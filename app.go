@@ -951,19 +951,35 @@ func (a *App) applySettingsToConfig() {
 	a.config.Health.Timeout = a.settingsService.GetDuration(ctx, service.CategoryHealth, "timeout", a.config.Health.Timeout)
 	a.config.Health.HealthPath = a.getSettingString(ctx, service.CategoryHealth, "health_path", a.config.Health.HealthPath)
 
-	// 故障转移配置
-	a.config.Failover.Enabled = a.settingsService.GetBool(ctx, service.CategoryFailover, "enabled", a.config.Failover.Enabled)
-	a.config.Failover.DefaultCooldown = a.settingsService.GetDuration(ctx, service.CategoryFailover, "default_cooldown", a.config.Failover.DefaultCooldown)
-	// 🔧 [热更新修复] 同步更新旧字段 Group.AutoSwitchBetweenGroups
-	// 部分组件仍使用此字段（suspension_manager, retry），确保配置一致性
-	a.config.Group.AutoSwitchBetweenGroups = a.config.Failover.Enabled
-
 	// 请求控制配置
 	a.config.GlobalTimeout = a.settingsService.GetDuration(ctx, service.CategoryRequest, "global_timeout", a.config.GlobalTimeout)
-	a.config.RequestSuspend.Enabled = a.settingsService.GetBool(ctx, service.CategoryRequest, "suspend_enabled", a.config.RequestSuspend.Enabled)
 	a.config.RequestSuspend.Timeout = a.settingsService.GetDuration(ctx, service.CategoryRequest, "suspend_timeout", a.config.RequestSuspend.Timeout)
 	a.config.RequestSuspend.MaxSuspendedRequests = a.settingsService.GetInt(ctx, service.CategoryRequest, "max_suspended", a.config.RequestSuspend.MaxSuspendedRequests)
-	a.config.RequestSuspend.EOFRetryHint = a.settingsService.GetBool(ctx, service.CategoryRequest, "eof_retry_hint", a.config.RequestSuspend.EOFRetryHint)
+
+	// 失败处理配置（默认开启）
+	a.config.FailureTracker.Enabled = true
+	a.config.FailureTracker.TimeWindow = a.settingsService.GetDuration(ctx, service.CategoryRequest, "failure_time_window", a.config.FailureTracker.TimeWindow)
+	a.config.FailureTracker.Threshold = a.settingsService.GetInt(ctx, service.CategoryRequest, "failure_threshold", a.config.FailureTracker.Threshold)
+	a.config.FailureTracker.Action = a.getSettingString(ctx, service.CategoryRequest, "failure_action", a.config.FailureTracker.Action)
+	a.config.Failover.DefaultCooldown = a.settingsService.GetDuration(ctx, service.CategoryRequest, "failover_cooldown", a.config.Failover.DefaultCooldown)
+
+	// 根据失败处理动作自动启用对应功能
+	switch a.config.FailureTracker.Action {
+	case "failover":
+		a.config.Failover.Enabled = true
+		a.config.RequestSuspend.Enabled = false
+	case "suspend":
+		a.config.Failover.Enabled = false
+		a.config.RequestSuspend.Enabled = true
+	case "reject":
+		a.config.Failover.Enabled = false
+		a.config.RequestSuspend.Enabled = false
+	default:
+		a.config.Failover.Enabled = true // 默认故障转移
+		a.config.RequestSuspend.Enabled = false
+	}
+	// 🔧 同步更新旧字段
+	a.config.Group.AutoSwitchBetweenGroups = a.config.Failover.Enabled
 
 	// 流式传输配置
 	a.config.Streaming.HeartbeatInterval = a.settingsService.GetDuration(ctx, service.CategoryStreaming, "heartbeat_interval", a.config.Streaming.HeartbeatInterval)

@@ -23,6 +23,7 @@ type Config struct {
 	Streaming        StreamingConfig        `yaml:"streaming"`
 	Group            GroupConfig            `yaml:"group"`                   // Group configuration (DEPRECATED: use Failover instead)
 	Failover         FailoverConfig         `yaml:"failover"`                // Failover configuration (v4.0+)
+	FailureTracker   FailureTrackerConfig   `yaml:"failure_tracker"`         // Failure tracker configuration (v5.2.6+)
 	RequestSuspend   RequestSuspendConfig   `yaml:"request_suspend"`         // Request suspension configuration
 	UsageTracking    UsageTrackingConfig    `yaml:"usage_tracking"`          // Usage tracking configuration
 	TokenCounting    TokenCountingConfig    `yaml:"token_counting"`          // Token counting configuration
@@ -104,11 +105,20 @@ type FailoverConfig struct {
 	DefaultCooldown time.Duration `yaml:"default_cooldown"`  // 默认冷却时间，默认: 10m
 }
 
+// FailureTrackerConfig v5.2.6 失败追踪器配置
+// 追踪端点失败次数，用于触发故障转移、挂起或拒绝请求
+type FailureTrackerConfig struct {
+	Enabled    bool          `yaml:"enabled"`     // 启用失败追踪，默认: false
+	TimeWindow time.Duration `yaml:"time_window"` // 时间窗口，默认: 5m
+	Threshold  int           `yaml:"threshold"`   // 失败次数阈值，默认: 3
+	Action     string        `yaml:"action"`      // 触发动作: failover|suspend|reject，默认: failover
+}
+
 type RequestSuspendConfig struct {
 	Enabled            bool          `yaml:"enabled"`               // Enable request suspension feature, default: false
 	Timeout            time.Duration `yaml:"timeout"`               // Timeout for suspended requests, default: 300s
 	MaxSuspendedRequests int          `yaml:"max_suspended_requests"` // Maximum number of suspended requests, default: 100
-	EOFRetryHint       bool          `yaml:"eof_retry_hint"`        // Send retryable error format on EOF, default: false
+	EOFRetryHint       bool          `yaml:"eof_retry_hint"`        // Send retryable error format on streaming errors (triggers client auto-retry), default: false
 }
 
 // ModelPricing 模型定价配置
@@ -247,6 +257,9 @@ func LoadConfig(path string) (*Config, error) {
 	// Check if v4.0 failover config is present
 	hasFailoverConfig := strings.Contains(string(data), "failover:")
 
+	// Check if v5.2.6 failure_tracker config is present
+	hasFailureTrackerConfig := strings.Contains(string(data), "failure_tracker:")
+
 	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
@@ -267,6 +280,11 @@ func LoadConfig(path string) (*Config, error) {
 			config.Failover.DefaultCooldown = config.Group.Cooldown
 		}
 		config.Failover.Enabled = config.Group.AutoSwitchBetweenGroups
+	}
+
+	// v5.2.6+: 失败追踪器默认启用
+	if !hasFailureTrackerConfig {
+		config.FailureTracker.Enabled = true
 	}
 
 	// Validate configuration
@@ -383,6 +401,19 @@ func (c *Config) setDefaults() {
 		c.Failover.DefaultCooldown = 600 * time.Second // Default 10 minutes cooldown
 	}
 	// Failover.Enabled has no explicit default here - will be set by LoadConfig compatibility logic
+
+	// Set failure tracker defaults (v5.2.6+)
+	if c.FailureTracker.TimeWindow == 0 {
+		c.FailureTracker.TimeWindow = 5 * time.Minute // Default 5 minutes time window
+	}
+	if c.FailureTracker.Threshold == 0 {
+		c.FailureTracker.Threshold = 3 // Default threshold: 3 failures
+	}
+	if c.FailureTracker.Action == "" {
+		c.FailureTracker.Action = "failover" // Default action: failover
+	}
+	// v5.2.6+: FailureTracker.Enabled defaults to true for better fault tolerance
+	// 用户可以通过设置页面禁用
 
 	// Set endpoints storage defaults (v5.0+)
 	if c.EndpointsStorage.Type == "" {

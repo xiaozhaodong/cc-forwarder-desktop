@@ -23,6 +23,13 @@ const STRATEGY_OPTIONS = [
   { value: 'fastest', label: 'fastest (最快响应)' }
 ];
 
+// 失败处理动作选项
+const FAILURE_ACTION_OPTIONS = [
+  { value: 'failover', label: 'failover - 故障转移到其他端点' },
+  { value: 'suspend', label: 'suspend - 挂起请求等待恢复' },
+  { value: 'reject', label: 'reject - 直接拒绝返回错误' }
+];
+
 const SettingItem = ({
   setting,
   value,
@@ -127,6 +134,40 @@ const SettingItem = ({
           options={STRATEGY_OPTIONS}
           value={localValue}
           onChange={handleStrategyChange}
+          disabled={disabled}
+          size="md"
+        />
+      </div>
+    );
+  }
+
+  // 失败处理动作使用下拉选择
+  if (setting.key === 'failure_action' && setting.category === 'request') {
+    const handleActionChange = (newValue) => {
+      setLocalValue(newValue);
+      onChange(setting.category, setting.key, newValue);
+    };
+
+    return (
+      <div className="flex justify-between items-center py-3 border-b border-slate-100 last:border-0">
+        <div className="flex-1 min-w-0 pr-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-slate-700">{displayLabel}</span>
+            {setting.requires_restart && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">
+                <AlertTriangle size={10} className="mr-0.5" />
+                重启生效
+              </span>
+            )}
+          </div>
+          {setting.description && (
+            <p className="text-xs text-slate-400 mt-0.5">{setting.description}</p>
+          )}
+        </div>
+        <CustomSelect
+          options={FAILURE_ACTION_OPTIONS}
+          value={localValue}
+          onChange={handleActionChange}
           disabled={disabled}
           size="md"
         />

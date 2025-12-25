@@ -69,6 +69,11 @@ func (m *Manager) healthCheckLoop() {
 		case <-ticker.C:
 			m.performHealthChecks()
 
+			// 🧹 [失败追踪] 定期清理过期失败记录，避免内存泄漏
+			if m.failureTracker != nil {
+				m.failureTracker.CleanupExpiredEvents()
+			}
+
 			// 检查配置是否变化，动态调整间隔
 			newInterval := getCheckInterval()
 			if newInterval != currentInterval {

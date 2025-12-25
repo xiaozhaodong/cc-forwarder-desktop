@@ -189,13 +189,21 @@ type SuspensionManagerFactory interface {
 
 // RetryDecision 统一重试决策结果
 // 包含重试策略的完整决策信息，用于替代原有的复杂RetryController机制
+//
+// 🎯 [请求级穿透架构] 2025-12-25
+// 新增 ShouldRecord 和 RetryAfterSeconds 字段，支持：
+// - 将错误直接返回给客户端（Claude Code SDK 自行重试）
+// - 通过 FailureTracker 滑动窗口记录端点失败
+// - 在下一个请求时智能跳过故障端点
 type RetryDecision struct {
-	RetrySameEndpoint bool          // 是否继续在当前端点重试
-	SwitchEndpoint    bool          // 是否切换到下一端点
-	SuspendRequest    bool          // 是否尝试挂起请求
-	Delay             time.Duration // 重试延迟时间
-	FinalStatus       string        // 若终止，应记录的最终状态
-	Reason            string        // 决策原因（用于日志）
+	RetrySameEndpoint  bool          // 是否继续在当前端点重试（passthrough架构下通常为false）
+	SwitchEndpoint     bool          // 是否切换到下一端点（passthrough架构下通常为false）
+	SuspendRequest     bool          // 是否尝试挂起请求
+	Delay              time.Duration // 重试延迟时间（仅在请求内重试时使用）
+	FinalStatus        string        // 若终止，应记录的最终状态
+	Reason             string        // 决策原因（用于日志）
+	ShouldRecord       bool          // 是否应记录到 FailureTracker（用于后续请求的端点选择）
+	RetryAfterSeconds  int           // 建议客户端重试的延迟秒数（通过 Retry-After 响应头返回）
 }
 
 // RetryManager 重试管理器接口

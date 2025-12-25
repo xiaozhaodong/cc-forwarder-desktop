@@ -40,10 +40,10 @@ func TestClientCancelDetection(t *testing.T) {
 			shouldRetry: true,
 		},
 		{
-			name:        "Timeout Error", 
+			name:        "Timeout Error",
 			err:         context.DeadlineExceeded,
-			expectedType: ErrorTypeTimeout,
-			shouldRetry: true,
+			expectedType: ErrorTypeResponseTimeout, // 响应超时，服务器可能已处理
+			shouldRetry: false, // 🎯 [请求级穿透] 响应超时不重试，避免重复计费
 		},
 	}
 	

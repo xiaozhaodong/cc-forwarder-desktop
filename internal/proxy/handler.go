@@ -475,7 +475,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	
 	// 创建统一的请求生命周期管理器
 	lifecycleManager := NewRequestLifecycleManagerWithRecoverySignal(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus, h.recoverySignalManager)
-	
+	// 📊 [失败追踪] 设置端点管理器，用于记录成功/失败
+	lifecycleManager.SetEndpointManager(h.endpointManager)
+
 	// 克隆请求体用于重试
 	var bodyBytes []byte
 	if r.Body != nil {

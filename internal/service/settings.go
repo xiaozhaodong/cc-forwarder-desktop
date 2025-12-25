@@ -17,7 +17,6 @@ const (
 	CategoryStrategy      = "strategy"
 	CategoryRetry         = "retry"
 	CategoryHealth        = "health"
-	CategoryFailover      = "failover"
 	CategoryRequest       = "request"
 	CategoryStreaming     = "streaming"
 	CategoryAuth          = "auth"
@@ -86,19 +85,12 @@ func NewSettingsService(store store.SettingsStore) *SettingsService {
 				Icon:        "❤️",
 				Order:       4,
 			},
-			CategoryFailover: {
-				Name:        CategoryFailover,
-				Label:       "故障转移",
-				Description: "配置端点故障转移行为",
-				Icon:        "🔁",
-				Order:       5,
-			},
 			CategoryRequest: {
 				Name:        CategoryRequest,
 				Label:       "请求控制",
-				Description: "配置全局超时和请求挂起",
+				Description: "配置全局超时、请求挂起和失败处理",
 				Icon:        "⏱️",
-				Order:       6,
+				Order:       5,
 			},
 			// CategoryStreaming 和 CategoryHotPool 不在前端设置页面展示
 			// 这些是底层技术配置，保留在 config.yaml 中
@@ -107,14 +99,14 @@ func NewSettingsService(store store.SettingsStore) *SettingsService {
 				Label:       "Token 计数",
 				Description: "配置 Token 计数功能",
 				Icon:        "🔢",
-				Order:       7,
+				Order:       6,
 			},
 			CategoryRetention: {
 				Name:        CategoryRetention,
 				Label:       "数据保留",
 				Description: "配置历史数据保留策略",
 				Icon:        "📦",
-				Order:       8,
+				Order:       7,
 			},
 			CategoryServer: {
 				Name:        CategoryServer,
@@ -304,7 +296,16 @@ func (s *SettingsService) InitDefaults(ctx context.Context) error {
 	// 始终同步元数据（label、description、value_type等）
 	// 这样即使数据库中已有数据，也能更新到最新的元数据
 	// 但会保留用户设置的 value 值
-	return s.store.SyncMetadata(ctx, defaults)
+	if err := s.store.SyncMetadata(ctx, defaults); err != nil {
+		return err
+	}
+
+	// 🔄 [v5.2.6+] 自动迁移旧配置到新分类
+	if err := s.migrateOldSettings(ctx); err != nil {
+		slog.Warn(fmt.Sprintf("⚠️ [设置迁移] 迁移旧配置失败（不影响使用）: %v", err))
+	}
+
+	return nil
 }
 
 // IsInitialized 检查是否已初始化
@@ -327,9 +328,6 @@ func (s *SettingsService) GetAllDefaults() []*store.SettingRecord {
 
 	// Health 设置
 	defaults = append(defaults, s.getDefaultsForCategory(CategoryHealth)...)
-
-	// Failover 设置
-	defaults = append(defaults, s.getDefaultsForCategory(CategoryFailover)...)
 
 	// Request 设置
 	defaults = append(defaults, s.getDefaultsForCategory(CategoryRequest)...)
@@ -380,19 +378,15 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 			{Category: CategoryHealth, Key: "health_path", Value: "/v1/models", ValueType: ValueTypeString, Label: "检查路径", Description: "健康检查请求的 API 路径", DisplayOrder: 3},
 		}
 
-	case CategoryFailover:
-		return []*store.SettingRecord{
-			{Category: CategoryFailover, Key: "enabled", Value: "true", ValueType: ValueTypeBool, Label: "启用故障转移", Description: "当端点不可用时自动切换到备用端点", DisplayOrder: 1},
-			{Category: CategoryFailover, Key: "default_cooldown", Value: "600s", ValueType: ValueTypeDuration, Label: "默认冷却时间", Description: "端点故障后的冷却等待时间", DisplayOrder: 2},
-		}
-
 	case CategoryRequest:
 		return []*store.SettingRecord{
 			{Category: CategoryRequest, Key: "global_timeout", Value: "300s", ValueType: ValueTypeDuration, Label: "全局超时", Description: "非流式请求的默认超时时间", DisplayOrder: 1},
-			{Category: CategoryRequest, Key: "suspend_enabled", Value: "false", ValueType: ValueTypeBool, Label: "启用请求挂起", Description: "当所有端点不可用时挂起请求等待恢复", DisplayOrder: 2},
-			{Category: CategoryRequest, Key: "suspend_timeout", Value: "300s", ValueType: ValueTypeDuration, Label: "挂起超时", Description: "请求挂起的最大等待时间", DisplayOrder: 3},
-			{Category: CategoryRequest, Key: "max_suspended", Value: "100", ValueType: ValueTypeInt, Label: "最大挂起数", Description: "同时挂起的最大请求数量", DisplayOrder: 4},
-			{Category: CategoryRequest, Key: "eof_retry_hint", Value: "false", ValueType: ValueTypeBool, Label: "EOF 重试提示", Description: "流式传输中断时发送可重试错误格式，让客户端自动重试", DisplayOrder: 5},
+			{Category: CategoryRequest, Key: "suspend_timeout", Value: "300s", ValueType: ValueTypeDuration, Label: "挂起超时", Description: "挂起请求的最大等待时间", DisplayOrder: 2},
+			{Category: CategoryRequest, Key: "max_suspended", Value: "100", ValueType: ValueTypeInt, Label: "最大挂起数", Description: "同时挂起的最大请求数量", DisplayOrder: 3},
+			{Category: CategoryRequest, Key: "failure_time_window", Value: "5m", ValueType: ValueTypeDuration, Label: "失败时间窗口", Description: "统计失败次数的时间窗口", DisplayOrder: 4},
+			{Category: CategoryRequest, Key: "failure_threshold", Value: "3", ValueType: ValueTypeInt, Label: "失败阈值", Description: "触发失败处理的次数阈值", DisplayOrder: 5},
+			{Category: CategoryRequest, Key: "failure_action", Value: "failover", ValueType: ValueTypeString, Label: "失败处理动作", Description: "failover (故障转移) / suspend (挂起) / reject (拒绝)", DisplayOrder: 6},
+			{Category: CategoryRequest, Key: "failover_cooldown", Value: "600s", ValueType: ValueTypeDuration, Label: "故障冷却时间", Description: "端点故障后的冷却等待时间", DisplayOrder: 7},
 		}
 
 	case CategoryStreaming:
@@ -434,3 +428,75 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 		return nil
 	}
 }
+
+// migrateOldSettings 迁移旧版本配置到新分类
+// v5.2.6+: 从 failure_tracker/failover 分类迁移到 request 分类
+func (s *SettingsService) migrateOldSettings(ctx context.Context) error {
+	// 定义迁移映射：旧分类.key → 新分类.key
+	migrations := []struct {
+		oldCategory string
+		oldKey      string
+		newCategory string
+		newKey      string
+	}{
+		// FailureTracker 迁移
+		{"failure_tracker", "time_window", CategoryRequest, "failure_time_window"},
+		{"failure_tracker", "threshold", CategoryRequest, "failure_threshold"},
+		{"failure_tracker", "action", CategoryRequest, "failure_action"},
+		// Failover 迁移
+		{"failover", "default_cooldown", CategoryRequest, "failover_cooldown"},
+	}
+
+	migratedCount := 0
+	for _, m := range migrations {
+		// 检查旧配置是否存在
+		oldRecord, err := s.store.Get(ctx, m.oldCategory, m.oldKey)
+		if err != nil || oldRecord == nil {
+			continue // 旧配置不存在，跳过
+		}
+
+		// 检查新配置是否已经有用户设置的值
+		newRecord, err := s.store.Get(ctx, m.newCategory, m.newKey)
+		if err != nil {
+			continue
+		}
+
+		// 获取新配置的默认值
+		defaultValue := s.getDefaultValue(m.newCategory, m.newKey)
+
+		// 只有当新配置还是默认值时，才迁移旧值（避免覆盖用户新设置）
+		if newRecord != nil && newRecord.Value != defaultValue {
+			slog.Debug(fmt.Sprintf("⏭️ [设置迁移] 跳过 %s.%s（新配置已有用户设置值）", m.newCategory, m.newKey))
+			continue
+		}
+
+		// 执行迁移：将旧值写入新配置
+		if err := s.store.Set(ctx, m.newCategory, m.newKey, oldRecord.Value); err != nil {
+			slog.Warn(fmt.Sprintf("⚠️ [设置迁移] 迁移 %s.%s → %s.%s 失败: %v",
+				m.oldCategory, m.oldKey, m.newCategory, m.newKey, err))
+			continue
+		}
+
+		migratedCount++
+		slog.Info(fmt.Sprintf("✅ [设置迁移] %s.%s (%s) → %s.%s",
+			m.oldCategory, m.oldKey, oldRecord.Value, m.newCategory, m.newKey))
+	}
+
+	if migratedCount > 0 {
+		slog.Info(fmt.Sprintf("🔄 [设置迁移] 成功迁移 %d 个旧配置到新分类", migratedCount))
+	}
+
+	return nil
+}
+
+// getDefaultValue 获取指定配置的默认值
+func (s *SettingsService) getDefaultValue(category, key string) string {
+	defaults := s.getDefaultsForCategory(category)
+	for _, d := range defaults {
+		if d.Key == key {
+			return d.Value
+		}
+	}
+	return ""
+}
+

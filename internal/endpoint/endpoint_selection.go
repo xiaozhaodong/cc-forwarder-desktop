@@ -25,12 +25,34 @@ func (m *Manager) GetHealthyEndpoints() []*Endpoint {
 
 	now := time.Now()
 	var healthy []*Endpoint
+	var failedEndpoints []string // 📊 [失败追踪] 记录达到失败阈值的端点
+
 	for _, endpoint := range activeEndpoints {
 		endpoint.mutex.RLock()
 		isHealthy := endpoint.Status.Healthy
 		// 检查是否在请求冷却中
 		inCooldown := !endpoint.Status.CooldownUntil.IsZero() && now.Before(endpoint.Status.CooldownUntil)
 		endpoint.mutex.RUnlock()
+
+		// 📊 [失败追踪] 检查是否达到失败阈值
+		if m.config.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(endpoint.Config.Name) {
+			action := m.config.FailureTracker.Action
+			switch action {
+			case "failover":
+				// 🔄 故障转移：跳过该端点，不清除记录
+				// 只有当端点真正请求成功时才会清除失败记录（在 lifecycle_manager 中）
+				slog.Info(fmt.Sprintf("🔄 [失败追踪] 端点 %s 达到失败阈值，触发故障转移，跳过该端点", endpoint.Config.Name))
+				failedEndpoints = append(failedEndpoints, endpoint.Config.Name) // 记录失败端点
+			case "suspend":
+				// ⏸️ 挂起模式：跳过该端点，不清除记录，基于时间窗口自动恢复
+				// 失败记录会在窗口时间后自动过期，无需手动干预
+				slog.Info(fmt.Sprintf("⏸️ [失败追踪] 端点 %s 达到失败阈值，挂起模式，跳过该端点", endpoint.Config.Name))
+			case "reject":
+				// ❌ 拒绝模式：跳过该端点（实际拒绝在 handler 层通过 ShouldRejectRequest() 判断）
+				slog.Warn(fmt.Sprintf("❌ [失败追踪] 端点 %s 达到失败阈值（reject 模式）", endpoint.Config.Name))
+			}
+			continue // 跳过该端点
+		}
 
 		if isHealthy && !inCooldown {
 			healthy = append(healthy, endpoint)
@@ -54,6 +76,11 @@ func (m *Manager) GetHealthyEndpoints() []*Endpoint {
 
 	if len(healthy) > 0 {
 		slog.Info(fmt.Sprintf("✅ [故障转移] 找到 %d 个可用的故障转移端点", len(healthy)))
+
+		// 🔧 [选择阶段故障转移] 对因失败追踪被跳过的端点，设置冷却并激活新端点
+		if len(failedEndpoints) > 0 {
+			m.executeSelectionFailover(failedEndpoints, healthy[0].Config.Name)
+		}
 	}
 
 	return m.sortHealthyEndpoints(healthy, true) // 按策略排序
@@ -82,6 +109,12 @@ func (m *Manager) getFailoverEndpoints(activeEndpoints, snapshot []*Endpoint) []
 			failoverEnabled = *endpoint.Config.FailoverEnabled
 		}
 		if !failoverEnabled {
+			continue
+		}
+
+		// 📊 [失败追踪] 检查是否达到失败阈值
+		if m.config.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(endpoint.Config.Name) {
+			slog.Debug(fmt.Sprintf("📊 [失败追踪] 故障转移端点 %s 达到失败阈值，跳过", endpoint.Config.Name))
 			continue
 		}
 
@@ -150,7 +183,19 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*En
 	activeEndpoints := m.groupManager.FilterEndpointsByActiveGroups(snapshot)
 
 	var healthy []*Endpoint
+	var failedEndpoints []string // 📊 [失败追踪] 记录达到失败阈值的端点
+
 	for _, endpoint := range activeEndpoints {
+		// 📊 [失败追踪] 检查是否达到失败阈值
+		if m.config.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(endpoint.Config.Name) {
+			action := m.config.FailureTracker.Action
+			if action == "failover" {
+				slog.Debug(fmt.Sprintf("📊 [失败追踪] 端点 %s 达到失败阈值，跳过", endpoint.Config.Name))
+				failedEndpoints = append(failedEndpoints, endpoint.Config.Name) // 记录失败端点
+			}
+			continue
+		}
+
 		endpoint.mutex.RLock()
 		if endpoint.Status.Healthy {
 			healthy = append(healthy, endpoint)
@@ -165,6 +210,11 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*En
 
 		if len(healthy) > 0 {
 			slog.InfoContext(ctx, fmt.Sprintf("✅ [故障转移] 找到 %d 个可用的故障转移端点", len(healthy)))
+
+			// 🔧 [选择阶段故障转移] 对因失败追踪被跳过的端点，设置冷却并激活新端点
+			if len(failedEndpoints) > 0 {
+				m.executeSelectionFailover(failedEndpoints, healthy[0].Config.Name)
+			}
 		}
 	}
 
@@ -352,3 +402,60 @@ func (m *Manager) GetEndpointCount() int {
 	defer m.endpointsMu.RUnlock()
 	return len(m.endpoints)
 }
+
+// executeSelectionFailover 执行选择阶段的故障转移操作
+// 当在端点选择阶段检测到失败追踪阈值时调用
+// 对失败端点设置冷却并停用，激活新故障转移端点
+func (m *Manager) executeSelectionFailover(failedEndpoints []string, newEndpointName string) {
+	// 计算冷却时间
+	cooldownDuration := m.config.Failover.DefaultCooldown
+	if cooldownDuration == 0 {
+		cooldownDuration = 10 * time.Minute // 默认 10 分钟
+	}
+
+	// 1. 对每个失败端点设置冷却并停用组
+	for _, failedName := range failedEndpoints {
+		failedEndpoint := m.GetEndpointByNameAny(failedName)
+		if failedEndpoint == nil {
+			continue
+		}
+
+		// 如果端点有自定义冷却时间，使用端点配置
+		epCooldown := cooldownDuration
+		if failedEndpoint.Config.Cooldown != nil && *failedEndpoint.Config.Cooldown > 0 {
+			epCooldown = *failedEndpoint.Config.Cooldown
+		}
+
+		// 设置冷却状态
+		failedEndpoint.mutex.Lock()
+		failedEndpoint.Status.CooldownUntil = time.Now().Add(epCooldown)
+		failedEndpoint.Status.CooldownReason = "failure_tracker_threshold"
+		failedEndpoint.mutex.Unlock()
+
+		slog.Info(fmt.Sprintf("⏱️ [选择阶段故障转移] 端点 %s 进入冷却，持续 %v", failedName, epCooldown))
+
+		// 停用失败端点的组
+		if err := m.groupManager.DeactivateGroup(failedName); err != nil {
+			slog.Warn(fmt.Sprintf("⚠️ [选择阶段故障转移] 停用组失败: %v", err))
+		}
+	}
+
+	// 2. 激活新故障转移端点的组
+	if err := m.groupManager.ManualActivateGroup(newEndpointName); err != nil {
+		slog.Error(fmt.Sprintf("❌ [选择阶段故障转移] 激活新端点失败: %v", err))
+		return
+	}
+
+	slog.Info(fmt.Sprintf("✅ [选择阶段故障转移] 已切换到端点: %s", newEndpointName))
+
+	// 3. 调用回调通知 App 层同步数据库（使用第一个失败端点作为代表）
+	if m.onFailoverTriggered != nil && len(failedEndpoints) > 0 {
+		go m.onFailoverTriggered(failedEndpoints[0], newEndpointName)
+	}
+
+	// 4. 触发前端刷新
+	if m.onHealthCheckComplete != nil {
+		go m.onHealthCheckComplete()
+	}
+}
+

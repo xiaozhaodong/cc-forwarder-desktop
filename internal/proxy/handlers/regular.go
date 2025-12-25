@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,6 +95,16 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 
 	// 外层循环处理组切换逻辑
 	for {
+		// 🎯 [失败追踪] reject 模式：检查是否应该直接拒绝请求
+		if shouldReject, rejectedEndpoint := rh.endpointManager.ShouldRejectRequest(); shouldReject {
+			slog.Warn(fmt.Sprintf("❌ [失败追踪] [%s] 端点 %s 达到失败阈值，拒绝请求（reject 模式）", connID, rejectedEndpoint))
+			lifecycleManager.FailRequest("rejected_by_failure_tracker",
+				fmt.Sprintf("Endpoint %s reached failure threshold, request rejected", rejectedEndpoint),
+				http.StatusServiceUnavailable)
+			http.Error(w, fmt.Sprintf("Service temporarily unavailable: endpoint %s failure threshold reached", rejectedEndpoint), http.StatusServiceUnavailable)
+			return
+		}
+
 		// 获取端点列表
 		endpoints := retryMgr.GetHealthyEndpoints(ctx)
 		if len(endpoints) == 0 {
@@ -103,30 +114,50 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 			errorCtx := errorRecovery.ClassifyError(noHealthyErr, connID, "", "", 0)
 
 			if errorCtx.ErrorType == ErrorTypeNoHealthyEndpoints {
-				// 尝试获取所有活跃端点，忽略健康状态
+				// 🔍 [健康检查回退] 忽略健康状态（可能误判），但仍然尊重失败追踪和冷却
 				allActiveEndpoints := rh.endpointManager.GetGroupManager().FilterEndpointsByActiveGroups(
 					rh.endpointManager.GetAllEndpoints())
 
-				if len(allActiveEndpoints) > 0 {
-					slog.InfoContext(ctx, fmt.Sprintf("🔄 [健康检查回退] [%s] 忽略健康状态，尝试 %d 个活跃端点",
-						connID, len(allActiveEndpoints)))
-					endpoints = allActiveEndpoints
+				// 过滤：跳过失败追踪器标记的端点和冷却中的端点
+				var fallbackEndpoints []*endpoint.Endpoint
+				for _, ep := range allActiveEndpoints {
+					// 📊 [失败追踪] 检查是否达到失败阈值（真实请求失败，必须跳过）
+					if rh.endpointManager.GetConfig().FailureTracker.Enabled &&
+						rh.endpointManager.ShouldTriggerFailureAction(ep.Config.Name) {
+						slog.Debug(fmt.Sprintf("⏭️ [健康检查回退] 跳过失败追踪标记的端点: %s", ep.Config.Name))
+						continue
+					}
+
+					// 检查冷却状态
+					if ep.IsInCooldown() {
+						slog.Debug(fmt.Sprintf("⏭️ [健康检查回退] 跳过冷却中的端点: %s", ep.Config.Name))
+						continue
+					}
+
+					fallbackEndpoints = append(fallbackEndpoints, ep)
+				}
+
+				if len(fallbackEndpoints) > 0 {
+					slog.InfoContext(ctx, fmt.Sprintf("🔄 [健康检查回退] [%s] 忽略健康状态，尝试 %d 个端点（已过滤失败和冷却）",
+						connID, len(fallbackEndpoints)))
+					endpoints = fallbackEndpoints
 					// 继续正常处理流程
 				} else {
-					// 真的没有端点
+					// 🔧 [挂起修复] 2025-12-25: 所有端点不可用时，应该触发挂起而非直接返回 503
+					// 保持 endpoints 为空数组，让代码继续执行到后面的挂起逻辑（line 357-417）
+					slog.InfoContext(ctx, fmt.Sprintf("⏸️ [端点不可用] [%s] 所有端点因失败追踪或冷却被过滤，准备进入挂起逻辑",
+						connID))
 					lifecycleManager.HandleError(noHealthyErr)
-					// 🔧 [修复] 2025-12-11: 所有端点不可用时必须终结请求
-					lifecycleManager.FailRequest("no_endpoints", "No endpoints available in active groups", http.StatusServiceUnavailable)
-					http.Error(w, "No endpoints available in active groups", http.StatusServiceUnavailable)
-					return
+					endpoints = []*endpoint.Endpoint{} // 空数组，跳过端点处理循环
+					// 不要 return，继续执行到后面的挂起逻辑
 				}
 			} else {
-				// 按原来逻辑处理
+				// 🔧 [挂起修复] 2025-12-25: 其他错误导致端点不可用，也应该触发挂起
+				slog.InfoContext(ctx, fmt.Sprintf("⏸️ [端点不可用] [%s] 无健康端点，准备进入挂起逻辑",
+					connID))
 				lifecycleManager.HandleError(noHealthyErr)
-				// 🔧 [修复] 2025-12-11: 所有端点不可用时必须终结请求
-				lifecycleManager.FailRequest("no_healthy_endpoints", "No healthy endpoints available", http.StatusServiceUnavailable)
-				http.Error(w, "No healthy endpoints available", http.StatusServiceUnavailable)
-				return
+				endpoints = []*endpoint.Endpoint{} // 空数组，跳过端点处理循环
+				// 不要 return，继续执行到后面的挂起逻辑
 			}
 		}
 
@@ -164,7 +195,8 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 					// ✅ [重试决策] 成功请求的决策日志 - 保持监控完整性
 					slog.Info(fmt.Sprintf("✅ [重试决策] 请求成功完成 request_id=%s endpoint=%s attempt=%d reason=请求成功完成",
 						connID, endpoint.Config.Name, attempt))
-
+					// 🔧 [失败追踪] 成功记录移至 lifecycle_manager.CompleteRequest()
+					// 确保响应体完全处理后才清空失败计数，避免在响应读写阶段失败时过早清空失败窗口
 					lifecycleManager.UpdateStatus("processing", globalAttemptCount, resp.StatusCode)
 					rh.processSuccessResponse(ctx, w, resp, lifecycleManager, endpoint.Config.Name, r)
 					return
@@ -217,7 +249,6 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 							slog.Info(fmt.Sprintf("🎯 [恢复成功] [%s] 端点 %s 已恢复或组已切换，重新获取端点列表",
 								connID, endpoint.Config.Name))
 							groupSwitchNeeded = true
-							break
 						case SuspensionCancelled:
 							// 🎯 [挂起取消区分] 用户在挂起期间取消请求，应该记录为取消而非失败
 							slog.Info(fmt.Sprintf("🚫 [挂起期间取消] [%s] 用户在挂起期间取消请求", connID))
@@ -242,22 +273,34 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 
 				if !decision.RetrySameEndpoint {
 					if decision.SwitchEndpoint {
-						break // 尝试下一个端点
+						break // 尝试下一个端点（passthrough架构下不会进入此分支）
 					} else {
-						// 🚀 [状态机重构] Phase 4: 最终失败处理
-						// 获取失败原因
-						failureReason := lifecycleManager.MapErrorTypeToFailureReason(errorCtx.ErrorType)
+						// 🎯 [请求级穿透] 2025-12-25
+						// 核心原则：每个客户端请求 = 1个上游请求
+						// 错误直接返回给客户端，让 Claude Code SDK 自行重试
 
-						// 获取真实状态码，避免http.Error panic
+						// 记录到 FailureTracker（如果需要）
+						if decision.ShouldRecord {
+							failCount := rh.endpointManager.RecordFailure(endpoint.Config.Name)
+							slog.Info(fmt.Sprintf("📊 [失败追踪] [%s] 端点 %s 失败，窗口内失败次数: %d",
+								connID, endpoint.Config.Name, failCount))
+						}
+
+						// 获取真实状态码
 						statusCode := GetStatusCodeFromError(err, resp)
-
-						// 避免statusCode=0导致http.Error panic
 						if statusCode == 0 {
 							statusCode = getDefaultStatusCodeForFinalStatus(decision.FinalStatus)
 						}
 
-						// 使用新的FailRequest方法标记最终失败（修复：添加HTTP状态码）
+						// 添加 Retry-After 头（如果有）
+						if decision.RetryAfterSeconds > 0 {
+							w.Header().Set("Retry-After", strconv.Itoa(decision.RetryAfterSeconds))
+						}
+
+						// 标记请求失败
+						failureReason := lifecycleManager.MapErrorTypeToFailureReason(errorCtx.ErrorType)
 						lifecycleManager.FailRequest(failureReason, err.Error(), statusCode)
+
 						http.Error(w, decision.Reason, statusCode)
 						return
 					}
@@ -411,7 +454,7 @@ func (rh *RegularHandler) executeRequest(ctx context.Context, r *http.Request, b
 }
 
 // processSuccessResponse 处理成功响应
-func (rh *RegularHandler) processSuccessResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, lifecycleManager RequestLifecycleManager, endpointName string, r *http.Request) {
+func (rh *RegularHandler) processSuccessResponse(_ context.Context, w http.ResponseWriter, resp *http.Response, lifecycleManager RequestLifecycleManager, endpointName string, r *http.Request) {
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
 			slog.Warn("Failed to close response body", "request_id", lifecycleManager.GetRequestID(), "error", err)

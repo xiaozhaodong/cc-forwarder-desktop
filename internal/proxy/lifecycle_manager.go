@@ -46,6 +46,7 @@ type RequestLifecycleManager struct {
 	errorRecovery         *ErrorRecoveryManager          // 错误恢复管理器
 	eventBus              events.EventBus                // EventBus事件总线
 	recoverySignalManager *EndpointRecoverySignalManager // 端点恢复信号管理器
+	endpointManager       *endpoint.Manager              // 端点管理器（用于失败追踪）
 	requestID             string                         // 请求唯一标识符
 	startTime             time.Time                      // 请求开始时间
 	modelMu               sync.RWMutex                   // 保护模型字段的读写锁
@@ -264,6 +265,11 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 	if rlm.recoverySignalManager != nil && rlm.endpointName != "" {
 		rlm.recoverySignalManager.BroadcastEndpointSuccess(rlm.endpointName)
 	}
+
+	// 📊 [失败追踪] 记录端点成功，清空失败计数
+	if rlm.endpointManager != nil && rlm.endpointName != "" {
+		rlm.endpointManager.RecordSuccess(rlm.endpointName)
+	}
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		// 使用线程安全的方式获取模型信息
 		modelName := rlm.GetModelName()
@@ -317,6 +323,11 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.
 	// 🚀 [端点自愈] 无论usageTracker是否为空，都应该广播端点成功信号
 	if rlm.recoverySignalManager != nil && rlm.endpointName != "" {
 		rlm.recoverySignalManager.BroadcastEndpointSuccess(rlm.endpointName)
+	}
+
+	// 📊 [失败追踪] 记录端点成功，清空失败计数
+	if rlm.endpointManager != nil && rlm.endpointName != "" {
+		rlm.endpointManager.RecordSuccess(rlm.endpointName)
 	}
 
 	if rlm.usageTracker != nil && rlm.requestID != "" {
@@ -424,6 +435,11 @@ func (rlm *RequestLifecycleManager) SetEndpoint(endpointName, groupName, channel
 			Channel:      &channel,
 		})
 	}
+}
+
+// SetEndpointManager 设置端点管理器（用于失败追踪）
+func (rlm *RequestLifecycleManager) SetEndpointManager(manager *endpoint.Manager) {
+	rlm.endpointManager = manager
 }
 
 // SetModel 设置模型名称（线程安全）
@@ -665,6 +681,7 @@ func (rlm *RequestLifecycleManager) getModelNameForCost() string {
 // FailRequest 标记请求最终失败
 // Phase 3新增: 专门用于标记最终失败的方法
 // 设置状态为"failed"并记录失败原因和错误详情
+// 注意: 失败追踪由 handler 层根据 RetryDecision.ShouldRecord 决定，这里不重复记录
 func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail string, httpStatus int) {
 	duration := time.Since(rlm.startTime)
 	modelName := rlm.getModelNameForCost()

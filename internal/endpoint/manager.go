@@ -40,6 +40,23 @@ type Endpoint struct {
 	mutex  sync.RWMutex
 }
 
+// RLock 锁定端点状态读锁（供外部安全读取状态）
+func (e *Endpoint) RLock() {
+	e.mutex.RLock()
+}
+
+// RUnlock 解锁端点状态读锁
+func (e *Endpoint) RUnlock() {
+	e.mutex.RUnlock()
+}
+
+// IsInCooldown 检查端点是否处于冷却状态
+func (e *Endpoint) IsInCooldown() bool {
+	e.mutex.RLock()
+	defer e.mutex.RUnlock()
+	return !e.Status.CooldownUntil.IsZero() && time.Now().Before(e.Status.CooldownUntil)
+}
+
 // Manager manages endpoints and their health status
 type Manager struct {
 	endpoints   []*Endpoint
@@ -51,7 +68,8 @@ type Manager struct {
 	wg          sync.WaitGroup
 	fastTester  *FastTester
 	groupManager *GroupManager
-	keyManager   *KeyManager // 管理多 API Key 状态
+	keyManager   *KeyManager      // 管理多 API Key 状态
+	failureTracker *FailureTracker // 失败追踪器，用于检测端点持续故障
 	// EventBus for decoupled event publishing
 	eventBus events.EventBus
 	// 健康检查完成回调（用于推送 Wails 事件）
@@ -84,6 +102,11 @@ func NewManager(cfg *config.Config) *Manager {
 		fastTester:   NewFastTester(cfg),
 		groupManager: NewGroupManager(cfg),
 		keyManager:   NewKeyManager(), // 初始化 Key 管理器
+		failureTracker: NewFailureTracker(
+			cfg.FailureTracker.Enabled,
+			cfg.FailureTracker.TimeWindow,
+			cfg.FailureTracker.Threshold,
+		),
 	}
 
 	// Initialize endpoints
@@ -143,6 +166,11 @@ func (m *Manager) UpdateConfig(cfg *config.Config) {
 	// Update fast tester with new config
 	if m.fastTester != nil {
 		m.fastTester.UpdateConfig(cfg)
+	}
+
+	// 🔧 [热更新] 同步更新失败追踪器配置
+	if m.failureTracker != nil {
+		m.failureTracker.UpdateConfig(cfg.FailureTracker.Enabled, cfg.FailureTracker.TimeWindow, cfg.FailureTracker.Threshold)
 	}
 
 	// Recreate transport with new proxy configuration
@@ -254,4 +282,57 @@ func (m *Manager) GetConfig() *config.Config {
 // GetGroupManager returns the group manager
 func (m *Manager) GetGroupManager() *GroupManager {
 	return m.groupManager
+}
+
+// RecordFailure 记录端点失败，返回当前窗口内失败次数
+func (m *Manager) RecordFailure(endpointName string) int {
+	return m.failureTracker.RecordFailure(endpointName)
+}
+
+// RecordSuccess 记录端点成功，清空失败记录
+func (m *Manager) RecordSuccess(endpointName string) {
+	m.failureTracker.RecordSuccess(endpointName)
+}
+
+// GetFailureStats 获取失败统计信息
+func (m *Manager) GetFailureStats() map[string]int {
+	return m.failureTracker.GetStats()
+}
+
+// ShouldTriggerFailureAction 检查指定端点是否达到失败阈值
+// 用于健康检查回退逻辑中过滤端点
+func (m *Manager) ShouldTriggerFailureAction(endpointName string) bool {
+	return m.failureTracker.ShouldTriggerAction(endpointName)
+}
+
+// UpdateFailureTrackerConfig 热更新失败追踪器配置
+func (m *Manager) UpdateFailureTrackerConfig(enabled bool, timeWindow time.Duration, threshold int) {
+	m.failureTracker.UpdateConfig(enabled, timeWindow, threshold)
+}
+
+// ShouldRejectRequest 检查是否应该拒绝请求
+// 当 FailureTracker 配置为 "reject" 模式且有任意活跃端点达到失败阈值时返回 true
+// 返回: (shouldReject, rejectedEndpointName)
+func (m *Manager) ShouldRejectRequest() (bool, string) {
+	// 未启用失败追踪或不是 reject 模式，不拒绝
+	if !m.config.FailureTracker.Enabled || m.config.FailureTracker.Action != "reject" {
+		return false, ""
+	}
+
+	// 获取活跃端点
+	m.endpointsMu.RLock()
+	snapshot := make([]*Endpoint, len(m.endpoints))
+	copy(snapshot, m.endpoints)
+	m.endpointsMu.RUnlock()
+
+	activeEndpoints := m.groupManager.FilterEndpointsByActiveGroups(snapshot)
+
+	// 检查是否有任意活跃端点达到失败阈值
+	for _, ep := range activeEndpoints {
+		if m.failureTracker.ShouldTriggerAction(ep.Config.Name) {
+			return true, ep.Config.Name
+		}
+	}
+
+	return false, ""
 }
