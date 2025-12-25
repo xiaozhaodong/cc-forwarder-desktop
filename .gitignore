@@ -77,3 +77,4 @@ build.log
 
 # 废弃代码
 internal/tracking/deprecated/
+tests/mock_claude_api/mock_server
