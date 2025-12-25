@@ -286,22 +286,40 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 								connID, endpoint.Config.Name, failCount))
 						}
 
-						// 获取真实状态码
+						// 获取真实状态码（用于内部记录）
 						statusCode := GetStatusCodeFromError(err, resp)
 						if statusCode == 0 {
 							statusCode = getDefaultStatusCodeForFinalStatus(decision.FinalStatus)
 						}
 
-						// 添加 Retry-After 头（如果有）
-						if decision.RetryAfterSeconds > 0 {
-							w.Header().Set("Retry-After", strconv.Itoa(decision.RetryAfterSeconds))
+						// 🎯 [客户端重试控制] 2025-12-25
+						// 对于可重试错误，统一返回 500 + Retry-After: 失败阈值
+						// 避免 Claude Code SDK 的不同重试策略干扰 ccf 的故障转移逻辑
+						clientStatusCode := statusCode
+						retryAfter := decision.RetryAfterSeconds
+						if errorCtx.ErrorType == ErrorTypeRateLimit || errorCtx.ErrorType == ErrorTypeServerError {
+							clientStatusCode = http.StatusInternalServerError // 统一返回 500
+							// 从配置读取失败阈值作为重试延迟
+							if threshold := rh.endpointManager.GetConfig().FailureTracker.Threshold; threshold > 0 {
+								retryAfter = threshold
+							} else {
+								retryAfter = 3 // 默认 3 秒
+							}
+							slog.Debug(fmt.Sprintf("🔄 [客户端重试控制] [%s] 真实状态: %d, 返回: 500, Retry-After: %d",
+								connID, statusCode, retryAfter))
 						}
 
-						// 标记请求失败
+						// 添加 Retry-After 头
+						if retryAfter > 0 {
+							w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+						}
+
+						// 标记请求失败（使用真实状态码）
 						failureReason := lifecycleManager.MapErrorTypeToFailureReason(errorCtx.ErrorType)
 						lifecycleManager.FailRequest(failureReason, err.Error(), statusCode)
 
-						http.Error(w, decision.Reason, statusCode)
+						// 返回给客户端（使用转换后的状态码）
+						http.Error(w, decision.Reason, clientStatusCode)
 						return
 					}
 				}

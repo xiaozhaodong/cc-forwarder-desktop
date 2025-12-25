@@ -569,7 +569,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 							connID, ep.Config.Name, failCount))
 					}
 
-					// 获取真实状态码
+					// 获取真实状态码（用于内部记录）
 					statusCode := GetStatusCodeFromError(lastErr, lastResp)
 					if statusCode == 0 {
 						switch decision.FinalStatus {
@@ -584,21 +584,38 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 						}
 					}
 
-					// 添加 Retry-After 头（如果有）
-					if decision.RetryAfterSeconds > 0 {
-						w.Header().Set("Retry-After", strconv.Itoa(decision.RetryAfterSeconds))
+					// 🎯 [客户端重试控制] 2025-12-25
+					// 对于可重试错误，统一返回 500 + Retry-After: 失败阈值
+					// 避免 Claude Code SDK 的不同重试策略干扰 ccf 的故障转移逻辑
+					clientStatusCode := statusCode
+					retryAfter := decision.RetryAfterSeconds
+					if errorCtx.ErrorType == ErrorTypeRateLimit || errorCtx.ErrorType == ErrorTypeServerError {
+						clientStatusCode = http.StatusInternalServerError // 统一返回 500
+						// 从配置读取失败阈值作为重试延迟
+						if threshold := sh.endpointManager.GetConfig().FailureTracker.Threshold; threshold > 0 {
+							retryAfter = threshold
+						} else {
+							retryAfter = 3 // 默认 3 秒
+						}
+						slog.Debug(fmt.Sprintf("🔄 [客户端重试控制] [%s] 真实状态: %d, 返回: 500, Retry-After: %d",
+							connID, statusCode, retryAfter))
 					}
 
-					// 标记请求失败
+					// 添加 Retry-After 头
+					if retryAfter > 0 {
+						w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+					}
+
+					// 标记请求失败（使用真实状态码）
 					failureReason := lifecycleManager.MapErrorTypeToFailureReason(errorCtx.ErrorType)
 					lifecycleManager.FailRequest(failureReason, lastErr.Error(), statusCode)
 
-					// 终止重试，使用 SSE 格式返回错误（而不是 http.Error）
-					slog.Info(fmt.Sprintf("🛑 [终止重试] [%s] 端点: %s, 状态: %s, 状态码: %d, 原因: %s",
-						connID, ep.Config.Name, decision.FinalStatus, statusCode, decision.Reason))
+					// 终止重试，使用 SSE 格式返回错误（使用转换后的状态码）
+					slog.Info(fmt.Sprintf("🛑 [终止重试] [%s] 端点: %s, 状态: %s, 返回状态码: %d, 原因: %s",
+						connID, ep.Config.Name, decision.FinalStatus, clientStatusCode, decision.Reason))
 
 					// 🔧 [SSE 格式修复] 使用 SSE 格式返回错误，而不是 http.Error（会覆盖 Content-Type）
-					w.WriteHeader(statusCode)
+					w.WriteHeader(clientStatusCode)
 					fmt.Fprintf(w, "data: error: %s\n\n", decision.Reason)
 					flusher.Flush()
 					return
