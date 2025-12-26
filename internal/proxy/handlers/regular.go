@@ -540,6 +540,9 @@ func (rh *RegularHandler) processSuccessResponse(_ context.Context, w http.Respo
 }
 
 // HandleRegularRequest handles non-streaming requests
+// Deprecated: 此方法使用旧的请求级重试架构（retryHandler.ExecuteWithContext），
+// 与"请求穿透"设计冲突。请使用 HandleRegularRequestUnified 替代。
+// TODO: 待确认无其他调用后删除 (2025-12-26)
 func (rh *RegularHandler) HandleRegularRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte) {
 	var selectedEndpointName string
 

@@ -339,18 +339,29 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 						parsedModelName := streamErr.GetModelName()
 						failureReason := streamErr.GetFailureReason()
 
-						// 设置模型信息
-						if parsedModelName != "unknown" && parsedModelName != "" {
+						// 🔧 [模型回退修复] 2025-12-26: 优先使用请求体中的模型，而非流解析的 "default"/"unknown"
+						// 当没有收到 message_start 事件时，流解析器返回 "unknown"，这会导致费用计算错误
+						// 此时应该使用请求体中提取的模型（已经在 lifecycleManager 中设置）
+						if parsedModelName != "unknown" && parsedModelName != "" && parsedModelName != "default" {
 							lifecycleManager.SetModelWithComparison(parsedModelName, "stream_incomplete")
-						} else if modelName != "unknown" && modelName != "" {
+						} else if modelName != "unknown" && modelName != "" && modelName != "default" {
 							lifecycleManager.SetModelWithComparison(modelName, "stream_processor")
+						} else {
+							// 流解析模型无效，使用请求体中的模型（已在 lifecycleManager 中）
+							if lifecycleManager.HasModel() {
+								slog.Info(fmt.Sprintf("🔄 [模型回退] [%s] 流解析模型无效(%s)，使用请求体模型",
+									connID, parsedModelName))
+							} else {
+								slog.Warn(fmt.Sprintf("⚠️ [模型缺失] [%s] 流解析模型: %s, 请求体也无模型",
+									connID, parsedModelName))
+							}
 						}
 
 						// 使用 CompleteRequestWithQuality 完成请求并标记数据质量问题
 						lifecycleManager.CompleteRequestWithQuality(finalTokenUsage, failureReason)
 
-						slog.Info(fmt.Sprintf("⚠️ [流不完整但已完成] [%s] 端点: %s, failure_reason: %s, 模型: %s",
-							connID, ep.Config.Name, failureReason, parsedModelName))
+						slog.Info(fmt.Sprintf("⚠️ [流不完整但已完成] [%s] 端点: %s, failure_reason: %s",
+							connID, ep.Config.Name, failureReason))
 						return
 					}
 

@@ -1,5 +1,6 @@
 // Package endpoint - 通用失败追踪器
-// 基于时间窗口追踪端点失败次数，不区分错误类型
+// 追踪端点失败次数，语义为"自上次成功以来的失败次数"（成功后清空计数）
+// 同时支持时间窗口自动过期，避免历史失败永久累积
 package endpoint
 
 import (
@@ -11,12 +12,16 @@ import (
 // FailureTrackerConfig 失败追踪器配置
 type FailureTrackerConfig struct {
 	Enabled    bool          // 是否启用
-	TimeWindow time.Duration // 时间窗口
+	TimeWindow time.Duration // 时间窗口（兜底过期机制，主要靠成功清空）
 	Threshold  int           // 失败次数阈值
 }
 
 // FailureTracker 通用失败追踪器
-// 追踪端点在时间窗口内的失败次数，用于触发故障转移、挂起或拒绝请求
+// 追踪端点失败次数，用于触发故障转移、挂起或拒绝请求
+// 计数规则：
+//   - 成功请求：清空失败计数（语义为"自上次成功以来"）
+//   - 失败请求：累加失败计数
+//   - 时间窗口：自动过期超出窗口的失败记录（兜底机制）
 type FailureTracker struct {
 	config FailureTrackerConfig
 	mu     sync.RWMutex
@@ -61,7 +66,8 @@ func (t *FailureTracker) RecordFailure(endpointName string) int {
 }
 
 // RecordSuccess 记录端点成功
-// 成功后清空该端点的失败记录
+// 成功后清空该端点的失败记录，因为成功证明端点已恢复
+// 这使得语义变为"自上次成功以来的失败次数"，符合断路器模式
 func (t *FailureTracker) RecordSuccess(endpointName string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

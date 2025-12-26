@@ -243,9 +243,9 @@ func (sp *StreamProcessor) processSSELine(line string) {
 			trackingTokens := result.TokenUsage
 			modelName := result.ModelName
 
-			// 确保模型名称不为空
+			// 确保模型名称不为空（用于日志）
 			if modelName == "" {
-				modelName = "default"
+				modelName = "unknown"
 			}
 
 			// ✅ 移除completionRecorded限制，每次都更新最新token统计
@@ -392,8 +392,11 @@ func (sp *StreamProcessor) ProcessStreamWithRetry(ctx context.Context, resp *htt
 		// 检查流是否完整，即使 err == nil 也可能是不完整的流
 		completeness := sp.tokenParser.GetStreamCompleteness()
 		modelName := sp.tokenParser.GetModelName()
+		// 🔧 [模型语义修复] 2025-12-26: 使用 "unknown" 而非 "default"
+		// 当没有收到 message_start 事件时，模型应该标记为 "unknown"
+		// 上层会根据这个值决定是否回退使用请求体中的模型
 		if modelName == "" {
-			modelName = "default"
+			modelName = "unknown"
 		}
 
 		if !completeness.IsComplete {
@@ -620,7 +623,7 @@ func (sp *StreamProcessor) getFinalTokenUsage() *tracking.TokenUsage {
 			// 有真实token信息，记录详细日志
 			modelName := sp.tokenParser.GetModelName()
 			if modelName == "" {
-				modelName = "default"
+				modelName = "unknown"
 			}
 			slog.Info(fmt.Sprintf("🪙 [Token最终统计] [%s] 流式处理完成 - 模型: %s, 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d",
 				sp.requestID, modelName, finalUsage.InputTokens, finalUsage.OutputTokens, finalUsage.CacheCreationTokens, finalUsage.CacheReadTokens))
