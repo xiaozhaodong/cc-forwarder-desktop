@@ -387,6 +387,7 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 			{Category: CategoryRequest, Key: "failure_threshold", Value: "3", ValueType: ValueTypeInt, Label: "失败阈值", Description: "触发失败处理的次数阈值", DisplayOrder: 5},
 			{Category: CategoryRequest, Key: "failure_action", Value: "failover", ValueType: ValueTypeString, Label: "失败处理动作", Description: "failover (故障转移) / suspend (挂起) / reject (拒绝)", DisplayOrder: 6},
 			{Category: CategoryRequest, Key: "failover_cooldown", Value: "600s", ValueType: ValueTypeDuration, Label: "故障冷却时间", Description: "端点故障后的冷却等待时间", DisplayOrder: 7},
+			{Category: CategoryRequest, Key: "eof_retry_hint", Value: "false", ValueType: ValueTypeBool, Label: "流式中断重试提示", Description: "流式传输中断时发送特定格式响应，触发客户端自动重试", DisplayOrder: 8},
 		}
 
 	case CategoryStreaming:
