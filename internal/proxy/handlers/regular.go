@@ -473,11 +473,34 @@ func (rh *RegularHandler) executeRequest(ctx context.Context, r *http.Request, b
 
 // processSuccessResponse 处理成功响应
 func (rh *RegularHandler) processSuccessResponse(_ context.Context, w http.ResponseWriter, resp *http.Response, lifecycleManager RequestLifecycleManager, endpointName string, r *http.Request) {
+	connID := lifecycleManager.GetRequestID()
+
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			slog.Warn("Failed to close response body", "request_id", lifecycleManager.GetRequestID(), "error", err)
+			slog.Warn("Failed to close response body", "request_id", connID, "error", err)
 		}
 	}()
+
+	// 🔧 [修复] 2025-12-29: 先读取响应体，检查异常后再写入状态码
+	// 避免上游返回 200 + 空响应体时，客户端收到无效的成功响应
+	responseBytes, err := rh.responseProcessor.ProcessResponseBody(resp)
+	if err != nil {
+		lifecycleManager.HandleError(fmt.Errorf("failed to process response: %w", err))
+		slog.Error("Failed to process response body", "request_id", connID, "error", err)
+		lifecycleManager.FailRequest("response_read_error", err.Error(), http.StatusBadGateway)
+		http.Error(w, "Failed to read upstream response", http.StatusBadGateway)
+		return
+	}
+
+	// 🔧 [修复] 2025-12-29: 检测空响应体异常
+	// 对于 /v1/messages 端点，空响应体是异常情况，应返回 502
+	if len(responseBytes) == 0 && r.URL.Path == "/v1/messages" {
+		slog.Error(fmt.Sprintf("❌ [空响应体] [%s] 端点 %s 返回 200 但响应体为空，判定为上游异常",
+			connID, endpointName))
+		lifecycleManager.FailRequest("empty_response_body", "Upstream returned 200 with empty body", http.StatusBadGateway)
+		http.Error(w, "Upstream returned empty response", http.StatusBadGateway)
+		return
+	}
 
 	// 复制响应头（排除Content-Encoding用于gzip处理）
 	rh.responseProcessor.CopyResponseHeaders(resp, w)
@@ -485,20 +508,8 @@ func (rh *RegularHandler) processSuccessResponse(_ context.Context, w http.Respo
 	// 写入状态码
 	w.WriteHeader(resp.StatusCode)
 
-	// 读取并处理响应体
-	responseBytes, err := rh.responseProcessor.ProcessResponseBody(resp)
-	if err != nil {
-		connID := lifecycleManager.GetRequestID()
-		lifecycleManager.HandleError(fmt.Errorf("failed to process response: %w", err))
-		slog.Error("Failed to process response body", "request_id", connID, "error", err)
-		// 🔧 [修复] 2025-12-11: 响应体读取失败时必须终结请求，否则会滞留在内存热池
-		lifecycleManager.FailRequest("response_read_error", err.Error(), resp.StatusCode)
-		return
-	}
-
 	// 写入响应体到客户端
 	if _, err := w.Write(responseBytes); err != nil {
-		connID := lifecycleManager.GetRequestID()
 		lifecycleManager.HandleError(fmt.Errorf("failed to write response: %w", err))
 		slog.Error("Failed to write response to client", "request_id", connID, "error", err)
 		// 🔧 [修复] 2025-12-11: 写入失败时必须终结请求，否则会滞留在内存热池
@@ -507,7 +518,6 @@ func (rh *RegularHandler) processSuccessResponse(_ context.Context, w http.Respo
 	}
 
 	// ✅ 同步Token解析：简化逻辑，避免协程控制问题
-	connID := lifecycleManager.GetRequestID()
 	slog.Debug(fmt.Sprintf("🔄 [Token解析] [%s] 开始Token解析", connID))
 
 	// 🔍 [路径过滤] 跳过count_tokens端点的Token解析
