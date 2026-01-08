@@ -144,6 +144,11 @@ func (m *Manager) RemoveEndpoint(name string) error {
 	// 清理 KeyManager 状态
 	m.keyManager.RemoveEndpoint(name)
 
+	// 清理 FailureTracker 记录（避免内存泄漏）
+	if m.failureTracker != nil {
+		m.failureTracker.ClearEndpoint(name)
+	}
+
 	// 更新 GroupManager（在锁内创建快照）
 	snapshot := make([]*Endpoint, len(m.endpoints))
 	copy(snapshot, m.endpoints)
