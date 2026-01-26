@@ -12,24 +12,24 @@ import (
 
 // GroupInfo represents information about an endpoint group
 type GroupInfo struct {
-	Name         string
-	Priority     int
-	IsActive     bool
+	Name          string
+	Priority      int
+	IsActive      bool
 	CooldownUntil time.Time
-	Endpoints    []*Endpoint
+	Endpoints     []*Endpoint
 	// Manual control states
-	ManuallyPaused bool
+	ManuallyPaused       bool
 	ManualActivationTime time.Time
 	// Forced activation states
-	ForcedActivation bool       // 标记是否为强制激活（无健康端点时激活）
+	ForcedActivation     bool
 	ForcedActivationTime time.Time // 强制激活时间
 }
 
 // GroupManager manages endpoint groups and their cooldown states
 type GroupManager struct {
-	groups        map[string]*GroupInfo
-	config        *config.Config
-	mutex         sync.RWMutex
+	groups           map[string]*GroupInfo
+	config           *config.Config
+	mutex            sync.RWMutex
 	cooldownDuration time.Duration
 	// Group change notification subscribers
 	groupChangeSubscribers []chan string
@@ -46,9 +46,9 @@ func NewGroupManager(cfg *config.Config) *GroupManager {
 	}
 
 	return &GroupManager{
-		groups:               make(map[string]*GroupInfo),
-		config:               cfg,
-		cooldownDuration:     cooldownDuration,
+		groups:                 make(map[string]*GroupInfo),
+		config:                 cfg,
+		cooldownDuration:       cooldownDuration,
 		groupChangeSubscribers: make([]chan string, 0),
 	}
 }
@@ -183,7 +183,7 @@ func (gm *GroupManager) updateActiveGroups() {
 		// Auto mode: automatically activate highest priority available group
 		// Get all groups sorted by priority
 		sortedGroups := gm.getSortedGroups()
-		
+
 		// Find the highest priority group that's not in cooldown and not manually paused
 		activeGroupFound := false
 		for _, group := range sortedGroups {
@@ -213,7 +213,7 @@ func (gm *GroupManager) updateActiveGroups() {
 				currentActiveCount++
 			}
 		}
-		
+
 		// Handle cooldown states first
 		for _, group := range gm.groups {
 			if !group.CooldownUntil.IsZero() && now.Before(group.CooldownUntil) {
@@ -221,7 +221,7 @@ func (gm *GroupManager) updateActiveGroups() {
 				group.IsActive = false
 			}
 		}
-		
+
 		// If no groups are active, determine if this is startup or runtime failure
 		if currentActiveCount == 0 {
 			// Check if this is truly startup (no groups have ever failed) or runtime failure
@@ -232,7 +232,7 @@ func (gm *GroupManager) updateActiveGroups() {
 					break
 				}
 			}
-			
+
 			// Determine activation strategy based on startup vs runtime context
 			var shouldAutoActivate bool
 			if isActualStartup {
@@ -252,39 +252,29 @@ func (gm *GroupManager) updateActiveGroups() {
 					slog.Debug("🔄 [组管理] 运行时故障但未启用挂起 - 尝试激活可用组")
 				}
 			}
-			
+
 			if shouldAutoActivate {
 				sortedGroups := gm.getSortedGroups()
 				for _, group := range sortedGroups {
 					// 关键修复：检查组是否被手动暂停（包括因失败而暂停的组）
 					if group.Priority == 1 && group.CooldownUntil.IsZero() && !group.ManuallyPaused {
-						// Check if this group has healthy endpoints
-						hasHealthyEndpoints := false
-						for _, ep := range group.Endpoints {
-							if ep.IsHealthy() {
-								hasHealthyEndpoints = true
-								break
-							}
-						}
-						if hasHealthyEndpoints {
+						if len(group.Endpoints) > 0 {
 							wasActive := group.IsActive
 							group.IsActive = true
-							// 🔧 [热更新修复] 统一使用 Failover.Enabled
 							autoSwitchEnabled := gm.config.Failover.Enabled
 							if isActualStartup {
 								if autoSwitchEnabled {
-									slog.Info(fmt.Sprintf("🚀 [自动模式] 启动时激活优先级1组: %s (有健康端点)", group.Name))
+									slog.Info(fmt.Sprintf("🚀 [自动模式] 启动时激活优先级1组: %s", group.Name))
 								} else {
-									slog.Info(fmt.Sprintf("🚀 [手动模式] 启动时激活优先级1组: %s (有健康端点) - 后续故障将启用挂起", group.Name))
+									slog.Info(fmt.Sprintf("🚀 [手动模式] 启动时激活优先级1组: %s - 后续故障将启用挂起", group.Name))
 								}
 							} else {
-								slog.Info(fmt.Sprintf("🔄 [运行时] 激活可用组: %s (优先级: %d, 有健康端点)", group.Name, group.Priority))
+								slog.Info(fmt.Sprintf("🔄 [运行时] 激活可用组: %s (优先级: %d)", group.Name, group.Priority))
 							}
-							// Check if this group became newly active
 							if !wasActive && group.IsActive {
 								newlyActivatedGroup = group.Name
 							}
-							break // Only activate one group
+							break
 						}
 					} else if group.ManuallyPaused {
 						// 记录被暂停的组，说明为什么没有激活
@@ -294,7 +284,7 @@ func (gm *GroupManager) updateActiveGroups() {
 			}
 		}
 	}
-	
+
 	// Notify subscribers if a group was newly activated
 	if newlyActivatedGroup != "" {
 		// Check if this is truly a state change (not just the same group remaining active)
@@ -311,11 +301,11 @@ func (gm *GroupManager) getSortedGroups() []*GroupInfo {
 	for _, group := range gm.groups {
 		groups = append(groups, group)
 	}
-	
+
 	sort.Slice(groups, func(i, j int) bool {
 		return groups[i].Priority < groups[j].Priority
 	})
-	
+
 	return groups
 }
 
@@ -323,21 +313,21 @@ func (gm *GroupManager) getSortedGroups() []*GroupInfo {
 func (gm *GroupManager) GetActiveGroups() []*GroupInfo {
 	gm.mutex.RLock()
 	defer gm.mutex.RUnlock()
-	
+
 	gm.updateActiveGroups()
-	
+
 	var active []*GroupInfo
 	for _, group := range gm.groups {
 		if group.IsActive {
 			active = append(active, group)
 		}
 	}
-	
+
 	// Sort by priority
 	sort.Slice(active, func(i, j int) bool {
 		return active[i].Priority < active[j].Priority
 	})
-	
+
 	return active
 }
 
@@ -345,19 +335,19 @@ func (gm *GroupManager) GetActiveGroups() []*GroupInfo {
 func (gm *GroupManager) GetAllGroups() []*GroupInfo {
 	gm.mutex.RLock()
 	defer gm.mutex.RUnlock()
-	
+
 	gm.updateActiveGroups()
-	
+
 	groups := make([]*GroupInfo, 0, len(gm.groups))
 	for _, group := range gm.groups {
 		groups = append(groups, group)
 	}
-	
+
 	// Sort by priority
 	sort.Slice(groups, func(i, j int) bool {
 		return groups[i].Priority < groups[j].Priority
 	})
-	
+
 	return groups
 }
 
@@ -366,38 +356,36 @@ func (gm *GroupManager) SetGroupCooldown(groupName string) {
 	gm.mutex.Lock()
 	defer gm.mutex.Unlock()
 
-	if group, exists := gm.groups[groupName]; exists {
-		// In manual mode, mark group as manually paused to prevent re-activation
-		// 🔧 [热更新修复] 统一使用 Failover.Enabled
-		autoSwitchEnabled := gm.config.Failover.Enabled
-		if !autoSwitchEnabled {
-			group.IsActive = false
-			group.ManuallyPaused = true // 👈 关键修复：防止组被自动重新激活
-			slog.Warn(fmt.Sprintf("⚠️ [手动模式] 组 %s 失败已停用并标记为暂停状态，需要手动切换到其他组", groupName))
-			slog.Info(fmt.Sprintf("🚫 [组状态] 组 %s 已设置 ManuallyPaused=true，不会被自动重新激活", groupName))
-			return
-		}
+	group, exists := gm.groups[groupName]
+	if !exists {
+		return
+	}
 
-		// Auto mode: use cooldown mechanism
-		now := time.Now()
-		group.CooldownUntil = now.Add(gm.cooldownDuration)
+	// In manual mode, mark group as manually paused to prevent re-activation
+	autoSwitchEnabled := gm.config.Failover.Enabled
+	if !autoSwitchEnabled {
 		group.IsActive = false
+		group.ManuallyPaused = true
+		slog.Warn(fmt.Sprintf("⚠️ [手动模式] 组 %s 失败已停用并标记为暂停状态，需要手动切换到其他组", groupName))
+		return
+	}
 
-		slog.Warn(fmt.Sprintf("❄️ [自动模式] 组进入冷却状态: %s (冷却时长: %v, 恢复时间: %s)",
-			groupName, gm.cooldownDuration, group.CooldownUntil.Format("15:04:05")))
+	// Auto mode: use cooldown mechanism
+	now := time.Now()
+	group.CooldownUntil = now.Add(gm.cooldownDuration)
+	group.IsActive = false
 
-		// Update active groups after cooldown change
-		gm.updateActiveGroups()
+	slog.Warn(fmt.Sprintf("❄️ [自动模式] 组进入冷却状态: %s (冷却时长: %v, 恢复时间: %s)",
+		groupName, gm.cooldownDuration, group.CooldownUntil.Format("15:04:05")))
 
-		// Log and notify about next active group
-		for _, g := range gm.getSortedGroups() {
-			if g.IsActive {
-				slog.Info(fmt.Sprintf("🔄 [自动模式] 切换到下一优先级组: %s (优先级: %d)",
-					g.Name, g.Priority))
-				// Notify subscribers about the group switch
-				gm.notifyGroupChange(g.Name)
-				break
-			}
+	gm.updateActiveGroups()
+
+	for _, g := range gm.getSortedGroups() {
+		if g.IsActive {
+			slog.Info(fmt.Sprintf("🔄 [自动模式] 切换到下一优先级组: %s (优先级: %d)",
+				g.Name, g.Priority))
+			gm.notifyGroupChange(g.Name)
+			break
 		}
 	}
 }
@@ -406,11 +394,11 @@ func (gm *GroupManager) SetGroupCooldown(groupName string) {
 func (gm *GroupManager) IsGroupInCooldown(groupName string) bool {
 	gm.mutex.RLock()
 	defer gm.mutex.RUnlock()
-	
+
 	if group, exists := gm.groups[groupName]; exists {
 		return !group.CooldownUntil.IsZero() && time.Now().Before(group.CooldownUntil)
 	}
-	
+
 	return false
 }
 
@@ -418,13 +406,13 @@ func (gm *GroupManager) IsGroupInCooldown(groupName string) bool {
 func (gm *GroupManager) GetGroupCooldownRemaining(groupName string) time.Duration {
 	gm.mutex.RLock()
 	defer gm.mutex.RUnlock()
-	
+
 	if group, exists := gm.groups[groupName]; exists {
 		if !group.CooldownUntil.IsZero() && time.Now().Before(group.CooldownUntil) {
 			return group.CooldownUntil.Sub(time.Now())
 		}
 	}
-	
+
 	return 0
 }
 
@@ -434,7 +422,7 @@ func (gm *GroupManager) ManualActivateGroup(groupName string) error {
 }
 
 // ManualActivateGroupWithForce manually activates a specific group and deactivates others
-// force: 当为true时，即使组内没有健康端点也强制激活
+
 func (gm *GroupManager) ManualActivateGroupWithForce(groupName string, force bool) error {
 	gm.mutex.Lock()
 	defer gm.mutex.Unlock()
@@ -453,51 +441,22 @@ func (gm *GroupManager) ManualActivateGroupWithForce(groupName string, force boo
 	// v5.0: SQLite 模式下跳过健康检查（因为启动时健康检查还没开始）
 	isSQLiteMode := gm.config.EndpointsStorage.Type == "sqlite"
 
-	// 检查健康端点
-	healthyCount := 0
 	totalCount := len(targetGroup.Endpoints)
-	for _, ep := range targetGroup.Endpoints {
-		if ep.IsHealthy() {
-			healthyCount++
-		}
-	}
 
-	// v5.0: SQLite 模式下，允许激活没有健康端点的组（用户手动控制）
 	if isSQLiteMode {
-		// SQLite 模式：直接激活，不检查健康状态
-		if healthyCount == 0 {
-			slog.Info(fmt.Sprintf("🔄 [SQLite模式] 激活端点: %s (健康检查待执行)", groupName))
-		} else {
-			slog.Info(fmt.Sprintf("🔄 [SQLite模式] 激活端点: %s (健康端点: %d/%d)", groupName, healthyCount, totalCount))
-		}
+		slog.Info(fmt.Sprintf("🔄 [SQLite模式] 激活端点: %s (端点数: %d)", groupName, totalCount))
 	} else {
-		// YAML 模式：保持原有的健康检查逻辑
-		// 核心逻辑：强制激活只能在完全没有健康端点时使用
-		if healthyCount == 0 {
-			// 没有健康端点的情况
-			if !force {
-				return fmt.Errorf("组 %s 中没有健康的端点，无法激活。如需强制激活请使用强制模式", groupName)
-			}
-			// 强制激活：只有在没有健康端点时才允许
-			slog.Warn(fmt.Sprintf("⚠️ [强制激活] 用户强制激活无健康端点组: %s (健康端点: %d/%d, 操作时间: %s, 风险等级: HIGH)",
-				groupName, healthyCount, totalCount, time.Now().Format("2006-01-02 15:04:05")))
+		if force {
+			slog.Warn(fmt.Sprintf("⚠️ [强制激活] 用户强制激活组: %s (端点数: %d, 操作时间: %s, 风险等级: HIGH)",
+				groupName, totalCount, time.Now().Format("2006-01-02 15:04:05")))
 			slog.Error(fmt.Sprintf("🚨 [安全警告] 强制激活可能导致请求失败! 组: %s, 建议尽快检查端点健康状态", groupName))
 
-			// 标记强制激活
 			targetGroup.ForcedActivation = true
 			targetGroup.ForcedActivationTime = time.Now()
 		} else {
-			// 有健康端点的情况
-			if force {
-				// 拒绝在有健康端点时使用强制激活
-				return fmt.Errorf("组 %s 有 %d 个健康端点，无需强制激活。请使用正常激活", groupName, healthyCount)
-			}
-			// 正常激活
 			targetGroup.ForcedActivation = false
 			targetGroup.ForcedActivationTime = time.Time{}
-
-			slog.Info(fmt.Sprintf("🔄 [正常激活] 手动激活组: %s (健康端点: %d/%d)",
-				groupName, healthyCount, totalCount))
+			slog.Info(fmt.Sprintf("🔄 [正常激活] 手动激活组: %s (端点数: %d)", groupName, totalCount))
 		}
 	}
 
@@ -541,45 +500,45 @@ func (gm *GroupManager) DeactivateGroup(groupName string) error {
 func (gm *GroupManager) ManualPauseGroup(groupName string, duration time.Duration) error {
 	gm.mutex.Lock()
 	defer gm.mutex.Unlock()
-	
+
 	targetGroup, exists := gm.groups[groupName]
 	if !exists {
 		return fmt.Errorf("组不存在: %s", groupName)
 	}
-	
-	// Pause the group
+
 	targetGroup.ManuallyPaused = true
+
 	var switchedToGroup string
+	prevActiveGroups := make(map[string]bool)
+	for _, g := range gm.groups {
+		prevActiveGroups[g.Name] = g.IsActive
+	}
+
 	if targetGroup.IsActive {
 		targetGroup.IsActive = false
-		// Find next available group to activate
 		gm.updateActiveGroups()
-		// Check which group became active after pausing
-		for _, g := range gm.getSortedGroups() {
-			if g.IsActive {
+		for _, g := range gm.groups {
+			if g.IsActive && !prevActiveGroups[g.Name] {
 				switchedToGroup = g.Name
 				break
 			}
 		}
 	}
-	
+
 	if duration > 0 {
-		// Set a timer to automatically unpause
 		go func() {
 			time.Sleep(duration)
 			gm.mutex.Lock()
 			defer gm.mutex.Unlock()
 			if targetGroup.ManuallyPaused {
 				targetGroup.ManuallyPaused = false
-				// Store previous state to check for changes
-				prevActiveGroups := make(map[string]bool)
+				prevActive := make(map[string]bool)
 				for _, g := range gm.groups {
-					prevActiveGroups[g.Name] = g.IsActive
+					prevActive[g.Name] = g.IsActive
 				}
 				gm.updateActiveGroups()
-				// Check if any group became newly active
 				for _, g := range gm.groups {
-					if g.IsActive && !prevActiveGroups[g.Name] {
+					if g.IsActive && !prevActive[g.Name] {
 						gm.notifyGroupChange(g.Name)
 						break
 					}
@@ -587,17 +546,14 @@ func (gm *GroupManager) ManualPauseGroup(groupName string, duration time.Duratio
 				slog.Info(fmt.Sprintf("⏰ [自动恢复] 组 %s 暂停期已结束，重新可用", groupName))
 			}
 		}()
-		slog.Info(fmt.Sprintf("⏸️ [手动暂停] 组 %s 已暂停 %v", groupName, duration))
-	} else {
-		slog.Info(fmt.Sprintf("⏸️ [手动暂停] 组 %s 已暂停，需要手动恢复", groupName))
 	}
-	
-	// Notify about group switch if another group became active
+
 	if switchedToGroup != "" {
 		gm.notifyGroupChange(switchedToGroup)
-		slog.Debug(fmt.Sprintf("📡 [组通知] 因暂停组 %s 而切换到组 %s", groupName, switchedToGroup))
 	}
-	
+
+	slog.Info(fmt.Sprintf("⏸️ [手动暂停] 组 %s 已暂停，需要手动恢复", groupName))
+
 	return nil
 }
 
@@ -605,26 +561,26 @@ func (gm *GroupManager) ManualPauseGroup(groupName string, duration time.Duratio
 func (gm *GroupManager) ManualResumeGroup(groupName string) error {
 	gm.mutex.Lock()
 	defer gm.mutex.Unlock()
-	
+
 	targetGroup, exists := gm.groups[groupName]
 	if !exists {
 		return fmt.Errorf("组不存在: %s", groupName)
 	}
-	
+
 	if !targetGroup.ManuallyPaused {
 		return fmt.Errorf("组 %s 未处于暂停状态", groupName)
 	}
-	
+
 	targetGroup.ManuallyPaused = false
-	
+
 	// Store previous active groups to detect changes
 	prevActiveGroups := make(map[string]bool)
 	for _, g := range gm.groups {
 		prevActiveGroups[g.Name] = g.IsActive
 	}
-	
+
 	gm.updateActiveGroups() // Re-evaluate active groups
-	
+
 	// Check if any group became newly active
 	for _, g := range gm.groups {
 		if g.IsActive && !prevActiveGroups[g.Name] {
@@ -633,7 +589,7 @@ func (gm *GroupManager) ManualResumeGroup(groupName string) error {
 			break
 		}
 	}
-	
+
 	slog.Info(fmt.Sprintf("▶️ [手动恢复] 组 %s 已恢复，重新参与自动选择", groupName))
 	return nil
 }
@@ -642,17 +598,17 @@ func (gm *GroupManager) ManualResumeGroup(groupName string) error {
 func (gm *GroupManager) GetGroupDetails() map[string]interface{} {
 	gm.mutex.RLock()
 	defer gm.mutex.RUnlock()
-	
+
 	gm.updateActiveGroups()
-	
+
 	result := make(map[string]interface{})
 	groupsData := make([]map[string]interface{}, 0, len(gm.groups))
-	
+
 	for _, group := range gm.groups {
 		healthyCount := 0
 		unhealthyCount := 0
 		totalEndpoints := len(group.Endpoints)
-		
+
 		for _, ep := range group.Endpoints {
 			if ep.IsHealthy() {
 				healthyCount++
@@ -660,11 +616,11 @@ func (gm *GroupManager) GetGroupDetails() map[string]interface{} {
 				unhealthyCount++
 			}
 		}
-		
+
 		var status string
 		var statusColor string
 		var cooldownRemaining time.Duration
-		
+
 		if group.IsActive {
 			status = "活跃"
 			statusColor = "success"
@@ -675,33 +631,30 @@ func (gm *GroupManager) GetGroupDetails() map[string]interface{} {
 			status = "冷却中"
 			statusColor = "danger"
 			cooldownRemaining = group.CooldownUntil.Sub(time.Now())
-		} else if healthyCount == 0 {
-			status = "无健康端点"
-			statusColor = "danger"
 		} else {
 			status = "可用"
 			statusColor = "secondary"
 		}
-		
+
 		groupData := map[string]interface{}{
-			"name":               group.Name,
-			"priority":           group.Priority,
-			"is_active":          group.IsActive,
-			"status":             status,
-			"status_color":       statusColor,
-			"total_endpoints":    totalEndpoints,
-			"healthy_endpoints":  healthyCount,
-			"unhealthy_endpoints": unhealthyCount,
-			"manually_paused":    group.ManuallyPaused,
-			"in_cooldown":        !group.CooldownUntil.IsZero() && time.Now().Before(group.CooldownUntil),
-			"cooldown_remaining": cooldownRemaining.Round(time.Second).String(),
-			"can_activate":       healthyCount > 0 && !group.IsActive && (group.CooldownUntil.IsZero() || time.Now().After(group.CooldownUntil)),
-			"can_pause":          !group.ManuallyPaused,
-			"can_resume":         group.ManuallyPaused,
+			"name":                   group.Name,
+			"priority":               group.Priority,
+			"is_active":              group.IsActive,
+			"status":                 status,
+			"status_color":           statusColor,
+			"total_endpoints":        totalEndpoints,
+			"healthy_endpoints":      healthyCount,
+			"unhealthy_endpoints":    unhealthyCount,
+			"manually_paused":        group.ManuallyPaused,
+			"in_cooldown":            !group.CooldownUntil.IsZero() && time.Now().Before(group.CooldownUntil),
+			"cooldown_remaining":     cooldownRemaining.Round(time.Second).String(),
+			"can_activate":           totalEndpoints > 0 && !group.IsActive && (group.CooldownUntil.IsZero() || time.Now().After(group.CooldownUntil)),
+			"can_pause":              !group.ManuallyPaused,
+			"can_resume":             group.ManuallyPaused,
 			"forced_activation":      group.ForcedActivation,
 			"forced_activation_time": "",
 			"activation_type":        "normal",
-			"can_force_activate":     healthyCount == 0 && !group.IsActive && (group.CooldownUntil.IsZero() || time.Now().After(group.CooldownUntil)),
+			"can_force_activate":     !group.IsActive && (group.CooldownUntil.IsZero() || time.Now().After(group.CooldownUntil)),
 		}
 
 		// 添加强制激活时间
@@ -712,30 +665,25 @@ func (gm *GroupManager) GetGroupDetails() map[string]interface{} {
 		// 设置激活类型
 		if group.ForcedActivation {
 			groupData["activation_type"] = "forced"
-			// 计算健康状态描述
-			if healthyCount == 0 {
-				groupData["_computed_health_status"] = "强制激活(无健康端点)"
-			} else {
-				groupData["_computed_health_status"] = "强制激活(已恢复)"
-			}
+			groupData["_computed_health_status"] = "强制激活"
 		}
-		
+
 		if !group.ManualActivationTime.IsZero() {
 			groupData["last_manual_activation"] = group.ManualActivationTime.Format("2006-01-02 15:04:05")
 		}
-		
+
 		groupsData = append(groupsData, groupData)
 	}
-	
+
 	// Sort by priority
 	sort.Slice(groupsData, func(i, j int) bool {
 		return groupsData[i]["priority"].(int) < groupsData[j]["priority"].(int)
 	})
-	
+
 	result["groups"] = groupsData
 	result["total_groups"] = len(groupsData)
 	result["active_groups"] = len(gm.GetActiveGroups())
-	
+
 	return result
 }
 
@@ -773,13 +721,13 @@ func (gm *GroupManager) FilterEndpointsByActiveGroups(endpoints []*Endpoint) []*
 func (gm *GroupManager) SubscribeToGroupChanges() <-chan string {
 	gm.subscriberMutex.Lock()
 	defer gm.subscriberMutex.Unlock()
-	
+
 	// Create a buffered channel to avoid blocking the sender
 	ch := make(chan string, 10)
 	gm.groupChangeSubscribers = append(gm.groupChangeSubscribers, ch)
-	
+
 	slog.Debug(fmt.Sprintf("📡 [组通知] 新增订阅者，当前订阅者数: %d", len(gm.groupChangeSubscribers)))
-	
+
 	return ch
 }
 
@@ -787,7 +735,7 @@ func (gm *GroupManager) SubscribeToGroupChanges() <-chan string {
 func (gm *GroupManager) UnsubscribeFromGroupChanges(ch <-chan string) {
 	gm.subscriberMutex.Lock()
 	defer gm.subscriberMutex.Unlock()
-	
+
 	// Find and remove the channel from subscribers
 	for i, subscriber := range gm.groupChangeSubscribers {
 		if subscriber == ch {
@@ -806,14 +754,14 @@ func (gm *GroupManager) UnsubscribeFromGroupChanges(ch <-chan string) {
 func (gm *GroupManager) notifyGroupChange(activatedGroupName string) {
 	gm.subscriberMutex.RLock()
 	defer gm.subscriberMutex.RUnlock()
-	
+
 	if len(gm.groupChangeSubscribers) == 0 {
 		return
 	}
-	
-	slog.Debug(fmt.Sprintf("📡 [组通知] 广播组切换事件: %s (订阅者数: %d)", 
+
+	slog.Debug(fmt.Sprintf("📡 [组通知] 广播组切换事件: %s (订阅者数: %d)",
 		activatedGroupName, len(gm.groupChangeSubscribers)))
-	
+
 	// Send notification to all subscribers in a non-blocking manner
 	for i, subscriber := range gm.groupChangeSubscribers {
 		select {

@@ -65,7 +65,7 @@ func TestEmergencyActivationLogging(t *testing.T) {
 				Priority: 1,
 			},
 			Status: EndpointStatus{
-				Healthy: false, // 不健康端点
+				Healthy: false,
 			},
 		},
 		{
@@ -75,7 +75,7 @@ func TestEmergencyActivationLogging(t *testing.T) {
 				Priority: 2,
 			},
 			Status: EndpointStatus{
-				Healthy: true, // 健康端点
+				Healthy: true,
 			},
 		},
 	}
@@ -114,15 +114,12 @@ func TestEmergencyActivationLogging(t *testing.T) {
 		assert.Equal(t, "INFO", normalActivationLog.Level, "正常激活应该使用INFO级别")
 
 		// 验证日志格式
-		expectedPattern := "🔄 [正常激活] 手动激活组: healthy-endpoint (健康端点: 1/1)"
+		expectedPattern := "🔄 [正常激活] 手动激活组: healthy-endpoint (端点数: 1)"
 		assert.Equal(t, expectedPattern, normalActivationLog.Message, "正常激活日志格式应该符合设计文档")
 
-		// 验证emoji图标
 		assert.True(t, strings.HasPrefix(normalActivationLog.Message, "🔄"), "正常激活日志应该以🔄开头")
-
-		// 验证包含组名和端点信息
 		assert.Contains(t, normalActivationLog.Message, "healthy-endpoint", "日志应该包含组名")
-		assert.Contains(t, normalActivationLog.Message, "健康端点: 1/1", "日志应该包含端点健康信息")
+		assert.Contains(t, normalActivationLog.Message, "端点数: 1", "日志应该包含端点数量")
 
 		t.Logf("✅ 正常激活日志验证成功:")
 		t.Logf("   - 级别: %s", normalActivationLog.Level)
@@ -172,8 +169,8 @@ func TestEmergencyActivationLogging(t *testing.T) {
 
 		// 验证WARN日志格式和内容
 		assert.True(t, strings.HasPrefix(emergencyWarnLog.Message, "⚠️ [强制激活]"), "WARN日志应该以⚠️ [强制激活]开头")
-		assert.Contains(t, emergencyWarnLog.Message, "用户强制激活无健康端点组: unhealthy-endpoint", "应该包含组名信息")
-		assert.Contains(t, emergencyWarnLog.Message, "健康端点: 0/1", "应该包含健康端点统计")
+		assert.Contains(t, emergencyWarnLog.Message, "用户强制激活组: unhealthy-endpoint", "应该包含组名信息")
+		assert.Contains(t, emergencyWarnLog.Message, "端点数: 1", "应该包含端点数量")
 		assert.Contains(t, emergencyWarnLog.Message, "操作时间:", "应该包含操作时间")
 		assert.Contains(t, emergencyWarnLog.Message, "风险等级: HIGH", "应该包含风险等级")
 
@@ -196,55 +193,37 @@ func TestEmergencyActivationLogging(t *testing.T) {
 		t.Logf("   - ERROR日志消息: %s", safetyErrorLog.Message)
 	})
 
-	t.Run("验证拒绝强制激活日志", func(t *testing.T) {
-		t.Log("=== 测试拒绝强制激活日志 ===")
+	t.Run("强制激活不再被拒绝", func(t *testing.T) {
+		t.Log("=== 测试强制激活不再被拒绝 ===")
 
-		// 清空日志缓冲区
 		logBuffer.Reset()
 
-		// 让healthy-endpoint保持健康
 		endpoints[1].Status.Healthy = true
 		gm.UpdateGroups(endpoints)
 
-		// 手动暂停组以确保它不会自动激活
 		gm.ManualPauseGroup("healthy-endpoint", 0)
 
-		// v4.0: 尝试强制激活健康端点（应该被拒绝）
 		err := gm.ManualActivateGroupWithForce("healthy-endpoint", true)
-		assert.Error(t, err, "强制激活应该被拒绝")
+		assert.NoError(t, err, "强制激活应该成功")
 
-		// 验证错误消息内容
-		assert.Contains(t, err.Error(), "有 1 个健康端点", "错误消息应该说明健康端点数量")
-		assert.Contains(t, err.Error(), "无需强制激活", "错误消息应该说明无需强制激活")
-		assert.Contains(t, err.Error(), "请使用正常激活", "错误消息应该建议使用正常激活")
-
-		// 获取日志内容
 		logContent := logBuffer.String()
 		t.Logf("实际日志输出:\n%s", logContent)
 
-		// 解析日志条目
 		logEntries := parseLogEntries(t, logContent)
 
-		// 在拒绝强制激活的情况下，不应该有强制激活相关的WARN或ERROR日志
-		hasForceActivationLog := false
-		hasSecurityWarningLog := false
-
+		hasForceWarn := false
+		hasSecurityError := false
 		for _, entry := range logEntries {
-			if strings.Contains(entry.Message, "强制激活") && strings.Contains(entry.Message, "healthy-endpoint") {
-				hasForceActivationLog = true
+			if strings.Contains(entry.Message, "强制激活") && strings.Contains(entry.Message, "healthy-endpoint") && entry.Level == "WARN" {
+				hasForceWarn = true
 			}
-			if strings.Contains(entry.Message, "安全警告") && strings.Contains(entry.Message, "healthy-endpoint") {
-				hasSecurityWarningLog = true
+			if strings.Contains(entry.Message, "安全警告") && strings.Contains(entry.Message, "healthy-endpoint") && entry.Level == "ERROR" {
+				hasSecurityError = true
 			}
 		}
 
-		assert.False(t, hasForceActivationLog, "拒绝强制激活时不应该有强制激活日志")
-		assert.False(t, hasSecurityWarningLog, "拒绝强制激活时不应该有安全警告日志")
-
-		t.Logf("✅ 拒绝强制激活验证成功:")
-		t.Logf("   - 错误消息: %s", err.Error())
-		t.Logf("   - 无强制激活日志: %v", !hasForceActivationLog)
-		t.Logf("   - 无安全警告日志: %v", !hasSecurityWarningLog)
+		assert.True(t, hasForceWarn, "应该有强制激活WARN日志")
+		assert.True(t, hasSecurityError, "应该有安全警告ERROR日志")
 	})
 
 	t.Run("验证应急激活完整日志序列", func(t *testing.T) {
@@ -320,8 +299,8 @@ func TestLogFormatCompliance(t *testing.T) {
 
 	// 设计文档中定义的日志格式
 	expectedFormats := map[string]string{
-		"normal_activation": "🔄 [正常激活] 手动激活组: %s (健康端点: %d/%d)",
-		"force_activation":  "⚠️ [强制激活] 用户强制激活无健康端点组: %s (健康端点: %d/%d, 操作时间: %s, 风险等级: HIGH)",
+		"normal_activation": "🔄 [正常激活] 手动激活组: %s (端点数: %d)",
+		"force_activation":  "⚠️ [强制激活] 用户强制激活组: %s (端点数: %d, 操作时间: %s, 风险等级: HIGH)",
 		"safety_warning":    "🚨 [安全警告] 强制激活可能导致请求失败! 组: %s, 建议尽快检查端点健康状态",
 	}
 
@@ -384,7 +363,7 @@ func TestLogFormatCompliance(t *testing.T) {
 		require.NotNil(t, normalLog, "应该找到正常激活日志")
 
 		// 验证格式匹配
-		expectedMsg := fmt.Sprintf(expectedFormats["normal_activation"], "test-endpoint", 1, 1)
+		expectedMsg := fmt.Sprintf(expectedFormats["normal_activation"], "test-endpoint", 1)
 		assert.Equal(t, expectedMsg, normalLog.Message, "正常激活日志格式应该完全匹配设计文档")
 
 		t.Logf("✅ 正常激活格式验证通过: %s", normalLog.Message)
@@ -426,8 +405,8 @@ func TestLogFormatCompliance(t *testing.T) {
 		require.NotNil(t, warningLog, "应该找到安全警告日志")
 
 		// 由于时间可能有细微差异，我们分别验证各个部分
-		assert.Contains(t, forceLog.Message, "⚠️ [强制激活] 用户强制激活无健康端点组: test-endpoint", "强制激活日志应该包含正确的前缀")
-		assert.Contains(t, forceLog.Message, "健康端点: 0/1", "应该包含正确的端点统计")
+		assert.Contains(t, forceLog.Message, "⚠️ [强制激活] 用户强制激活组: test-endpoint", "强制激活日志应该包含正确的前缀")
+		assert.Contains(t, forceLog.Message, "端点数: 1", "应该包含正确的端点统计")
 		assert.Contains(t, forceLog.Message, "操作时间:", "应该包含操作时间")
 		assert.Contains(t, forceLog.Message, "风险等级: HIGH", "应该包含风险等级")
 

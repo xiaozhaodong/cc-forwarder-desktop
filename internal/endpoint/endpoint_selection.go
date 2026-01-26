@@ -11,8 +11,6 @@ import (
 	"time"
 )
 
-// GetHealthyEndpoints returns a list of healthy endpoints from active groups based on strategy
-// v5.0 Desktop: 支持故障转移 - 活跃端点不健康时，返回其他 failover_enabled=true 的健康端点
 func (m *Manager) GetHealthyEndpoints() []*Endpoint {
 	// v5.0+: 使用快照机制
 	m.endpointsMu.RLock()
@@ -29,7 +27,6 @@ func (m *Manager) GetHealthyEndpoints() []*Endpoint {
 
 	for _, endpoint := range activeEndpoints {
 		endpoint.mutex.RLock()
-		isHealthy := endpoint.Status.Healthy
 		// 检查是否在请求冷却中
 		inCooldown := !endpoint.Status.CooldownUntil.IsZero() && now.Before(endpoint.Status.CooldownUntil)
 		endpoint.mutex.RUnlock()
@@ -54,24 +51,22 @@ func (m *Manager) GetHealthyEndpoints() []*Endpoint {
 			continue // 跳过该端点
 		}
 
-		if isHealthy && !inCooldown {
+		if !inCooldown {
 			healthy = append(healthy, endpoint)
-		} else if inCooldown {
+		} else {
 			slog.Debug(fmt.Sprintf("⏭️ [端点选择] 跳过冷却中的端点: %s", endpoint.Config.Name))
 		}
 	}
 
-	// 2. 如果活跃端点健康且不在冷却中，直接返回
 	if len(healthy) > 0 {
 		return m.sortHealthyEndpoints(healthy, true)
 	}
 
-	// 3. 活跃端点不健康或在冷却中，尝试故障转移
 	if !m.config.Failover.Enabled {
 		return healthy // 故障转移未启用，返回空列表
 	}
 
-	slog.Info("🔄 [故障转移] 活跃端点不可用（不健康或在冷却中），尝试故障转移到其他端点")
+	slog.Info("🔄 [故障转移] 活跃端点不可用（失败追踪或冷却），尝试故障转移到其他端点")
 	healthy = m.getFailoverEndpoints(activeEndpoints, snapshot)
 
 	if len(healthy) > 0 {
@@ -118,9 +113,7 @@ func (m *Manager) getFailoverEndpoints(activeEndpoints, snapshot []*Endpoint) []
 			continue
 		}
 
-		// 检查健康状态和冷却状态
 		endpoint.mutex.RLock()
-		isHealthy := endpoint.Status.Healthy
 		inCooldown := !endpoint.Status.CooldownUntil.IsZero() && now.Before(endpoint.Status.CooldownUntil)
 		endpoint.mutex.RUnlock()
 
@@ -129,9 +122,7 @@ func (m *Manager) getFailoverEndpoints(activeEndpoints, snapshot []*Endpoint) []
 			continue
 		}
 
-		if isHealthy {
-			failoverEndpoints = append(failoverEndpoints, endpoint)
-		}
+		failoverEndpoints = append(failoverEndpoints, endpoint)
 	}
 
 	return failoverEndpoints
@@ -197,15 +188,16 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*En
 		}
 
 		endpoint.mutex.RLock()
-		if endpoint.Status.Healthy {
+		inCooldown := !endpoint.Status.CooldownUntil.IsZero() && time.Now().Before(endpoint.Status.CooldownUntil)
+		endpoint.mutex.RUnlock()
+
+		if !inCooldown {
 			healthy = append(healthy, endpoint)
 		}
-		endpoint.mutex.RUnlock()
 	}
 
-	// 2. 如果活跃端点不健康，尝试故障转移
 	if len(healthy) == 0 && m.config.Failover.Enabled {
-		slog.InfoContext(ctx, "🔄 [故障转移] 活跃端点不健康，尝试故障转移到其他端点")
+		slog.InfoContext(ctx, "🔄 [故障转移] 活跃端点不可用（失败追踪或冷却），尝试故障转移到其他端点")
 		healthy = m.getFailoverEndpoints(activeEndpoints, snapshot)
 
 		if len(healthy) > 0 {
@@ -458,4 +450,3 @@ func (m *Manager) executeSelectionFailover(failedEndpoints []string, newEndpoint
 		go m.onHealthCheckComplete()
 	}
 }
-

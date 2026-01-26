@@ -19,20 +19,20 @@ import (
 type ErrorType int
 
 const (
-	ErrorTypeUnknown              ErrorType = iota
-	ErrorTypeNetwork                        // 网络错误（连接失败等，可重试）
-	ErrorTypeEOF                            // EOF 错误（连接中断，不可重试，避免重复计费）
-	ErrorTypeConnectionTimeout              // 连接超时（可重试，未开始处理）
-	ErrorTypeResponseTimeout                // 响应超时（不可重试，可能已计费）
-	ErrorTypeTimeout                        // 超时错误（兼容旧代码，映射到响应超时）
-	ErrorTypeHTTP                           // HTTP错误
-	ErrorTypeServerError                    // 服务器错误（5xx）
-	ErrorTypeStream                         // 流式处理错误
-	ErrorTypeAuth                           // 认证错误
-	ErrorTypeRateLimit                      // 限流错误
-	ErrorTypeParsing                        // 解析错误
-	ErrorTypeClientCancel                   // 客户端取消错误
-	ErrorTypeNoHealthyEndpoints             // 没有健康端点可用
+	ErrorTypeUnknown            ErrorType = iota
+	ErrorTypeNetwork                      // 网络错误（连接失败等，可重试）
+	ErrorTypeEOF                          // EOF 错误（连接中断，不可重试，避免重复计费）
+	ErrorTypeConnectionTimeout            // 连接超时（可重试，未开始处理）
+	ErrorTypeResponseTimeout              // 响应超时（不可重试，可能已计费）
+	ErrorTypeTimeout                      // 超时错误（兼容旧代码，映射到响应超时）
+	ErrorTypeHTTP                         // HTTP错误
+	ErrorTypeServerError                  // 服务器错误（5xx）
+	ErrorTypeStream                       // 流式处理错误
+	ErrorTypeAuth                         // 认证错误
+	ErrorTypeRateLimit                    // 限流错误
+	ErrorTypeParsing                      // 解析错误
+	ErrorTypeClientCancel                 // 客户端取消错误
+	ErrorTypeNoHealthyEndpoints           // 没有健康端点可用
 )
 
 // ErrorContext 错误上下文信息
@@ -210,11 +210,10 @@ func (erm *ErrorRecoveryManager) ClassifyError(err error, requestID, endpoint, g
 		return errorCtx
 	}
 
-	// 没有健康端点可用错误分类 - 在未知错误之前检查
-	if strings.Contains(errStr, "no healthy endpoints available") {
+	if strings.Contains(errStr, "no endpoints available") || strings.Contains(errStr, "no healthy endpoints available") {
 		errorCtx.ErrorType = ErrorTypeNoHealthyEndpoints
 		errorCtx.RetryableAfter = 0 // 立即重试，不需要退避
-		slog.Warn(fmt.Sprintf("🏥 [健康检查限制] [%s] 端点: %s, 尝试: %d, 建议尝试实际转发, 错误: %v",
+		slog.Warn(fmt.Sprintf("🏥 [无可用端点] [%s] 端点: %s, 尝试: %d, 错误: %v",
 			requestID, endpoint, attempt, err))
 		return errorCtx
 	}

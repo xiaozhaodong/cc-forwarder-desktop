@@ -109,7 +109,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 		endpoints := retryMgr.GetHealthyEndpoints(ctx)
 		if len(endpoints) == 0 {
 			// 创建特殊错误，交给错误分类和重试系统处理
-			noHealthyErr := fmt.Errorf("no healthy endpoints available")
+			noHealthyErr := fmt.Errorf("no endpoints available")
 			errorRecovery := rh.errorRecoveryFactory.NewErrorRecoveryManager(rh.usageTracker)
 			errorCtx := errorRecovery.ClassifyError(noHealthyErr, connID, "", "", 0)
 
@@ -153,7 +153,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 				}
 			} else {
 				// 🔧 [挂起修复] 2025-12-25: 其他错误导致端点不可用，也应该触发挂起
-				slog.InfoContext(ctx, fmt.Sprintf("⏸️ [端点不可用] [%s] 无健康端点，准备进入挂起逻辑",
+				slog.InfoContext(ctx, fmt.Sprintf("⏸️ [端点不可用] [%s] 无可用端点，准备进入挂起逻辑",
 					connID))
 				lifecycleManager.HandleError(noHealthyErr)
 				endpoints = []*endpoint.Endpoint{} // 空数组，跳过端点处理循环
@@ -390,7 +390,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 
 		// 🔢 [语义修复] 在日志中记录端点数量信息，但不影响重试计数语义
 		actualAttemptCount := lifecycleManager.GetAttemptCount()
-		slog.Info(fmt.Sprintf("⏸️ [常规挂起] [%s] 请求已挂起，尝试次数: %d, 健康端点数: %d, 当前所有组均不可用",
+		slog.Info(fmt.Sprintf("⏸️ [常规挂起] [%s] 请求已挂起，尝试次数: %d, 可用端点数: %d, 当前所有组均不可用",
 			connID, actualAttemptCount, len(currentEndpoints)))
 
 		// 🚀 [端点自愈] 等待端点恢复，能区分成功/超时/取消
@@ -400,7 +400,6 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 		case SuspensionSuccess:
 			slog.Info(fmt.Sprintf("🚀 [挂起恢复] [%s] 端点已恢复或组切换完成，重新获取端点", connID))
 
-			// 重新获取健康端点
 			var newEndpoints []*endpoint.Endpoint
 			if rh.endpointManager.GetConfig().Strategy.Type == "fastest" && rh.endpointManager.GetConfig().Strategy.FastTestEnabled {
 				newEndpoints = rh.endpointManager.GetFastestEndpointsWithRealTimeTest(ctx)
@@ -416,7 +415,6 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 				firstEndpoint := newEndpoints[0]
 				lifecycleManager.SetEndpoint(firstEndpoint.Config.Name, firstEndpoint.Config.Group, firstEndpoint.Config.Channel)
 
-				// 重新获取健康端点并重新尝试（递归调用）
 				rh.HandleRegularRequestUnified(ctx, w, r, bodyBytes, lifecycleManager)
 				return
 			}

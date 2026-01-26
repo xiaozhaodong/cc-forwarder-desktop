@@ -199,7 +199,6 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 		return
 	}
 
-	// 获取健康端点
 	var endpoints []*endpoint.Endpoint
 	if sh.endpointManager.GetConfig().Strategy.Type == "fastest" && sh.endpointManager.GetConfig().Strategy.FastTestEnabled {
 		endpoints = sh.endpointManager.GetFastestEndpointsWithRealTimeTest(ctx)
@@ -209,7 +208,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 	if len(endpoints) == 0 {
 		// 创建特殊错误，交给错误分类和重试系统处理
-		noHealthyErr := fmt.Errorf("no healthy endpoints available")
+		noHealthyErr := fmt.Errorf("no endpoints available")
 		errorRecovery := sh.errorRecoveryFactory.NewErrorRecoveryManager(sh.usageTracker)
 		errorCtx := errorRecovery.ClassifyError(noHealthyErr, connID, "", "", 0)
 
@@ -253,7 +252,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 			}
 		} else {
 			// 🔧 [挂起修复] 2025-12-25: 其他错误导致端点不可用，也应该触发挂起
-			slog.InfoContext(ctx, fmt.Sprintf("⏸️ [端点不可用] [%s] 无健康端点，准备进入挂起逻辑",
+			slog.InfoContext(ctx, fmt.Sprintf("⏸️ [端点不可用] [%s] 无可用端点，准备进入挂起逻辑",
 				connID))
 			lifecycleManager.HandleError(noHealthyErr)
 			endpoints = []*endpoint.Endpoint{} // 空数组，跳过端点处理循环
@@ -778,7 +777,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 		// 🔢 [语义修复] 在日志中记录端点数量信息，但不影响重试计数语义
 		actualAttemptCount := lifecycleManager.GetAttemptCount()
-		slog.Info(fmt.Sprintf("⏸️ [流式挂起] [%s] 请求已挂起，尝试次数: %d, 健康端点数: %d, 最后失败端点: %s",
+		slog.Info(fmt.Sprintf("⏸️ [流式挂起] [%s] 请求已挂起，尝试次数: %d, 可用端点数: %d, 最后失败端点: %s",
 			connID, actualAttemptCount, len(currentEndpoints), lastFailedEndpoint))
 
 		// 🚀 [端点自愈] 等待端点恢复，能区分成功/超时/取消
@@ -789,7 +788,6 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 			fmt.Fprintf(w, "data: resume: 组切换完成，恢复处理...\n\n")
 			flusher.Flush()
 
-			// 重新获取健康端点
 			var newEndpoints []*endpoint.Endpoint
 			if sh.endpointManager.GetConfig().Strategy.Type == "fastest" && sh.endpointManager.GetConfig().Strategy.FastTestEnabled {
 				newEndpoints = sh.endpointManager.GetFastestEndpointsWithRealTimeTest(ctx)
@@ -807,7 +805,6 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 				firstEndpoint := newEndpoints[0]
 				lifecycleManager.SetEndpoint(firstEndpoint.Config.Name, firstEndpoint.Config.Group, firstEndpoint.Config.Channel)
 
-				// 重新获取健康端点并重新尝试（递归调用）
 				sh.executeStreamingWithRetry(ctx, w, r, bodyBytes, lifecycleManager, flusher)
 				return
 			}

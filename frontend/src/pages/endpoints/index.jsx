@@ -8,7 +8,8 @@ import {
   Activity,
   RefreshCw,
   Database,
-  Server
+  Server,
+  Info
 } from 'lucide-react';
 import {
   Button,
@@ -299,6 +300,13 @@ const EndpointsPage = () => {
             </Button>
           )}
         </div>
+      </div>
+
+      <div className="flex items-center gap-2 mb-6 px-3 py-2 bg-slate-50/80 rounded-lg border border-slate-100 text-xs text-slate-500">
+        <Info className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
+        <span>
+          提示：显示的健康状态与延迟仅基于探测请求（如 /v1/models）。实际路由调度基于真实请求的成功率与故障冷却策略，不完全依赖探测数据。
+        </span>
       </div>
 
       {/* 统计卡片 */}

@@ -241,7 +241,6 @@ func TestGetEndpointByNameWithGroups(t *testing.T) {
 		ep.mutex.Unlock()
 	}
 
-	// v4.0: 必须手动激活一个组，因为 GroupManager 在启动时会检查健康端点
 	// 先激活 primary-endpoint 组（优先级最高）
 	err := manager.ManualActivateGroup("primary-endpoint")
 	if err != nil {

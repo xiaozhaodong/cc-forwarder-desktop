@@ -38,7 +38,7 @@ func TestFailedRequestTokensIntegration(t *testing.T) {
 	rlm := proxy.NewRequestLifecycleManager(tracker, monitoringMiddleware, "req-integration-test", nil)
 
 	// 4. 设置请求信息
-	rlm.SetEndpoint("integration-endpoint", "integration-group")
+	rlm.SetEndpoint("integration-endpoint", "integration-group", "")
 	rlm.SetModel("claude-3-5-sonnet")
 
 	// 5. 模拟完整的失败请求流程
@@ -95,12 +95,12 @@ func TestFailedRequestTokensIntegration(t *testing.T) {
 // TestFailedRequestTokensEdgeCases 边界情况集成测试
 func TestFailedRequestTokensEdgeCases(t *testing.T) {
 	trackerConfig := &tracking.Config{
-		Enabled:       true,
-		DatabasePath:  ":memory:",
-		BufferSize:    20,
-		BatchSize:     3,
-		FlushInterval: 50 * time.Millisecond,
-		MaxRetry:      2,
+		Enabled:        true,
+		DatabasePath:   ":memory:",
+		BufferSize:     20,
+		BatchSize:      3,
+		FlushInterval:  50 * time.Millisecond,
+		MaxRetry:       2,
 		DefaultPricing: tracking.ModelPricing{Input: 1.0, Output: 5.0},
 	}
 
@@ -159,12 +159,12 @@ func TestFailedRequestTokensEdgeCases(t *testing.T) {
 // TestFailedRequestTokensConcurrency 并发集成测试
 func TestFailedRequestTokensConcurrency(t *testing.T) {
 	trackerConfig := &tracking.Config{
-		Enabled:       true,
-		DatabasePath:  ":memory:",
-		BufferSize:    100,
-		BatchSize:     10,
-		FlushInterval: 200 * time.Millisecond,
-		MaxRetry:      3,
+		Enabled:        true,
+		DatabasePath:   ":memory:",
+		BufferSize:     100,
+		BatchSize:      10,
+		FlushInterval:  200 * time.Millisecond,
+		MaxRetry:       3,
 		DefaultPricing: tracking.ModelPricing{Input: 1.0, Output: 2.0},
 	}
 
@@ -185,7 +185,7 @@ func TestFailedRequestTokensConcurrency(t *testing.T) {
 			rlm := proxy.NewRequestLifecycleManager(tracker, monitoringMiddleware,
 				"req-concurrent-"+string(rune('A'+managerID)), nil)
 
-			rlm.SetEndpoint("concurrent-endpoint-"+string(rune('0'+managerID)), "concurrent-group")
+			rlm.SetEndpoint("concurrent-endpoint-"+string(rune('0'+managerID)), "concurrent-group", "")
 
 			for j := 0; j < tokensPerManager; j++ {
 				tokens := &tracking.TokenUsage{

@@ -16,9 +16,9 @@ import (
 // SuspensionManager 管理请求挂起逻辑
 // 从RetryHandler中分离出来，专门负责请求挂起的判断和等待逻辑
 type SuspensionManager struct {
-	config          *config.Config
-	endpointManager *endpoint.Manager
-	groupManager    *endpoint.GroupManager
+	config                *config.Config
+	endpointManager       *endpoint.Manager
+	groupManager          *endpoint.GroupManager
 	recoverySignalManager *EndpointRecoverySignalManager // 端点恢复信号管理器
 
 	// 挂起请求计数相关字段
@@ -98,18 +98,21 @@ func (sm *SuspensionManager) ShouldSuspend(ctx context.Context) bool {
 
 		// 检查非活跃组且不在冷却期的组
 		if !group.IsActive && !sm.groupManager.IsGroupInCooldown(group.Name) {
-			// 检查组内是否有健康端点
-			healthyCount := 0
+			availableCount := 0
 			for _, ep := range group.Endpoints {
-				if ep.IsHealthy() {
-					healthyCount++
+				if ep.IsInCooldown() {
+					continue
 				}
+				if sm.endpointManager.GetConfig().FailureTracker.Enabled && sm.endpointManager.ShouldTriggerFailureAction(ep.Config.Name) {
+					continue
+				}
+				availableCount++
 			}
-			slog.InfoContext(ctx, fmt.Sprintf("🔍 [挂起检查] 组 %s 健康端点数: %d", group.Name, healthyCount))
+			slog.InfoContext(ctx, fmt.Sprintf("🔍 [挂起检查] 组 %s 可用端点数: %d", group.Name, availableCount))
 
-			if healthyCount > 0 {
+			if availableCount > 0 {
 				hasAvailableBackupGroups = true
-				availableGroups = append(availableGroups, fmt.Sprintf("%s(%d个健康端点)", group.Name, healthyCount))
+				availableGroups = append(availableGroups, fmt.Sprintf("%s(%d个可用端点)", group.Name, availableCount))
 			}
 		}
 	}
@@ -185,17 +188,15 @@ func (sm *SuspensionManager) WaitForGroupSwitch(ctx context.Context, connID stri
 		// 收到组切换通知
 		slog.InfoContext(ctx, fmt.Sprintf("📡 [组切换通知] 连接 %s 收到组切换通知: %s，验证新组可用性", connID, newGroupName))
 
-		// 验证新激活的组是否有健康端点
 		newEndpoints := sm.endpointManager.GetHealthyEndpoints()
 		if len(newEndpoints) > 0 {
-			slog.InfoContext(ctx, fmt.Sprintf("✅ [切换成功] 连接 %s 新组 %s 有 %d 个健康端点，恢复请求处理",
+			slog.InfoContext(ctx, fmt.Sprintf("✅ [切换成功] 连接 %s 新组 %s 有 %d 个可用端点，恢复请求处理",
 				connID, newGroupName, len(newEndpoints)))
 			return true
-		} else {
-			slog.WarnContext(ctx, fmt.Sprintf("⚠️ [切换无效] 连接 %s 新组 %s 暂无健康端点，挂起失败",
-				connID, newGroupName))
-			return false
 		}
+		slog.WarnContext(ctx, fmt.Sprintf("⚠️ [切换无效] 连接 %s 新组 %s 暂无可用端点，挂起失败",
+			connID, newGroupName))
+		return false
 
 	case <-timeoutCtx.Done():
 		// 挂起超时
@@ -238,6 +239,7 @@ func (sm *SuspensionManager) UpdateConfig(cfg *config.Config) {
 //   - ctx: 上下文
 //   - connID: 连接ID
 //   - failedEndpoint: 失败的端点名称
+//
 // 返回：是否成功恢复（端点恢复或组切换）
 func (sm *SuspensionManager) WaitForEndpointRecovery(ctx context.Context, connID, failedEndpoint string) bool {
 	// 检查配置和管理器是否存在
@@ -317,17 +319,15 @@ func (sm *SuspensionManager) WaitForEndpointRecovery(ctx context.Context, connID
 			slog.InfoContext(ctx, fmt.Sprintf("📡 [组切换通知] 连接 %s 收到组切换通知: %s，验证新组可用性",
 				connID, newGroupName))
 
-			// 验证新激活的组是否有健康端点
 			newEndpoints := sm.endpointManager.GetHealthyEndpoints()
 			if len(newEndpoints) > 0 {
-				slog.InfoContext(ctx, fmt.Sprintf("✅ [切换成功] 连接 %s 新组 %s 有 %d 个健康端点，恢复请求处理",
+				slog.InfoContext(ctx, fmt.Sprintf("✅ [切换成功] 连接 %s 新组 %s 有 %d 个可用端点，恢复请求处理",
 					connID, newGroupName, len(newEndpoints)))
 				return true
-			} else {
-				slog.WarnContext(ctx, fmt.Sprintf("⚠️ [切换无效] 连接 %s 新组 %s 暂无健康端点，继续等待",
-					connID, newGroupName))
-				// 继续等待其他恢复信号
 			}
+			slog.WarnContext(ctx, fmt.Sprintf("⚠️ [切换无效] 连接 %s 新组 %s 暂无可用端点，继续等待",
+				connID, newGroupName))
+			// 继续等待其他恢复信号
 
 		case <-timeoutCtx.Done():
 			// ⏰ [优先级3] 挂起超时
@@ -434,17 +434,15 @@ func (sm *SuspensionManager) WaitForEndpointRecoveryWithResult(ctx context.Conte
 			slog.InfoContext(ctx, fmt.Sprintf("📡 [组切换通知] 连接 %s 收到组切换通知: %s，验证新组可用性",
 				connID, newGroupName))
 
-			// 验证新激活的组是否有健康端点
 			newEndpoints := sm.endpointManager.GetHealthyEndpoints()
 			if len(newEndpoints) > 0 {
-				slog.InfoContext(ctx, fmt.Sprintf("✅ [切换成功] 连接 %s 新组 %s 有 %d 个健康端点，恢复请求处理",
+				slog.InfoContext(ctx, fmt.Sprintf("✅ [切换成功] 连接 %s 新组 %s 有 %d 个可用端点，恢复请求处理",
 					connID, newGroupName, len(newEndpoints)))
 				return handlers.SuspensionSuccess
-			} else {
-				slog.WarnContext(ctx, fmt.Sprintf("⚠️ [切换无效] 连接 %s 新组 %s 暂无健康端点，继续等待",
-					connID, newGroupName))
-				// 继续等待其他恢复信号
 			}
+			slog.WarnContext(ctx, fmt.Sprintf("⚠️ [切换无效] 连接 %s 新组 %s 暂无可用端点，继续等待",
+				connID, newGroupName))
+			// 继续等待其他恢复信号
 
 		case <-timeoutCtx.Done():
 			// ⏰ [优先级3] 挂起超时

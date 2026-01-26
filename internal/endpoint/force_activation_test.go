@@ -67,8 +67,7 @@ func TestForceActivation(t *testing.T) {
 		}
 	})
 
-	t.Run("Normal activation fails with no healthy endpoints", func(t *testing.T) {
-		// Make all endpoints unhealthy
+	t.Run("Normal activation succeeds regardless of health probe", func(t *testing.T) {
 		endpoints[0].Status.Healthy = false
 		gm.UpdateGroups(endpoints)
 
@@ -80,12 +79,8 @@ func TestForceActivation(t *testing.T) {
 		}
 
 		err := gm.ManualActivateGroup(groupName)
-		if err == nil {
-			t.Error("Normal activation should fail with no healthy endpoints")
-		}
-		expectedMsg := "组 " + groupName + " 中没有健康的端点，无法激活。如需强制激活请使用强制模式"
-		if err.Error() != expectedMsg {
-			t.Errorf("Expected specific error message, got: %v", err)
+		if err != nil {
+			t.Errorf("Normal activation should succeed regardless of health probe: %v", err)
 		}
 	})
 
@@ -126,8 +121,7 @@ func TestForceActivation(t *testing.T) {
 		}
 	})
 
-	t.Run("Force activation fails with healthy endpoints", func(t *testing.T) {
-		// Make one endpoint healthy
+	t.Run("Force activation always succeeds", func(t *testing.T) {
 		endpoints[0].Status.Healthy = true
 		gm.UpdateGroups(endpoints)
 
@@ -139,12 +133,8 @@ func TestForceActivation(t *testing.T) {
 		}
 
 		err := gm.ManualActivateGroupWithForce(groupName, true)
-		if err == nil {
-			t.Error("Force activation should fail with healthy endpoints")
-		}
-		expectedMsg := "组 " + groupName + " 有 1 个健康端点，无需强制激活。请使用正常激活"
-		if err.Error() != expectedMsg {
-			t.Errorf("Expected specific error message, got: %v", err)
+		if err != nil {
+			t.Errorf("Force activation should succeed: %v", err)
 		}
 	})
 

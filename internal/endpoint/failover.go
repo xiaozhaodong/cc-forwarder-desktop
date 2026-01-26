@@ -86,7 +86,6 @@ func (m *Manager) TriggerRequestFailover(failedEndpointName string, reason strin
 }
 
 // selectNextFailoverEndpoint 选择下一个故障转移端点
-// 按优先级选择 failover_enabled=true 且健康且不在冷却中的端点
 func (m *Manager) selectNextFailoverEndpoint(excludeEndpoint string) string {
 	m.endpointsMu.RLock()
 	snapshot := make([]*Endpoint, len(m.endpoints))
@@ -117,16 +116,10 @@ func (m *Manager) selectNextFailoverEndpoint(excludeEndpoint string) string {
 		// 检查是否在冷却中
 		ep.mutex.RLock()
 		inCooldown := !ep.Status.CooldownUntil.IsZero() && now.Before(ep.Status.CooldownUntil)
-		isHealthy := ep.Status.Healthy
 		ep.mutex.RUnlock()
 
 		if inCooldown {
 			slog.Debug(fmt.Sprintf("⏭️ [故障转移] 跳过冷却中的端点: %s", ep.Config.Name))
-			continue
-		}
-
-		if !isHealthy {
-			slog.Debug(fmt.Sprintf("⏭️ [故障转移] 跳过不健康的端点: %s", ep.Config.Name))
 			continue
 		}
 

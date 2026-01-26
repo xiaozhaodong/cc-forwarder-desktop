@@ -34,7 +34,7 @@ func TestEmergencyActivationCooldownScenarios(t *testing.T) {
 			Config: config.EndpointConfig{
 				Name:          "endpoint-1",
 				URL:           "https://api.example.com",
-				Group:         "test-group",  // v3.x兼容字段，v4.0中会被忽略
+				Group:         "test-group", // v3.x兼容字段，v4.0中会被忽略
 				GroupPriority: 1,
 				Priority:      1,
 			},
@@ -206,11 +206,11 @@ func TestEmergencyActivationComprehensiveAPI(t *testing.T) {
 			isActive := groupData["is_active"].(bool)
 
 			if groupName == "healthy-endpoint" {
-				assert.False(t, canForceActivate, "有健康端点的组不应该能强制激活")
-				assert.Greater(t, healthyEndpoints, 0, "healthy-endpoint应该有健康端点")
+				assert.True(t, canForceActivate, "非活跃组应该能强制激活")
+				assert.Greater(t, healthyEndpoints, 0, "healthy-endpoint应该有健康探测结果")
 			} else if groupName == "unhealthy-endpoint" {
-				assert.True(t, canForceActivate, "无健康端点的非活跃组应该能强制激活")
-				assert.Equal(t, 0, healthyEndpoints, "unhealthy-endpoint应该没有健康端点")
+				assert.True(t, canForceActivate, "非活跃组应该能强制激活")
+				assert.Equal(t, 0, healthyEndpoints, "unhealthy-endpoint应该没有健康探测结果")
 			}
 
 			assert.False(t, isActive, "所有组都应该是非活跃状态")

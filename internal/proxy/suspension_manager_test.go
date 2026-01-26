@@ -114,8 +114,11 @@ func TestSuspensionManager_ShouldSuspend_FeatureDisabled(t *testing.T) {
 			Timeout:              300 * time.Second,
 			MaxSuspendedRequests: 100,
 		},
+		Failover: config.FailoverConfig{
+			Enabled: false, // 手动模式
+		},
 		Group: config.GroupConfig{
-			AutoSwitchBetweenGroups: false, // 手动模式
+			AutoSwitchBetweenGroups: false,
 		},
 	}
 
@@ -133,8 +136,11 @@ func TestSuspensionManager_ShouldSuspend_AutoMode(t *testing.T) {
 			Timeout:              300 * time.Second,
 			MaxSuspendedRequests: 100,
 		},
+		Failover: config.FailoverConfig{
+			Enabled: true,
+		},
 		Group: config.GroupConfig{
-			AutoSwitchBetweenGroups: true, // 自动模式
+			AutoSwitchBetweenGroups: true,
 		},
 	}
 
@@ -152,8 +158,11 @@ func TestSuspensionManager_ShouldSuspend_MaxSuspendedRequestsReached(t *testing.
 			Timeout:              300 * time.Second,
 			MaxSuspendedRequests: 2, // 设置较小的最大挂起数
 		},
+		Failover: config.FailoverConfig{
+			Enabled: false, // 手动模式
+		},
 		Group: config.GroupConfig{
-			AutoSwitchBetweenGroups: false, // 手动模式
+			AutoSwitchBetweenGroups: false,
 		},
 	}
 
@@ -177,7 +186,7 @@ func TestSuspensionManager_ShouldSuspend_NoAvailableBackupGroups(t *testing.T) {
 	setupTestGroups(sm.endpointManager, []string{"primary", "backup"}, []string{})
 
 	shouldSuspend := sm.ShouldSuspend(ctx)
-	assert.False(t, shouldSuspend, "没有可用备用组时不应该挂起请求")
+	assert.True(t, shouldSuspend, "存在可用备用组时应该挂起请求")
 }
 
 func TestSuspensionManager_ShouldSuspend_WithAvailableBackupGroups(t *testing.T) {

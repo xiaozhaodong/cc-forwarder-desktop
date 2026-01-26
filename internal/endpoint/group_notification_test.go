@@ -131,6 +131,9 @@ func TestGroupChangeNotifications(t *testing.T) {
 func TestGroupCooldownNotifications(t *testing.T) {
 	// Create test configuration with short cooldown for testing
 	cfg := &config.Config{
+		Failover: config.FailoverConfig{
+			Enabled: true,
+		},
 		Group: config.GroupConfig{
 			Cooldown:                time.Second,
 			AutoSwitchBetweenGroups: true,
@@ -199,6 +202,9 @@ func TestGroupCooldownNotifications(t *testing.T) {
 // v4.0: 适配一端点一组架构
 func TestGroupPauseResumeNotifications(t *testing.T) {
 	cfg := &config.Config{
+		Failover: config.FailoverConfig{
+			Enabled: true,
+		},
 		Group: config.GroupConfig{
 			Cooldown:                time.Minute * 5,
 			AutoSwitchBetweenGroups: true,

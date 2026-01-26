@@ -54,7 +54,7 @@ func TestEmergencyActivationScenarios(t *testing.T) {
 				Priority: 2,
 			},
 			Status: EndpointStatus{
-				Healthy: true, // 健康端点
+				Healthy: true,
 			},
 		},
 	}
@@ -76,14 +76,13 @@ func TestEmergencyActivationScenarios(t *testing.T) {
 		testGroup := findGroupByName(groups, groupName)
 		require.NotNil(t, testGroup, "应该找到"+groupName)
 
-		// 统计健康端点
 		healthyCount := 0
 		for _, ep := range testGroup.Endpoints {
 			if ep.IsHealthy() {
 				healthyCount++
 			}
 		}
-		assert.Equal(t, 0, healthyCount, "确认没有健康端点")
+		assert.Equal(t, 0, healthyCount, "确认健康探测结果为不健康")
 
 		// 执行应急激活
 		t.Log("执行应急激活...")
@@ -128,8 +127,8 @@ func TestEmergencyActivationScenarios(t *testing.T) {
 			testGroupData["activation_type"], testGroupData["forced_activation_time"])
 	})
 
-	t.Run("场景2: 拒绝在有健康端点时进行应急激活测试", func(t *testing.T) {
-		t.Log("=== 测试场景2: 拒绝在有健康端点时进行应急激活 ===")
+	t.Run("场景2: 有健康探测结果时仍允许应急激活", func(t *testing.T) {
+		t.Log("=== 测试场景2: 有健康探测结果时仍允许应急激活 ===")
 
 		// 先停用所有组并清除状态
 		for _, group := range gm.groups {
@@ -154,45 +153,18 @@ func TestEmergencyActivationScenarios(t *testing.T) {
 		testGroup := findGroupByName(groups, groupName)
 		require.NotNil(t, testGroup, "应该找到"+groupName)
 
-		// 统计健康端点
-		healthyCount := 0
-		for _, ep := range testGroup.Endpoints {
-			if ep.IsHealthy() {
-				healthyCount++
-			}
-		}
-		assert.Equal(t, 1, healthyCount, "应该有1个健康端点")
 		assert.False(t, testGroup.IsActive, "组应该处于非活跃状态")
 
-		// 尝试应急激活（应该被拒绝）
-		t.Log("尝试应急激活（应该被拒绝）...")
 		err := gm.ManualActivateGroupWithForce(groupName, true)
-		assert.Error(t, err, "应急激活应该被拒绝")
-		assert.Contains(t, err.Error(), "无需强制激活", "错误消息应该提示无需强制激活")
-		assert.Contains(t, err.Error(), "1 个健康端点", "错误消息应该说明健康端点数量")
+		assert.NoError(t, err, "应急激活应该成功")
 
-		// 验证组状态没有被改变
 		groups = gm.GetAllGroups()
 		testGroup = findGroupByName(groups, groupName)
 		require.NotNil(t, testGroup, "应该找到"+groupName)
 
-		assert.False(t, testGroup.IsActive, "组应该仍然非活跃")
-		assert.False(t, testGroup.ForcedActivation, "ForcedActivation标志应该仍为false")
-		assert.True(t, testGroup.ForcedActivationTime.IsZero(), "ForcedActivationTime应该仍为空")
-
-		t.Logf("✅ 验证成功: 错误消息=%v, 组状态未改变", err.Error())
-
-		// 验证正常激活仍然可以工作
-		t.Log("验证正常激活仍然可以工作...")
-		err = gm.ManualActivateGroupWithForce(groupName, false)
-		assert.NoError(t, err, "正常激活应该成功")
-
-		groups = gm.GetAllGroups()
-		testGroup = findGroupByName(groups, groupName)
 		assert.True(t, testGroup.IsActive, "组应该已激活")
-		assert.False(t, testGroup.ForcedActivation, "ForcedActivation标志应该为false")
-
-		t.Logf("✅ 正常激活验证成功")
+		assert.True(t, testGroup.ForcedActivation, "ForcedActivation标志应该为true")
+		assert.False(t, testGroup.ForcedActivationTime.IsZero(), "ForcedActivationTime应该被设置")
 	})
 
 	t.Run("场景3: 组详情API返回应急激活信息测试", func(t *testing.T) {
@@ -254,7 +226,7 @@ func TestEmergencyActivationScenarios(t *testing.T) {
 		// 验证健康状态描述
 		healthStatus, ok := testGroupData["_computed_health_status"].(string)
 		assert.True(t, ok, "应该有健康状态描述")
-		assert.Equal(t, "强制激活(无健康端点)", healthStatus, "健康状态描述应该正确")
+		assert.Equal(t, "强制激活", healthStatus, "健康状态描述应该正确")
 
 		t.Logf("✅ API字段验证成功:")
 		t.Logf("   - forced_activation: %v", testGroupData["forced_activation"])
@@ -263,8 +235,8 @@ func TestEmergencyActivationScenarios(t *testing.T) {
 		t.Logf("   - can_force_activate: %v", testGroupData["can_force_activate"])
 		t.Logf("   - _computed_health_status: %v", testGroupData["_computed_health_status"])
 
-		// 测试can_force_activate逻辑（非活跃组+无健康端点）
 		t.Log("测试can_force_activate逻辑...")
+		assert.Equal(t, false, testGroupData["can_force_activate"], "已活跃组不能强制激活")
 
 		// 先暂停组让其变为非活跃
 		gm.ManualPauseGroup(groupName, 0)
@@ -278,8 +250,7 @@ func TestEmergencyActivationScenarios(t *testing.T) {
 			}
 		}
 
-		// 验证can_force_activate为true（非活跃+无健康端点+无冷却）
-		assert.Equal(t, true, testGroupData["can_force_activate"], "非活跃且无健康端点的组应该可以强制激活")
+		assert.Equal(t, true, testGroupData["can_force_activate"], "非活跃组应该可以强制激活")
 		assert.Equal(t, false, testGroupData["is_active"], "组应该是非活跃状态")
 
 		t.Logf("✅ can_force_activate逻辑验证成功")
@@ -361,7 +332,7 @@ func TestEmergencyActivationScenarios(t *testing.T) {
 		assert.Equal(t, false, testGroupData["forced_activation"], "API中forced_activation应该为false")
 		assert.Equal(t, "normal", testGroupData["activation_type"], "API中activation_type应该为normal")
 		assert.Equal(t, "", testGroupData["forced_activation_time"], "API中forced_activation_time应该为空")
-		assert.Equal(t, false, testGroupData["can_force_activate"], "有健康端点的活跃组不能强制激活")
+		assert.Equal(t, false, testGroupData["can_force_activate"], "活跃组不能强制激活")
 
 		t.Logf("✅ API信息验证成功: activation_type=%v, can_force_activate=%v",
 			testGroupData["activation_type"], testGroupData["can_force_activate"])
@@ -399,7 +370,7 @@ func TestEmergencyActivationScenarios(t *testing.T) {
 
 			var responseMessage string
 			if force {
-				responseMessage = "⚠️ 组 " + gName + " 已强制激活（请注意：该组无健康端点，可能影响服务质量）"
+				responseMessage = "⚠️ 组 " + gName + " 已强制激活（请注意：该操作不代表端点真实可用性，可能影响服务质量）"
 			} else {
 				responseMessage = "组 " + gName + " 已成功激活"
 			}
@@ -442,7 +413,7 @@ func TestEmergencyActivationScenarios(t *testing.T) {
 		assert.Equal(t, true, response["success"], "success字段应该为true")
 		assert.Equal(t, true, response["force_activated"], "force_activated字段应该为true")
 		assert.Contains(t, response["message"], "强制激活", "消息应该包含强制激活")
-		assert.Contains(t, response["message"], "无健康端点", "消息应该包含警告")
+		assert.Contains(t, response["message"], "不代表端点真实可用性", "消息应该包含警告")
 		assert.NotEmpty(t, response["timestamp"], "应该有时间戳")
 
 		t.Logf("✅ 应急激活API响应验证成功:")
@@ -450,8 +421,7 @@ func TestEmergencyActivationScenarios(t *testing.T) {
 		t.Logf("   - force_activated: %v", response["force_activated"])
 		t.Logf("   - message: %v", response["message"])
 
-		// 测试在有健康端点时拒绝强制激活
-		t.Log("测试在有健康端点时拒绝强制激活...")
+		t.Log("测试在有健康探测结果时强制激活...")
 		endpoints[0].Status.Healthy = true
 		gm.UpdateGroups(endpoints)
 
@@ -459,19 +429,18 @@ func TestEmergencyActivationScenarios(t *testing.T) {
 		w = httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusBadRequest, w.Code, "应该返回400错误")
+		assert.Equal(t, http.StatusOK, w.Code, "强制激活应该返回200")
 
 		err = json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err, "响应应该是有效的JSON")
 
-		assert.Contains(t, response["error"], "无需强制激活", "错误消息应该说明无需强制激活")
-		assert.Contains(t, response["error"], "健康端点", "错误消息应该提到健康端点")
-
-		t.Logf("✅ 拒绝强制激活API响应验证成功: %v", response["error"])
+		assert.Equal(t, true, response["success"], "success字段应该为true")
+		assert.Equal(t, true, response["force_activated"], "force_activated字段应该为true")
+		assert.Contains(t, response["message"], "强制激活", "消息应该包含强制激活")
 
 		// 测试组详情API
 		t.Log("测试组详情API...")
-		// 重新设置无健康端点并强制激活
+
 		endpoints[0].Status.Healthy = false
 		gm.UpdateGroups(endpoints)
 		gm.ManualActivateGroupWithForce(groupName, true)

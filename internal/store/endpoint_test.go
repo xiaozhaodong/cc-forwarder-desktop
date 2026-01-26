@@ -47,6 +47,7 @@ func createTestDB(t *testing.T) (*sql.DB, func()) {
 			input_cost_multiplier REAL DEFAULT 1.0,
 			output_cost_multiplier REAL DEFAULT 1.0,
 			cache_creation_cost_multiplier REAL DEFAULT 1.0,
+			cache_creation_cost_multiplier_1h REAL DEFAULT 1.0,
 			cache_read_cost_multiplier REAL DEFAULT 1.0,
 			enabled INTEGER DEFAULT 1,
 			created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),

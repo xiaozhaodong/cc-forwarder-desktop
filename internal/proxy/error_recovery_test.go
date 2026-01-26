@@ -34,18 +34,18 @@ func TestErrorRecoveryManager_ClassifyError(t *testing.T) {
 	attempt := 1
 
 	testCases := []struct {
-		err           error
-		expectedType  ErrorType
-		description   string
-		shouldRetry   bool
+		err          error
+		expectedType ErrorType
+		description  string
+		shouldRetry  bool
 	}{
 		{nil, ErrorTypeUnknown, "nil error", false},
 		{errors.New("connection reset"), ErrorTypeNetwork, "connection reset", true},
 		{errors.New("connection refused"), ErrorTypeNetwork, "connection refused", true},
-		{errors.New("i/o timeout"), ErrorTypeResponseTimeout, "i/o timeout", false},               // 响应超时不可重试
+		{errors.New("i/o timeout"), ErrorTypeResponseTimeout, "i/o timeout", false},                     // 响应超时不可重试
 		{errors.New("context deadline exceeded"), ErrorTypeResponseTimeout, "deadline exceeded", false}, // 响应超时不可重试
 		{errors.New("HTTP 500 Internal Server Error"), ErrorTypeServerError, "HTTP 5xx error", true},
-		{errors.New("HTTP 400 Bad Request"), ErrorTypeRateLimit, "HTTP 400 error (now rate limit)", true},
+		{errors.New("HTTP 400 Bad Request"), ErrorTypeHTTP, "HTTP 400 error", false},
 		{errors.New("HTTP 404 Not Found"), ErrorTypeHTTP, "HTTP 4xx error (non-400)", false},
 		{errors.New("unauthorized access"), ErrorTypeAuth, "auth error", false},
 		{errors.New("rate limit exceeded"), ErrorTypeRateLimit, "rate limit", true},
@@ -76,8 +76,8 @@ func TestErrorRecoveryManager_ClassifyError(t *testing.T) {
 		if tc.description == "HTTP 4xx error (non-400)" && shouldRetry {
 			t.Errorf("HTTP 4xx errors (non-400) should not be retryable")
 		}
-		if tc.description == "HTTP 400 error (now rate limit)" && !shouldRetry {
-			t.Errorf("HTTP 400 errors should now be retryable as rate limit")
+		if tc.description == "HTTP 400 error" && shouldRetry {
+			t.Errorf("HTTP 400 errors should not be retryable")
 		}
 		if tc.description == "auth error" && shouldRetry {
 			t.Errorf("Auth errors should not be retryable")
@@ -89,11 +89,11 @@ func TestErrorRecoveryManager_ShouldRetry(t *testing.T) {
 	erm := NewErrorRecoveryManager(nil)
 
 	testCases := []struct {
-		errorType     ErrorType
-		attemptCount  int
-		maxRetries    int
-		expected      bool
-		description   string
+		errorType    ErrorType
+		attemptCount int
+		maxRetries   int
+		expected     bool
+		description  string
 	}{
 		{ErrorTypeNetwork, 1, 3, true, "network error within retry limit"},
 		{ErrorTypeNetwork, 5, 3, false, "network error exceeds retry limit"},
@@ -169,7 +169,7 @@ func TestErrorRecoveryManager_IsNetworkError(t *testing.T) {
 		{errors.New("network is unreachable"), true},
 		{errors.New("no route to host"), true},
 		{errors.New("broken pipe"), true},
-		{errors.New("eof"), false},          // EOF is now a separate error type, not network
+		{errors.New("eof"), false},            // EOF is now a separate error type, not network
 		{errors.New("unexpected eof"), false}, // EOF is now a separate error type, not network
 		{errors.New("random error"), false},
 		{&net.OpError{Op: "dial"}, true},
@@ -211,7 +211,7 @@ func TestErrorRecoveryManager_IsTimeoutError(t *testing.T) {
 
 func TestErrorRecoveryManager_ExecuteRetry(t *testing.T) {
 	erm := NewErrorRecoveryManager(nil)
-	
+
 	// Test with no delay
 	errorCtx := &ErrorContext{
 		RequestID:      "test-execute-789",
@@ -230,7 +230,7 @@ func TestErrorRecoveryManager_ExecuteRetry(t *testing.T) {
 	start := time.Now()
 	err = erm.ExecuteRetry(ctx, errorCtx)
 	elapsed := time.Since(start)
-	
+
 	if err != nil {
 		t.Errorf("ExecuteRetry should not return error for short delay, got: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestErrorRecoveryManager_ExecuteRetry(t *testing.T) {
 	// Test with context cancellation
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
-	
+
 	errorCtx.RetryableAfter = time.Second
 	err = erm.ExecuteRetry(cancelCtx, errorCtx)
 	if err != context.Canceled {
@@ -344,7 +344,7 @@ func TestErrorRecoveryManager_ClassifyError_SyscallErrors(t *testing.T) {
 	for _, tc := range testCases {
 		mockErr := &mockSyscallError{errno: tc.errno}
 		errorCtx := erm.ClassifyError(mockErr, "test", "endpoint", "group", 1)
-		
+
 		if errorCtx.ErrorType != tc.expected {
 			t.Errorf("For syscall error %v, expected %v, got %v", tc.errno, tc.expected, errorCtx.ErrorType)
 		}

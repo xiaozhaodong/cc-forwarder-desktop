@@ -72,7 +72,7 @@ func TestStreamProcessor_ProcessStream_SimpleData(t *testing.T) {
 	// 准备测试数据
 	testData := "data: test line 1\ndata: test line 2\n"
 	resp := mockResponse(testData, 200)
-	
+
 	// 创建处理器
 	tokenParser := NewTokenParser()
 	writer := &mockResponseWriter{}
@@ -80,12 +80,12 @@ func TestStreamProcessor_ProcessStream_SimpleData(t *testing.T) {
 
 	// 执行流处理
 	_, err := processor.ProcessStream(context.Background(), resp)
-	
+
 	// 验证结果
 	if err != nil {
 		t.Errorf("ProcessStream failed: %v", err)
 	}
-	
+
 	// 验证数据被写入
 	output := writer.buffer.String()
 	if !strings.Contains(output, "test line 1") {
@@ -94,12 +94,12 @@ func TestStreamProcessor_ProcessStream_SimpleData(t *testing.T) {
 	if !strings.Contains(output, "test line 2") {
 		t.Error("Output should contain 'test line 2'")
 	}
-	
+
 	// 验证Flush被调用
 	if writer.flushed == 0 {
 		t.Error("Flush should have been called")
 	}
-	
+
 	// 验证字节数统计
 	if processor.bytesProcessed == 0 {
 		t.Error("BytesProcessed should be greater than 0")
@@ -111,13 +111,13 @@ func TestStreamProcessor_GetProcessingStats(t *testing.T) {
 	tokenParser := NewTokenParser()
 	writer := &mockResponseWriter{}
 	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-stats", "test-endpoint")
-	
+
 	// 设置一些处理统计
 	processor.bytesProcessed = 2048
-	
+
 	// 获取统计信息
 	stats := processor.GetProcessingStats()
-	
+
 	// 验证统计信息
 	if stats["request_id"] != "test-stats" {
 		t.Error("Request ID not in stats")
@@ -135,14 +135,14 @@ func TestStreamProcessor_Reset(t *testing.T) {
 	tokenParser := NewTokenParser()
 	writer := &mockResponseWriter{}
 	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-reset", "endpoint")
-	
+
 	// 设置一些状态
 	processor.bytesProcessed = 1024
 	processor.parseErrors = append(processor.parseErrors, io.EOF)
-	
+
 	// 重置处理器
 	processor.Reset()
-	
+
 	// 验证状态被重置
 	if processor.bytesProcessed != 0 {
 		t.Error("Bytes processed not reset")
@@ -156,13 +156,13 @@ func TestStreamProcessor_IsNetworkError(t *testing.T) {
 	processor := &StreamProcessor{}
 	// 创建错误恢复管理器用于测试
 	processor.errorRecovery = NewErrorRecoveryManager(nil)
-	
+
 	testCases := []struct {
 		err      error
 		expected bool
 	}{
 		{nil, false},
-		{io.ErrUnexpectedEOF, true}, // This is now classified as a network error
+		{io.ErrUnexpectedEOF, false},
 		{&mockNetError{"connection reset"}, true},
 		{&mockNetError{"connection refused"}, true},
 		{&mockNetError{"timeout"}, false}, // This is now classified as a timeout error, not network
@@ -171,7 +171,7 @@ func TestStreamProcessor_IsNetworkError(t *testing.T) {
 		{&mockNetError{"broken pipe"}, true},
 		{&mockNetError{"unknown error"}, false},
 	}
-	
+
 	for _, tc := range testCases {
 		result := processor.errorRecovery.isNetworkError(tc.err)
 		if result != tc.expected {
