@@ -23,14 +23,14 @@ var schemaFS embed.FS
 
 // UsageStatsDetailed 详细的使用统计
 type UsageStatsDetailed struct {
-	TotalRequests    int64                      `json:"total_requests"`
-	SuccessRequests  int64                      `json:"success_requests"`
-	ErrorRequests    int64                      `json:"error_requests"`
-	TotalTokens      int64                      `json:"total_tokens"`
-	TotalCost        float64                    `json:"total_cost"`
-	ModelStats       map[string]ModelStat       `json:"model_stats"`
-	EndpointStats    map[string]EndpointStat    `json:"endpoint_stats"`
-	GroupStats       map[string]GroupStat       `json:"group_stats"`
+	TotalRequests   int64                   `json:"total_requests"`
+	SuccessRequests int64                   `json:"success_requests"`
+	ErrorRequests   int64                   `json:"error_requests"`
+	TotalTokens     int64                   `json:"total_tokens"`
+	TotalCost       float64                 `json:"total_cost"`
+	ModelStats      map[string]ModelStat    `json:"model_stats"`
+	EndpointStats   map[string]EndpointStat `json:"endpoint_stats"`
+	GroupStats      map[string]GroupStat    `json:"group_stats"`
 }
 
 // ModelStat 模型统计
@@ -53,7 +53,7 @@ type GroupStat struct {
 
 // RequestEvent 表示请求事件
 type RequestEvent struct {
-	Type      string      `json:"type"`      // "start", "flexible_update", "success", "final_failure", "complete", "failed_request_tokens", "token_recovery"
+	Type      string      `json:"type"` // "start", "flexible_update", "success", "final_failure", "complete", "failed_request_tokens", "token_recovery"
 	RequestID string      `json:"request_id"`
 	Timestamp time.Time   `json:"timestamp"`
 	Data      interface{} `json:"data"` // 根据Type不同而变化
@@ -70,12 +70,12 @@ type RequestStartData struct {
 
 // RequestUpdateData 请求更新事件数据
 type RequestUpdateData struct {
-	Channel       string `json:"channel"`
-	EndpointName  string `json:"endpoint_name"`
-	GroupName     string `json:"group_name"`
-	Status        string `json:"status"`
-	RetryCount    int    `json:"retry_count"`
-	HTTPStatus    int    `json:"http_status"`
+	Channel      string `json:"channel"`
+	EndpointName string `json:"endpoint_name"`
+	GroupName    string `json:"group_name"`
+	Status       string `json:"status"`
+	RetryCount   int    `json:"retry_count"`
+	HTTPStatus   int    `json:"http_status"`
 	// 🚀 [状态机重构] Phase 2: 新增失败原因和取消原因字段
 	FailureReason string `json:"failure_reason,omitempty"`
 	CancelReason  string `json:"cancel_reason,omitempty"`
@@ -106,11 +106,11 @@ type TokenUsage struct {
 
 // ModelPricing 模型定价配置
 type ModelPricing struct {
-	Input           float64 `yaml:"input"`            // per 1M tokens
-	Output          float64 `yaml:"output"`           // per 1M tokens
-	CacheCreation   float64 `yaml:"cache_creation"`   // per 1M tokens (5分钟缓存创建，1.25x input)
+	Input           float64 `yaml:"input"`             // per 1M tokens
+	Output          float64 `yaml:"output"`            // per 1M tokens
+	CacheCreation   float64 `yaml:"cache_creation"`    // per 1M tokens (5分钟缓存创建，1.25x input)
 	CacheCreation1h float64 `yaml:"cache_creation_1h"` // per 1M tokens (1小时缓存创建，2x input)
-	CacheRead       float64 `yaml:"cache_read"`       // per 1M tokens (缓存读取)
+	CacheRead       float64 `yaml:"cache_read"`        // per 1M tokens (缓存读取)
 }
 
 // EndpointMultiplier 端点成本倍率（v5.0+ 支持端点级别的成本调整）
@@ -243,8 +243,8 @@ func CalculateCost(inputTokens, outputTokens, cacheCreationTokens, cacheReadToke
 
 	// 构建 TokenUsage，根据 use1hCache 决定放入哪个字段
 	usage := &TokenUsage{
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
+		InputTokens:     inputTokens,
+		OutputTokens:    outputTokens,
 		CacheReadTokens: cacheReadTokens,
 	}
 	if use1hCache {
@@ -259,33 +259,33 @@ func CalculateCost(inputTokens, outputTokens, cacheCreationTokens, cacheReadToke
 
 // Config 使用跟踪配置
 type Config struct {
-	Enabled         bool                     `yaml:"enabled"`
+	Enabled bool `yaml:"enabled"`
 
 	// 向后兼容：保留原有的 database_path 配置
-	DatabasePath    string                   `yaml:"database_path"`
+	DatabasePath string `yaml:"database_path"`
 
 	// 新增：数据库配置（优先级高于 DatabasePath）
-	Database        *config.DatabaseBackendConfig  `yaml:"database,omitempty"`
+	Database *config.DatabaseBackendConfig `yaml:"database,omitempty"`
 
-	BufferSize      int                      `yaml:"buffer_size"`
-	BatchSize       int                      `yaml:"batch_size"`
-	FlushInterval   time.Duration            `yaml:"flush_interval"`
-	MaxRetry        int                      `yaml:"max_retry"`
-	RetentionDays   int                      `yaml:"retention_days"`
-	CleanupInterval time.Duration            `yaml:"cleanup_interval"`
-	ModelPricing    map[string]ModelPricing  `yaml:"model_pricing"`
-	DefaultPricing  ModelPricing             `yaml:"default_pricing"`
+	BufferSize      int                     `yaml:"buffer_size"`
+	BatchSize       int                     `yaml:"batch_size"`
+	FlushInterval   time.Duration           `yaml:"flush_interval"`
+	MaxRetry        int                     `yaml:"max_retry"`
+	RetentionDays   int                     `yaml:"retention_days"`
+	CleanupInterval time.Duration           `yaml:"cleanup_interval"`
+	ModelPricing    map[string]ModelPricing `yaml:"model_pricing"`
+	DefaultPricing  ModelPricing            `yaml:"default_pricing"`
 
 	// 🔥 v4.1 新增：热池配置
-	HotPool         *HotPoolSettings         `yaml:"hot_pool,omitempty"`
+	HotPool *HotPoolSettings `yaml:"hot_pool,omitempty"`
 }
 
 // HotPoolSettings 热池配置
 type HotPoolSettings struct {
-	Enabled          bool          `yaml:"enabled"`           // 是否启用热池模式（默认true）
-	MaxAge           time.Duration `yaml:"max_age"`           // 最大存活时间（默认30分钟）
-	MaxSize          int           `yaml:"max_size"`          // 最大容量（默认10000）
-	CleanupInterval  time.Duration `yaml:"cleanup_interval"`  // 清理间隔（默认1分钟）
+	Enabled          bool          `yaml:"enabled"`            // 是否启用热池模式（默认true）
+	MaxAge           time.Duration `yaml:"max_age"`            // 最大存活时间（默认30分钟）
+	MaxSize          int           `yaml:"max_size"`           // 最大容量（默认10000）
+	CleanupInterval  time.Duration `yaml:"cleanup_interval"`   // 清理间隔（默认1分钟）
 	ArchiveOnCleanup bool          `yaml:"archive_on_cleanup"` // 清理时是否归档（默认true）
 }
 
@@ -295,7 +295,7 @@ type WriteRequest struct {
 	Args      []interface{}
 	Response  chan error
 	Context   context.Context
-	EventType string  // 用于调试和监控
+	EventType string // 用于调试和监控
 }
 
 // UpdateOptions 统一的请求更新选项
@@ -319,7 +319,7 @@ type UsageTracker struct {
 	db           *sql.DB
 	eventChan    chan RequestEvent
 	config       *Config
-	pricing      map[string]ModelPricing      // 模型定价缓存
+	pricing      map[string]ModelPricing       // 模型定价缓存
 	endpointMu   map[string]EndpointMultiplier // 端点倍率缓存
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -328,10 +328,10 @@ type UsageTracker struct {
 	errorHandler *ErrorHandler
 
 	// 时区支持
-	location     *time.Location  // 配置的时区
+	location *time.Location // 配置的时区
 
 	// 新增：数据库适配器
-	adapter    DatabaseAdapter   // 数据库适配器接口
+	adapter DatabaseAdapter // 数据库适配器接口
 
 	// 新增：读写分离组件（从适配器获取）
 	readDB     *sql.DB           // 读连接池 (多连接)
@@ -366,7 +366,7 @@ func NewUsageTracker(config *Config, globalTimezone ...string) (*UsageTracker, e
 		config.MaxRetry = 3
 	}
 	if config.CleanupInterval <= 0 {
-		config.CleanupInterval = 24 * time.Hour  // 默认24小时清理一次
+		config.CleanupInterval = 24 * time.Hour // 默认24小时清理一次
 	}
 
 	// 构建数据库配置
@@ -415,7 +415,7 @@ func NewUsageTracker(config *Config, globalTimezone ...string) (*UsageTracker, e
 
 	ut := &UsageTracker{
 		// 原有字段（兼容性）
-		db:        db,        // 兼容性：指向readDB
+		db:        db, // 兼容性：指向readDB
 		eventChan: make(chan RequestEvent, config.BufferSize),
 		config:    config,
 		pricing:   config.ModelPricing,
@@ -423,7 +423,7 @@ func NewUsageTracker(config *Config, globalTimezone ...string) (*UsageTracker, e
 		cancel:    cancel,
 
 		// 时区支持
-		location:    location,
+		location: location,
 
 		// 新增：数据库适配器
 		adapter: adapter,
@@ -445,6 +445,7 @@ func NewUsageTracker(config *Config, globalTimezone ...string) (*UsageTracker, e
 	}
 
 	// 启动写操作处理器
+	ut.writeWg.Add(1)
 	go ut.processWriteQueue()
 
 	// 启动异步事件处理器
@@ -644,7 +645,7 @@ func (ut *UsageTracker) Close() error {
 	ut.mu.RUnlock()
 
 	slog.Info("Shutting down usage tracker...")
-	
+
 	// 取消上下文（不需要持有锁）
 	ut.cancel()
 
@@ -655,7 +656,7 @@ func (ut *UsageTracker) Close() error {
 	// 现在可以安全地持有写锁进行清理
 	ut.mu.Lock()
 	defer ut.mu.Unlock()
-	
+
 	ut.cancel = nil // 标记为已关闭
 
 	// 关闭事件通道
@@ -663,7 +664,7 @@ func (ut *UsageTracker) Close() error {
 		close(ut.eventChan)
 		ut.eventChan = nil
 	}
-	
+
 	// 关闭写操作队列
 	if ut.writeQueue != nil {
 		close(ut.writeQueue)
@@ -994,8 +995,8 @@ func (ut *UsageTracker) recordRequestFinalFailureLegacy(requestID, modelName, st
 		RequestID: requestID,
 		Timestamp: ut.now(),
 		Data: map[string]interface{}{
-			"status":                   status,    // "failed" or "cancelled"
-			"reason":                   reason,    // failure_reason or cancel_reason
+			"status":                   status, // "failed" or "cancelled"
+			"reason":                   reason, // failure_reason or cancel_reason
 			"error_detail":             errorDetail,
 			"duration":                 duration,
 			"http_status":              httpStatus, // HTTP状态码
@@ -1223,35 +1224,35 @@ func (ut *UsageTracker) HealthCheck(ctx context.Context) error {
 	if ut.config == nil || !ut.config.Enabled {
 		return nil // 如果未启用，认为是健康的
 	}
-	
+
 	if ut.readDB == nil {
 		return fmt.Errorf("read database not initialized")
 	}
-	
+
 	// 测试读数据库连接
 	if err := ut.readDB.PingContext(ctx); err != nil {
 		return fmt.Errorf("read database ping failed: %w", err)
 	}
-	
+
 	// 测试写数据库连接
 	if ut.writeDB != nil {
 		if err := ut.writeDB.PingContext(ctx); err != nil {
 			return fmt.Errorf("write database ping failed: %w", err)
 		}
 	}
-	
+
 	// 测试基本查询（使用读连接）
 	var count int
 	err := ut.readDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table'").Scan(&count)
 	if err != nil {
 		return fmt.Errorf("database query test failed: %w", err)
 	}
-	
+
 	// 检查表是否存在
 	if count < 2 { // 至少应该有 request_logs 和 usage_summary 两个表
 		return fmt.Errorf("database schema incomplete: expected at least 2 tables, found %d", count)
 	}
-	
+
 	// 检查事件处理通道是否正常
 	select {
 	case <-ut.ctx.Done():
@@ -1259,7 +1260,7 @@ func (ut *UsageTracker) HealthCheck(ctx context.Context) error {
 	default:
 		// 上下文正常
 	}
-	
+
 	// 检查事件通道容量
 	if ut.eventChan != nil {
 		channelLoad := float64(len(ut.eventChan)) / float64(cap(ut.eventChan)) * 100
@@ -1267,7 +1268,7 @@ func (ut *UsageTracker) HealthCheck(ctx context.Context) error {
 			return fmt.Errorf("event channel overloaded: %.1f%% capacity used", channelLoad)
 		}
 	}
-	
+
 	// 检查写队列容量
 	if ut.writeQueue != nil {
 		writeQueueLoad := float64(len(ut.writeQueue)) / float64(cap(ut.writeQueue)) * 100
@@ -1275,7 +1276,7 @@ func (ut *UsageTracker) HealthCheck(ctx context.Context) error {
 			return fmt.Errorf("write queue overloaded: %.1f%% capacity used", writeQueueLoad)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -1284,7 +1285,7 @@ func (ut *UsageTracker) ForceFlush() error {
 	if ut.config == nil || !ut.config.Enabled {
 		return nil
 	}
-	
+
 	// 尝试发送一个特殊事件来触发批处理
 	flushEvent := RequestEvent{
 		Type:      "flush",
@@ -1292,7 +1293,7 @@ func (ut *UsageTracker) ForceFlush() error {
 		Timestamp: ut.now(),
 		Data:      nil,
 	}
-	
+
 	select {
 	case ut.eventChan <- flushEvent:
 		slog.Info("Force flush event sent")
@@ -1306,7 +1307,7 @@ func (ut *UsageTracker) ForceFlush() error {
 func (ut *UsageTracker) GetPricing(modelName string) ModelPricing {
 	ut.mu.RLock()
 	defer ut.mu.RUnlock()
-	
+
 	if pricing, exists := ut.pricing[modelName]; exists {
 		return pricing
 	}
@@ -1317,12 +1318,12 @@ func (ut *UsageTracker) GetPricing(modelName string) ModelPricing {
 func (ut *UsageTracker) GetConfiguredModels() []string {
 	ut.mu.RLock()
 	defer ut.mu.RUnlock()
-	
+
 	models := make([]string, 0, len(ut.pricing))
 	for modelName := range ut.pricing {
 		models = append(models, modelName)
 	}
-	
+
 	return models
 }
 
@@ -1359,12 +1360,12 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 	query := `SELECT 
 		COUNT(*) as total_requests,
 		SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_requests,
-		SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_requests,
+		SUM(CASE WHEN status IN ('error', 'failed') THEN 1 ELSE 0 END) as error_requests,
 		SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) as total_tokens,
 		SUM(total_cost_usd) as total_cost
 		FROM request_logs 
 		WHERE start_time >= ? AND start_time <= ?`
-	
+
 	var stats UsageStatsDetailed
 	err := ut.readDB.QueryRowContext(ctx, query, startTime, endTime).Scan(
 		&stats.TotalRequests,
@@ -1376,19 +1377,19 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 	if err != nil {
 		return nil, fmt.Errorf("failed to query detailed usage stats: %w", err)
 	}
-	
+
 	// 获取模型统计（使用读连接）
 	modelQuery := `SELECT model_name, COUNT(*), SUM(total_cost_usd)
 		FROM request_logs 
 		WHERE start_time >= ? AND start_time <= ? AND model_name IS NOT NULL AND model_name != ''
 		GROUP BY model_name`
-	
+
 	rows, err := ut.readDB.QueryContext(ctx, modelQuery, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query model stats: %w", err)
 	}
 	defer rows.Close()
-	
+
 	stats.ModelStats = make(map[string]ModelStat)
 	for rows.Next() {
 		var modelName string
@@ -1402,19 +1403,19 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 			TotalCost:    cost,
 		}
 	}
-	
+
 	// 获取端点统计（使用读连接）
 	endpointQuery := `SELECT endpoint_name, COUNT(*), SUM(total_cost_usd)
 		FROM request_logs 
 		WHERE start_time >= ? AND start_time <= ? AND endpoint_name IS NOT NULL AND endpoint_name != ''
 		GROUP BY endpoint_name`
-	
+
 	rows2, err := ut.readDB.QueryContext(ctx, endpointQuery, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query endpoint stats: %w", err)
 	}
 	defer rows2.Close()
-	
+
 	stats.EndpointStats = make(map[string]EndpointStat)
 	for rows2.Next() {
 		var endpointName string
@@ -1428,19 +1429,19 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 			TotalCost:    cost,
 		}
 	}
-	
+
 	// 获取组统计（使用读连接）
 	groupQuery := `SELECT group_name, COUNT(*), SUM(total_cost_usd)
 		FROM request_logs 
 		WHERE start_time >= ? AND start_time <= ? AND group_name IS NOT NULL AND group_name != ''
 		GROUP BY group_name`
-	
+
 	rows3, err := ut.readDB.QueryContext(ctx, groupQuery, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query group stats: %w", err)
 	}
 	defer rows3.Close()
-	
+
 	stats.GroupStats = make(map[string]GroupStat)
 	for rows3.Next() {
 		var groupName string
@@ -1454,7 +1455,7 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 			TotalCost:    cost,
 		}
 	}
-	
+
 	return &stats, nil
 }
 
@@ -1464,27 +1465,27 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 	if err != nil {
 		return nil, fmt.Errorf("failed to get request logs for CSV export: %w", err)
 	}
-	
+
 	// CSV header
 	csv := "request_id,client_ip,user_agent,method,path,start_time,end_time,duration_ms,endpoint_name,group_name,model_name,status,http_status_code,retry_count,input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens,input_cost_usd,output_cost_usd,cache_creation_cost_usd,cache_read_cost_usd,total_cost_usd,created_at,updated_at\n"
-	
+
 	// CSV rows
 	for _, log := range logs {
 		endTime := ""
 		if log.EndTime != nil {
 			endTime = log.EndTime.Format(time.RFC3339)
 		}
-		
+
 		durationMs := ""
 		if log.DurationMs != nil {
 			durationMs = fmt.Sprintf("%d", *log.DurationMs)
 		}
-		
+
 		httpStatus := ""
 		if log.HTTPStatusCode != nil {
 			httpStatus = fmt.Sprintf("%d", *log.HTTPStatusCode)
 		}
-		
+
 		csv += fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%s,%s\n",
 			log.RequestID, log.ClientIP, log.UserAgent, log.Method, log.Path,
 			log.StartTime.Format(time.RFC3339), endTime, durationMs,
@@ -1495,7 +1496,7 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 			log.CreatedAt.Format(time.RFC3339), log.UpdatedAt.Format(time.RFC3339),
 		)
 	}
-	
+
 	return []byte(csv), nil
 }
 
@@ -1505,27 +1506,34 @@ func (ut *UsageTracker) ExportToJSON(ctx context.Context, startTime, endTime tim
 	if err != nil {
 		return nil, fmt.Errorf("failed to get request logs for JSON export: %w", err)
 	}
-	
+
 	// 使用标准库的json包序列化
 	jsonBytes, err := json.Marshal(logs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal logs to JSON: %w", err)
 	}
-	
+
 	return jsonBytes, nil
 }
 
 // processWriteQueue 启动写操作队列处理器（简化版，确保稳定性）
 func (ut *UsageTracker) processWriteQueue() {
-	ut.writeWg.Add(1)
 	defer ut.writeWg.Done()
 	slog.Debug("Write processor started")
 
 	for {
 		select {
-		case writeReq := <-ut.writeQueue:
+		case writeReq, ok := <-ut.writeQueue:
+			if !ok {
+				slog.Debug("Write queue closed, write processor stopped")
+				return
+			}
 			err := ut.executeWriteSimple(writeReq)
-			writeReq.Response <- err
+			select {
+			case writeReq.Response <- err:
+			case <-ut.ctx.Done():
+				return
+			}
 
 		case <-ut.ctx.Done():
 			slog.Debug("Write processor stopped")
@@ -1538,23 +1546,23 @@ func (ut *UsageTracker) processWriteQueue() {
 func (ut *UsageTracker) executeWriteSimple(req WriteRequest) error {
 	ut.writeMu.Lock()
 	defer ut.writeMu.Unlock()
-	
+
 	ctx, cancel := context.WithTimeout(req.Context, 30*time.Second)
 	defer cancel()
-	
+
 	// 直接执行，不使用事务（对于简单INSERT/UPDATE，不一定需要事务）
 	if req.EventType == "vacuum" {
 		// VACUUM不能在事务中执行
 		_, err := ut.writeDB.ExecContext(ctx, req.Query, req.Args...)
 		return err
 	}
-	
+
 	// 其他操作使用短事务
 	tx, err := ut.writeDB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	
+
 	committed := false
 	defer func() {
 		if !committed {
@@ -1563,17 +1571,17 @@ func (ut *UsageTracker) executeWriteSimple(req WriteRequest) error {
 			}
 		}
 	}()
-	
+
 	_, err = tx.ExecContext(ctx, req.Query, req.Args...)
 	if err != nil {
 		return fmt.Errorf("failed to execute query: %w", err)
 	}
-	
+
 	err = tx.Commit()
 	if err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
-	
+
 	committed = true
 	return nil
 }
@@ -1582,10 +1590,10 @@ func (ut *UsageTracker) executeWriteSimple(req WriteRequest) error {
 func (ut *UsageTracker) executeWrite(req WriteRequest) error {
 	ut.writeMu.Lock()
 	defer ut.writeMu.Unlock()
-	
+
 	ctx, cancel := context.WithTimeout(req.Context, 60*time.Second)
 	defer cancel()
-	
+
 	// 安全的事务处理
 	return ut.executeWriteTransaction(ctx, req)
 }
@@ -1596,7 +1604,7 @@ func (ut *UsageTracker) executeWriteTransaction(ctx context.Context, req WriteRe
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	
+
 	committed := false
 	defer func() {
 		if !committed {
@@ -1605,18 +1613,18 @@ func (ut *UsageTracker) executeWriteTransaction(ctx context.Context, req WriteRe
 			}
 		}
 	}()
-	
+
 	_, err = tx.ExecContext(ctx, req.Query, req.Args...)
 	if err != nil {
 		return fmt.Errorf("failed to execute query: %w", err)
 	}
-	
+
 	err = tx.Commit()
 	if err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
-	
-	committed = true  // 标记已提交，避免重复Rollback
+
+	committed = true // 标记已提交，避免重复Rollback
 	return nil
 }
 

@@ -89,7 +89,7 @@ func (s *SQLiteAdapter) Open() error {
 	}
 
 	// 设置连接池参数（SQLite建议少量连接）
-	db.SetMaxOpenConns(1)  // SQLite写操作需要单一连接
+	db.SetMaxOpenConns(1) // SQLite写操作需要单一连接
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 
@@ -264,11 +264,45 @@ func (s *SQLiteAdapter) BuildInsertOrReplaceQuery(table string, columns []string
 	// 构建INSERT部分
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", table, columnsStr, valuesStr)
 
+	// 根据表结构推断冲突键
+	containsColumn := func(name string) bool {
+		for _, col := range columns {
+			if col == name {
+				return true
+			}
+		}
+		return false
+	}
+
+	conflictColumns := make([]string, 0)
+	switch table {
+	case "request_logs":
+		if containsColumn("request_id") {
+			conflictColumns = append(conflictColumns, "request_id")
+		}
+	case "usage_summary":
+		if containsColumn("date") && containsColumn("model_name") &&
+			containsColumn("endpoint_name") && containsColumn("group_name") {
+			conflictColumns = append(conflictColumns, "date", "model_name", "endpoint_name", "group_name")
+		}
+	default:
+		if containsColumn("request_id") {
+			conflictColumns = append(conflictColumns, "request_id")
+		}
+	}
+
 	// 构建ON CONFLICT DO UPDATE部分，对start_time字段进行特殊处理
 	// 对于request_logs表，主键冲突时更新提供的字段（除了request_id主键）
 	var updatePairs []string
 	for _, col := range columns {
-		if col != "request_id" { // 跳过主键字段
+		skipInUpdate := false
+		for _, conflictCol := range conflictColumns {
+			if col == conflictCol {
+				skipInUpdate = true
+				break
+			}
+		}
+		if !skipInUpdate { // 跳过冲突键字段
 			if col == "start_time" {
 				// 对start_time使用COALESCE，只在原值为NULL时才更新
 				updatePairs = append(updatePairs, fmt.Sprintf("%s = COALESCE(request_logs.%s, EXCLUDED.%s)", col, col, col))
@@ -278,10 +312,10 @@ func (s *SQLiteAdapter) BuildInsertOrReplaceQuery(table string, columns []string
 		}
 	}
 
-	if len(updatePairs) > 0 {
-		query += " ON CONFLICT(request_id) DO UPDATE SET " + strings.Join(updatePairs, ", ")
+	if len(updatePairs) > 0 && len(conflictColumns) > 0 {
+		query += " ON CONFLICT(" + strings.Join(conflictColumns, ", ") + ") DO UPDATE SET " + strings.Join(updatePairs, ", ")
 	} else {
-		// 如果只有request_id字段，则使用IGNORE避免重复插入
+		// 如果没有可更新字段或没有冲突键，则使用IGNORE避免重复插入
 		query = fmt.Sprintf("INSERT OR IGNORE INTO %s (%s) VALUES (%s)", table, columnsStr, valuesStr)
 	}
 

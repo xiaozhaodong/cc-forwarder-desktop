@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -794,24 +795,68 @@ func generateTestRequestID(suffix string) string {
 
 // getBillingRecordsFromDB 从数据库获取计费记录
 func getBillingRecordsFromDB(t *testing.T, tracker *tracking.UsageTracker, requestID string) []BillingRecord {
-	// 等待异步操作完成
-	time.Sleep(150 * time.Millisecond)
+	db := tracker.GetReadDB()
+	require.NotNil(t, db, "read DB 不应为空")
 
-	// 实际实现中需要直接查询tracker的数据库
-	// 这里返回模拟的查询结果
+	deadline := time.Now().Add(2 * time.Second)
+	query := `SELECT request_id,
+		COALESCE(status, '') as status,
+		COALESCE(input_tokens, 0) as input_tokens,
+		COALESCE(output_tokens, 0) as output_tokens,
+		COALESCE(total_cost_usd, 0) as total_cost_usd
+		FROM request_logs
+		WHERE request_id = ?
+		ORDER BY id ASC`
 
-	// 等待一下确保数据已写入
-	time.Sleep(100 * time.Millisecond)
+	for {
+		rows, err := db.Query(query, requestID)
+		require.NoError(t, err)
 
-	// 这里返回模拟数据，实际实现需要真实查询数据库
-	return []BillingRecord{
-		{
-			RequestID:    requestID,
-			Status:       "error",
-			InputTokens:  100,
-			OutputTokens: 50,
-			TotalCost:    0.001,
-		},
+		records := make([]BillingRecord, 0)
+		for rows.Next() {
+			var record BillingRecord
+			err = rows.Scan(
+				&record.RequestID,
+				&record.Status,
+				&record.InputTokens,
+				&record.OutputTokens,
+				&record.TotalCost,
+			)
+			require.NoError(t, err)
+			records = append(records, record)
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
+
+		if len(records) > 0 {
+			return records
+		}
+
+		// 热池兜底：失败请求可能尚未归档到数据库
+		details, _, err := tracker.QueryRequestDetailsWithHotPool(context.Background(), &tracking.QueryOptions{
+			Limit:  1000,
+			Offset: 0,
+		})
+		require.NoError(t, err)
+		for _, detail := range details {
+			if detail.RequestID == requestID {
+				return []BillingRecord{
+					{
+						RequestID:    detail.RequestID,
+						Status:       detail.Status,
+						InputTokens:  detail.InputTokens,
+						OutputTokens: detail.OutputTokens,
+						TotalCost:    detail.TotalCostUSD,
+					},
+				}
+			}
+		}
+
+		if time.Now().After(deadline) {
+			return nil
+		}
+
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

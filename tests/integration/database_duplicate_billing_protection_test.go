@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -771,32 +772,57 @@ func generateDatabaseTestRequestID(suffix string) string {
 }
 
 func queryBillingRecordsDirectly(t *testing.T, tracker *tracking.UsageTracker, requestID string) []DatabaseBillingRecord {
-	// 等待异步操作完成
-	time.Sleep(150 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		details, _, err := tracker.QueryRequestDetailsWithHotPool(context.Background(), &tracking.QueryOptions{
+			Limit:  1000,
+			Offset: 0,
+		})
+		require.NoError(t, err)
 
-	// 实际实现中需要直接查询tracker的数据库
-	// 这里返回模拟的查询结果
+		records := make([]DatabaseBillingRecord, 0)
+		for _, detail := range details {
+			if detail.RequestID != requestID {
+				continue
+			}
+			duration := int64(0)
+			if detail.DurationMs != nil {
+				duration = *detail.DurationMs
+			}
+			records = append(records, DatabaseBillingRecord{
+				RequestID:           detail.RequestID,
+				Status:              detail.Status,
+				ModelName:           detail.ModelName,
+				InputTokens:         detail.InputTokens,
+				OutputTokens:        detail.OutputTokens,
+				CacheCreationTokens: detail.CacheCreationTokens,
+				CacheReadTokens:     detail.CacheReadTokens,
+				InputCost:           detail.InputCostUSD,
+				OutputCost:          detail.OutputCostUSD,
+				CacheCreationCost:   detail.CacheCreationCostUSD,
+				CacheReadCost:       detail.CacheReadCostUSD,
+				TotalCost:           detail.TotalCostUSD,
+				Endpoint:            detail.EndpointName,
+				EndpointGroup:       detail.GroupName,
+				ClientIP:            detail.ClientIP,
+				UserAgent:           detail.UserAgent,
+				Method:              detail.Method,
+				Path:                detail.Path,
+				IsStreaming:         detail.IsStreaming,
+				DurationMs:          duration,
+				CreatedAt:           detail.CreatedAt,
+				UpdatedAt:           detail.UpdatedAt,
+			})
+		}
 
-	// 模拟数据库查询结果
-	return []DatabaseBillingRecord{
-		{
-			RequestID:           requestID,
-			Status:              "error",
-			ModelName:           "claude-3-5-haiku-20241022",
-			InputTokens:         100,
-			OutputTokens:        50,
-			CacheCreationTokens: 0,
-			CacheReadTokens:     0,
-			InputCost:           0.0003,
-			OutputCost:          0.00075,
-			CacheCreationCost:   0.0,
-			CacheReadCost:       0.0,
-			TotalCost:           0.00105,
-			Endpoint:            "test-endpoint",
-			EndpointGroup:       "test-group",
-			CreatedAt:           time.Now(),
-			UpdatedAt:           time.Now(),
-		},
+		if len(records) > 0 {
+			return records
+		}
+
+		if time.Now().After(deadline) {
+			return nil
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

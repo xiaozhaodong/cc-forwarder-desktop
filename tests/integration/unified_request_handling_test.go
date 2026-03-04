@@ -73,13 +73,13 @@ func TestRetryManager_ErrorClassificationDrivenRetry(t *testing.T) {
 			description:   "网络错误通常是临时性的，应该重试",
 		},
 		{
-			name:          "超时错误应该重试",
+			name:          "超时错误不应该重试",
 			errorType:     handlers.ErrorTypeTimeout,
 			originalError: fmt.Errorf("context deadline exceeded"),
 			attempt:       1,
-			expectRetry:   true,
-			expectDelay:   true,
-			description:   "超时错误可能是暂时负载过高，应该重试",
+			expectRetry:   false,
+			expectDelay:   false,
+			description:   "passthrough架构下超时可能已计费，不在请求内重试",
 		},
 		{
 			name:          "HTTP错误不应该重试",
@@ -118,13 +118,13 @@ func TestRetryManager_ErrorClassificationDrivenRetry(t *testing.T) {
 			description:   "限流错误应该重试，但需要更长的延迟",
 		},
 		{
-			name:          "流处理错误应该重试",
+			name:          "流处理错误不应该重试",
 			errorType:     handlers.ErrorTypeStream,
 			originalError: fmt.Errorf("stream parsing error"),
 			attempt:       1,
-			expectRetry:   true,
-			expectDelay:   true,
-			description:   "流处理错误可能是临时解析问题，应该重试",
+			expectRetry:   false,
+			expectDelay:   false,
+			description:   "流式响应可能已部分发送，不在请求内重试",
 		},
 		{
 			name:          "超过最大重试次数不应该重试",
@@ -602,7 +602,7 @@ func TestIntegrationErrorRecoveryFlow(t *testing.T) {
 	timeoutErr := fmt.Errorf("context deadline exceeded")
 	errorCtx2 := errorRecovery.ClassifyError(timeoutErr, requestID, endpointName, groupName, 2)
 
-	assert.Equal(t, proxy.ErrorTypeTimeout, errorCtx2.ErrorType)
+	assert.Equal(t, proxy.ErrorTypeResponseTimeout, errorCtx2.ErrorType)
 
 	// 第三次尝试 - 达到最大重试次数
 	shouldRetry3, delay3 := retryManager.ShouldRetry(&handlers.ErrorContext{

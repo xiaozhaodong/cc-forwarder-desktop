@@ -155,7 +155,12 @@ func (ut *UsageTracker) processBatch(events []RequestEvent) error {
 		// 通过队列发送写操作
 		select {
 		case ut.writeQueue <- writeReq:
-			err := <-writeReq.Response
+			var err error
+			select {
+			case err = <-writeReq.Response:
+			case <-ut.ctx.Done():
+				return ut.ctx.Err()
+			}
 			if err != nil {
 				slog.Error("Write operation failed",
 					"error", err,
@@ -620,8 +625,8 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			inputTokens,
 			outputTokens,
 			cacheCreationTokens,
-			cacheCreation5mTokens,  // 🔧 [修复] 2025-12-11
-			cacheCreation1hTokens,  // 🔧 [修复] 2025-12-11
+			cacheCreation5mTokens, // 🔧 [修复] 2025-12-11
+			cacheCreation1hTokens, // 🔧 [修复] 2025-12-11
 			cacheReadTokens,
 			event.RequestID,
 		}
@@ -654,8 +659,8 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			inputTokens,
 			outputTokens,
 			cacheCreationTokens,
-			cacheCreation5mTokens,  // 🔧 [修复] 2025-12-11
-			cacheCreation1hTokens,  // 🔧 [修复] 2025-12-11
+			cacheCreation5mTokens, // 🔧 [修复] 2025-12-11
+			cacheCreation1hTokens, // 🔧 [修复] 2025-12-11
 			cacheReadTokens,
 			event.RequestID,
 		}
@@ -1023,7 +1028,12 @@ func (ut *UsageTracker) cleanupOldRecords() error {
 
 	select {
 	case ut.writeQueue <- requestWriteReq:
-		err := <-requestWriteReq.Response
+		var err error
+		select {
+		case err = <-requestWriteReq.Response:
+		case <-ut.ctx.Done():
+			return ut.ctx.Err()
+		}
 		if err != nil {
 			return fmt.Errorf("failed to delete old request logs: %w", err)
 		}
@@ -1043,7 +1053,12 @@ func (ut *UsageTracker) cleanupOldRecords() error {
 
 	select {
 	case ut.writeQueue <- summaryWriteReq:
-		err := <-summaryWriteReq.Response
+		var err error
+		select {
+		case err = <-summaryWriteReq.Response:
+		case <-ut.ctx.Done():
+			return ut.ctx.Err()
+		}
 		if err != nil {
 			return fmt.Errorf("failed to delete old usage summary: %w", err)
 		}
@@ -1063,7 +1078,12 @@ func (ut *UsageTracker) cleanupOldRecords() error {
 
 		select {
 		case ut.writeQueue <- vacuumWriteReq:
-			err := <-vacuumWriteReq.Response
+			var err error
+			select {
+			case err = <-vacuumWriteReq.Response:
+			case <-ut.ctx.Done():
+				return ut.ctx.Err()
+			}
 			if err != nil {
 				slog.Warn("Failed to vacuum database after cleanup", "error", err)
 			}
@@ -1118,39 +1138,79 @@ func (ut *UsageTracker) updateUsageSummary() {
 		"created_at", "updated_at",
 	}
 
-	placeholders := make([]string, len(columns))
-	for i := range placeholders {
-		placeholders[i] = "?"
+	var query string
+	if ut.adapter.GetDatabaseType() == "sqlite" {
+		nowExpr := ut.adapter.BuildDateTimeNow()
+		query = fmt.Sprintf(`
+		INSERT INTO usage_summary (%s)
+		SELECT
+			substr(start_time, 1, 10) AS date,
+			COALESCE(model_name, '') AS model_name,
+			COALESCE(endpoint_name, '') AS endpoint_name,
+			COALESCE(group_name, '') AS group_name,
+			COUNT(*) AS request_count,
+			SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS success_count,
+			SUM(CASE WHEN status IN ('error', 'failed') THEN 1 ELSE 0 END) AS error_count,
+			SUM(input_tokens) AS total_input_tokens,
+			SUM(output_tokens) AS total_output_tokens,
+			SUM(cache_creation_tokens) AS total_cache_creation_tokens,
+			SUM(cache_read_tokens) AS total_cache_read_tokens,
+			SUM(total_cost_usd) AS total_cost_usd,
+			AVG(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE NULL END) AS avg_duration_ms,
+			%s AS created_at,
+			%s AS updated_at
+		FROM request_logs
+		WHERE start_time IS NOT NULL
+			AND length(start_time) >= 10
+			AND start_time >= ? AND start_time < ?
+		GROUP BY substr(start_time, 1, 10), COALESCE(model_name, ''), COALESCE(endpoint_name, ''), COALESCE(group_name, '')
+		ON CONFLICT(date, model_name, endpoint_name, group_name) DO UPDATE SET
+			request_count = EXCLUDED.request_count,
+			success_count = EXCLUDED.success_count,
+			error_count = EXCLUDED.error_count,
+			total_input_tokens = EXCLUDED.total_input_tokens,
+			total_output_tokens = EXCLUDED.total_output_tokens,
+			total_cache_creation_tokens = EXCLUDED.total_cache_creation_tokens,
+			total_cache_read_tokens = EXCLUDED.total_cache_read_tokens,
+			total_cost_usd = EXCLUDED.total_cost_usd,
+			avg_duration_ms = EXCLUDED.avg_duration_ms,
+			updated_at = %s
+		`, strings.Join(columns, ", "), nowExpr, nowExpr, nowExpr)
+	} else {
+		placeholders := make([]string, len(columns))
+		for i := range placeholders {
+			placeholders[i] = "?"
+		}
+
+		baseQuery := ut.adapter.BuildInsertOrReplaceQuery("usage_summary", columns, placeholders)
+
+		// 非SQLite分支沿用原有构建逻辑
+		selectQuery := fmt.Sprintf(`
+		SELECT
+			substr(start_time, 1, 10) as date,
+			COALESCE(model_name, '') as model_name,
+			COALESCE(endpoint_name, '') as endpoint_name,
+			COALESCE(group_name, '') as group_name,
+			COUNT(*) as request_count,
+			SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_count,
+			SUM(CASE WHEN status IN ('error', 'failed') THEN 1 ELSE 0 END) as error_count,
+			SUM(input_tokens) as total_input_tokens,
+			SUM(output_tokens) as total_output_tokens,
+			SUM(cache_creation_tokens) as total_cache_creation_tokens,
+			SUM(cache_read_tokens) as total_cache_read_tokens,
+			SUM(total_cost_usd) as total_cost_usd,
+			AVG(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE NULL END) as avg_duration_ms,
+			%s as created_at,
+			%s as updated_at
+		FROM request_logs
+		WHERE start_time IS NOT NULL
+			AND length(start_time) >= 10
+			AND start_time >= ? AND start_time < ?
+		GROUP BY substr(start_time, 1, 10), model_name, endpoint_name, group_name
+		`, ut.adapter.BuildDateTimeNow(), ut.adapter.BuildDateTimeNow())
+
+		query = strings.Replace(baseQuery, "VALUES ("+strings.Join(placeholders, ", ")+")", "("+selectQuery+")", 1)
 	}
-
-	baseQuery := ut.adapter.BuildInsertOrReplaceQuery("usage_summary", columns, placeholders)
-
-	// 构建SELECT子查询
-	selectQuery := fmt.Sprintf(`
-	SELECT
-		DATE(start_time) as date,
-		COALESCE(model_name, '') as model_name,
-		COALESCE(endpoint_name, '') as endpoint_name,
-		COALESCE(group_name, '') as group_name,
-		COUNT(*) as request_count,
-		SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_count,
-		SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count,
-		SUM(input_tokens) as total_input_tokens,
-		SUM(output_tokens) as total_output_tokens,
-		SUM(cache_creation_tokens) as total_cache_creation_tokens,
-		SUM(cache_read_tokens) as total_cache_read_tokens,
-		SUM(total_cost_usd) as total_cost_usd,
-		AVG(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE NULL END) as avg_duration_ms,
-		%s as created_at,
-		%s as updated_at
-	FROM request_logs
-	WHERE start_time >= ? AND start_time < ?
-		AND (model_name IS NOT NULL OR endpoint_name IS NOT NULL)
-	GROUP BY DATE(start_time), model_name, endpoint_name, group_name
-	`, ut.adapter.BuildDateTimeNow(), ut.adapter.BuildDateTimeNow())
-
-	// 拼接完整查询
-	query := strings.Replace(baseQuery, "VALUES ("+strings.Join(placeholders, ", ")+")", "("+selectQuery+")", 1)
 
 	summaryWriteReq := WriteRequest{
 		Query:     query,
@@ -1162,7 +1222,13 @@ func (ut *UsageTracker) updateUsageSummary() {
 
 	select {
 	case ut.writeQueue <- summaryWriteReq:
-		err := <-summaryWriteReq.Response
+		var err error
+		select {
+		case err = <-summaryWriteReq.Response:
+		case <-ut.ctx.Done():
+			slog.Debug("Usage summary update cancelled while waiting for write response")
+			return
+		}
 		if err != nil {
 			slog.Error("Failed to update usage summary", "error", err)
 		} else {

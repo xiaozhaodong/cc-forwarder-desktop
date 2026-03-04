@@ -175,7 +175,9 @@ func TestSQLiteDataPersistence(t *testing.T) {
 		assert.Equal(t, "primary-group", req.GroupName)
 		assert.Equal(t, "processing", req.Status)
 		assert.Equal(t, 1, req.RetryCount)
-		assert.Equal(t, 200, req.HTTPStatusCode)
+		if assert.NotNil(t, req.HTTPStatusCode) {
+			assert.Equal(t, 200, *req.HTTPStatusCode)
+		}
 
 		// Token相关字段应该还是空的
 		assert.Empty(t, req.ModelName)
@@ -250,7 +252,9 @@ func TestSQLiteDataPersistence(t *testing.T) {
 		assert.Equal(t, "test-endpoint-001", req.EndpointName, "更新事件的EndpointName不应该丢失")
 		assert.Equal(t, "primary-group", req.GroupName, "更新事件的GroupName不应该丢失")
 		assert.Equal(t, 1, req.RetryCount, "更新事件的RetryCount不应该丢失")
-		assert.Equal(t, 200, req.HTTPStatusCode, "更新事件的HTTPStatusCode不应该丢失")
+		if assert.NotNil(t, req.HTTPStatusCode, "更新事件的HTTPStatusCode不应该丢失") {
+			assert.Equal(t, 200, *req.HTTPStatusCode, "更新事件的HTTPStatusCode不应该丢失")
+		}
 
 		// ===== 完成事件数据应该存在 =====
 		assert.Equal(t, "claude-3-5-haiku-20241022", req.ModelName)
@@ -260,7 +264,9 @@ func TestSQLiteDataPersistence(t *testing.T) {
 		assert.Equal(t, int64(100), req.CacheReadTokens)
 		assert.Equal(t, "completed", req.Status)
 		assert.NotNil(t, req.EndTime)
-		assert.Greater(t, req.DurationMs, int64(2000)) // 至少2.5秒
+		if assert.NotNil(t, req.DurationMs) {
+			assert.Greater(t, *req.DurationMs, int64(2000)) // 至少2.5秒
+		}
 
 		// 验证成本计算
 		assert.Greater(t, req.TotalCostUSD, float64(0))

@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -720,25 +721,42 @@ func generateAdvancedTestRequestID(suffix string) string {
 }
 
 func getDetailedBillingRecords(t *testing.T, tracker *tracking.UsageTracker, requestID string) []DetailedBillingRecord {
-	// 等待异步处理完成
-	time.Sleep(150 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		details, _, err := tracker.QueryRequestDetailsWithHotPool(context.Background(), &tracking.QueryOptions{
+			Limit:  1000,
+			Offset: 0,
+		})
+		require.NoError(t, err)
 
-	// 实际实现中需要查询数据库
-	// 这里返回模拟数据
-	return []DetailedBillingRecord{
-		{
-			RequestID:           requestID,
-			Status:              "error",
-			InputTokens:         100,
-			OutputTokens:        50,
-			CacheCreationTokens: 0,
-			CacheReadTokens:     0,
-			InputCost:           0.0003,
-			OutputCost:          0.00075,
-			CacheCreationCost:   0.0,
-			CacheReadCost:       0.0,
-			TotalCost:           0.00105,
-		},
+		records := make([]DetailedBillingRecord, 0)
+		for _, detail := range details {
+			if detail.RequestID != requestID {
+				continue
+			}
+			records = append(records, DetailedBillingRecord{
+				RequestID:           detail.RequestID,
+				Status:              detail.Status,
+				InputTokens:         detail.InputTokens,
+				OutputTokens:        detail.OutputTokens,
+				CacheCreationTokens: detail.CacheCreationTokens,
+				CacheReadTokens:     detail.CacheReadTokens,
+				InputCost:           detail.InputCostUSD,
+				OutputCost:          detail.OutputCostUSD,
+				CacheCreationCost:   detail.CacheCreationCostUSD,
+				CacheReadCost:       detail.CacheReadCostUSD,
+				TotalCost:           detail.TotalCostUSD,
+			})
+		}
+
+		if len(records) > 0 {
+			return records
+		}
+
+		if time.Now().After(deadline) {
+			return nil
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
