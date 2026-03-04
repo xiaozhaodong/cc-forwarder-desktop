@@ -12,6 +12,8 @@ import (
 )
 
 func (m *Manager) GetHealthyEndpoints() []*Endpoint {
+	cfg := m.getConfigSnapshot()
+
 	// v5.0+: 使用快照机制
 	m.endpointsMu.RLock()
 	snapshot := make([]*Endpoint, len(m.endpoints))
@@ -32,8 +34,8 @@ func (m *Manager) GetHealthyEndpoints() []*Endpoint {
 		endpoint.mutex.RUnlock()
 
 		// 📊 [失败追踪] 检查是否达到失败阈值
-		if m.config.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(endpoint.Config.Name) {
-			action := m.config.FailureTracker.Action
+		if cfg.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(endpoint.Config.Name) {
+			action := cfg.FailureTracker.Action
 			switch action {
 			case "failover":
 				// 🔄 故障转移：跳过该端点，不清除记录
@@ -62,7 +64,7 @@ func (m *Manager) GetHealthyEndpoints() []*Endpoint {
 		return m.sortHealthyEndpoints(healthy, true)
 	}
 
-	if !m.config.Failover.Enabled {
+	if !cfg.Failover.Enabled {
 		return healthy // 故障转移未启用，返回空列表
 	}
 
@@ -84,6 +86,8 @@ func (m *Manager) GetHealthyEndpoints() []*Endpoint {
 // getFailoverEndpoints 获取故障转移端点（排除活跃端点）
 // 返回所有 failover_enabled=true 且健康且不在冷却中的非活跃端点
 func (m *Manager) getFailoverEndpoints(activeEndpoints, snapshot []*Endpoint) []*Endpoint {
+	cfg := m.getConfigSnapshot()
+
 	// 构建活跃端点名称集合
 	activeNames := make(map[string]bool, len(activeEndpoints))
 	for _, ep := range activeEndpoints {
@@ -108,7 +112,7 @@ func (m *Manager) getFailoverEndpoints(activeEndpoints, snapshot []*Endpoint) []
 		}
 
 		// 📊 [失败追踪] 检查是否达到失败阈值
-		if m.config.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(endpoint.Config.Name) {
+		if cfg.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(endpoint.Config.Name) {
 			slog.Debug(fmt.Sprintf("📊 [失败追踪] 故障转移端点 %s 达到失败阈值，跳过", endpoint.Config.Name))
 			continue
 		}
@@ -130,8 +134,10 @@ func (m *Manager) getFailoverEndpoints(activeEndpoints, snapshot []*Endpoint) []
 
 // sortHealthyEndpoints sorts healthy endpoints based on strategy with optional logging
 func (m *Manager) sortHealthyEndpoints(healthy []*Endpoint, showLogs bool) []*Endpoint {
+	cfg := m.getConfigSnapshot()
+
 	// Sort based on strategy
-	switch m.config.Strategy.Type {
+	switch cfg.Strategy.Type {
 	case "priority":
 		sort.Slice(healthy, func(i, j int) bool {
 			return healthy[i].Config.Priority < healthy[j].Config.Priority
@@ -149,13 +155,32 @@ func (m *Manager) sortHealthyEndpoints(healthy []*Endpoint, showLogs bool) []*En
 			}
 		}
 
-		sort.Slice(healthy, func(i, j int) bool {
-			healthy[i].mutex.RLock()
-			healthy[j].mutex.RLock()
-			defer healthy[i].mutex.RUnlock()
-			defer healthy[j].mutex.RUnlock()
-			return healthy[i].Status.ResponseTime < healthy[j].Status.ResponseTime
+		type endpointLatency struct {
+			endpoint     *Endpoint
+			responseTime time.Duration
+		}
+
+		latencies := make([]endpointLatency, 0, len(healthy))
+		for _, ep := range healthy {
+			ep.mutex.RLock()
+			responseTime := ep.Status.ResponseTime
+			ep.mutex.RUnlock()
+			latencies = append(latencies, endpointLatency{
+				endpoint:     ep,
+				responseTime: responseTime,
+			})
+		}
+
+		sort.SliceStable(latencies, func(i, j int) bool {
+			if latencies[i].responseTime == latencies[j].responseTime {
+				return latencies[i].endpoint.Config.Priority < latencies[j].endpoint.Config.Priority
+			}
+			return latencies[i].responseTime < latencies[j].responseTime
 		})
+
+		for i := range latencies {
+			healthy[i] = latencies[i].endpoint
+		}
 	}
 
 	return healthy
@@ -164,6 +189,8 @@ func (m *Manager) sortHealthyEndpoints(healthy []*Endpoint, showLogs bool) []*En
 // GetFastestEndpointsWithRealTimeTest returns endpoints from active groups sorted by real-time testing
 // v5.0 Desktop: 支持故障转移 - 活跃端点不健康时，返回其他 failover_enabled=true 的健康端点
 func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*Endpoint {
+	cfg := m.getConfigSnapshot()
+
 	// v5.0+: 使用快照机制
 	m.endpointsMu.RLock()
 	snapshot := make([]*Endpoint, len(m.endpoints))
@@ -178,8 +205,8 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*En
 
 	for _, endpoint := range activeEndpoints {
 		// 📊 [失败追踪] 检查是否达到失败阈值
-		if m.config.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(endpoint.Config.Name) {
-			action := m.config.FailureTracker.Action
+		if cfg.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(endpoint.Config.Name) {
+			action := cfg.FailureTracker.Action
 			if action == "failover" {
 				slog.Debug(fmt.Sprintf("📊 [失败追踪] 端点 %s 达到失败阈值，跳过", endpoint.Config.Name))
 				failedEndpoints = append(failedEndpoints, endpoint.Config.Name) // 记录失败端点
@@ -196,7 +223,7 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*En
 		}
 	}
 
-	if len(healthy) == 0 && m.config.Failover.Enabled {
+	if len(healthy) == 0 && cfg.Failover.Enabled {
 		slog.InfoContext(ctx, "🔄 [故障转移] 活跃端点不可用（失败追踪或冷却），尝试故障转移到其他端点")
 		healthy = m.getFailoverEndpoints(activeEndpoints, snapshot)
 
@@ -215,7 +242,7 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*En
 	}
 
 	// If not using fastest strategy or fast test disabled, apply sorting with logging
-	if m.config.Strategy.Type != "fastest" || !m.config.Strategy.FastTestEnabled {
+	if cfg.Strategy.Type != "fastest" || !cfg.Strategy.FastTestEnabled {
 		return m.sortHealthyEndpoints(healthy, true) // Show logs
 	}
 
@@ -223,7 +250,7 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*En
 	testResults, usedCache := m.fastTester.TestEndpointsParallel(ctx, healthy)
 
 	// Only show health check sorting if we're NOT using cache
-	if !usedCache && m.config.Strategy.Type == "fastest" && len(healthy) > 1 {
+	if !usedCache && cfg.Strategy.Type == "fastest" && len(healthy) > 1 {
 		slog.InfoContext(ctx, "📊 [Fastest Strategy] 基于健康检查的活跃组端点延迟排序:")
 		for _, ep := range healthy {
 			ep.mutex.RLock()
@@ -399,8 +426,10 @@ func (m *Manager) GetEndpointCount() int {
 // 当在端点选择阶段检测到失败追踪阈值时调用
 // 对失败端点设置冷却并停用，激活新故障转移端点
 func (m *Manager) executeSelectionFailover(failedEndpoints []string, newEndpointName string) {
+	cfg := m.getConfigSnapshot()
+
 	// 计算冷却时间
-	cooldownDuration := m.config.Failover.DefaultCooldown
+	cooldownDuration := cfg.Failover.DefaultCooldown
 	if cooldownDuration == 0 {
 		cooldownDuration = 10 * time.Minute // 默认 10 分钟
 	}

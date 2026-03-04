@@ -3,6 +3,7 @@ package endpoint
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 // MockEventBus 用于测试的模拟EventBus
 type MockEventBus struct {
+	mutex       sync.RWMutex
 	events      []events.Event
 	broadcaster events.SSEBroadcaster
 }
@@ -26,11 +28,15 @@ const (
 
 // Publish 实现EventBus接口
 func (m *MockEventBus) Publish(event events.Event) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 	m.events = append(m.events, event)
 }
 
 // SetSSEBroadcaster 实现EventBus接口
 func (m *MockEventBus) SetSSEBroadcaster(broadcaster events.SSEBroadcaster) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 	m.broadcaster = broadcaster
 }
 
@@ -47,6 +53,23 @@ func (m *MockEventBus) Stop() error {
 // GetStats 实现EventBus接口
 func (m *MockEventBus) GetStats() events.BusStats {
 	return events.BusStats{}
+}
+
+// EventsSnapshot returns a copy for concurrent-safe assertions.
+func (m *MockEventBus) EventsSnapshot() []events.Event {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	copied := make([]events.Event, len(m.events))
+	copy(copied, m.events)
+	return copied
+}
+
+// ClearEvents clears all recorded events in a concurrent-safe way.
+func (m *MockEventBus) ClearEvents() {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.events = m.events[:0]
 }
 
 func TestHealthCheckWithAPIEndpoint(t *testing.T) {
@@ -392,11 +415,12 @@ func TestGroupEventBusPublish(t *testing.T) {
 	manager.notifyWebGroupChange("group_manually_activated", "test-endpoint")
 
 	// 验证EventBus是否收到正确的事件
-	if len(mockEventBus.events) != 1 {
-		t.Fatalf("Expected 1 event, got %d", len(mockEventBus.events))
+	eventsSnapshot := mockEventBus.EventsSnapshot()
+	if len(eventsSnapshot) != 1 {
+		t.Fatalf("Expected 1 event, got %d", len(eventsSnapshot))
 	}
 
-	event := mockEventBus.events[0]
+	event := eventsSnapshot[0]
 
 	// 验证事件类型
 	if event.Type != "group_status_changed" {
@@ -547,13 +571,14 @@ func TestGroupEventBusIntegration(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// 验证是否发布了事件
-	if len(mockEventBus.events) != 1 {
-		t.Errorf("Expected 1 event after manual activation, got %d", len(mockEventBus.events))
+	eventsSnapshot := mockEventBus.EventsSnapshot()
+	if len(eventsSnapshot) != 1 {
+		t.Errorf("Expected 1 event after manual activation, got %d", len(eventsSnapshot))
 	}
 
 	// 验证激活事件
-	if len(mockEventBus.events) > 0 {
-		event := mockEventBus.events[0]
+	if len(eventsSnapshot) > 0 {
+		event := eventsSnapshot[0]
 		if event.Type != "group_status_changed" {
 			t.Errorf("Expected group_status_changed event, got %s", event.Type)
 		}
@@ -567,7 +592,7 @@ func TestGroupEventBusIntegration(t *testing.T) {
 	}
 
 	// 清空事件记录
-	mockEventBus.events = mockEventBus.events[:0]
+	mockEventBus.ClearEvents()
 
 	// 测试手动暂停组
 	err = manager.ManualPauseGroup("backup-endpoint", 5*time.Minute)
@@ -579,13 +604,14 @@ func TestGroupEventBusIntegration(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// 验证是否发布了暂停事件
-	if len(mockEventBus.events) != 1 {
-		t.Errorf("Expected 1 event after manual pause, got %d", len(mockEventBus.events))
+	eventsSnapshot = mockEventBus.EventsSnapshot()
+	if len(eventsSnapshot) != 1 {
+		t.Errorf("Expected 1 event after manual pause, got %d", len(eventsSnapshot))
 	}
 
 	// 验证暂停事件
-	if len(mockEventBus.events) > 0 {
-		event := mockEventBus.events[0]
+	if len(eventsSnapshot) > 0 {
+		event := eventsSnapshot[0]
 		if event.Type != "group_status_changed" {
 			t.Errorf("Expected group_status_changed event, got %s", event.Type)
 		}
@@ -599,7 +625,7 @@ func TestGroupEventBusIntegration(t *testing.T) {
 	}
 
 	// 清空事件记录
-	mockEventBus.events = mockEventBus.events[:0]
+	mockEventBus.ClearEvents()
 
 	// 测试手动恢复组
 	err = manager.ManualResumeGroup("backup-endpoint")
@@ -611,13 +637,14 @@ func TestGroupEventBusIntegration(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// 验证是否发布了恢复事件
-	if len(mockEventBus.events) != 1 {
-		t.Errorf("Expected 1 event after manual resume, got %d", len(mockEventBus.events))
+	eventsSnapshot = mockEventBus.EventsSnapshot()
+	if len(eventsSnapshot) != 1 {
+		t.Errorf("Expected 1 event after manual resume, got %d", len(eventsSnapshot))
 	}
 
 	// 验证恢复事件
-	if len(mockEventBus.events) > 0 {
-		event := mockEventBus.events[0]
+	if len(eventsSnapshot) > 0 {
+		event := eventsSnapshot[0]
 		if event.Type != "group_status_changed" {
 			t.Errorf("Expected group_status_changed event, got %s", event.Type)
 		}

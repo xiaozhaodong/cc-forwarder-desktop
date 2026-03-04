@@ -59,16 +59,17 @@ func (e *Endpoint) IsInCooldown() bool {
 
 // Manager manages endpoints and their health status
 type Manager struct {
-	endpoints   []*Endpoint
-	endpointsMu sync.RWMutex // v5.0+: 保护 endpoints 切片的并发访问
-	config      *config.Config
-	client      *http.Client
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	fastTester  *FastTester
-	groupManager *GroupManager
-	keyManager   *KeyManager      // 管理多 API Key 状态
+	endpoints      []*Endpoint
+	endpointsMu    sync.RWMutex // v5.0+: 保护 endpoints 切片的并发访问
+	configMu       sync.RWMutex
+	config         *config.Config
+	client         *http.Client
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	fastTester     *FastTester
+	groupManager   *GroupManager
+	keyManager     *KeyManager     // 管理多 API Key 状态
 	failureTracker *FailureTracker // 失败追踪器，用于检测端点持续故障
 	// EventBus for decoupled event publishing
 	eventBus events.EventBus
@@ -157,7 +158,9 @@ func (m *Manager) Stop() {
 // UpdateConfig updates the manager configuration (hot-reload)
 // v5.0 Desktop: 只更新配置参数，不重建端点（端点完全由数据库管理）
 func (m *Manager) UpdateConfig(cfg *config.Config) {
+	m.configMu.Lock()
 	m.config = cfg
+	m.configMu.Unlock()
 
 	// 只更新 GroupManager 配置
 	m.groupManager.UpdateConfig(cfg)
@@ -276,7 +279,17 @@ func (m *Manager) GetApiKeyForEndpoint(ep *Endpoint) string {
 
 // GetConfig returns the manager's configuration
 func (m *Manager) GetConfig() *config.Config {
+	m.configMu.RLock()
+	defer m.configMu.RUnlock()
 	return m.config
+}
+
+// getConfigSnapshot returns a consistent config pointer for internal use.
+func (m *Manager) getConfigSnapshot() *config.Config {
+	m.configMu.RLock()
+	cfg := m.config
+	m.configMu.RUnlock()
+	return cfg
 }
 
 // GetGroupManager returns the group manager
@@ -314,8 +327,10 @@ func (m *Manager) UpdateFailureTrackerConfig(enabled bool, timeWindow time.Durat
 // 当 FailureTracker 配置为 "reject" 模式且有任意活跃端点达到失败阈值时返回 true
 // 返回: (shouldReject, rejectedEndpointName)
 func (m *Manager) ShouldRejectRequest() (bool, string) {
+	cfg := m.getConfigSnapshot()
+
 	// 未启用失败追踪或不是 reject 模式，不拒绝
-	if !m.config.FailureTracker.Enabled || m.config.FailureTracker.Action != "reject" {
+	if !cfg.FailureTracker.Enabled || cfg.FailureTracker.Action != "reject" {
 		return false, ""
 	}
 

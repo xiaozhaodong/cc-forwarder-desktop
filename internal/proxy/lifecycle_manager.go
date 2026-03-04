@@ -756,9 +756,19 @@ func (rlm *RequestLifecycleManager) GetFinalStatusCode() int {
 // 与 CompleteRequest 的区别：只记录Token统计，不改变请求状态
 func (rlm *RequestLifecycleManager) RecordTokensForFailedRequest(tokens *tracking.TokenUsage, failureReason string) {
 	if rlm.requestID != "" && tokens != nil {
+		// 负数Token属于无效数据，必须跳过，避免异常计费
+		hasNegativeTokens := tokens.InputTokens < 0 || tokens.OutputTokens < 0 ||
+			tokens.CacheCreationTokens < 0 || tokens.CacheReadTokens < 0 ||
+			tokens.CacheCreation5mTokens < 0 || tokens.CacheCreation1hTokens < 0
+		if hasNegativeTokens {
+			slog.Warn(fmt.Sprintf("⏭️ [跳过无效Token] [%s] 失败请求包含负数Token，忽略记录", rlm.requestID))
+			return
+		}
+
 		// ✅ 检查是否有真实的Token使用
 		hasRealTokens := tokens.InputTokens > 0 || tokens.OutputTokens > 0 ||
-			tokens.CacheCreationTokens > 0 || tokens.CacheReadTokens > 0
+			tokens.CacheCreationTokens > 0 || tokens.CacheReadTokens > 0 ||
+			tokens.CacheCreation5mTokens > 0 || tokens.CacheCreation1hTokens > 0
 
 		if !hasRealTokens {
 			// 空Token信息不记录
@@ -853,6 +863,12 @@ func (rlm *RequestLifecycleManager) MapErrorTypeToFailureReason(errorType handle
 		return "server_error"
 	case handlers.ErrorTypeNetwork:
 		return "network_error"
+	case handlers.ErrorTypeEOF:
+		return "eof_error"
+	case handlers.ErrorTypeConnectionTimeout:
+		return "connection_timeout"
+	case handlers.ErrorTypeResponseTimeout:
+		return "response_timeout"
 	case handlers.ErrorTypeTimeout:
 		return "timeout"
 	case handlers.ErrorTypeHTTP:

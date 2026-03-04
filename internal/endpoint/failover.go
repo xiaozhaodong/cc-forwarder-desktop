@@ -20,8 +20,10 @@ func (m *Manager) SetOnFailoverTriggered(fn func(failedEndpoint, newEndpoint str
 // 当请求在某端点上失败达到重试上限时调用
 // 返回: 新激活的端点名，如果没有可用端点则返回空字符串
 func (m *Manager) TriggerRequestFailover(failedEndpointName string, reason string) (string, error) {
+	cfg := m.getConfigSnapshot()
+
 	// 🔧 [热更新修复] 检查故障转移开关
-	if !m.config.Failover.Enabled {
+	if !cfg.Failover.Enabled {
 		slog.Info(fmt.Sprintf("⏭️ [故障转移] 故障转移已禁用，跳过: %s", failedEndpointName))
 		return "", fmt.Errorf("故障转移已禁用")
 	}
@@ -35,7 +37,7 @@ func (m *Manager) TriggerRequestFailover(failedEndpointName string, reason strin
 	}
 
 	// 计算冷却时间
-	cooldownDuration := m.config.Failover.DefaultCooldown
+	cooldownDuration := cfg.Failover.DefaultCooldown
 	if cooldownDuration == 0 {
 		cooldownDuration = 10 * time.Minute // 默认 10 分钟
 	}
@@ -87,6 +89,8 @@ func (m *Manager) TriggerRequestFailover(failedEndpointName string, reason strin
 
 // selectNextFailoverEndpoint 选择下一个故障转移端点
 func (m *Manager) selectNextFailoverEndpoint(excludeEndpoint string) string {
+	cfg := m.getConfigSnapshot()
+
 	m.endpointsMu.RLock()
 	snapshot := make([]*Endpoint, len(m.endpoints))
 	copy(snapshot, m.endpoints)
@@ -110,6 +114,12 @@ func (m *Manager) selectNextFailoverEndpoint(excludeEndpoint string) string {
 			failoverEnabled = *ep.Config.FailoverEnabled
 		}
 		if !failoverEnabled {
+			continue
+		}
+
+		// 📊 [失败追踪] 达到阈值的端点不应作为故障转移目标
+		if cfg.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(ep.Config.Name) {
+			slog.Debug(fmt.Sprintf("📊 [失败追踪] 跳过达到失败阈值的故障转移端点: %s", ep.Config.Name))
 			continue
 		}
 

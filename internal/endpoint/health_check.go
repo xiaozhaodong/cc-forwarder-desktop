@@ -48,7 +48,8 @@ func (m *Manager) healthCheckLoop() {
 
 	// 获取当前检查间隔
 	getCheckInterval := func() time.Duration {
-		interval := m.config.Health.CheckInterval
+		cfg := m.getConfigSnapshot()
+		interval := cfg.Health.CheckInterval
 		if interval <= 0 {
 			interval = 30 * time.Second // 默认30秒检查一次
 		}
@@ -87,6 +88,8 @@ func (m *Manager) healthCheckLoop() {
 
 // performHealthChecks performs health checks on all endpoints
 func (m *Manager) performHealthChecks() {
+	cfg := m.getConfigSnapshot()
+
 	// v5.0+: 使用快照机制，不阻塞动态增删操作
 	m.endpointsMu.RLock()
 	snapshot := make([]*Endpoint, len(m.endpoints))
@@ -98,7 +101,7 @@ func (m *Manager) performHealthChecks() {
 	var endpointsToCheck []*Endpoint
 
 	// 判断是否为 SQLite 存储模式
-	isSQLiteMode := m.config.EndpointsStorage.Type == "sqlite"
+	isSQLiteMode := cfg.EndpointsStorage.Type == "sqlite"
 
 	if isSQLiteMode {
 		// v5.0 SQLite 模式：检查所有端点（包括 enabled=false 的）
@@ -111,7 +114,7 @@ func (m *Manager) performHealthChecks() {
 
 		slog.Debug(fmt.Sprintf("🩺 [健康检查] SQLite 模式：检查所有 %d 个端点（包括未激活）",
 			len(endpointsToCheck)))
-	} else if m.config.Group.AutoSwitchBetweenGroups {
+	} else if cfg.Group.AutoSwitchBetweenGroups {
 		// v4.0 Auto mode: only check active group endpoints
 		endpointsToCheck = m.groupManager.FilterEndpointsByActiveGroups(snapshot)
 
@@ -156,7 +159,7 @@ func (m *Manager) performHealthChecks() {
 		}
 	}
 
-	if m.config.Group.AutoSwitchBetweenGroups {
+	if cfg.Group.AutoSwitchBetweenGroups {
 		slog.Debug(fmt.Sprintf("🩺 [健康检查] 完成检查 - 活跃组健康: %d/%d", healthyCount, len(endpointsToCheck)))
 	} else {
 		slog.Debug(fmt.Sprintf("🩺 [健康检查] 完成检查 - 总体健康: %d/%d", healthyCount, len(endpointsToCheck)))
@@ -171,8 +174,9 @@ func (m *Manager) performHealthChecks() {
 // checkEndpointHealth checks the health of a single endpoint
 func (m *Manager) checkEndpointHealth(endpoint *Endpoint) {
 	start := time.Now()
+	cfg := m.getConfigSnapshot()
 
-	healthURL := endpoint.Config.URL + m.config.Health.HealthPath
+	healthURL := endpoint.Config.URL + cfg.Health.HealthPath
 	req, err := http.NewRequestWithContext(m.ctx, "GET", healthURL, nil)
 	if err != nil {
 		m.updateEndpointStatus(endpoint, false, 0)

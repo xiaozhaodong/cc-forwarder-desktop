@@ -309,17 +309,30 @@ func (gm *GroupManager) getSortedGroups() []*GroupInfo {
 	return groups
 }
 
+// cloneGroupInfo creates a copy to avoid exposing internal mutable state.
+func cloneGroupInfo(group *GroupInfo) *GroupInfo {
+	if group == nil {
+		return nil
+	}
+
+	cloned := *group
+	if group.Endpoints != nil {
+		cloned.Endpoints = append([]*Endpoint(nil), group.Endpoints...)
+	}
+	return &cloned
+}
+
 // GetActiveGroups returns currently active groups
 func (gm *GroupManager) GetActiveGroups() []*GroupInfo {
-	gm.mutex.RLock()
-	defer gm.mutex.RUnlock()
+	gm.mutex.Lock()
+	defer gm.mutex.Unlock()
 
 	gm.updateActiveGroups()
 
 	var active []*GroupInfo
 	for _, group := range gm.groups {
 		if group.IsActive {
-			active = append(active, group)
+			active = append(active, cloneGroupInfo(group))
 		}
 	}
 
@@ -333,14 +346,14 @@ func (gm *GroupManager) GetActiveGroups() []*GroupInfo {
 
 // GetAllGroups returns all groups
 func (gm *GroupManager) GetAllGroups() []*GroupInfo {
-	gm.mutex.RLock()
-	defer gm.mutex.RUnlock()
+	gm.mutex.Lock()
+	defer gm.mutex.Unlock()
 
 	gm.updateActiveGroups()
 
 	groups := make([]*GroupInfo, 0, len(gm.groups))
 	for _, group := range gm.groups {
-		groups = append(groups, group)
+		groups = append(groups, cloneGroupInfo(group))
 	}
 
 	// Sort by priority
@@ -526,12 +539,16 @@ func (gm *GroupManager) ManualPauseGroup(groupName string, duration time.Duratio
 	}
 
 	if duration > 0 {
-		go func() {
+		go func(resumeGroupName string) {
 			time.Sleep(duration)
 			gm.mutex.Lock()
 			defer gm.mutex.Unlock()
-			if targetGroup.ManuallyPaused {
-				targetGroup.ManuallyPaused = false
+			currentGroup, exists := gm.groups[resumeGroupName]
+			if !exists {
+				return
+			}
+			if currentGroup.ManuallyPaused {
+				currentGroup.ManuallyPaused = false
 				prevActive := make(map[string]bool)
 				for _, g := range gm.groups {
 					prevActive[g.Name] = g.IsActive
@@ -543,9 +560,9 @@ func (gm *GroupManager) ManualPauseGroup(groupName string, duration time.Duratio
 						break
 					}
 				}
-				slog.Info(fmt.Sprintf("⏰ [自动恢复] 组 %s 暂停期已结束，重新可用", groupName))
+				slog.Info(fmt.Sprintf("⏰ [自动恢复] 组 %s 暂停期已结束，重新可用", resumeGroupName))
 			}
-		}()
+		}(groupName)
 	}
 
 	if switchedToGroup != "" {
@@ -596,15 +613,20 @@ func (gm *GroupManager) ManualResumeGroup(groupName string) error {
 
 // GetGroupDetails returns detailed information about all groups
 func (gm *GroupManager) GetGroupDetails() map[string]interface{} {
-	gm.mutex.RLock()
-	defer gm.mutex.RUnlock()
+	gm.mutex.Lock()
+	defer gm.mutex.Unlock()
 
 	gm.updateActiveGroups()
 
 	result := make(map[string]interface{})
 	groupsData := make([]map[string]interface{}, 0, len(gm.groups))
+	activeGroupCount := 0
 
 	for _, group := range gm.groups {
+		if group.IsActive {
+			activeGroupCount++
+		}
+
 		healthyCount := 0
 		unhealthyCount := 0
 		totalEndpoints := len(group.Endpoints)
@@ -682,7 +704,7 @@ func (gm *GroupManager) GetGroupDetails() map[string]interface{} {
 
 	result["groups"] = groupsData
 	result["total_groups"] = len(groupsData)
-	result["active_groups"] = len(gm.GetActiveGroups())
+	result["active_groups"] = activeGroupCount
 
 	return result
 }
