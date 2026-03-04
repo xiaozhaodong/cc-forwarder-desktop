@@ -198,8 +198,8 @@ func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
 			tp.hasMessageStop = true
 		}
 
-		// 为message_start（模型信息）、message_delta（使用量）和error事件收集数据
-		tp.collectingData = eventType == "message_delta" || eventType == "message_start" || eventType == "error"
+		// 为message_start（模型信息）、message_delta/content_block_delta（使用量）和error事件收集数据
+		tp.collectingData = eventType == "message_delta" || eventType == "content_block_delta" || eventType == "message_start" || eventType == "error"
 		tp.eventBuffer.Reset()
 		return nil
 	}
@@ -223,8 +223,8 @@ func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
 			// 仅解析message_start以获取模型信息（不需要ParseResult）
 			tp.parseMessageStart()
 			return nil
-		case "message_delta":
-			// 使用新的V2方法解析message_delta
+		case "message_delta", "content_block_delta":
+			// 使用新的V2方法解析message_delta/content_block_delta
 			return tp.parseMessageDeltaV2()
 		case "error":
 			// 使用新的V2方法解析error事件
@@ -252,8 +252,8 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 		eventType = tp.fixMalformedEventType(eventType)
 
 		tp.currentEvent = eventType
-		// 为message_start（模型信息）、message_delta（使用量）和error事件收集数据
-		tp.collectingData = eventType == "message_delta" || eventType == "message_start" || eventType == "error"
+		// 为message_start（模型信息）、message_delta/content_block_delta（使用量）和error事件收集数据
+		tp.collectingData = eventType == "message_delta" || eventType == "content_block_delta" || eventType == "message_start" || eventType == "error"
 		tp.eventBuffer.Reset()
 		return nil
 	}
@@ -276,8 +276,8 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 		case "message_start":
 			// 解析message_start以获取模型信息和token使用量
 			return tp.parseMessageStart()
-		case "message_delta":
-			// 解析message_delta以获取使用信息
+		case "message_delta", "content_block_delta":
+			// 解析message_delta/content_block_delta以获取使用信息
 			return tp.parseMessageDelta()
 		case "error":
 			// 解析error事件并记录为API错误
@@ -772,7 +772,7 @@ func (tp *TokenParser) ParseMessageDelta(line string) *tracking.TokenUsage {
 		return nil
 	}
 
-	if event["type"] == "message_delta" {
+	if eventType, ok := event["type"].(string); ok && (eventType == "message_delta" || eventType == "content_block_delta") {
 		if usage, ok := event["usage"].(map[string]interface{}); ok {
 			tokenUsage := &tracking.TokenUsage{}
 
@@ -956,9 +956,9 @@ func (tp *TokenParser) FlushPendingEvent() *ParseResult {
 
 	// 根据当前事件类型调用相应的解析方法
 	switch tp.currentEvent {
-	case "message_delta":
+	case "message_delta", "content_block_delta":
 		if tp.requestID != "" {
-			slog.Info(fmt.Sprintf("🔄 [事件Flush] [%s] 强制解析缓存的message_delta事件", tp.requestID))
+			slog.Info(fmt.Sprintf("🔄 [事件Flush] [%s] 强制解析缓存的delta事件: %s", tp.requestID, tp.currentEvent))
 		}
 		return tp.parseMessageDeltaV2()
 	case "message_start":
