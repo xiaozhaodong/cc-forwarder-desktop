@@ -4,23 +4,8 @@ import { useWailsLogs } from '@/hooks/useWailsLogs';
 import { FileText, RefreshCw, AlertCircle } from 'lucide-react';
 import { LogEntry, LogControls, LogFilters } from './components';
 
-// 检测组件挂载状态
-function useComponentVisibility() {
-  const [isVisible, setIsVisible] = useState(true);
-
-  useEffect(() => {
-    setIsVisible(true);
-    return () => setIsVisible(false);
-  }, []);
-
-  return isVisible;
-}
-
 // 主页面组件
 function LogsPage() {
-  // 组件可见性
-  const isPageVisible = useComponentVisibility();
-
   // 日志数据和操作
   const {
     logs,
@@ -34,16 +19,16 @@ function LogsPage() {
   } = useWailsLogs({
     maxLogs: 1000,
     autoStart: true,
-    isActive: isPageVisible,
+    isActive: true,
   });
 
   // 本地状态
   const [searchQuery, setSearchQuery] = useState('');
   const [levelFilter, setLevelFilter] = useState('ALL');
   const [autoScroll, setAutoScroll] = useState(true);
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
   const logsEndRef = useRef(null);
   const prevLogsLengthRef = useRef(0);
+  const hasInitialScrollDoneRef = useRef(false);
 
   // 过滤日志
   const filteredLogs = useMemo(() => {
@@ -79,23 +64,27 @@ function LogsPage() {
 
   // 自动滚动逻辑
   useEffect(() => {
-    if (isInitialLoad && !loading && logs.length > 0) {
-      setIsInitialLoad(false);
+    if (!hasInitialScrollDoneRef.current && !loading && logs.length > 0 && logsEndRef.current) {
+      hasInitialScrollDoneRef.current = true;
       prevLogsLengthRef.current = logs.length;
-      return;
+      // 首次加载完成后定位到底部，确保显示最新日志
+      const rafId = requestAnimationFrame(() => {
+        logsEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+      });
+      return () => cancelAnimationFrame(rafId);
     }
 
     const hasNewLogs = logs.length > prevLogsLengthRef.current;
     if (autoScroll && hasNewLogs && !loading && logsEndRef.current) {
-      const timer = setTimeout(() => {
+      const rafId = requestAnimationFrame(() => {
         logsEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-      }, 50);
+      });
       prevLogsLengthRef.current = logs.length;
-      return () => clearTimeout(timer);
+      return () => cancelAnimationFrame(rafId);
     }
 
     prevLogsLengthRef.current = logs.length;
-  }, [logs.length, autoScroll, loading, isInitialLoad]);
+  }, [logs.length, autoScroll, loading]);
 
   // 导出日志
   const handleExport = () => {
@@ -114,7 +103,7 @@ function LogsPage() {
   // 清空日志
   const handleClear = () => {
     clear();
-    setIsInitialLoad(true);
+    hasInitialScrollDoneRef.current = false;
     prevLogsLengthRef.current = 0;
   };
 
