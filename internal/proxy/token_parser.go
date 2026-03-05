@@ -127,6 +127,8 @@ type TokenParser struct {
 	hasMessageStart      bool // 是否收到 message_start 事件
 	hasMessageDeltaUsage bool // 是否收到带 usage 的 message_delta 事件
 	hasMessageStop       bool // 是否收到 message_stop 事件
+	// 是否已经上报过“无Token响应”（避免 message_delta 高频重复日志）
+	nonTokenResponseReported bool
 }
 
 // fixMalformedEventType 修复格式错误的事件类型
@@ -379,6 +381,11 @@ func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
 
 	// 检查此message_delta是否包含使用信息
 	if messageDelta.Usage == nil {
+		// message_start 已有 usage 时，message_delta 无 usage 属于正常中间态，不记录“无Token响应”
+		if tp.partialUsage != nil {
+			return nil
+		}
+
 		// ⚠️ 兼容性处理：对于非Claude端点，message_delta可能不包含usage信息
 		// 这种情况下需要fallback机制来标记请求完成
 		if tp.requestID != "" {
@@ -387,6 +394,12 @@ func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
 			if modelName == "" {
 				modelName = "default"
 			}
+
+			// 仅首次上报，避免日志污染
+			if tp.nonTokenResponseReported {
+				return nil
+			}
+			tp.nonTokenResponseReported = true
 
 			slog.Info(fmt.Sprintf("🎯 [无Token响应] [%s] message_delta事件不包含token信息，标记为完成 - 模型: %s",
 				tp.requestID, modelName))
@@ -513,6 +526,11 @@ func (tp *TokenParser) parseMessageDelta() *monitor.TokenUsage {
 
 	// 检查此message_delta是否包含使用信息
 	if messageDelta.Usage == nil {
+		// message_start 已有 usage 时，message_delta 无 usage 属于正常中间态，不记录“无Token响应”
+		if tp.partialUsage != nil {
+			return nil
+		}
+
 		// ⚠️ 兼容性处理：对于非Claude端点，message_delta可能不包含usage信息
 		// 这种情况下需要fallback机制来标记请求完成
 		if tp.requestID != "" {
@@ -521,6 +539,12 @@ func (tp *TokenParser) parseMessageDelta() *monitor.TokenUsage {
 			if modelName == "" {
 				modelName = "default"
 			}
+
+			// 仅首次记录，避免 message_delta 高频重复日志
+			if tp.nonTokenResponseReported {
+				return nil
+			}
+			tp.nonTokenResponseReported = true
 
 			slog.Info(fmt.Sprintf("🎯 [无Token响应] [%s] message_delta事件不包含token信息，标记为完成 - 模型: %s",
 				tp.requestID, modelName))
@@ -603,6 +627,7 @@ func (tp *TokenParser) Reset() {
 	tp.hasMessageStart = false
 	tp.hasMessageDeltaUsage = false
 	tp.hasMessageStop = false
+	tp.nonTokenResponseReported = false
 }
 
 // parseErrorEventV2 新版本的错误事件解析方法

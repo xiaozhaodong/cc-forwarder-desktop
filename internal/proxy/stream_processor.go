@@ -59,6 +59,8 @@ type StreamProcessor struct {
 
 	// 🔍 [调试缓冲区] 轻量级调试数据收集（仅在token解析失败时使用）
 	debugLines []string // SSE行数据收集，最多保存DebugLineLimit行
+	// 去重日志签名：仅在Token统计变化时输出实时更新日志
+	lastTokenLogSignature string
 }
 
 // NewStreamProcessor 创建新的流式处理器实例
@@ -249,9 +251,21 @@ func (sp *StreamProcessor) processSSELine(line string) {
 			}
 
 			// ✅ 移除completionRecorded限制，每次都更新最新token统计
-			slog.Debug(fmt.Sprintf("🔄 [Token实时更新] [%s] 模型: %s, 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d",
-				sp.requestID, modelName, trackingTokens.InputTokens, trackingTokens.OutputTokens,
-				trackingTokens.CacheCreationTokens, trackingTokens.CacheReadTokens))
+			signature := fmt.Sprintf("%s:%d:%d:%d:%d:%d:%d",
+				modelName,
+				trackingTokens.InputTokens,
+				trackingTokens.OutputTokens,
+				trackingTokens.CacheCreationTokens,
+				trackingTokens.CacheReadTokens,
+				trackingTokens.CacheCreation5mTokens,
+				trackingTokens.CacheCreation1hTokens,
+			)
+			if signature != sp.lastTokenLogSignature {
+				slog.Debug(fmt.Sprintf("🔄 [Token实时更新] [%s] 模型: %s, 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d",
+					sp.requestID, modelName, trackingTokens.InputTokens, trackingTokens.OutputTokens,
+					trackingTokens.CacheCreationTokens, trackingTokens.CacheReadTokens))
+				sp.lastTokenLogSignature = signature
+			}
 
 			// ✅ 移除或注释掉这个字段，因为不再需要
 			// sp.completionRecorded = true
@@ -520,6 +534,7 @@ func (sp *StreamProcessor) Reset() {
 	sp.lineBuffer = sp.lineBuffer[:0]
 	sp.partialData = sp.partialData[:0] // 重置部分数据缓冲区
 	sp.parseErrors = sp.parseErrors[:0]
+	sp.lastTokenLogSignature = ""
 
 	// 重置TokenParser状态
 	if sp.tokenParser != nil {

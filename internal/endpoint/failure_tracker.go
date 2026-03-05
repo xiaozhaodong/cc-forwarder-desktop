@@ -76,9 +76,19 @@ func (t *FailureTracker) RecordSuccess(endpointName string) {
 		return
 	}
 
+	// 仅在存在有效失败记录时才打印日志，避免无意义日志污染
+	now := time.Now()
+	validFailures := t.countValidFailuresLocked(endpointName, now)
+
+	// 无有效失败记录：仅做清理，不打印“清空失败记录”
+	if validFailures == 0 {
+		delete(t.endpointFailures, endpointName)
+		return
+	}
+
 	// 清空失败记录
 	delete(t.endpointFailures, endpointName)
-	slog.Debug("[失败追踪] 端点成功，清空失败记录", "endpoint", endpointName)
+	slog.Debug("[失败追踪] 端点成功，清空失败记录", "endpoint", endpointName, "cleared_failures", validFailures)
 }
 
 // ShouldTriggerAction 检查是否应该触发动作
