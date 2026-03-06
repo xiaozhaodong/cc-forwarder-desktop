@@ -84,6 +84,19 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			continue
 		}
 
+		if isNoAvailableProviders503Response(resp) {
+			detail := readAndRestoreResponseBody(resp, 1024)
+			if detail == "" {
+				detail = "no_available_providers"
+			}
+			if writeErr := h.writeRawResponse(w, resp); writeErr != nil {
+				lifecycleManager.FailRequest("account_pipeline_response_write_error", writeErr.Error(), resp.StatusCode)
+				return
+			}
+			lifecycleManager.FailRequest("upstream_no_available_providers", detail, resp.StatusCode)
+			return
+		}
+
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 			detail := readAndCloseResponseBody(resp, 1024)
 			if detail == "" {
@@ -166,6 +179,29 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	return resp, nil
+}
+
+func isNoAvailableProviders503Response(resp *http.Response) bool {
+	if resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
+		return false
+	}
+	bodyText := readAndRestoreResponseBody(resp, 1024)
+	lower := strings.ToLower(strings.TrimSpace(bodyText))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "no_available_providers") ||
+		strings.Contains(lower, "no available providers")
+}
+
+func readAndRestoreResponseBody(resp *http.Response, limit int64) string {
+	if resp == nil || resp.Body == nil {
+		return ""
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, limit))
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return strings.TrimSpace(string(body))
 }
 
 func (h *Handler) getAccountHTTPClient(isSSE bool) (*http.Client, error) {

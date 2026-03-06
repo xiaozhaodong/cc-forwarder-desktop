@@ -413,7 +413,15 @@ export const resumeGroup = async (groupName) => {
 // v6.0+ 账号池 API (Wails)
 // ============================================
 
-const normalizeUpstreamAccount = (account = {}) => ({
+export const parseNullableNumber = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const numeric = Number.parseFloat(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+export const normalizeUpstreamAccount = (account = {}) => ({
   id: parseEntityId(account.id ?? account.ID ?? account.Id ?? account.account_id ?? account.accountId ?? account.AccountID ?? null),
   provider_type: account.provider_type || account.providerType || account.ProviderType || '',
   providerType: account.provider_type || account.providerType || account.ProviderType || '',
@@ -434,6 +442,26 @@ const normalizeUpstreamAccount = (account = {}) => ({
   lastSuccessAt: account.last_success_at || account.lastSuccessAt || account.LastSuccessAt || '',
   last_error: account.last_error || account.lastError || account.LastError || '',
   lastError: account.last_error || account.lastError || account.LastError || '',
+  plan_type: account.plan_type || account.planType || account.PlanType || '',
+  planType: account.plan_type || account.planType || account.PlanType || '',
+  chatgpt_account_id: account.chatgpt_account_id || account.chatgptAccountId || account.ChatGPTAccountID || '',
+  chatgptAccountId: account.chatgpt_account_id || account.chatgptAccountId || account.ChatGPTAccountID || '',
+  chatgpt_user_id: account.chatgpt_user_id || account.chatgptUserId || account.ChatGPTUserID || '',
+  chatgptUserId: account.chatgpt_user_id || account.chatgptUserId || account.ChatGPTUserID || '',
+  organization_id: account.organization_id || account.organizationId || account.OrganizationID || '',
+  organizationId: account.organization_id || account.organizationId || account.OrganizationID || '',
+  quota_5h_used_percent: parseNullableNumber(account.quota_5h_used_percent ?? account.quota5hUsedPercent ?? account.Quota5HUsedPercent ?? null),
+  quota5hUsedPercent: parseNullableNumber(account.quota_5h_used_percent ?? account.quota5hUsedPercent ?? account.Quota5HUsedPercent ?? null),
+  quota_5h_reset_at: account.quota_5h_reset_at || account.quota5hResetAt || account.Quota5HResetAt || '',
+  quota5hResetAt: account.quota_5h_reset_at || account.quota5hResetAt || account.Quota5HResetAt || '',
+  quota_weekly_used_percent: parseNullableNumber(account.quota_weekly_used_percent ?? account.quotaWeeklyUsedPercent ?? account.QuotaWeeklyUsedPercent ?? null),
+  quotaWeeklyUsedPercent: parseNullableNumber(account.quota_weekly_used_percent ?? account.quotaWeeklyUsedPercent ?? account.QuotaWeeklyUsedPercent ?? null),
+  quota_weekly_reset_at: account.quota_weekly_reset_at || account.quotaWeeklyResetAt || account.QuotaWeeklyResetAt || '',
+  quotaWeeklyResetAt: account.quota_weekly_reset_at || account.quotaWeeklyResetAt || account.QuotaWeeklyResetAt || '',
+  quota_status: account.quota_status || account.quotaStatus || account.QuotaStatus || '',
+  quotaStatus: account.quota_status || account.quotaStatus || account.QuotaStatus || '',
+  quota_refreshed_at: account.quota_refreshed_at || account.quotaRefreshedAt || account.QuotaRefreshedAt || '',
+  quotaRefreshedAt: account.quota_refreshed_at || account.quotaRefreshedAt || account.QuotaRefreshedAt || '',
   fingerprint: account.fingerprint || account.Fingerprint || '',
   created_at: account.created_at || account.createdAt || account.CreatedAt || '',
   createdAt: account.created_at || account.createdAt || account.CreatedAt || '',
@@ -441,7 +469,7 @@ const normalizeUpstreamAccount = (account = {}) => ({
   updatedAt: account.updated_at || account.updatedAt || account.UpdatedAt || ''
 });
 
-const buildUpstreamAccountPayload = (input = {}) => {
+export const buildUpstreamAccountPayload = (input = {}) => {
   return {
     ...input,
     account_name: input.account_name || input.accountName || '',
@@ -525,6 +553,38 @@ export const testUpstreamAccount = async (id) => {
         success: false,
         unsupported: true,
         message: '当前后端版本暂未提供 TestUpstreamAccount'
+      };
+    }
+    throw error;
+  }
+};
+
+export const refreshUpstreamAccountProfile = async (id) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('RefreshUpstreamAccountProfile', { optional: true });
+  if (!method) {
+    return {
+      success: false,
+      unsupported: true,
+      message: '当前后端版本暂未提供 RefreshUpstreamAccountProfile'
+    };
+  }
+
+  try {
+    const result = await method(normalizeEntityId(id));
+    if (result && typeof result === 'object') {
+      return result;
+    }
+    return { success: true, message: '账号画像已刷新' };
+  } catch (error) {
+    const errorText = error?.message || String(error || '');
+    if (/not found|undefined|is not a function/i.test(errorText)) {
+      return {
+        success: false,
+        unsupported: true,
+        message: '当前后端版本暂未提供 RefreshUpstreamAccountProfile'
       };
     }
     throw error;

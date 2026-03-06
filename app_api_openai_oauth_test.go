@@ -84,7 +84,7 @@ func TestSha256CodeChallenge(t *testing.T) {
 }
 
 func TestBuildOAuthCredentialResult_IncludesAccountIDAndCredentialRaw(t *testing.T) {
-	idToken := testOAuthIDToken("acc-test-1")
+	idToken := testOAuthIDTokenWithProfile("team", "acc-test-1", "user-1", "org-1")
 	result := buildOAuthCredentialResult(&openAIOAuthTokenResponse{
 		AccessToken:  "at-1",
 		IDToken:      idToken,
@@ -98,8 +98,20 @@ func TestBuildOAuthCredentialResult_IncludesAccountIDAndCredentialRaw(t *testing
 	if result.ChatGPTAccountID != "acc-test-1" {
 		t.Fatalf("unexpected account id: %s", result.ChatGPTAccountID)
 	}
+	if result.PlanType != "team" {
+		t.Fatalf("unexpected plan type: %s", result.PlanType)
+	}
+	if result.ChatGPTUserID != "user-1" {
+		t.Fatalf("unexpected user id: %s", result.ChatGPTUserID)
+	}
+	if result.OrganizationID != "org-1" {
+		t.Fatalf("unexpected organization id: %s", result.OrganizationID)
+	}
 	if !strings.Contains(result.CredentialRaw, `"refresh_token":"rt-1"`) {
 		t.Fatalf("credential_raw should contain refresh token, got: %s", result.CredentialRaw)
+	}
+	if !strings.Contains(result.CredentialRaw, `"plan_type":"team"`) {
+		t.Fatalf("credential_raw should contain plan_type, got: %s", result.CredentialRaw)
 	}
 	if accountauth.ExtractChatGPTAccountID(result.CredentialRaw) != "acc-test-1" {
 		t.Fatalf("credential_raw should expose chatgpt_account_id, got: %s", result.CredentialRaw)
@@ -126,7 +138,11 @@ func TestBuildOAuthCredentialResultFromValues_ParsesDirectTokenPayload(t *testin
 }
 
 func testOAuthIDToken(accountID string) string {
+	return testOAuthIDTokenWithProfile("", accountID, "", "")
+}
+
+func testOAuthIDTokenWithProfile(planType, accountID, userID, organizationID string) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
-	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"https://api.openai.com/auth":{"chatgpt_account_id":"` + accountID + `"}}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"https://api.openai.com/auth":{"chatgpt_account_id":"` + accountID + `","chatgpt_plan_type":"` + planType + `","chatgpt_user_id":"` + userID + `","organization_id":"` + organizationID + `"}}`))
 	return header + "." + payload + ".signature"
 }

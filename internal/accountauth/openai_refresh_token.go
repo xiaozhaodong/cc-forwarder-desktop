@@ -3,7 +3,6 @@ package accountauth
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,6 +26,16 @@ const (
 )
 
 var openAIRefreshTokenURL = defaultOpenAIRefreshTokenURL
+
+// CurrentOpenAIRefreshTokenURLForTest 返回当前 refresh token 端点，仅用于测试覆盖。
+func CurrentOpenAIRefreshTokenURLForTest() string {
+	return openAIRefreshTokenURL
+}
+
+// SetOpenAIRefreshTokenURLForTest 覆盖 refresh token 端点，仅用于测试。
+func SetOpenAIRefreshTokenURLForTest(rawURL string) {
+	openAIRefreshTokenURL = rawURL
+}
 
 // OpenAIRefreshTokenManager 负责将 ChatGPT refresh token 交换为 access token，并做短期缓存。
 type OpenAIRefreshTokenManager struct {
@@ -66,6 +75,9 @@ type storedOpenAICredential struct {
 	ExpiresAt        string `json:"expires_at"`
 	ChatGPTAccountID string `json:"chatgpt_account_id"`
 	AccountID        string `json:"account_id"`
+	PlanType         string `json:"plan_type"`
+	ChatGPTUserID    string `json:"chatgpt_user_id"`
+	OrganizationID   string `json:"organization_id"`
 }
 
 // NewOpenAIRefreshTokenManager 创建 RT 管理器。
@@ -353,43 +365,7 @@ func ExtractChatGPTAccountID(raw string) string {
 }
 
 func ExtractChatGPTAccountIDFromIDToken(idToken string) string {
-	trim := strings.TrimSpace(idToken)
-	if trim == "" {
-		return ""
-	}
-
-	parts := strings.Split(trim, ".")
-	if len(parts) != 3 {
-		return ""
-	}
-
-	payload := parts[1]
-	switch len(payload) % 4 {
-	case 2:
-		payload += "=="
-	case 3:
-		payload += "="
-	}
-
-	decoded, err := base64.URLEncoding.DecodeString(payload)
-	if err != nil {
-		decoded, err = base64.StdEncoding.DecodeString(payload)
-		if err != nil {
-			return ""
-		}
-	}
-
-	var claims map[string]any
-	if err := json.Unmarshal(decoded, &claims); err != nil {
-		return ""
-	}
-	if accountID := stringFromAnyMap(claims, "chatgpt_account_id", "chatgptAccountId", "account_id", "accountId"); accountID != "" {
-		return accountID
-	}
-	if nested, ok := claims["https://api.openai.com/auth"].(map[string]any); ok {
-		return stringFromAnyMap(nested, "chatgpt_account_id", "chatgptAccountId", "account_id", "accountId")
-	}
-	return ""
+	return ExtractOpenAIAccountProfileFromIDToken(idToken).ChatGPTAccountID
 }
 
 func stringFromAnyMap(m map[string]any, keys ...string) string {

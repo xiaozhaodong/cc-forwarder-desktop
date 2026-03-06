@@ -53,6 +53,14 @@ func TestTestUpstreamAccount_UsesResponsesEndpointAndTreats400AsReachable(t *tes
 	if receivedBody == "" {
 		t.Fatal("expected non-empty request body")
 	}
+
+	account, err := svc.GetAccount(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if account == nil || account.LastSuccessAt == nil || account.LastSuccessAt.IsZero() {
+		t.Fatalf("expected last_success_at to be updated after connectivity test, got %+v", account)
+	}
 }
 
 func TestTestUpstreamAccount_ReturnsPermissionErrorOn403(t *testing.T) {
@@ -101,6 +109,20 @@ func TestTestUpstreamAccount_Treats429AsReachable(t *testing.T) {
 	err := svc.TestUpstreamAccount(context.Background(), accountID)
 	if err != nil {
 		t.Fatalf("expected nil error for 429 reachability, got %v", err)
+	}
+}
+
+func TestTestUpstreamAccount_Treats503NoAvailableProvidersAsReachable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"type":"no_available_providers","message":"no_available_providers"}}`, http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	svc, accountID := newTestAccountPoolServiceForConnectivity(t, server.URL, "api_key", "sk-test")
+
+	err := svc.TestUpstreamAccount(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("expected nil error for 503 no_available_providers, got %v", err)
 	}
 }
 

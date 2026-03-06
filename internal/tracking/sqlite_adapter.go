@@ -182,54 +182,123 @@ func (s *SQLiteAdapter) InitSchema() error {
 // migrateSchema 执行数据库迁移（v5.0.1+: 添加 5m/1h 缓存字段）
 func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 	migrations := []struct {
+		table       string
 		checkColumn string
 		alterSQL    string
 		description string
 	}{
 		{
+			table:       "request_logs",
 			checkColumn: "cache_creation_5m_tokens",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN cache_creation_5m_tokens INTEGER DEFAULT 0",
 			description: "5分钟缓存创建tokens字段",
 		},
 		{
+			table:       "request_logs",
 			checkColumn: "cache_creation_1h_tokens",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN cache_creation_1h_tokens INTEGER DEFAULT 0",
 			description: "1小时缓存创建tokens字段",
 		},
 		{
+			table:       "request_logs",
 			checkColumn: "cache_creation_5m_cost_usd",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN cache_creation_5m_cost_usd REAL DEFAULT 0",
 			description: "5分钟缓存创建成本字段",
 		},
 		{
+			table:       "request_logs",
 			checkColumn: "cache_creation_1h_cost_usd",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN cache_creation_1h_cost_usd REAL DEFAULT 0",
 			description: "1小时缓存创建成本字段",
 		},
 		{
+			table:       "request_logs",
 			checkColumn: "upstream_type",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_type TEXT DEFAULT 'endpoint'",
 			description: "上游来源类型字段",
 		},
 		{
+			table:       "request_logs",
 			checkColumn: "upstream_source_name",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_source_name TEXT DEFAULT ''",
 			description: "上游来源名称字段",
 		},
 		{
+			table:       "request_logs",
 			checkColumn: "upstream_name",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_name TEXT DEFAULT ''",
 			description: "上游名称字段",
 		},
 		{
+			table:       "request_logs",
 			checkColumn: "upstream_id",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_id INTEGER",
 			description: "上游ID字段",
 		},
+		{
+			table:       "upstream_accounts",
+			checkColumn: "plan_type",
+			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN plan_type TEXT DEFAULT ''",
+			description: "账号类型画像字段",
+		},
+		{
+			table:       "upstream_accounts",
+			checkColumn: "chatgpt_account_id",
+			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN chatgpt_account_id TEXT DEFAULT ''",
+			description: "ChatGPT 账号ID字段",
+		},
+		{
+			table:       "upstream_accounts",
+			checkColumn: "chatgpt_user_id",
+			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN chatgpt_user_id TEXT DEFAULT ''",
+			description: "ChatGPT 用户ID字段",
+		},
+		{
+			table:       "upstream_accounts",
+			checkColumn: "organization_id",
+			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN organization_id TEXT DEFAULT ''",
+			description: "组织ID字段",
+		},
+		{
+			table:       "upstream_accounts",
+			checkColumn: "quota_5h_used_percent",
+			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN quota_5h_used_percent REAL",
+			description: "5小时窗口已用百分比字段",
+		},
+		{
+			table:       "upstream_accounts",
+			checkColumn: "quota_5h_reset_at",
+			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN quota_5h_reset_at DATETIME",
+			description: "5小时窗口重置时间字段",
+		},
+		{
+			table:       "upstream_accounts",
+			checkColumn: "quota_weekly_used_percent",
+			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN quota_weekly_used_percent REAL",
+			description: "周窗口已用百分比字段",
+		},
+		{
+			table:       "upstream_accounts",
+			checkColumn: "quota_weekly_reset_at",
+			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN quota_weekly_reset_at DATETIME",
+			description: "周窗口重置时间字段",
+		},
+		{
+			table:       "upstream_accounts",
+			checkColumn: "quota_status",
+			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN quota_status TEXT DEFAULT ''",
+			description: "quota 状态字段",
+		},
+		{
+			table:       "upstream_accounts",
+			checkColumn: "quota_refreshed_at",
+			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN quota_refreshed_at DATETIME",
+			description: "quota 最近刷新时间字段",
+		},
 	}
 
 	for _, m := range migrations {
-		exists, err := s.columnExists(ctx, "request_logs", m.checkColumn)
+		exists, err := s.columnExists(ctx, m.table, m.checkColumn)
 		if err != nil {
 			return fmt.Errorf("failed to check column %s: %w", m.checkColumn, err)
 		}
@@ -333,6 +402,16 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 				fail_count INTEGER DEFAULT 0,
 				last_success_at DATETIME,
 				last_error TEXT DEFAULT '',
+				plan_type TEXT DEFAULT '',
+				chatgpt_account_id TEXT DEFAULT '',
+				chatgpt_user_id TEXT DEFAULT '',
+				organization_id TEXT DEFAULT '',
+				quota_5h_used_percent REAL,
+				quota_5h_reset_at DATETIME,
+				quota_weekly_used_percent REAL,
+				quota_weekly_reset_at DATETIME,
+				quota_status TEXT DEFAULT '',
+				quota_refreshed_at DATETIME,
 				fingerprint TEXT UNIQUE NOT NULL,
 				created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
 				updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
@@ -340,12 +419,25 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 			`INSERT INTO upstream_accounts_new (
 				id, provider_type, account_name, credential_raw, base_url,
 				priority, enabled, state, cooldown_until, fail_count,
-				last_success_at, last_error, fingerprint, created_at, updated_at
+				last_success_at, last_error, plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
+				quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
+				quota_status, quota_refreshed_at, fingerprint, created_at, updated_at
 			)
 			SELECT
 				id, provider_type, account_name, credential_raw, base_url,
 				priority, enabled, state, cooldown_until, fail_count,
-				last_success_at, last_error, fingerprint, created_at, updated_at
+				last_success_at, last_error,
+				'' AS plan_type,
+				'' AS chatgpt_account_id,
+				'' AS chatgpt_user_id,
+				'' AS organization_id,
+				NULL AS quota_5h_used_percent,
+				NULL AS quota_5h_reset_at,
+				NULL AS quota_weekly_used_percent,
+				NULL AS quota_weekly_reset_at,
+				'' AS quota_status,
+				NULL AS quota_refreshed_at,
+				fingerprint, created_at, updated_at
 			FROM upstream_accounts`,
 			"DROP TABLE upstream_accounts",
 			"ALTER TABLE upstream_accounts_new RENAME TO upstream_accounts",

@@ -361,6 +361,24 @@ func TestSQLiteMigrationRebuildsLegacyUpstreamAccountsAndRestoresForeignKeys(t *
 	require.NoError(t, err)
 	assert.Equal(t, 0, sourceIDColumnCount, "upstream_accounts.source_id should be removed by migration")
 
+	for _, column := range []string{
+		"plan_type",
+		"chatgpt_account_id",
+		"chatgpt_user_id",
+		"organization_id",
+		"quota_5h_used_percent",
+		"quota_5h_reset_at",
+		"quota_weekly_used_percent",
+		"quota_weekly_reset_at",
+		"quota_status",
+		"quota_refreshed_at",
+	} {
+		var columnCount int
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('upstream_accounts') WHERE name = ?`, column).Scan(&columnCount)
+		require.NoError(t, err)
+		assert.Equalf(t, 1, columnCount, "upstream_accounts.%s should exist after migration", column)
+	}
+
 	var accountCount int
 	err = db.QueryRow(`SELECT COUNT(*) FROM upstream_accounts WHERE id = 11 AND account_name = 'legacy-account'`).Scan(&accountCount)
 	require.NoError(t, err)

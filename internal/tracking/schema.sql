@@ -284,6 +284,16 @@ CREATE TABLE IF NOT EXISTS upstream_accounts (
     -- ========== 状态 ==========
     last_success_at DATETIME,                       -- 最近成功时间
     last_error TEXT DEFAULT '',                     -- 最近错误
+    plan_type TEXT DEFAULT '',                      -- 账号类型画像
+    chatgpt_account_id TEXT DEFAULT '',            -- ChatGPT 账号ID
+    chatgpt_user_id TEXT DEFAULT '',               -- ChatGPT 用户ID
+    organization_id TEXT DEFAULT '',               -- 组织ID
+    quota_5h_used_percent REAL,                    -- 5小时窗口已用百分比
+    quota_5h_reset_at DATETIME,                    -- 5小时窗口重置时间
+    quota_weekly_used_percent REAL,                -- 周窗口已用百分比
+    quota_weekly_reset_at DATETIME,                -- 周窗口重置时间
+    quota_status TEXT DEFAULT '',                  -- quota 状态
+    quota_refreshed_at DATETIME,                   -- 最近 quota 刷新时间
     fingerprint TEXT UNIQUE NOT NULL,               -- 去重指纹
 
     -- ========== 审计字段 ==========

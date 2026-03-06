@@ -23,12 +23,12 @@ const NavItem = ({ label, active, onClick }) => (
 const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyStatus = {} }) => {
   const tabs = [
     { name: 'overview', label: '概览' },
-    { name: 'endpoints', label: '端点管理' },
+    { name: 'endpoints', label: 'CC 端点管理' },
+    { name: 'account-pool', label: 'Codex 账号池' },
     // v4.0: 组管理入口已移除，配置简化后不再需要独立的组管理页面
     // { name: 'groups', label: '组管理' },
     { name: 'requests', label: '请求追踪' },
     { name: 'pricing', label: '基础定价' },
-    { name: 'account-pool', label: '账号池' },
     // v5.1: 新增日志页面
     { name: 'logs', label: '系统日志' },
     // v5.1: 配置改为设置

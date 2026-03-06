@@ -12,21 +12,31 @@ import (
 
 // UpstreamAccountInfo 上游账号信息
 type UpstreamAccountInfo struct {
-	ID            int64  `json:"id"`
-	ProviderType  string `json:"provider_type"`
-	AccountName   string `json:"account_name"`
-	CredentialRaw string `json:"credential_raw"`
-	BaseURL       string `json:"base_url"`
-	Priority      int    `json:"priority"`
-	Enabled       bool   `json:"enabled"`
-	State         string `json:"state"`
-	CooldownUntil string `json:"cooldown_until"`
-	FailCount     int    `json:"fail_count"`
-	LastSuccessAt string `json:"last_success_at"`
-	LastError     string `json:"last_error"`
-	Fingerprint   string `json:"fingerprint"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
+	ID                     int64    `json:"id"`
+	ProviderType           string   `json:"provider_type"`
+	AccountName            string   `json:"account_name"`
+	CredentialRaw          string   `json:"credential_raw"`
+	BaseURL                string   `json:"base_url"`
+	Priority               int      `json:"priority"`
+	Enabled                bool     `json:"enabled"`
+	State                  string   `json:"state"`
+	CooldownUntil          string   `json:"cooldown_until"`
+	FailCount              int      `json:"fail_count"`
+	LastSuccessAt          string   `json:"last_success_at"`
+	LastError              string   `json:"last_error"`
+	PlanType               string   `json:"plan_type"`
+	ChatGPTAccountID       string   `json:"chatgpt_account_id"`
+	ChatGPTUserID          string   `json:"chatgpt_user_id"`
+	OrganizationID         string   `json:"organization_id"`
+	Quota5HUsedPercent     *float64 `json:"quota_5h_used_percent,omitempty"`
+	Quota5HResetAt         string   `json:"quota_5h_reset_at"`
+	QuotaWeeklyUsedPercent *float64 `json:"quota_weekly_used_percent,omitempty"`
+	QuotaWeeklyResetAt     string   `json:"quota_weekly_reset_at"`
+	QuotaStatus            string   `json:"quota_status"`
+	QuotaRefreshedAt       string   `json:"quota_refreshed_at"`
+	Fingerprint            string   `json:"fingerprint"`
+	CreatedAt              string   `json:"created_at"`
+	UpdatedAt              string   `json:"updated_at"`
 }
 
 // CreateUpstreamAccountInput 创建/更新账号输入
@@ -43,6 +53,13 @@ type CreateUpstreamAccountInput struct {
 type TestUpstreamAccountResult struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
+}
+
+// RefreshUpstreamAccountProfileResult 刷新账号画像结果
+type RefreshUpstreamAccountProfileResult struct {
+	Success     bool   `json:"success"`
+	Message     string `json:"message"`
+	QuotaStatus string `json:"quota_status,omitempty"`
 }
 
 // GetUpstreamAccounts 获取账号列表
@@ -65,24 +82,57 @@ func (a *App) GetUpstreamAccounts() ([]UpstreamAccountInfo, error) {
 	out := make([]UpstreamAccountInfo, 0, len(records))
 	for _, rec := range records {
 		out = append(out, UpstreamAccountInfo{
-			ID:            rec.ID,
-			ProviderType:  rec.ProviderType,
-			AccountName:   rec.AccountName,
-			CredentialRaw: rec.CredentialRaw,
-			BaseURL:       rec.BaseURL,
-			Priority:      rec.Priority,
-			Enabled:       rec.Enabled,
-			State:         rec.State,
-			CooldownUntil: formatOptionalTime(rec.CooldownUntil),
-			FailCount:     rec.FailCount,
-			LastSuccessAt: formatOptionalTime(rec.LastSuccessAt),
-			LastError:     rec.LastError,
-			Fingerprint:   rec.Fingerprint,
-			CreatedAt:     formatTime(rec.CreatedAt),
-			UpdatedAt:     formatTime(rec.UpdatedAt),
+			ID:                     rec.ID,
+			ProviderType:           rec.ProviderType,
+			AccountName:            rec.AccountName,
+			CredentialRaw:          rec.CredentialRaw,
+			BaseURL:                rec.BaseURL,
+			Priority:               rec.Priority,
+			Enabled:                rec.Enabled,
+			State:                  rec.State,
+			CooldownUntil:          formatOptionalTime(rec.CooldownUntil),
+			FailCount:              rec.FailCount,
+			LastSuccessAt:          formatOptionalTime(rec.LastSuccessAt),
+			LastError:              rec.LastError,
+			PlanType:               rec.PlanType,
+			ChatGPTAccountID:       rec.ChatGPTAccountID,
+			ChatGPTUserID:          rec.ChatGPTUserID,
+			OrganizationID:         rec.OrganizationID,
+			Quota5HUsedPercent:     rec.Quota5HUsedPercent,
+			Quota5HResetAt:         formatOptionalTime(rec.Quota5HResetAt),
+			QuotaWeeklyUsedPercent: rec.QuotaWeeklyUsedPercent,
+			QuotaWeeklyResetAt:     formatOptionalTime(rec.QuotaWeeklyResetAt),
+			QuotaStatus:            rec.QuotaStatus,
+			QuotaRefreshedAt:       formatOptionalTime(rec.QuotaRefreshedAt),
+			Fingerprint:            rec.Fingerprint,
+			CreatedAt:              formatTime(rec.CreatedAt),
+			UpdatedAt:              formatTime(rec.UpdatedAt),
 		})
 	}
 	return out, nil
+}
+
+// RefreshUpstreamAccountProfile 刷新账号画像与 quota 信息
+func (a *App) RefreshUpstreamAccountProfile(id int64) (RefreshUpstreamAccountProfileResult, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if a.accountPoolService == nil {
+		return RefreshUpstreamAccountProfileResult{}, fmt.Errorf("账号池服务未启用")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	result, err := a.accountPoolService.RefreshAccountProfile(ctx, id)
+	if err != nil {
+		return RefreshUpstreamAccountProfileResult{}, err
+	}
+	return RefreshUpstreamAccountProfileResult{
+		Success:     result.Success,
+		Message:     result.Message,
+		QuotaStatus: result.QuotaStatus,
+	}, nil
 }
 
 // CreateUpstreamAccount 创建账号

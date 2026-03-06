@@ -186,6 +186,10 @@ export function PauseGroup(arg1) {
   return window['go']['main']['App']['PauseGroup'](arg1);
 }
 
+export function RefreshUpstreamAccountProfile(arg1) {
+  return window['go']['main']['App']['RefreshUpstreamAccountProfile'](arg1);
+}
+
 export function ResetCategorySettings(arg1) {
   return window['go']['main']['App']['ResetCategorySettings'](arg1);
 }

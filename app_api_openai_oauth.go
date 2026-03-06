@@ -55,7 +55,10 @@ type ExchangeChatGPTOAuthCallbackResult struct {
 	AccessToken      string `json:"access_token,omitempty"`
 	IDToken          string `json:"id_token,omitempty"`
 	ExpiresAt        string `json:"expires_at,omitempty"`
+	PlanType         string `json:"plan_type,omitempty"`
 	ChatGPTAccountID string `json:"chatgpt_account_id,omitempty"`
+	ChatGPTUserID    string `json:"chatgpt_user_id,omitempty"`
+	OrganizationID   string `json:"organization_id,omitempty"`
 	CredentialRaw    string `json:"credential_raw,omitempty"`
 	Message          string `json:"message"`
 }
@@ -382,10 +385,34 @@ func buildOAuthCredentialResultFromValues(values url.Values, message string) (Ex
 		}
 	}
 
-	accountID := firstNonEmpty(
-		strings.TrimSpace(values.Get("chatgpt_account_id")),
-		strings.TrimSpace(values.Get("account_id")),
-	)
+	profile := accountauth.ExtractOpenAIAccountProfile(firstNonEmpty(idToken, values.Get("claims")))
+	if profile.ChatGPTAccountID == "" {
+		profile.ChatGPTAccountID = firstNonEmpty(
+			strings.TrimSpace(values.Get("chatgpt_account_id")),
+			strings.TrimSpace(values.Get("account_id")),
+		)
+	}
+	if profile.PlanType == "" {
+		profile.PlanType = accountauth.NormalizeOpenAIPlanType(firstNonEmpty(
+			strings.TrimSpace(values.Get("chatgpt_plan_type")),
+			strings.TrimSpace(values.Get("plan_type")),
+			strings.TrimSpace(values.Get("planType")),
+		))
+	}
+	if profile.ChatGPTUserID == "" {
+		profile.ChatGPTUserID = firstNonEmpty(
+			strings.TrimSpace(values.Get("chatgpt_user_id")),
+			strings.TrimSpace(values.Get("user_id")),
+			strings.TrimSpace(values.Get("userId")),
+		)
+	}
+	if profile.OrganizationID == "" {
+		profile.OrganizationID = firstNonEmpty(
+			strings.TrimSpace(values.Get("organization_id")),
+			strings.TrimSpace(values.Get("org_id")),
+			strings.TrimSpace(values.Get("organizationId")),
+		)
+	}
 
 	tokenResp := &openAIOAuthTokenResponse{
 		AccessToken:  accessToken,
@@ -397,10 +424,25 @@ func buildOAuthCredentialResultFromValues(values url.Values, message string) (Ex
 	}
 
 	result := buildOAuthCredentialResult(tokenResp, message)
-	if accountID != "" && result.ChatGPTAccountID == "" {
-		result.ChatGPTAccountID = accountID
+	if profile.ChatGPTAccountID != "" && result.ChatGPTAccountID == "" {
+		result.ChatGPTAccountID = profile.ChatGPTAccountID
 	}
-	result.CredentialRaw = buildStoredOAuthCredential(refreshToken, accessToken, idToken, result.ChatGPTAccountID, expiresAt)
+	if profile.PlanType != "" && result.PlanType == "" {
+		result.PlanType = profile.PlanType
+	}
+	if profile.ChatGPTUserID != "" && result.ChatGPTUserID == "" {
+		result.ChatGPTUserID = profile.ChatGPTUserID
+	}
+	if profile.OrganizationID != "" && result.OrganizationID == "" {
+		result.OrganizationID = profile.OrganizationID
+	}
+	mergedProfile := accountauth.OpenAIAccountProfile{
+		PlanType:         result.PlanType,
+		ChatGPTAccountID: result.ChatGPTAccountID,
+		ChatGPTUserID:    result.ChatGPTUserID,
+		OrganizationID:   result.OrganizationID,
+	}
+	result.CredentialRaw = buildStoredOAuthCredential(refreshToken, accessToken, idToken, mergedProfile, expiresAt)
 	return result, true
 }
 
@@ -413,8 +455,8 @@ func buildOAuthCredentialResult(tokenResp *openAIOAuthTokenResponse, message str
 	if tokenResp.ExpiresIn > 0 {
 		expiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 	}
-	accountID := accountauth.ExtractChatGPTAccountIDFromIDToken(tokenResp.IDToken)
-	credentialRaw := buildStoredOAuthCredential(tokenResp.RefreshToken, tokenResp.AccessToken, tokenResp.IDToken, accountID, expiresAt)
+	profile := accountauth.ExtractOpenAIAccountProfileFromIDToken(tokenResp.IDToken)
+	credentialRaw := buildStoredOAuthCredential(tokenResp.RefreshToken, tokenResp.AccessToken, tokenResp.IDToken, profile, expiresAt)
 
 	return ExchangeChatGPTOAuthCallbackResult{
 		Success:          true,
@@ -422,37 +464,17 @@ func buildOAuthCredentialResult(tokenResp *openAIOAuthTokenResponse, message str
 		AccessToken:      tokenResp.AccessToken,
 		IDToken:          tokenResp.IDToken,
 		ExpiresAt:        formatRFC3339(expiresAt),
-		ChatGPTAccountID: accountID,
+		PlanType:         profile.PlanType,
+		ChatGPTAccountID: profile.ChatGPTAccountID,
+		ChatGPTUserID:    profile.ChatGPTUserID,
+		OrganizationID:   profile.OrganizationID,
 		CredentialRaw:    credentialRaw,
 		Message:          message,
 	}
 }
 
-func buildStoredOAuthCredential(refreshToken, accessToken, idToken, accountID string, expiresAt time.Time) string {
-	payload := map[string]string{}
-	if strings.TrimSpace(refreshToken) != "" {
-		payload["refresh_token"] = strings.TrimSpace(refreshToken)
-	}
-	if strings.TrimSpace(accessToken) != "" {
-		payload["access_token"] = strings.TrimSpace(accessToken)
-	}
-	if strings.TrimSpace(idToken) != "" {
-		payload["id_token"] = strings.TrimSpace(idToken)
-	}
-	if strings.TrimSpace(accountID) != "" {
-		payload["chatgpt_account_id"] = strings.TrimSpace(accountID)
-	}
-	if !expiresAt.IsZero() {
-		payload["expires_at"] = expiresAt.Format(time.RFC3339)
-	}
-	if len(payload) == 0 {
-		return ""
-	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-	return string(encoded)
+func buildStoredOAuthCredential(refreshToken, accessToken, idToken string, profile accountauth.OpenAIAccountProfile, expiresAt time.Time) string {
+	return accountauth.BuildStoredOpenAICredential(refreshToken, accessToken, idToken, profile, expiresAt)
 }
 
 func formatRFC3339(ts time.Time) string {

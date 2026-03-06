@@ -100,6 +100,33 @@ func TestExtractChatGPTAccountIDFromIDToken(t *testing.T) {
 	}
 }
 
+func TestExtractOpenAIAccountProfileFromIDToken(t *testing.T) {
+	idToken := testIDTokenWithProfile("team", "acc-profile", "user-1", "org-1")
+	profile := ExtractOpenAIAccountProfileFromIDToken(idToken)
+
+	if profile.PlanType != "team" {
+		t.Fatalf("unexpected plan type: %s", profile.PlanType)
+	}
+	if profile.ChatGPTAccountID != "acc-profile" {
+		t.Fatalf("unexpected account id: %s", profile.ChatGPTAccountID)
+	}
+	if profile.ChatGPTUserID != "user-1" {
+		t.Fatalf("unexpected user id: %s", profile.ChatGPTUserID)
+	}
+	if profile.OrganizationID != "org-1" {
+		t.Fatalf("unexpected organization id: %s", profile.OrganizationID)
+	}
+}
+
+func TestExtractOpenAIAccountProfile_FromCredentialJSON(t *testing.T) {
+	raw := `{"refresh_token":"rt-json","plan_type":"plus","chatgpt_account_id":"acc-json","chatgpt_user_id":"user-json","organization_id":"org-json"}`
+	profile := ExtractOpenAIAccountProfile(raw)
+
+	if profile.PlanType != "plus" || profile.ChatGPTAccountID != "acc-json" || profile.ChatGPTUserID != "user-json" || profile.OrganizationID != "org-json" {
+		t.Fatalf("unexpected profile: %+v", profile)
+	}
+}
+
 func TestResolveAccessToken_UsesStoredAccessTokenWhenFresh(t *testing.T) {
 	manager := NewOpenAIRefreshTokenManager(nil)
 	expiresAt := time.Now().Add(30 * time.Minute).Format(time.RFC3339)
@@ -266,5 +293,11 @@ func TestResolveAccessTokenDetails_ExtractsAccountIDFromIDToken(t *testing.T) {
 func testIDTokenForAccount(accountID string) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
 	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"https://api.openai.com/auth":{"chatgpt_account_id":"` + accountID + `"}}`))
+	return header + "." + payload + ".signature"
+}
+
+func testIDTokenWithProfile(planType, accountID, userID, organizationID string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"https://api.openai.com/auth":{"chatgpt_account_id":"` + accountID + `","chatgpt_plan_type":"` + planType + `","chatgpt_user_id":"` + userID + `","organization_id":"` + organizationID + `"}}`))
 	return header + "." + payload + ".signature"
 }

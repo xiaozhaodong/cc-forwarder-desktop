@@ -491,7 +491,10 @@ export namespace main {
 	    access_token?: string;
 	    id_token?: string;
 	    expires_at?: string;
+	    plan_type?: string;
 	    chatgpt_account_id?: string;
+	    chatgpt_user_id?: string;
+	    organization_id?: string;
 	    credential_raw?: string;
 	    message: string;
 	
@@ -506,7 +509,10 @@ export namespace main {
 	        this.access_token = source["access_token"];
 	        this.id_token = source["id_token"];
 	        this.expires_at = source["expires_at"];
+	        this.plan_type = source["plan_type"];
 	        this.chatgpt_account_id = source["chatgpt_account_id"];
+	        this.chatgpt_user_id = source["chatgpt_user_id"];
+	        this.organization_id = source["organization_id"];
 	        this.credential_raw = source["credential_raw"];
 	        this.message = source["message"];
 	    }
@@ -656,6 +662,22 @@ export namespace main {
 	        this.actual_port = source["actual_port"];
 	        this.is_default = source["is_default"];
 	        this.was_occupied = source["was_occupied"];
+	    }
+	}
+	export class RefreshUpstreamAccountProfileResult {
+	    success: boolean;
+	    message: string;
+	    quota_status?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RefreshUpstreamAccountProfileResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.message = source["message"];
+	        this.quota_status = source["quota_status"];
 	    }
 	}
 	export class RequestRecord {
@@ -935,6 +957,16 @@ export namespace main {
 	    fail_count: number;
 	    last_success_at: string;
 	    last_error: string;
+	    plan_type: string;
+	    chatgpt_account_id: string;
+	    chatgpt_user_id: string;
+	    organization_id: string;
+	    quota_5h_used_percent?: number;
+	    quota_5h_reset_at: string;
+	    quota_weekly_used_percent?: number;
+	    quota_weekly_reset_at: string;
+	    quota_status: string;
+	    quota_refreshed_at: string;
 	    fingerprint: string;
 	    created_at: string;
 	    updated_at: string;
@@ -957,6 +989,16 @@ export namespace main {
 	        this.fail_count = source["fail_count"];
 	        this.last_success_at = source["last_success_at"];
 	        this.last_error = source["last_error"];
+	        this.plan_type = source["plan_type"];
+	        this.chatgpt_account_id = source["chatgpt_account_id"];
+	        this.chatgpt_user_id = source["chatgpt_user_id"];
+	        this.organization_id = source["organization_id"];
+	        this.quota_5h_used_percent = source["quota_5h_used_percent"];
+	        this.quota_5h_reset_at = source["quota_5h_reset_at"];
+	        this.quota_weekly_used_percent = source["quota_weekly_used_percent"];
+	        this.quota_weekly_reset_at = source["quota_weekly_reset_at"];
+	        this.quota_status = source["quota_status"];
+	        this.quota_refreshed_at = source["quota_refreshed_at"];
 	        this.fingerprint = source["fingerprint"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];

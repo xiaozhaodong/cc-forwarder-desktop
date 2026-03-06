@@ -22,6 +22,8 @@ const (
 	defaultOAuthOriginatorValue = "codex_cli_rs"
 )
 
+var chatGPTCodexTestURL = defaultChatGPTCodexTestURL
+
 // AccountPoolService 账号池服务
 type AccountPoolService struct {
 	store               store.AccountPoolStore
@@ -64,6 +66,7 @@ func (s *AccountPoolService) CreateAccount(ctx context.Context, rec *store.Upstr
 	if rec.ProviderType == "" {
 		rec.ProviderType = accountauth.InferProviderType(rec.CredentialRaw)
 	}
+	s.populateAccountProfile(rec)
 	return s.store.CreateAccount(ctx, rec)
 }
 
@@ -83,6 +86,7 @@ func (s *AccountPoolService) UpdateAccount(ctx context.Context, rec *store.Upstr
 	if rec.ProviderType == "" {
 		rec.ProviderType = accountauth.InferProviderType(rec.CredentialRaw)
 	}
+	s.populateAccountProfile(rec)
 	return s.store.UpdateAccount(ctx, rec)
 }
 
@@ -130,7 +134,7 @@ func (s *AccountPoolService) TestUpstreamAccount(ctx context.Context, id int64) 
 
 	targetURL := defaultOpenAIResponsesURL
 	if isOAuth {
-		targetURL = defaultChatGPTCodexTestURL
+		targetURL = chatGPTCodexTestURL
 	} else {
 		base := strings.TrimSuffix(strings.TrimSpace(acc.BaseURL), "/")
 		if base == "" {
@@ -173,17 +177,31 @@ func (s *AccountPoolService) TestUpstreamAccount(ctx context.Context, id int64) 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+	reachable := (resp.StatusCode >= 200 && resp.StatusCode < 400) ||
+		resp.StatusCode == http.StatusBadRequest ||
+		resp.StatusCode == http.StatusTooManyRequests
+	if reachable {
+		if err := s.MarkAccountSuccess(ctx, id); err != nil {
+			return fmt.Errorf("写回账号连通成功时间失败: %w", err)
+		}
+		if isOAuth {
+			_, _ = s.RefreshAccountProfile(ctx, id)
+		}
 		return nil
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	bodyText := strings.TrimSpace(string(body))
+	if isNoAvailableProviders503(resp.StatusCode, bodyText) {
+		if err := s.MarkAccountSuccess(ctx, id); err != nil {
+			return fmt.Errorf("写回账号连通成功时间失败: %w", err)
+		}
+		if isOAuth {
+			_, _ = s.RefreshAccountProfile(ctx, id)
+		}
+		return nil
+	}
 
 	switch resp.StatusCode {
-	case http.StatusBadRequest:
-		return nil
-	case http.StatusTooManyRequests:
-		return nil
 	case http.StatusUnauthorized, http.StatusForbidden:
 		if !isOAuth && isMissingResponsesWriteScope(bodyText) {
 			return fmt.Errorf("鉴权通过但权限不足 (%d): 缺少 api.responses.write，请重新走 OAuth 授权并更新 RT。原始响应: %s", resp.StatusCode, bodyText)
@@ -201,6 +219,18 @@ func isMissingResponsesWriteScope(bodyText string) bool {
 	}
 	return strings.Contains(lower, "api.responses.write") &&
 		(strings.Contains(lower, "missing scopes") || strings.Contains(lower, "insufficient permissions"))
+}
+
+func isNoAvailableProviders503(statusCode int, bodyText string) bool {
+	if statusCode != http.StatusServiceUnavailable {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(bodyText))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "no_available_providers") ||
+		strings.Contains(lower, "no available providers")
 }
 
 func (s *AccountPoolService) buildHTTPClient(timeout time.Duration) (*http.Client, error) {

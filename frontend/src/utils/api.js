@@ -733,72 +733,19 @@ export const fetchChannels = async () => {
 // v6.0+ 账号池 API
 // ============================================
 
-const parseEntityId = (id) => {
-  if (id === null || id === undefined) return null;
-  if (typeof id === 'number') {
-    return Number.isFinite(id) ? id : null;
-  }
-  if (typeof id === 'string') {
-    const trimmed = id.trim();
-    if (!trimmed) return null;
-    const numeric = Number(trimmed);
-    return Number.isNaN(numeric) ? trimmed : numeric;
-  }
-  return null;
-};
-
 const normalizeUpstreamAccountList = (data) => {
   const list = Array.isArray(data)
     ? data
     : (data?.accounts || data?.upstream_accounts || data?.data || []);
 
-  return (Array.isArray(list) ? list : []).map(account => ({
-    id: parseEntityId(account.id ?? account.ID ?? account.Id ?? account.account_id ?? account.accountId ?? account.AccountID ?? null),
-    account_name: account.account_name || account.accountName || account.AccountName || '',
-    accountName: account.account_name || account.accountName || account.AccountName || '',
-    provider_type: account.provider_type || account.providerType || account.ProviderType || '',
-    providerType: account.provider_type || account.providerType || account.ProviderType || '',
-    credential_raw: account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
-    credentialRaw: account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
-    base_url: account.base_url || account.baseURL || account.BaseURL || '',
-    baseURL: account.base_url || account.baseURL || account.BaseURL || '',
-    priority: Number.parseInt(account.priority ?? account.Priority, 10) || 1,
-    enabled: (account.enabled ?? account.Enabled) !== false,
-    state: account.state || account.State || 'active',
-    cooldown_until: account.cooldown_until || account.cooldownUntil || account.CooldownUntil || '',
-    cooldownUntil: account.cooldown_until || account.cooldownUntil || account.CooldownUntil || '',
-    fail_count: account.fail_count || account.failCount || account.FailCount || 0,
-    failCount: account.fail_count || account.failCount || account.FailCount || 0,
-    last_success_at: account.last_success_at || account.lastSuccessAt || account.LastSuccessAt || '',
-    lastSuccessAt: account.last_success_at || account.lastSuccessAt || account.LastSuccessAt || '',
-    last_error: account.last_error || account.lastError || account.LastError || '',
-    lastError: account.last_error || account.lastError || account.LastError || '',
-    fingerprint: account.fingerprint || account.Fingerprint || '',
-    created_at: account.created_at || account.createdAt || account.CreatedAt || '',
-    createdAt: account.created_at || account.createdAt || account.CreatedAt || '',
-    updated_at: account.updated_at || account.updatedAt || account.UpdatedAt || '',
-    updatedAt: account.updated_at || account.updatedAt || account.UpdatedAt || ''
-  }));
+  return (Array.isArray(list) ? list : []).map(WailsApi.normalizeUpstreamAccount);
 };
 
 const normalizeEntityIdForUrl = (id) => encodeURIComponent(String(id));
 
-const buildUpstreamAccountPayload = (input = {}) => {
-  return {
-    ...input,
-    account_name: input.account_name || input.accountName || '',
-    provider_type: input.provider_type || input.providerType || '',
-    credential_raw: input.credential_raw || input.credentialRaw || '',
-    base_url: input.base_url || input.baseURL || '',
-    priority: Number.parseInt(input.priority, 10) || 1,
-    enabled: input.enabled !== false
-  };
-};
-
 export const fetchUpstreamAccounts = async () => {
   if (isWailsEnvironment()) {
-    const list = await WailsApi.getUpstreamAccounts();
-    return normalizeUpstreamAccountList(list);
+    return await WailsApi.getUpstreamAccounts();
   }
 
   const data = await fetchWithTimeout('/api/v1/upstream-accounts');
@@ -806,7 +753,7 @@ export const fetchUpstreamAccounts = async () => {
 };
 
 export const createUpstreamAccount = async (input) => {
-  const payload = buildUpstreamAccountPayload(input);
+  const payload = WailsApi.buildUpstreamAccountPayload(input);
 
   if (isWailsEnvironment()) {
     return await WailsApi.createUpstreamAccount(payload);
@@ -819,7 +766,7 @@ export const createUpstreamAccount = async (input) => {
 };
 
 export const updateUpstreamAccount = async (id, input) => {
-  const payload = buildUpstreamAccountPayload(input);
+  const payload = WailsApi.buildUpstreamAccountPayload(input);
 
   if (isWailsEnvironment()) {
     return await WailsApi.updateUpstreamAccount(id, payload);
@@ -868,6 +815,28 @@ export const testUpstreamAccount = async (id) => {
         success: false,
         unsupported: true,
         message: '当前后端版本暂未提供 TestUpstreamAccount'
+      };
+    }
+    throw error;
+  }
+};
+
+export const refreshUpstreamAccountProfile = async (id) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.refreshUpstreamAccountProfile(id);
+  }
+
+  try {
+    return await fetchWithTimeout(`/api/v1/upstream-accounts/${normalizeEntityIdForUrl(id)}/profile/refresh`, {
+      method: 'POST'
+    });
+  } catch (error) {
+    const errorText = error?.message || String(error || '');
+    if (/404|not found/i.test(errorText)) {
+      return {
+        success: false,
+        unsupported: true,
+        message: '当前后端版本暂未提供 RefreshUpstreamAccountProfile'
       };
     }
     throw error;

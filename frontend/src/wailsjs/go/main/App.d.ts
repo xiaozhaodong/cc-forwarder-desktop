@@ -95,6 +95,8 @@ export function IsProxyRunning():Promise<boolean>;
 
 export function PauseGroup(arg1:string):Promise<void>;
 
+export function RefreshUpstreamAccountProfile(arg1:number):Promise<main.RefreshUpstreamAccountProfileResult>;
+
 export function ResetCategorySettings(arg1:string):Promise<void>;
 
 export function ResumeGroup(arg1:string):Promise<void>;

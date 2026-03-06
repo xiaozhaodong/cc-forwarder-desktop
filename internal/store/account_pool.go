@@ -20,21 +20,31 @@ const (
 
 // UpstreamAccountRecord 上游账号记录
 type UpstreamAccountRecord struct {
-	ID            int64      `json:"id"`
-	ProviderType  string     `json:"provider_type"`
-	AccountName   string     `json:"account_name"`
-	CredentialRaw string     `json:"credential_raw"`
-	BaseURL       string     `json:"base_url"`
-	Priority      int        `json:"priority"`
-	Enabled       bool       `json:"enabled"`
-	State         string     `json:"state"`
-	CooldownUntil *time.Time `json:"cooldown_until,omitempty"`
-	FailCount     int        `json:"fail_count"`
-	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
-	LastError     string     `json:"last_error"`
-	Fingerprint   string     `json:"fingerprint"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID                     int64      `json:"id"`
+	ProviderType           string     `json:"provider_type"`
+	AccountName            string     `json:"account_name"`
+	CredentialRaw          string     `json:"credential_raw"`
+	BaseURL                string     `json:"base_url"`
+	Priority               int        `json:"priority"`
+	Enabled                bool       `json:"enabled"`
+	State                  string     `json:"state"`
+	CooldownUntil          *time.Time `json:"cooldown_until,omitempty"`
+	FailCount              int        `json:"fail_count"`
+	LastSuccessAt          *time.Time `json:"last_success_at,omitempty"`
+	LastError              string     `json:"last_error"`
+	PlanType               string     `json:"plan_type"`
+	ChatGPTAccountID       string     `json:"chatgpt_account_id"`
+	ChatGPTUserID          string     `json:"chatgpt_user_id"`
+	OrganizationID         string     `json:"organization_id"`
+	Quota5HUsedPercent     *float64   `json:"quota_5h_used_percent,omitempty"`
+	Quota5HResetAt         *time.Time `json:"quota_5h_reset_at,omitempty"`
+	QuotaWeeklyUsedPercent *float64   `json:"quota_weekly_used_percent,omitempty"`
+	QuotaWeeklyResetAt     *time.Time `json:"quota_weekly_reset_at,omitempty"`
+	QuotaStatus            string     `json:"quota_status"`
+	QuotaRefreshedAt       *time.Time `json:"quota_refreshed_at,omitempty"`
+	Fingerprint            string     `json:"fingerprint"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
 }
 
 // AccountPoolStore 账号池存储接口
@@ -50,6 +60,7 @@ type AccountPoolStore interface {
 	MarkAccountSuccess(ctx context.Context, id int64, successAt time.Time) error
 	MarkAccountAuthFailed(ctx context.Context, id int64, reason string) error
 	MarkAccountTransientFailure(ctx context.Context, id int64, reason string, cooldownUntil time.Time) error
+	UpdateAccountProfile(ctx context.Context, record *UpstreamAccountRecord) error
 }
 
 // SQLiteAccountPoolStore SQLite 账号池存储实现
@@ -84,13 +95,20 @@ func (s *SQLiteAccountPoolStore) CreateAccount(ctx context.Context, record *Upst
 	query := `
 		INSERT INTO upstream_accounts (
 			provider_type, account_name, credential_raw, base_url,
-			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error, fingerprint
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
+			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
+			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
+			quota_status, quota_refreshed_at, fingerprint
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	res, err := s.getQuerier().ExecContext(ctx, query,
 		record.ProviderType, record.AccountName, record.CredentialRaw, record.BaseURL,
 		record.Priority, boolToInt(record.Enabled), record.State, nullableTime(record.CooldownUntil), record.FailCount,
-		nullableTime(record.LastSuccessAt), record.LastError, record.Fingerprint)
+		nullableTime(record.LastSuccessAt), record.LastError,
+		record.PlanType, record.ChatGPTAccountID, record.ChatGPTUserID, record.OrganizationID,
+		nullableFloat(record.Quota5HUsedPercent), nullableTime(record.Quota5HResetAt),
+		nullableFloat(record.QuotaWeeklyUsedPercent), nullableTime(record.QuotaWeeklyResetAt),
+		record.QuotaStatus, nullableTime(record.QuotaRefreshedAt), record.Fingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("创建账号失败: %w", err)
 	}
@@ -113,13 +131,20 @@ func (s *SQLiteAccountPoolStore) UpdateAccount(ctx context.Context, record *Upst
 	query := `
 		UPDATE upstream_accounts
 		SET provider_type = ?, account_name = ?, credential_raw = ?, base_url = ?,
-			priority = ?, enabled = ?, state = ?, cooldown_until = ?, fail_count = ?, last_success_at = ?, last_error = ?, fingerprint = ?
+			priority = ?, enabled = ?, state = ?, cooldown_until = ?, fail_count = ?, last_success_at = ?, last_error = ?,
+			plan_type = ?, chatgpt_account_id = ?, chatgpt_user_id = ?, organization_id = ?,
+			quota_5h_used_percent = ?, quota_5h_reset_at = ?, quota_weekly_used_percent = ?, quota_weekly_reset_at = ?,
+			quota_status = ?, quota_refreshed_at = ?, fingerprint = ?
 		WHERE id = ?
 	`
 	res, err := s.getQuerier().ExecContext(ctx, query,
 		record.ProviderType, record.AccountName, record.CredentialRaw, record.BaseURL,
 		record.Priority, boolToInt(record.Enabled), record.State, nullableTime(record.CooldownUntil), record.FailCount,
-		nullableTime(record.LastSuccessAt), record.LastError, record.Fingerprint, record.ID)
+		nullableTime(record.LastSuccessAt), record.LastError,
+		record.PlanType, record.ChatGPTAccountID, record.ChatGPTUserID, record.OrganizationID,
+		nullableFloat(record.Quota5HUsedPercent), nullableTime(record.Quota5HResetAt),
+		nullableFloat(record.QuotaWeeklyUsedPercent), nullableTime(record.QuotaWeeklyResetAt),
+		record.QuotaStatus, nullableTime(record.QuotaRefreshedAt), record.Fingerprint, record.ID)
 	if err != nil {
 		return fmt.Errorf("更新账号失败: %w", err)
 	}
@@ -163,7 +188,10 @@ func (s *SQLiteAccountPoolStore) GetAccount(ctx context.Context, id int64) (*Ups
 func (s *SQLiteAccountPoolStore) getAccountByID(ctx context.Context, id int64) (*UpstreamAccountRecord, error) {
 	query := `
 		SELECT id, provider_type, account_name, credential_raw, base_url,
-			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error, fingerprint, created_at, updated_at
+			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
+			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
+			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
+			quota_status, quota_refreshed_at, fingerprint, created_at, updated_at
 		FROM upstream_accounts
 		WHERE id = ?
 	`
@@ -177,7 +205,10 @@ func (s *SQLiteAccountPoolStore) ListAccounts(ctx context.Context, includeDisabl
 
 	query := `
 		SELECT id, provider_type, account_name, credential_raw, base_url,
-			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error, fingerprint, created_at, updated_at
+			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
+			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
+			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
+			quota_status, quota_refreshed_at, fingerprint, created_at, updated_at
 		FROM upstream_accounts
 	`
 	if !includeDisabled {
@@ -212,7 +243,10 @@ func (s *SQLiteAccountPoolStore) ListSchedulableAccounts(ctx context.Context, no
 
 	query := `
 		SELECT id, provider_type, account_name, credential_raw, base_url,
-			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error, fingerprint, created_at, updated_at
+			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
+			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
+			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
+			quota_status, quota_refreshed_at, fingerprint, created_at, updated_at
 		FROM upstream_accounts
 		WHERE enabled = 1
 			AND state != 'disabled_auth'
@@ -246,7 +280,10 @@ func (s *SQLiteAccountPoolStore) FindAccountByFingerprint(ctx context.Context, f
 
 	query := `
 		SELECT id, provider_type, account_name, credential_raw, base_url,
-			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error, fingerprint, created_at, updated_at
+			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
+			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
+			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
+			quota_status, quota_refreshed_at, fingerprint, created_at, updated_at
 		FROM upstream_accounts
 		WHERE fingerprint = ?
 	`
@@ -333,6 +370,46 @@ func (s *SQLiteAccountPoolStore) MarkAccountTransientFailure(ctx context.Context
 	return nil
 }
 
+// UpdateAccountProfile 更新账号画像与 quota 字段。
+func (s *SQLiteAccountPoolStore) UpdateAccountProfile(ctx context.Context, record *UpstreamAccountRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if record == nil || record.ID <= 0 {
+		return fmt.Errorf("无效的账号记录")
+	}
+	record.PlanType = strings.TrimSpace(record.PlanType)
+	record.ChatGPTAccountID = strings.TrimSpace(record.ChatGPTAccountID)
+	record.ChatGPTUserID = strings.TrimSpace(record.ChatGPTUserID)
+	record.OrganizationID = strings.TrimSpace(record.OrganizationID)
+	record.QuotaStatus = strings.TrimSpace(record.QuotaStatus)
+	record.Fingerprint = GenerateAccountFingerprint(record.ProviderType, record.CredentialRaw, record.BaseURL)
+
+	res, err := s.getQuerier().ExecContext(ctx, `
+		UPDATE upstream_accounts
+		SET credential_raw = ?, plan_type = ?, chatgpt_account_id = ?, chatgpt_user_id = ?, organization_id = ?,
+			quota_5h_used_percent = ?, quota_5h_reset_at = ?, quota_weekly_used_percent = ?, quota_weekly_reset_at = ?,
+			quota_status = ?, quota_refreshed_at = ?, fingerprint = ?
+		WHERE id = ?
+	`,
+		record.CredentialRaw, record.PlanType, record.ChatGPTAccountID, record.ChatGPTUserID, record.OrganizationID,
+		nullableFloat(record.Quota5HUsedPercent), nullableTime(record.Quota5HResetAt),
+		nullableFloat(record.QuotaWeeklyUsedPercent), nullableTime(record.QuotaWeeklyResetAt),
+		record.QuotaStatus, nullableTime(record.QuotaRefreshedAt), record.Fingerprint, record.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("更新账号画像失败: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("获取影响行数失败: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("账号不存在: %d", record.ID)
+	}
+	return nil
+}
+
 // GenerateAccountFingerprint 生成账号指纹（用于去重）
 func GenerateAccountFingerprint(providerType, credentialRaw, baseURL string) string {
 	text := strings.ToLower(strings.TrimSpace(providerType)) + "\n" +
@@ -380,6 +457,13 @@ func nullableTime(v *time.Time) any {
 	return formatDBTime(*v)
 }
 
+func nullableFloat(v *float64) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
 func formatDBTime(t time.Time) string {
 	return t.Format("2006-01-02 15:04:05.999999-07:00")
 }
@@ -390,22 +474,35 @@ type rowScanner interface {
 
 func scanAccountRow(scanner rowScanner) (*UpstreamAccountRecord, error) {
 	var (
-		rec              UpstreamAccountRecord
-		enabled          int
-		cooldownUntilStr sql.NullString
-		lastSuccessAtStr sql.NullString
-		createdAtStr     string
-		updatedAtStr     string
+		rec                    UpstreamAccountRecord
+		enabled                int
+		cooldownUntilStr       sql.NullString
+		lastSuccessAtStr       sql.NullString
+		quota5HUsedPercent     sql.NullFloat64
+		quota5HResetAtStr      sql.NullString
+		quotaWeeklyUsedPercent sql.NullFloat64
+		quotaWeeklyResetAtStr  sql.NullString
+		quotaRefreshedAtStr    sql.NullString
+		createdAtStr           string
+		updatedAtStr           string
 	)
 	if err := scanner.Scan(
 		&rec.ID, &rec.ProviderType, &rec.AccountName, &rec.CredentialRaw, &rec.BaseURL,
-		&rec.Priority, &enabled, &rec.State, &cooldownUntilStr, &rec.FailCount, &lastSuccessAtStr, &rec.LastError, &rec.Fingerprint, &createdAtStr, &updatedAtStr,
+		&rec.Priority, &enabled, &rec.State, &cooldownUntilStr, &rec.FailCount, &lastSuccessAtStr, &rec.LastError,
+		&rec.PlanType, &rec.ChatGPTAccountID, &rec.ChatGPTUserID, &rec.OrganizationID,
+		&quota5HUsedPercent, &quota5HResetAtStr, &quotaWeeklyUsedPercent, &quotaWeeklyResetAtStr,
+		&rec.QuotaStatus, &quotaRefreshedAtStr, &rec.Fingerprint, &createdAtStr, &updatedAtStr,
 	); err != nil {
 		return nil, err
 	}
 	rec.Enabled = enabled == 1
 	rec.CooldownUntil = parseNullableTime(cooldownUntilStr)
 	rec.LastSuccessAt = parseNullableTime(lastSuccessAtStr)
+	rec.Quota5HUsedPercent = parseNullableFloat(quota5HUsedPercent)
+	rec.Quota5HResetAt = parseNullableTime(quota5HResetAtStr)
+	rec.QuotaWeeklyUsedPercent = parseNullableFloat(quotaWeeklyUsedPercent)
+	rec.QuotaWeeklyResetAt = parseNullableTime(quotaWeeklyResetAtStr)
+	rec.QuotaRefreshedAt = parseNullableTime(quotaRefreshedAtStr)
 	rec.CreatedAt = parseDBTime(createdAtStr)
 	rec.UpdatedAt = parseDBTime(updatedAtStr)
 	return &rec, nil
@@ -417,6 +514,14 @@ func parseNullableTime(v sql.NullString) *time.Time {
 	}
 	t := parseDBTime(v.String)
 	return &t
+}
+
+func parseNullableFloat(v sql.NullFloat64) *float64 {
+	if !v.Valid {
+		return nil
+	}
+	value := v.Float64
+	return &value
 }
 
 func parseDBTime(text string) time.Time {

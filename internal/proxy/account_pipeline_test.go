@@ -312,6 +312,52 @@ func TestAccountPipeline_429FailoverThenSuccess(t *testing.T) {
 	}
 }
 
+func TestAccountPipeline_503NoAvailableProviders_PassthroughWithoutCooldown(t *testing.T) {
+	firstHits := 0
+	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstHits++
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":{"type":"no_available_providers","message":"no_available_providers"}}`, http.StatusServiceUnavailable)
+	}))
+	defer firstServer.Close()
+
+	secondHits := 0
+	secondServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"should_not_run"}`))
+	}))
+	defer secondServer.Close()
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 13, AccountName: "acc-a", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: firstServer.URL, Enabled: true},
+			{ID: 14, AccountName: "acc-b", ProviderType: "api_key", CredentialRaw: "sk-b", BaseURL: secondServer.URL, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, firstServer.URL, service)
+
+	rec := performResponsesRequest(t, handler)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if firstHits != 1 || secondHits != 0 {
+		t.Fatalf("expected only first account attempted, got first=%d second=%d", firstHits, secondHits)
+	}
+	if !strings.Contains(rec.Body.String(), "no_available_providers") {
+		t.Fatalf("expected passthrough body to contain no_available_providers, got %s", rec.Body.String())
+	}
+	if len(service.transientCalls) != 0 {
+		t.Fatalf("expected no transient failure calls, got %+v", service.transientCalls)
+	}
+	if len(service.authFailCalls) != 0 {
+		t.Fatalf("expected no auth-failed calls, got %+v", service.authFailCalls)
+	}
+	if len(service.successCalls) != 0 {
+		t.Fatalf("expected no success calls, got %+v", service.successCalls)
+	}
+}
+
 func TestAccountPipeline_AuthFailedSwitchToNextAccount(t *testing.T) {
 	firstHits := 0
 	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
