@@ -102,7 +102,7 @@ func TestSQLiteSchemaInit_OldRequestLogsWithoutUpstreamColumns(t *testing.T) {
 	}
 }
 
-func TestSQLiteAccountRequestLogsDirectArchiveRouting(t *testing.T) {
+func TestSQLiteAccountRequestsArchiveIntoRequestLogs(t *testing.T) {
 	cfg := &Config{
 		Enabled:         true,
 		DatabasePath:    ":memory:",
@@ -125,16 +125,19 @@ func TestSQLiteAccountRequestLogsDirectArchiveRouting(t *testing.T) {
 	tracker.RecordRequestStart(requestID, "127.0.0.1", "codex-cli", "POST", "/v1/responses", true)
 
 	upstreamType := "account"
-	sourceName := "pool-a"
 	accountName := "acc-001"
 	accountID := int64(101)
+	channel := "account-pool"
+	groupName := ""
 	tracker.RecordRequestUpdate(requestID, UpdateOptions{
-		UpstreamType:       &upstreamType,
-		UpstreamSourceName: &sourceName,
-		UpstreamName:       &accountName,
-		UpstreamID:         &accountID,
-		Status:             &statusProcessing,
-		HttpStatus:         &httpStatus200,
+		Channel:      &channel,
+		EndpointName: &accountName,
+		GroupName:    &groupName,
+		UpstreamType: &upstreamType,
+		UpstreamName: &accountName,
+		UpstreamID:   &accountID,
+		Status:       &statusProcessing,
+		HttpStatus:   &httpStatus200,
 	})
 
 	tracker.RecordRequestSuccess(requestID, "gpt-5-codex", &TokenUsage{
@@ -151,6 +154,8 @@ func TestSQLiteAccountRequestLogsDirectArchiveRouting(t *testing.T) {
 		gotAccountID   int64
 		gotSourceName  string
 		gotAccountName string
+		gotChannel     string
+		gotGroupName   string
 		status         string
 		modelName      string
 		inputTokens    int64
@@ -160,30 +165,206 @@ func TestSQLiteAccountRequestLogsDirectArchiveRouting(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		err := db.QueryRow(`
-			SELECT account_id, source_name, account_name, status, model_name,
+			SELECT upstream_id, upstream_source_name, endpoint_name, channel, group_name, status, model_name,
 			       input_tokens, output_tokens, cache_read_tokens
-			FROM account_request_logs
+			FROM request_logs
 			WHERE request_id = ?
 		`, requestID).Scan(
-			&gotAccountID, &gotSourceName, &gotAccountName, &status, &modelName,
+			&gotAccountID, &gotSourceName, &gotAccountName, &gotChannel, &gotGroupName, &status, &modelName,
 			&inputTokens, &outputTokens, &cacheReadToken,
 		)
 		return err == nil
-	}, 2*time.Second, 50*time.Millisecond, "account_request_logs should contain archived account request")
+	}, 2*time.Second, 50*time.Millisecond, "request_logs should contain archived account request")
 
 	assert.Equal(t, int64(101), gotAccountID)
-	assert.Equal(t, "pool-a", gotSourceName)
+	assert.Equal(t, "", gotSourceName)
 	assert.Equal(t, "acc-001", gotAccountName)
+	assert.Equal(t, "account-pool", gotChannel)
+	assert.Equal(t, "", gotGroupName)
 	assert.Equal(t, "completed", status)
 	assert.Equal(t, "gpt-5-codex", modelName)
 	assert.Equal(t, int64(20), inputTokens)
 	assert.Equal(t, int64(5), outputTokens)
 	assert.Equal(t, int64(2), cacheReadToken)
+}
 
-	var requestLogsCount int
-	err = db.QueryRow(`SELECT COUNT(*) FROM request_logs WHERE request_id = ?`, requestID).Scan(&requestLogsCount)
+func TestSQLiteRestartDoesNotDeleteAccountRequestsAfterMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "restart-preserve-account-requests.db")
+
+	cfg := &Config{
+		Enabled:         true,
+		DatabasePath:    dbPath,
+		BufferSize:      10,
+		BatchSize:       5,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
+	}
+
+	tracker, err := NewUsageTracker(cfg)
 	require.NoError(t, err)
-	assert.Equal(t, 0, requestLogsCount, "account request should not be written into request_logs")
+
+	db := tracker.GetWriteDB()
+	require.NotNil(t, db)
+
+	_, err = db.Exec(`
+		INSERT INTO request_logs (
+			request_id, start_time, status, channel, endpoint_name, group_name,
+			upstream_type, upstream_source_name, upstream_name, upstream_id
+		) VALUES (?, ?, 'completed', ?, ?, ?, 'account', ?, ?, ?)
+	`, "req-restart-account-1", time.Now().Format(time.RFC3339), "account-pool", "acc-001", "", "", "acc-001", 101)
+	require.NoError(t, err)
+	require.NoError(t, tracker.Close())
+
+	restarted, err := NewUsageTracker(cfg)
+	require.NoError(t, err)
+	defer restarted.Close()
+
+	var count int
+	err = restarted.GetReadDB().QueryRow(`SELECT COUNT(*) FROM request_logs WHERE request_id = ?`, "req-restart-account-1").Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "account request should survive normal restart once legacy schema is gone")
+}
+
+func TestSQLiteMigrationRebuildsLegacyUpstreamAccountsAndRestoresForeignKeys(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy-account-pool.db")
+
+	rawDB, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = rawDB.Exec(`
+		PRAGMA foreign_keys=ON;
+
+		CREATE TABLE IF NOT EXISTS request_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			request_id TEXT UNIQUE NOT NULL,
+			client_ip TEXT,
+			user_agent TEXT,
+			method TEXT DEFAULT 'POST',
+			path TEXT DEFAULT '/v1/messages',
+			start_time DATETIME NOT NULL,
+			end_time DATETIME,
+			duration_ms INTEGER,
+			channel TEXT DEFAULT '',
+			endpoint_name TEXT,
+			group_name TEXT,
+			model_name TEXT,
+			is_streaming BOOLEAN DEFAULT FALSE,
+			status TEXT NOT NULL DEFAULT 'pending',
+			http_status_code INTEGER,
+			retry_count INTEGER DEFAULT 0,
+			failure_reason TEXT,
+			last_failure_reason TEXT,
+			cancel_reason TEXT,
+			input_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			cache_creation_tokens INTEGER DEFAULT 0,
+			cache_read_tokens INTEGER DEFAULT 0,
+			input_cost_usd REAL DEFAULT 0,
+			output_cost_usd REAL DEFAULT 0,
+			cache_creation_cost_usd REAL DEFAULT 0,
+			cache_read_cost_usd REAL DEFAULT 0,
+			total_cost_usd REAL DEFAULT 0,
+			created_at DATETIME,
+			updated_at DATETIME
+		);
+
+		CREATE TABLE IF NOT EXISTS usage_summary (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			date TEXT NOT NULL,
+			model_name TEXT NOT NULL,
+			endpoint_name TEXT NOT NULL,
+			group_name TEXT,
+			request_count INTEGER DEFAULT 0,
+			success_count INTEGER DEFAULT 0,
+			error_count INTEGER DEFAULT 0,
+			total_input_tokens INTEGER DEFAULT 0,
+			total_output_tokens INTEGER DEFAULT 0,
+			total_cache_creation_tokens INTEGER DEFAULT 0,
+			total_cache_read_tokens INTEGER DEFAULT 0,
+			total_cost_usd REAL DEFAULT 0,
+			avg_duration_ms REAL DEFAULT 0,
+			created_at DATETIME,
+			updated_at DATETIME,
+			UNIQUE(date, model_name, endpoint_name, group_name)
+		);
+
+		CREATE TABLE IF NOT EXISTS subscription_sources (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT UNIQUE NOT NULL,
+			url TEXT NOT NULL,
+			enabled INTEGER DEFAULT 1
+		);
+
+		CREATE TABLE IF NOT EXISTS upstream_accounts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_id INTEGER,
+			provider_type TEXT NOT NULL DEFAULT 'api_key',
+			account_name TEXT NOT NULL,
+			credential_raw TEXT NOT NULL,
+			base_url TEXT NOT NULL DEFAULT 'https://api.openai.com',
+			priority INTEGER DEFAULT 100,
+			enabled INTEGER DEFAULT 1,
+			state TEXT DEFAULT 'active',
+			cooldown_until DATETIME,
+			fail_count INTEGER DEFAULT 0,
+			last_success_at DATETIME,
+			last_error TEXT DEFAULT '',
+			fingerprint TEXT UNIQUE NOT NULL,
+			created_at DATETIME,
+			updated_at DATETIME,
+			FOREIGN KEY (source_id) REFERENCES subscription_sources(id) ON DELETE SET NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS account_request_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			request_id TEXT UNIQUE NOT NULL
+		);
+
+		INSERT INTO subscription_sources (id, name, url, enabled) VALUES (1, 'legacy-source', 'https://example.com/legacy.txt', 1);
+		INSERT INTO upstream_accounts (
+			id, source_id, provider_type, account_name, credential_raw, base_url,
+			priority, enabled, state, fail_count, fingerprint, created_at, updated_at
+		) VALUES (
+			11, 1, 'api_key', 'legacy-account', 'sk-legacy', 'https://api.openai.com',
+			1, 1, 'active', 0, 'fp-legacy', datetime('now'), datetime('now')
+		);
+	`)
+	require.NoError(t, err)
+	require.NoError(t, rawDB.Close())
+
+	cfg := &Config{
+		Enabled:         true,
+		DatabasePath:    dbPath,
+		BufferSize:      10,
+		BatchSize:       5,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
+	}
+
+	tracker, err := NewUsageTracker(cfg)
+	require.NoError(t, err)
+	defer tracker.Close()
+
+	db := tracker.GetReadDB()
+	require.NotNil(t, db)
+
+	var foreignKeys int
+	err = db.QueryRow(`PRAGMA foreign_keys`).Scan(&foreignKeys)
+	require.NoError(t, err)
+	assert.Equal(t, 1, foreignKeys, "foreign_keys should be re-enabled after legacy migration")
+
+	var sourceIDColumnCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('upstream_accounts') WHERE name = 'source_id'`).Scan(&sourceIDColumnCount)
+	require.NoError(t, err)
+	assert.Equal(t, 0, sourceIDColumnCount, "upstream_accounts.source_id should be removed by migration")
+
+	var accountCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM upstream_accounts WHERE id = 11 AND account_name = 'legacy-account'`).Scan(&accountCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, accountCount, "legacy account row should be preserved during rebuild")
 }
 
 // TestSQLiteDataPersistence 测试SQLite数据持久化完整性

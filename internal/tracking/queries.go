@@ -18,7 +18,7 @@ const (
 	requestQuerySourceRaw      requestQuerySource = "raw"
 )
 
-const requestDetailsSelectFromEndpoint = `SELECT id, request_id,
+const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(client_ip, '') as client_ip,
 	COALESCE(user_agent, '') as user_agent,
 	method, path, start_time, end_time, duration_ms,
@@ -42,39 +42,6 @@ const requestDetailsSelectFromEndpoint = `SELECT id, request_id,
 	cache_read_cost_usd, total_cost_usd,
 	created_at, updated_at
 	FROM request_logs WHERE 1=1`
-
-const requestDetailsSelectFromAccount = `SELECT id, request_id,
-	COALESCE(client_ip, '') as client_ip,
-	COALESCE(user_agent, '') as user_agent,
-	COALESCE(method, 'POST') as method,
-	COALESCE(path, '/v1/responses') as path,
-	start_time, end_time, duration_ms,
-	'' as channel,
-	COALESCE(account_name, '') as endpoint_name,
-	COALESCE(source_name, '') as group_name,
-	'account' as upstream_type,
-	COALESCE(source_name, '') as upstream_source_name,
-	COALESCE(account_name, '') as upstream_name,
-	COALESCE(account_id, 0) as upstream_id,
-	COALESCE(model_name, '') as model_name,
-	COALESCE(is_streaming, false) as is_streaming,
-	status, http_status_code, COALESCE(retry_count, 0) as retry_count,
-	COALESCE(failure_reason, '') as failure_reason,
-	COALESCE(last_failure_reason, '') as last_failure_reason,
-	COALESCE(cancel_reason, '') as cancel_reason,
-	COALESCE(input_tokens, 0) as input_tokens,
-	COALESCE(output_tokens, 0) as output_tokens,
-	COALESCE(cache_creation_tokens, 0) as cache_creation_tokens,
-	COALESCE(cache_creation_5m_tokens, 0) as cache_creation_5m_tokens,
-	COALESCE(cache_creation_1h_tokens, 0) as cache_creation_1h_tokens,
-	COALESCE(cache_read_tokens, 0) as cache_read_tokens,
-	COALESCE(input_cost_usd, 0.0) as input_cost_usd,
-	COALESCE(output_cost_usd, 0.0) as output_cost_usd,
-	COALESCE(cache_creation_cost_usd, 0.0) as cache_creation_cost_usd,
-	COALESCE(cache_read_cost_usd, 0.0) as cache_read_cost_usd,
-	COALESCE(total_cost_usd, 0.0) as total_cost_usd,
-	created_at, updated_at
-	FROM account_request_logs WHERE 1=1`
 
 func resolveRequestQuerySource(upstreamType string) requestQuerySource {
 	switch upstreamType {
@@ -141,33 +108,23 @@ func appendRequestQueryFilters(query string, args []interface{}, opts *QueryOpti
 	}
 
 	if opts.Channel != "" {
-		if source != requestQuerySourceAccount {
-			query += " AND channel = ?"
-			args = append(args, opts.Channel)
-		}
+		query += " AND channel = ?"
+		args = append(args, opts.Channel)
 	}
 	if opts.EndpointName != "" {
-		if source == requestQuerySourceAccount {
-			query += " AND account_name = ?"
-			args = append(args, opts.EndpointName)
-		} else {
-			query += " AND endpoint_name = ?"
-			args = append(args, opts.EndpointName)
-		}
+		query += " AND endpoint_name = ?"
+		args = append(args, opts.EndpointName)
 	}
 	if opts.GroupName != "" {
-		if source == requestQuerySourceAccount {
-			query += " AND source_name = ?"
-			args = append(args, opts.GroupName)
-		} else {
-			query += " AND group_name = ?"
-			args = append(args, opts.GroupName)
-		}
+		query += " AND group_name = ?"
+		args = append(args, opts.GroupName)
 	}
 
 	switch source {
 	case requestQuerySourceEndpoint:
 		query += " AND COALESCE(upstream_type, 'endpoint') = 'endpoint'"
+	case requestQuerySourceAccount:
+		query += " AND COALESCE(upstream_type, 'endpoint') = 'account'"
 	case requestQuerySourceRaw:
 		if opts.UpstreamType != "" {
 			query += " AND COALESCE(upstream_type, 'endpoint') = ?"
@@ -183,16 +140,10 @@ func appendRequestQueryFilters(query string, args []interface{}, opts *QueryOpti
 }
 
 func requestDetailsBaseSelectForSource(source requestQuerySource) string {
-	if source == requestQuerySourceAccount {
-		return requestDetailsSelectFromAccount
-	}
-	return requestDetailsSelectFromEndpoint
+	return requestDetailsSelectBase
 }
 
 func requestCountBaseQueryForSource(source requestQuerySource) string {
-	if source == requestQuerySourceAccount {
-		return "SELECT COUNT(*) FROM account_request_logs WHERE 1=1"
-	}
 	return "SELECT COUNT(*) FROM request_logs WHERE 1=1"
 }
 
@@ -306,17 +257,7 @@ func (ut *UsageTracker) countRequestDetailsOverlapsByRequestIDs(ctx context.Cont
 
 	source := resolveRequestQuerySource(opts.UpstreamType)
 	switch source {
-	case requestQuerySourceAll:
-		endpointCount, err := ut.countRequestDetailsBySourceAndRequestIDs(ctx, opts, requestQuerySourceEndpoint, requestIDs)
-		if err != nil {
-			return 0, err
-		}
-		accountCount, err := ut.countRequestDetailsBySourceAndRequestIDs(ctx, opts, requestQuerySourceAccount, requestIDs)
-		if err != nil {
-			return 0, err
-		}
-		return endpointCount + accountCount, nil
-	case requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
+	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
 		return ut.countRequestDetailsBySourceAndRequestIDs(ctx, opts, source, requestIDs)
 	default:
 		return ut.countRequestDetailsBySourceAndRequestIDs(ctx, opts, requestQuerySourceRaw, requestIDs)
@@ -427,7 +368,7 @@ type AggregatedRequestStats struct {
 	DurationCount   int64
 }
 
-const aggregatedRequestStatsSelectFromEndpoint = `SELECT
+const aggregatedRequestStatsSelectBase = `SELECT
 	COUNT(*) as total_requests,
 	COALESCE(SUM(CASE WHEN status IN ('completed', 'processing') THEN 1 ELSE 0 END), 0) as success_requests,
 	COALESCE(SUM(CASE WHEN status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout') THEN 1 ELSE 0 END), 0) as failed_requests,
@@ -437,21 +378,8 @@ const aggregatedRequestStatsSelectFromEndpoint = `SELECT
 	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN 1 ELSE 0 END), 0) as duration_count
 	FROM request_logs WHERE 1=1`
 
-const aggregatedRequestStatsSelectFromAccount = `SELECT
-	COUNT(*) as total_requests,
-	COALESCE(SUM(CASE WHEN status IN ('completed', 'processing') THEN 1 ELSE 0 END), 0) as success_requests,
-	COALESCE(SUM(CASE WHEN status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout') THEN 1 ELSE 0 END), 0) as failed_requests,
-	COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
-	COALESCE(SUM(total_cost_usd), 0.0) as total_cost_usd,
-	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE 0 END), 0) as total_duration_ms,
-	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN 1 ELSE 0 END), 0) as duration_count
-	FROM account_request_logs WHERE 1=1`
-
 func aggregatedRequestStatsBaseQueryForSource(source requestQuerySource) string {
-	if source == requestQuerySourceAccount {
-		return aggregatedRequestStatsSelectFromAccount
-	}
-	return aggregatedRequestStatsSelectFromEndpoint
+	return aggregatedRequestStatsSelectBase
 }
 
 func (stats *AggregatedRequestStats) add(other AggregatedRequestStats) {
@@ -498,18 +426,7 @@ func (ut *UsageTracker) QueryAggregatedRequestStatsWithHotPool(ctx context.Conte
 	var stats AggregatedRequestStats
 
 	switch source {
-	case requestQuerySourceAll:
-		endpointStats, err := ut.queryAggregatedRequestStatsBySource(ctx, opts, requestQuerySourceEndpoint)
-		if err != nil {
-			return nil, err
-		}
-		accountStats, err := ut.queryAggregatedRequestStatsBySource(ctx, opts, requestQuerySourceAccount)
-		if err != nil {
-			return nil, err
-		}
-		stats.add(*endpointStats)
-		stats.add(*accountStats)
-	case requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
+	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
 		sourceStats, err := ut.queryAggregatedRequestStatsBySource(ctx, opts, source)
 		if err != nil {
 			return nil, err
@@ -666,33 +583,7 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 
 	source := resolveRequestQuerySource(opts.UpstreamType)
 	switch source {
-	case requestQuerySourceAll:
-		endpointQuery := requestDetailsBaseSelectForSource(requestQuerySourceEndpoint)
-		endpointArgs := make([]interface{}, 0, 16)
-		endpointQuery, endpointArgs = appendRequestQueryFilters(endpointQuery, endpointArgs, opts, requestQuerySourceEndpoint)
-
-		accountQuery := requestDetailsBaseSelectForSource(requestQuerySourceAccount)
-		accountArgs := make([]interface{}, 0, 16)
-		accountQuery, accountArgs = appendRequestQueryFilters(accountQuery, accountArgs, opts, requestQuerySourceAccount)
-
-		query := "SELECT * FROM (" + endpointQuery + " UNION ALL " + accountQuery + ") AS merged_requests ORDER BY start_time DESC"
-		args := append(endpointArgs, accountArgs...)
-		if opts.Limit > 0 {
-			query += " LIMIT ?"
-			args = append(args, opts.Limit)
-		}
-		if opts.Offset > 0 {
-			query += " OFFSET ?"
-			args = append(args, opts.Offset)
-		}
-
-		rows, err := ut.readDB.QueryContext(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query request details: %w", err)
-		}
-		defer rows.Close()
-		return ut.scanRequestDetailsRows(rows)
-	case requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
+	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
 		return ut.queryRequestDetailsBySource(ctx, opts, source)
 	default:
 		return ut.queryRequestDetailsBySource(ctx, opts, requestQuerySourceRaw)

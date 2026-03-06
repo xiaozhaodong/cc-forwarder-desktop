@@ -50,7 +50,7 @@ func insertEndpointRequestLog(t *testing.T, tracker *UsageTracker, requestID str
 	require.NoError(t, err)
 }
 
-func insertLegacyAccountRequestLog(t *testing.T, tracker *UsageTracker, requestID string, startTime time.Time) {
+func insertAccountRequestLog(t *testing.T, tracker *UsageTracker, requestID string, startTime time.Time, accountName string) {
 	t.Helper()
 	db := tracker.GetWriteDB()
 	require.NotNil(t, db)
@@ -58,31 +58,17 @@ func insertLegacyAccountRequestLog(t *testing.T, tracker *UsageTracker, requestI
 	_, err := db.Exec(`
 		INSERT INTO request_logs (
 			request_id, start_time, status, upstream_type,
-			upstream_source_name, upstream_name, model_name
-		) VALUES (?, ?, 'completed', 'account', ?, ?, ?)`,
+			channel, endpoint_name, group_name,
+			upstream_source_name, upstream_name, upstream_id, model_name
+		) VALUES (?, ?, 'completed', 'account', ?, ?, ?, ?, ?, ?, ?)`,
 		requestID,
 		startTime.Format("2006-01-02 15:04:05"),
-		"legacy-src",
-		"legacy-acc",
-		"gpt-4.1",
-	)
-	require.NoError(t, err)
-}
-
-func insertAccountRequestLog(t *testing.T, tracker *UsageTracker, requestID string, startTime time.Time, sourceName, accountName string) {
-	t.Helper()
-	db := tracker.GetWriteDB()
-	require.NotNil(t, db)
-
-	_, err := db.Exec(`
-		INSERT INTO account_request_logs (
-			request_id, account_id, source_name, account_name,
-			start_time, status, model_name
-		) VALUES (?, NULL, ?, ?, ?, 'completed', ?)`,
-		requestID,
-		sourceName,
+		"account-pool",
 		accountName,
-		startTime.Format("2006-01-02 15:04:05"),
+		"",
+		"",
+		accountName,
+		0,
 		"gpt-4.1",
 	)
 	require.NoError(t, err)
@@ -96,12 +82,12 @@ func requestIDs(details []RequestDetail) map[string]struct{} {
 	return out
 }
 
-func TestQueryRequestDetails_AccountSourceUsesAccountTableOnly(t *testing.T) {
+func TestQueryRequestDetails_AccountSourceUsesRequestLogs(t *testing.T) {
 	tracker := newSourceRoutingTracker(t)
 	now := time.Now()
 
-	insertAccountRequestLog(t, tracker, "req-account-table", now.Add(-2*time.Minute), "pool-a", "acc-a")
-	insertLegacyAccountRequestLog(t, tracker, "req-account-legacy-in-request-logs", now.Add(-1*time.Minute))
+	insertAccountRequestLog(t, tracker, "req-account-table", now.Add(-2*time.Minute), "acc-a")
+	insertAccountRequestLog(t, tracker, "req-account-second", now.Add(-1*time.Minute), "acc-b")
 	insertEndpointRequestLog(t, tracker, "req-endpoint-table", now.Add(-30*time.Second))
 
 	ctx := context.Background()
@@ -111,60 +97,59 @@ func TestQueryRequestDetails_AccountSourceUsesAccountTableOnly(t *testing.T) {
 		Limit:        20,
 	})
 	require.NoError(t, err)
-	require.Len(t, accountDetails, 1)
-	assert.Equal(t, "req-account-table", accountDetails[0].RequestID)
+	require.Len(t, accountDetails, 2)
+	assert.Equal(t, "req-account-second", accountDetails[0].RequestID)
 	assert.Equal(t, "account", accountDetails[0].UpstreamType)
-	assert.Equal(t, "pool-a", accountDetails[0].UpstreamSourceName)
-	assert.Equal(t, "acc-a", accountDetails[0].UpstreamName)
+	assert.Equal(t, "", accountDetails[0].UpstreamSourceName)
+	assert.Equal(t, "acc-b", accountDetails[0].UpstreamName)
+	assert.Equal(t, "account-pool", accountDetails[0].Channel)
 
 	accountCount, err := tracker.CountRequestDetails(ctx, &QueryOptions{
 		UpstreamType: "account",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 1, accountCount)
+	assert.Equal(t, 2, accountCount)
 
 	allDetails, err := tracker.QueryRequestDetails(ctx, &QueryOptions{
 		UpstreamType: "",
 		Limit:        20,
 	})
 	require.NoError(t, err)
-	assert.Len(t, allDetails, 2)
+	assert.Len(t, allDetails, 3)
 	allIDs := requestIDs(allDetails)
 	_, hasEndpoint := allIDs["req-endpoint-table"]
-	_, hasAccount := allIDs["req-account-table"]
-	_, hasLegacy := allIDs["req-account-legacy-in-request-logs"]
+	_, hasAccountA := allIDs["req-account-table"]
+	_, hasAccountB := allIDs["req-account-second"]
 	assert.True(t, hasEndpoint)
-	assert.True(t, hasAccount)
-	assert.False(t, hasLegacy, "all view should not read account rows from request_logs")
+	assert.True(t, hasAccountA)
+	assert.True(t, hasAccountB)
 
 	allCount, err := tracker.CountRequestDetails(ctx, &QueryOptions{
 		UpstreamType: "",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 2, allCount)
+	assert.Equal(t, 3, allCount)
 }
 
 func TestQueryRequestDetailsWithHotPool_AccountSourceDedupAndPagination(t *testing.T) {
 	tracker := newSourceRoutingTracker(t)
 	now := time.Now()
 
-	insertAccountRequestLog(t, tracker, "req-account-db", now.Add(-5*time.Minute), "pool-db", "acc-db")
-	insertAccountRequestLog(t, tracker, "req-account-hot", now.Add(-4*time.Minute), "pool-db", "acc-hot")
+	insertAccountRequestLog(t, tracker, "req-account-db", now.Add(-5*time.Minute), "acc-db")
+	insertAccountRequestLog(t, tracker, "req-account-hot", now.Add(-4*time.Minute), "acc-hot")
 
 	tracker.RecordRequestStart("req-account-hot", "127.0.0.1", "codex-cli", "POST", "/v1/responses", true)
 	upstreamType := "account"
-	sourceName := "pool-hot"
 	accountName := "acc-hot"
 	accountID := int64(9001)
 	status := "processing"
 	httpStatus := 200
 	tracker.RecordRequestUpdate("req-account-hot", UpdateOptions{
-		UpstreamType:       &upstreamType,
-		UpstreamSourceName: &sourceName,
-		UpstreamName:       &accountName,
-		UpstreamID:         &accountID,
-		Status:             &status,
-		HttpStatus:         &httpStatus,
+		UpstreamType: &upstreamType,
+		UpstreamName: &accountName,
+		UpstreamID:   &accountID,
+		Status:       &status,
+		HttpStatus:   &httpStatus,
 	})
 
 	ctx := context.Background()

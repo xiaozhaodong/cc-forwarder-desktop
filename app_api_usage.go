@@ -191,7 +191,7 @@ func (a *App) queryStatsFromSingleTable(ctx context.Context, db *sql.DB, tableNa
 }
 
 // queryStatsFromDB 按 source_view 查询成本、tokens 和请求数：
-// endpoint -> request_logs(endpoint)；account -> account_request_logs；all -> 两表聚合
+// endpoint/account/all 统一基于 request_logs + upstream_type 查询
 func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time, sourceView string) (cost float64, tokens int64, requests int64) {
 	if a.usageTracker == nil {
 		return 0, 0, 0
@@ -204,52 +204,23 @@ func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time
 
 	switch normalizeSourceView(sourceView) {
 	case "account":
-		// 账号视图优先走账号专表；若不存在则降级 request_logs(account)
-		accountCost, accountTokens, accountRequests, err := a.queryStatsFromSingleTable(ctx, db, "account_request_logs", startTime, endTime, "")
-		if err == nil {
-			return accountCost, accountTokens, accountRequests
-		}
-
-		if a.logger != nil {
-			a.logger.Debug("查询 account_request_logs 失败，降级 request_logs(account)", "error", err)
-		}
-		fallbackCost, fallbackTokens, fallbackRequests, fallbackErr := a.queryStatsFromSingleTable(ctx, db, "request_logs", startTime, endTime, "account")
-		if fallbackErr != nil {
+		accountCost, accountTokens, accountRequests, err := a.queryStatsFromSingleTable(ctx, db, "request_logs", startTime, endTime, "account")
+		if err != nil {
 			if a.logger != nil {
-				a.logger.Debug("降级查询 request_logs(account) 失败", "error", fallbackErr)
+				a.logger.Debug("查询 request_logs(account) 失败", "error", err)
 			}
 			return 0, 0, 0
 		}
-		return fallbackCost, fallbackTokens, fallbackRequests
-
+		return accountCost, accountTokens, accountRequests
 	case "all":
-		// all 聚合 endpoint + account，避免 account 在 request_logs 与专表双计数
-		endpointCost, endpointTokens, endpointRequests, endpointErr := a.queryStatsFromSingleTable(ctx, db, "request_logs", startTime, endTime, "endpoint")
-		if endpointErr != nil {
+		allCost, allTokens, allRequests, err := a.queryStatsFromSingleTable(ctx, db, "request_logs", startTime, endTime, "")
+		if err != nil {
 			if a.logger != nil {
-				a.logger.Debug("查询 request_logs(endpoint) 失败", "error", endpointErr)
+				a.logger.Debug("查询 request_logs(all) 失败", "error", err)
 			}
 			return 0, 0, 0
 		}
-
-		accountCost, accountTokens, accountRequests, accountErr := a.queryStatsFromSingleTable(ctx, db, "account_request_logs", startTime, endTime, "")
-		if accountErr != nil {
-			// 兼容旧库：没有账号专表时回退到 request_logs 全量统计
-			if a.logger != nil {
-				a.logger.Debug("查询 account_request_logs 失败，降级 request_logs(all)", "error", accountErr)
-			}
-			fallbackCost, fallbackTokens, fallbackRequests, fallbackErr := a.queryStatsFromSingleTable(ctx, db, "request_logs", startTime, endTime, "")
-			if fallbackErr != nil {
-				if a.logger != nil {
-					a.logger.Debug("降级查询 request_logs(all) 失败", "error", fallbackErr)
-				}
-				return 0, 0, 0
-			}
-			return fallbackCost, fallbackTokens, fallbackRequests
-		}
-
-		return endpointCost + accountCost, endpointTokens + accountTokens, endpointRequests + accountRequests
-
+		return allCost, allTokens, allRequests
 	default:
 		// endpoint（默认）
 		endpointCost, endpointTokens, endpointRequests, err := a.queryStatsFromSingleTable(ctx, db, "request_logs", startTime, endTime, "endpoint")

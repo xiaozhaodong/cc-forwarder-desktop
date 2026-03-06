@@ -320,27 +320,6 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 	}
 	defer requestStmt.Close()
 
-	// account 请求直接写入 account_request_logs，不再依赖 request_logs 镜像触发器
-	accountStmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO account_request_logs (
-			request_id, account_id, source_name, account_name,
-			client_ip, user_agent, method, path, is_streaming,
-			start_time, end_time, duration_ms,
-			status, http_status_code, retry_count,
-			failure_reason, cancel_reason,
-			model_name, input_tokens, output_tokens,
-			cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens,
-			cache_read_tokens,
-			input_cost_usd, output_cost_usd,
-			cache_creation_cost_usd, cache_creation_5m_cost_usd, cache_creation_1h_cost_usd,
-			cache_read_cost_usd, total_cost_usd
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare account_request_logs statement: %w", err)
-	}
-	defer accountStmt.Close()
-
 	for _, event := range events {
 		req := event.Request
 		upstreamType := strings.TrimSpace(req.UpstreamType)
@@ -360,79 +339,43 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			endTime = nil
 		}
 
-		if strings.EqualFold(upstreamType, "account") {
-			_, err = accountStmt.ExecContext(ctx,
-				req.RequestID,
-				nullInt64(req.UpstreamID),
-				req.UpstreamSourceName,
-				req.UpstreamName,
-				req.ClientIP,
-				req.UserAgent,
-				req.Method,
-				req.Path,
-				req.IsStreaming,
-				startTime,
-				endTime,
-				req.DurationMs,
-				req.Status,
-				req.HTTPStatus,
-				req.RetryCount,
-				nullString(req.FailureReason),
-				nullString(req.CancelReason),
-				req.ModelName,
-				req.InputTokens,
-				req.OutputTokens,
-				req.CacheCreationTokens,
-				req.CacheCreation5mTokens,
-				req.CacheCreation1hTokens,
-				req.CacheReadTokens,
-				costBreakdown.InputCost,
-				costBreakdown.OutputCost,
-				costBreakdown.CacheCreationCost,   // 总成本（向后兼容）
-				costBreakdown.CacheCreation5mCost, // 5分钟缓存成本
-				costBreakdown.CacheCreation1hCost, // 1小时缓存成本
-				costBreakdown.CacheReadCost,
-				costBreakdown.TotalCost,
-			)
-		} else {
-			_, err = requestStmt.ExecContext(ctx,
-				req.RequestID,
-				req.ClientIP,
-				req.UserAgent,
-				req.Method,
-				req.Path,
-				startTime,
-				endTime,
-				req.DurationMs,
-				req.Channel,
-				req.EndpointName,
-				req.GroupName,
-				req.ModelName,
-				upstreamType,
-				req.UpstreamSourceName,
-				req.UpstreamName,
-				nullInt64(req.UpstreamID),
-				req.Status,
-				req.HTTPStatus,
-				req.RetryCount,
-				nullString(req.FailureReason),
-				nullString(req.CancelReason),
-				req.IsStreaming,
-				req.InputTokens,
-				req.OutputTokens,
-				req.CacheCreationTokens,
-				req.CacheCreation5mTokens,
-				req.CacheCreation1hTokens,
-				req.CacheReadTokens,
-				costBreakdown.InputCost,
-				costBreakdown.OutputCost,
-				costBreakdown.CacheCreationCost,   // 总成本（向后兼容）
-				costBreakdown.CacheCreation5mCost, // 5分钟缓存成本
-				costBreakdown.CacheCreation1hCost, // 1小时缓存成本
-				costBreakdown.CacheReadCost,
-				costBreakdown.TotalCost,
-			)
-		}
+		_, err = requestStmt.ExecContext(ctx,
+			req.RequestID,
+			req.ClientIP,
+			req.UserAgent,
+			req.Method,
+			req.Path,
+			startTime,
+			endTime,
+			req.DurationMs,
+			req.Channel,
+			req.EndpointName,
+			req.GroupName,
+			req.ModelName,
+			upstreamType,
+			req.UpstreamSourceName,
+			req.UpstreamName,
+			nullInt64(req.UpstreamID),
+			req.Status,
+			req.HTTPStatus,
+			req.RetryCount,
+			nullString(req.FailureReason),
+			nullString(req.CancelReason),
+			req.IsStreaming,
+			req.InputTokens,
+			req.OutputTokens,
+			req.CacheCreationTokens,
+			req.CacheCreation5mTokens,
+			req.CacheCreation1hTokens,
+			req.CacheReadTokens,
+			costBreakdown.InputCost,
+			costBreakdown.OutputCost,
+			costBreakdown.CacheCreationCost,   // 总成本（向后兼容）
+			costBreakdown.CacheCreation5mCost, // 5分钟缓存成本
+			costBreakdown.CacheCreation1hCost, // 1小时缓存成本
+			costBreakdown.CacheReadCost,
+			costBreakdown.TotalCost,
+		)
 		if err != nil {
 			return fmt.Errorf("failed to insert request %s: %w", req.RequestID, err)
 		}

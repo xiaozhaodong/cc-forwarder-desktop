@@ -245,26 +245,7 @@ export namespace main {
 	        this.is_default = source["is_default"];
 	    }
 	}
-	export class CreateSubscriptionSourceInput {
-	    name: string;
-	    url: string;
-	    enabled: boolean;
-	    sync_mode: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new CreateSubscriptionSourceInput(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.url = source["url"];
-	        this.enabled = source["enabled"];
-	        this.sync_mode = source["sync_mode"];
-	    }
-	}
 	export class CreateUpstreamAccountInput {
-	    source_id?: number;
 	    provider_type: string;
 	    account_name: string;
 	    credential_raw: string;
@@ -278,7 +259,6 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.source_id = source["source_id"];
 	        this.provider_type = source["provider_type"];
 	        this.account_name = source["account_name"];
 	        this.credential_raw = source["credential_raw"];
@@ -855,36 +835,6 @@ export namespace main {
 	        this.is_initialized = source["is_initialized"];
 	    }
 	}
-	export class SubscriptionSourceInfo {
-	    id: number;
-	    name: string;
-	    url: string;
-	    enabled: boolean;
-	    sync_mode: string;
-	    last_sync_at: string;
-	    last_status: string;
-	    last_error: string;
-	    created_at: string;
-	    updated_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SubscriptionSourceInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.url = source["url"];
-	        this.enabled = source["enabled"];
-	        this.sync_mode = source["sync_mode"];
-	        this.last_sync_at = source["last_sync_at"];
-	        this.last_status = source["last_status"];
-	        this.last_error = source["last_error"];
-	        this.created_at = source["created_at"];
-	        this.updated_at = source["updated_at"];
-	    }
-	}
 	export class SwitchKeyResult {
 	    success: boolean;
 	    message: string;
@@ -905,24 +855,6 @@ export namespace main {
 	        this.key_type = source["key_type"];
 	        this.new_index = source["new_index"];
 	        this.timestamp = source["timestamp"];
-	    }
-	}
-	export class SyncSubscriptionSourceResultInfo {
-	    source_id: number;
-	    added: number;
-	    updated: number;
-	    disabled: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new SyncSubscriptionSourceResultInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.source_id = source["source_id"];
-	        this.added = source["added"];
-	        this.updated = source["updated"];
-	        this.disabled = source["disabled"];
 	    }
 	}
 	export class SystemStatus {
@@ -992,8 +924,6 @@ export namespace main {
 	
 	export class UpstreamAccountInfo {
 	    id: number;
-	    source_id?: number;
-	    source_name: string;
 	    provider_type: string;
 	    account_name: string;
 	    credential_raw: string;
@@ -1016,8 +946,6 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
-	        this.source_id = source["source_id"];
-	        this.source_name = source["source_name"];
 	        this.provider_type = source["provider_type"];
 	        this.account_name = source["account_name"];
 	        this.credential_raw = source["credential_raw"];

@@ -4,7 +4,7 @@
 // ============================================
 
 import { Filter, Settings2, ChevronDown } from 'lucide-react';
-import { TIME_RANGE_OPTIONS, SOURCE_VIEW_OPTIONS } from '../utils/constants.js';
+import { TIME_RANGE_OPTIONS } from '../utils/constants.js';
 import ViewConfigPanel from './ViewConfigPanel.jsx';
 import AutoRefreshControl from './AutoRefreshControl.jsx';
 import ActiveGroupSwitcher from './ActiveGroupSwitcher.jsx';
@@ -27,8 +27,6 @@ import ActiveGroupSwitcher from './ActiveGroupSwitcher.jsx';
  * @param {Array} props.groups - 所有端点列表（v4.0: 一个端点=一个组）
  * @param {string} props.activeGroup - 当前活跃端点名称
  * @param {Function} props.onGroupSwitch - 端点切换回调 (endpointName) => void
- * @param {string} props.sourceView - 来源视图（endpoint/account/all）
- * @param {Function} props.onSourceViewChange - 来源视图切换回调
  */
 const Toolbar = ({
   activeTimeRange = 'today',
@@ -45,30 +43,10 @@ const Toolbar = ({
   autoRefresh = null,
   groups = [],
   activeGroup = '',
-  onGroupSwitch,
-  sourceView = 'endpoint',
-  onSourceViewChange
+  onGroupSwitch
 }) => {
   return (
     <div className="flex flex-wrap items-center gap-3">
-      {/* 来源视图切换 */}
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-medium text-gray-500">来源视图</span>
-        <select
-          value={sourceView}
-          onChange={(e) => onSourceViewChange?.(e.target.value)}
-          className="px-2.5 py-1.5 text-sm bg-white border border-gray-200 rounded-lg shadow-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-        >
-          {SOURCE_VIEW_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="h-6 w-px bg-gray-300 mx-1 hidden sm:block"></div>
-
       {/* 端点快捷切换器 */}
       <ActiveGroupSwitcher
         groups={groups}

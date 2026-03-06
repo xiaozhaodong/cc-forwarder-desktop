@@ -254,10 +254,7 @@ func (eh *ErrorHandler) performSimpleBackup(ctx context.Context, backupDB *sql.D
 	tables := []string{
 		"request_logs",
 		"usage_summary",
-		"subscription_sources",
 		"upstream_accounts",
-		"account_request_logs",
-		"sync_logs",
 	}
 
 	totalRows := 0

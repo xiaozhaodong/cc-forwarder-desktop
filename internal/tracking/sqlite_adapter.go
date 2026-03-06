@@ -254,6 +254,143 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		}
 	}
 
+	if err := s.migrateDeprecatedAccountPoolSchema(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) (retErr error) {
+	hasLegacySourceID, err := s.columnExists(ctx, "upstream_accounts", "source_id")
+	if err != nil {
+		return fmt.Errorf("failed to inspect upstream_accounts schema: %w", err)
+	}
+	hasLegacyAccountLogs, err := s.tableExists(ctx, "account_request_logs")
+	if err != nil {
+		return fmt.Errorf("failed to inspect account_request_logs table: %w", err)
+	}
+	hasLegacySyncLogs, err := s.tableExists(ctx, "sync_logs")
+	if err != nil {
+		return fmt.Errorf("failed to inspect sync_logs table: %w", err)
+	}
+	hasLegacySources, err := s.tableExists(ctx, "subscription_sources")
+	if err != nil {
+		return fmt.Errorf("failed to inspect subscription_sources table: %w", err)
+	}
+	hasMirrorInsert, err := s.triggerExists(ctx, "mirror_account_logs_after_insert")
+	if err != nil {
+		return fmt.Errorf("failed to inspect mirror insert trigger: %w", err)
+	}
+	hasMirrorUpdate, err := s.triggerExists(ctx, "mirror_account_logs_after_update")
+	if err != nil {
+		return fmt.Errorf("failed to inspect mirror update trigger: %w", err)
+	}
+	hasMirrorDelete, err := s.triggerExists(ctx, "mirror_account_logs_after_delete")
+	if err != nil {
+		return fmt.Errorf("failed to inspect mirror delete trigger: %w", err)
+	}
+
+	legacyDetected := hasLegacySourceID || hasLegacyAccountLogs || hasLegacySyncLogs || hasLegacySources ||
+		hasMirrorInsert || hasMirrorUpdate || hasMirrorDelete
+	if !legacyDetected {
+		return nil
+	}
+
+	foreignKeysDisabled := false
+	if hasLegacySourceID {
+		if _, err := s.db.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+			return fmt.Errorf("failed to disable foreign keys before upstream_accounts rebuild: %w", err)
+		}
+		foreignKeysDisabled = true
+		defer func() {
+			if !foreignKeysDisabled {
+				return
+			}
+			if _, err := s.db.ExecContext(context.Background(), "PRAGMA foreign_keys=ON"); err != nil && retErr == nil {
+				retErr = fmt.Errorf("failed to re-enable foreign keys after upstream_accounts rebuild: %w", err)
+			}
+		}()
+
+		s.logger.Info("🔧 [数据库迁移] 重建 upstream_accounts，移除 source_id")
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to begin upstream_accounts rebuild transaction: %w", err)
+		}
+		defer tx.Rollback()
+
+		rebuildSQLs := []string{
+			`CREATE TABLE IF NOT EXISTS upstream_accounts_new (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				provider_type TEXT NOT NULL DEFAULT 'api_key',
+				account_name TEXT NOT NULL,
+				credential_raw TEXT NOT NULL,
+				base_url TEXT NOT NULL DEFAULT 'https://api.openai.com',
+				priority INTEGER DEFAULT 100,
+				enabled INTEGER DEFAULT 1,
+				state TEXT DEFAULT 'active',
+				cooldown_until DATETIME,
+				fail_count INTEGER DEFAULT 0,
+				last_success_at DATETIME,
+				last_error TEXT DEFAULT '',
+				fingerprint TEXT UNIQUE NOT NULL,
+				created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+				updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+			)`,
+			`INSERT INTO upstream_accounts_new (
+				id, provider_type, account_name, credential_raw, base_url,
+				priority, enabled, state, cooldown_until, fail_count,
+				last_success_at, last_error, fingerprint, created_at, updated_at
+			)
+			SELECT
+				id, provider_type, account_name, credential_raw, base_url,
+				priority, enabled, state, cooldown_until, fail_count,
+				last_success_at, last_error, fingerprint, created_at, updated_at
+			FROM upstream_accounts`,
+			"DROP TABLE upstream_accounts",
+			"ALTER TABLE upstream_accounts_new RENAME TO upstream_accounts",
+			"CREATE INDEX IF NOT EXISTS idx_upstream_accounts_priority ON upstream_accounts(priority)",
+			"CREATE INDEX IF NOT EXISTS idx_upstream_accounts_enabled ON upstream_accounts(enabled)",
+			"CREATE INDEX IF NOT EXISTS idx_upstream_accounts_state ON upstream_accounts(state)",
+			"CREATE INDEX IF NOT EXISTS idx_upstream_accounts_cooldown_until ON upstream_accounts(cooldown_until)",
+			`CREATE TRIGGER IF NOT EXISTS update_upstream_accounts_timestamp
+				AFTER UPDATE ON upstream_accounts
+				FOR EACH ROW
+				WHEN NEW.updated_at = OLD.updated_at
+			BEGIN
+				UPDATE upstream_accounts SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+			END`,
+		}
+		for _, stmt := range rebuildSQLs {
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("failed to rebuild upstream_accounts: %w", err)
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("failed to commit upstream_accounts rebuild: %w", err)
+		}
+		s.logger.Info("✅ [数据库迁移] upstream_accounts 已移除 source_id")
+	}
+
+	cleanupSQLs := []string{
+		"DROP TRIGGER IF EXISTS mirror_account_logs_after_insert",
+		"DROP TRIGGER IF EXISTS mirror_account_logs_after_update",
+		"DROP TRIGGER IF EXISTS mirror_account_logs_after_delete",
+		"DROP TABLE IF EXISTS account_request_logs",
+		"DROP TABLE IF EXISTS sync_logs",
+		"DROP TABLE IF EXISTS subscription_sources",
+	}
+	shouldDeleteLegacyAccountRows := hasLegacyAccountLogs || hasLegacySourceID || hasMirrorInsert || hasMirrorUpdate || hasMirrorDelete
+	if shouldDeleteLegacyAccountRows {
+		cleanupSQLs = append(cleanupSQLs, "DELETE FROM request_logs WHERE COALESCE(upstream_type, 'endpoint') = 'account'")
+	}
+	for _, stmt := range cleanupSQLs {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("failed to cleanup deprecated account pool schema: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -284,6 +421,26 @@ func (s *SQLiteAdapter) columnExists(ctx context.Context, table, column string) 
 	}
 
 	return false, nil
+}
+
+func (s *SQLiteAdapter) tableExists(ctx context.Context, table string) (bool, error) {
+	return s.sqliteObjectExists(ctx, "table", table)
+}
+
+func (s *SQLiteAdapter) triggerExists(ctx context.Context, trigger string) (bool, error) {
+	return s.sqliteObjectExists(ctx, "trigger", trigger)
+}
+
+func (s *SQLiteAdapter) sqliteObjectExists(ctx context.Context, objectType, name string) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type = ? AND name = ?",
+		objectType, name,
+	).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // BuildInsertOrReplaceQuery 构建插入或更新查询（SQLite语法）

@@ -66,10 +66,3 @@ export const TIME_RANGE_OPTIONS = [
   { value: '7days', label: '7天' },
   { value: '30days', label: '30天' }
 ];
-
-// 来源视图切换选项
-export const SOURCE_VIEW_OPTIONS = [
-  { value: 'endpoint', label: '端点' },
-  { value: 'account', label: '账号' },
-  { value: 'all', label: '全部' }
-];

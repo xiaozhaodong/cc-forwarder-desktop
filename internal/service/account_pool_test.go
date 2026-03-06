@@ -16,49 +16,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestParseSourceAccounts_JSON(t *testing.T) {
-	raw := []byte(`{
-		"accounts": [
-			{"name":"main","provider_type":"api_key","credential":"sk-abc","base_url":"https://api.openai.com","priority":1},
-			{"account_name":"backup","provider":"session_cookie","credential_raw":"session=xyz","base_url":"https://api.openai.com/"}
-		]
-	}`)
-
-	accounts, err := ParseSourceAccounts(raw)
-	if err != nil {
-		t.Fatalf("ParseSourceAccounts returned error: %v", err)
-	}
-	if len(accounts) != 2 {
-		t.Fatalf("expected 2 accounts, got %d", len(accounts))
-	}
-	if accounts[0].AccountName != "main" || accounts[0].ProviderType != "api_key" {
-		t.Fatalf("unexpected first account: %+v", accounts[0])
-	}
-	if accounts[1].ProviderType != "session_cookie" {
-		t.Fatalf("expected session_cookie, got %s", accounts[1].ProviderType)
-	}
-}
-
-func TestParseSourceAccounts_PlainText(t *testing.T) {
-	raw := []byte(`
-# name,provider,credential,base_url
-primary,api_key,sk-primary,https://api.openai.com
-session-a,session_cookie,session=abc123,https://api.openai.com
-sk-fallback
-`)
-
-	accounts, err := ParseSourceAccounts(raw)
-	if err != nil {
-		t.Fatalf("ParseSourceAccounts returned error: %v", err)
-	}
-	if len(accounts) != 3 {
-		t.Fatalf("expected 3 accounts, got %d", len(accounts))
-	}
-	if accounts[2].ProviderType != "api_key" {
-		t.Fatalf("expected inferred api_key, got %s", accounts[2].ProviderType)
-	}
-}
-
 func TestTestUpstreamAccount_UsesResponsesEndpointAndTreats400AsReachable(t *testing.T) {
 	var receivedMethod string
 	var receivedPath string

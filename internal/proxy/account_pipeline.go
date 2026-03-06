@@ -52,17 +52,13 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 	var lastErr error
 
 	for idx, acc := range accounts {
-		sourceName := acc.SourceName
-		if strings.TrimSpace(sourceName) == "" {
-			sourceName = "manual"
-		}
 		accountName := acc.AccountName
 		if strings.TrimSpace(accountName) == "" {
 			accountName = fmt.Sprintf("account-%d", acc.ID)
 		}
 
-		lifecycleManager.SetUpstream("account", sourceName, accountName, acc.ID)
-		lifecycleManager.SetEndpoint(accountName, sourceName, "")
+		lifecycleManager.SetUpstream("account", "", accountName, acc.ID)
+		lifecycleManager.SetEndpoint(accountName, "", "account-pool")
 		lifecycleManager.UpdateStatus("forwarding", idx, 0)
 
 		resp, forwardErr := h.forwardRequestToAccount(ctx, r, bodyBytes, acc, isSSE)

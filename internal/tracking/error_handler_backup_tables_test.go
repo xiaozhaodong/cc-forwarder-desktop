@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestCreateBackupAndRestore_PreservesAccountPoolTables(t *testing.T) {
+func TestCreateBackupAndRestore_PreservesCoreTables(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "backup-restore.db")
 
@@ -45,31 +45,10 @@ func TestCreateBackupAndRestore_PreservesAccountPoolTables(t *testing.T) {
 	}
 
 	if _, err := tracker.db.ExecContext(ctx, `
-		INSERT INTO subscription_sources (id, name, url, enabled, sync_mode, last_status, last_error)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, 1, "source-1", "https://example.com/subscription", 1, "manual", "ok", ""); err != nil {
-		t.Fatalf("failed to insert subscription_sources seed: %v", err)
-	}
-
-	if _, err := tracker.db.ExecContext(ctx, `
-		INSERT INTO upstream_accounts (id, source_id, provider_type, account_name, credential_raw, base_url, priority, enabled, state, fail_count, fingerprint)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, 10, 1, "api_key", "account-1", "sk-test", "https://chatgpt.com", 1, 1, "active", 0, "fp-1"); err != nil {
-		t.Fatalf("failed to insert upstream_accounts seed: %v", err)
-	}
-
-	if _, err := tracker.db.ExecContext(ctx, `
-		INSERT INTO account_request_logs (request_id, account_id, source_name, account_name, start_time, status, model_name, input_tokens, output_tokens, total_cost_usd)
+		INSERT INTO upstream_accounts (id, provider_type, account_name, credential_raw, base_url, priority, enabled, state, fail_count, fingerprint)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, "req-account-1", 10, "source-1", "account-1", now, "completed", "gpt-5-codex", 12, 4, 0.55); err != nil {
-		t.Fatalf("failed to insert account_request_logs seed: %v", err)
-	}
-
-	if _, err := tracker.db.ExecContext(ctx, `
-		INSERT INTO sync_logs (source_id, started_at, finished_at, result, added_count, updated_count, disabled_count, error_summary)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, 1, now, now, "success", 1, 0, 0, ""); err != nil {
-		t.Fatalf("failed to insert sync_logs seed: %v", err)
+	`, 10, "api_key", "account-1", "sk-test", "https://chatgpt.com", 1, 1, "active", 0, "fp-1"); err != nil {
+		t.Fatalf("failed to insert upstream_accounts seed: %v", err)
 	}
 
 	if err := tracker.errorHandler.CreateBackup(); err != nil {
@@ -84,10 +63,7 @@ func TestCreateBackupAndRestore_PreservesAccountPoolTables(t *testing.T) {
 	for _, table := range []string{
 		"request_logs",
 		"usage_summary",
-		"account_request_logs",
-		"subscription_sources",
 		"upstream_accounts",
-		"sync_logs",
 	} {
 		if _, err := tracker.db.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			t.Fatalf("failed to clear %s before restore: %v", table, err)
@@ -99,12 +75,9 @@ func TestCreateBackupAndRestore_PreservesAccountPoolTables(t *testing.T) {
 	}
 
 	counts := map[string]int{
-		"request_logs":         1,
-		"usage_summary":        1,
-		"account_request_logs": 1,
-		"subscription_sources": 1,
-		"upstream_accounts":    1,
-		"sync_logs":            1,
+		"request_logs":      1,
+		"usage_summary":     1,
+		"upstream_accounts": 1,
 	}
 	for table, expected := range counts {
 		var actual int

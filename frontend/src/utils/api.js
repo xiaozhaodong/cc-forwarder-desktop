@@ -251,14 +251,19 @@ export const pauseGroup = async (groupName) => {
 // ============================================
 
 export const fetchUsageStats = async (params = {}) => {
+  const queryInput = {
+    ...params,
+    source_view: params.source_view || params.sourceView || 'all'
+  };
+
   // Wails 环境使用新的 GetUsageStats 绑定（与 HTTP API 格式一致）
   // 传递完整筛选参数
   if (isWailsEnvironment()) {
-    return await WailsApi.getUsageStats(params);
+    return await WailsApi.getUsageStats(queryInput);
   }
 
   const queryParams = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
+  Object.entries(queryInput).forEach(([key, value]) => {
     if (value !== null && value !== undefined && value !== '') {
       queryParams.append(key, value.toString());
     }
@@ -272,6 +277,11 @@ export const fetchUsageStats = async (params = {}) => {
 };
 
 export const fetchRequests = async (params = {}) => {
+  const queryInput = {
+    ...params,
+    source_view: params.source_view || params.sourceView || 'all'
+  };
+
   // 标准化请求数据（提取到外部，Wails和HTTP环境共用）
   const normalizeRequest = (request) => ({
     ...request,
@@ -301,7 +311,7 @@ export const fetchRequests = async (params = {}) => {
   // Wails 环境使用绑定
   if (isWailsEnvironment()) {
     // 直接传递所有参数给 wailsApi
-    const data = await WailsApi.getRequests(params);
+    const data = await WailsApi.getRequests(queryInput);
 
     // 对 Wails 数据也进行规范化处理
     const requests = data.requests || [];
@@ -311,13 +321,13 @@ export const fetchRequests = async (params = {}) => {
       requests: normalizedRequests,
       total: data.total || normalizedRequests.length,
       page: data.page || 1,
-      pageSize: data.pageSize || parseInt(params.limit || params.pageSize || 50),
-      totalPages: data.totalPages || Math.ceil((data.total || 0) / (data.pageSize || parseInt(params.limit || params.pageSize || 50)))
+      pageSize: data.pageSize || parseInt(queryInput.limit || queryInput.pageSize || 50),
+      totalPages: data.totalPages || Math.ceil((data.total || 0) / (data.pageSize || parseInt(queryInput.limit || queryInput.pageSize || 50)))
     };
   }
 
   const queryParams = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
+  Object.entries(queryInput).forEach(([key, value]) => {
     if (value !== null && value !== undefined && value !== '') {
       queryParams.append(key, value.toString());
     }
@@ -737,31 +747,6 @@ const parseEntityId = (id) => {
   return null;
 };
 
-const normalizeSubscriptionSourceList = (data) => {
-  const list = Array.isArray(data)
-    ? data
-    : (data?.sources || data?.subscription_sources || data?.data || []);
-
-  return (Array.isArray(list) ? list : []).map(source => ({
-    id: source.id ?? source.ID ?? null,
-    name: source.name || source.Name || '',
-    url: source.url || source.URL || '',
-    enabled: (source.enabled ?? source.Enabled) !== false,
-    sync_mode: source.sync_mode || source.syncMode || source.SyncMode || 'manual',
-    syncMode: source.sync_mode || source.syncMode || source.SyncMode || 'manual',
-    last_sync_at: source.last_sync_at || source.lastSyncAt || source.LastSyncAt || '',
-    lastSyncAt: source.last_sync_at || source.lastSyncAt || source.LastSyncAt || '',
-    last_status: source.last_status || source.lastStatus || source.LastStatus || '',
-    lastStatus: source.last_status || source.lastStatus || source.LastStatus || '',
-    last_error: source.last_error || source.lastError || source.LastError || '',
-    lastError: source.last_error || source.lastError || source.LastError || '',
-    created_at: source.created_at || source.createdAt || source.CreatedAt || '',
-    createdAt: source.created_at || source.createdAt || source.CreatedAt || '',
-    updated_at: source.updated_at || source.updatedAt || source.UpdatedAt || '',
-    updatedAt: source.updated_at || source.updatedAt || source.UpdatedAt || ''
-  }));
-};
-
 const normalizeUpstreamAccountList = (data) => {
   const list = Array.isArray(data)
     ? data
@@ -769,10 +754,6 @@ const normalizeUpstreamAccountList = (data) => {
 
   return (Array.isArray(list) ? list : []).map(account => ({
     id: parseEntityId(account.id ?? account.ID ?? account.Id ?? account.account_id ?? account.accountId ?? account.AccountID ?? null),
-    source_id: parseEntityId(account.source_id ?? account.sourceId ?? account.SourceID ?? account.SourceId ?? account.sourceID ?? null),
-    sourceId: parseEntityId(account.source_id ?? account.sourceId ?? account.SourceID ?? account.SourceId ?? account.sourceID ?? null),
-    source_name: account.source_name || account.sourceName || account.SourceName || '',
-    sourceName: account.source_name || account.sourceName || account.SourceName || '',
     account_name: account.account_name || account.accountName || account.AccountName || '',
     accountName: account.account_name || account.accountName || account.AccountName || '',
     provider_type: account.provider_type || account.providerType || account.ProviderType || '',
@@ -802,18 +783,8 @@ const normalizeUpstreamAccountList = (data) => {
 
 const normalizeEntityIdForUrl = (id) => encodeURIComponent(String(id));
 
-const buildSubscriptionSourcePayload = (input = {}) => ({
-  ...input,
-  name: input.name || '',
-  url: input.url || '',
-  enabled: input.enabled !== false,
-  sync_mode: input.sync_mode || input.syncMode || 'manual'
-});
-
 const buildUpstreamAccountPayload = (input = {}) => {
-  const sourceId = input.source_id ?? input.sourceId;
-  const sourceName = input.source_name ?? input.sourceName;
-  const payload = {
+  return {
     ...input,
     account_name: input.account_name || input.accountName || '',
     provider_type: input.provider_type || input.providerType || '',
@@ -822,83 +793,6 @@ const buildUpstreamAccountPayload = (input = {}) => {
     priority: Number.parseInt(input.priority, 10) || 1,
     enabled: input.enabled !== false
   };
-
-  if (sourceId !== undefined && sourceId !== null && sourceId !== '') {
-    payload.source_id = sourceId;
-  }
-
-  if (sourceName !== undefined) {
-    payload.source_name = sourceName || '';
-  }
-
-  return payload;
-};
-
-export const fetchSubscriptionSources = async () => {
-  if (isWailsEnvironment()) {
-    const list = await WailsApi.getSubscriptionSources();
-    return normalizeSubscriptionSourceList(list);
-  }
-
-  const data = await fetchWithTimeout('/api/v1/subscription-sources');
-  return normalizeSubscriptionSourceList(data);
-};
-
-export const createSubscriptionSource = async (input) => {
-  const payload = buildSubscriptionSourcePayload(input);
-
-  if (isWailsEnvironment()) {
-    return await WailsApi.createSubscriptionSource(payload);
-  }
-
-  return await fetchWithTimeout('/api/v1/subscription-sources', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-};
-
-export const updateSubscriptionSource = async (id, input) => {
-  const payload = buildSubscriptionSourcePayload(input);
-
-  if (isWailsEnvironment()) {
-    return await WailsApi.updateSubscriptionSource(id, payload);
-  }
-
-  return await fetchWithTimeout(`/api/v1/subscription-sources/${normalizeEntityIdForUrl(id)}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-};
-
-export const deleteSubscriptionSource = async (id) => {
-  if (isWailsEnvironment()) {
-    return await WailsApi.deleteSubscriptionSource(id);
-  }
-
-  return await fetchWithTimeout(`/api/v1/subscription-sources/${normalizeEntityIdForUrl(id)}`, {
-    method: 'DELETE'
-  });
-};
-
-export const toggleSubscriptionSource = async (id, enabled) => {
-  if (isWailsEnvironment()) {
-    return await WailsApi.toggleSubscriptionSource(id, enabled);
-  }
-
-  return await fetchWithTimeout(`/api/v1/subscription-sources/${normalizeEntityIdForUrl(id)}/toggle`, {
-    method: 'POST',
-    body: JSON.stringify({ enabled: enabled !== false })
-  });
-};
-
-export const syncSubscriptionSource = async (id) => {
-  if (isWailsEnvironment()) {
-    return await WailsApi.syncSubscriptionSource(id);
-  }
-
-  return await fetchWithTimeout(`/api/v1/subscription-sources/${normalizeEntityIdForUrl(id)}/sync`, {
-    method: 'POST'
-  });
 };
 
 export const fetchUpstreamAccounts = async () => {

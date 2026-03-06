@@ -24,7 +24,6 @@ const RequestsPage = () => {
   // 数据状态
   const [requests, setRequests] = useState([]);
   const [stats, setStats] = useState(null);
-  const [sourceView, setSourceView] = useState('endpoint');
   const [models, setModels] = useState([]);
   const [endpoints, setEndpoints] = useState([]);
   const [groups, setGroups] = useState([]); // v4.0: 端点列表（一个端点=一个组）
@@ -75,6 +74,7 @@ const RequestsPage = () => {
   // 从端点列表提取唯一渠道
   const channels = useMemo(() => {
     const channelSet = new Set();
+    channelSet.add('account-pool');
     endpoints.forEach(ep => {
       const channel = ep.channel || ep.Channel;
       if (channel) channelSet.add(channel);
@@ -96,7 +96,7 @@ const RequestsPage = () => {
       const queryParams = buildQueryParams();
       const requestsQueryParams = {
         ...queryParams,
-        source_view: sourceView
+        source_view: 'all'
       };
 
       // 为stats API添加默认时间范围（30天），避免无数据问题
@@ -158,7 +158,7 @@ const RequestsPage = () => {
         setLoading(false);
       }
     }
-  }, [buildQueryParams, pagination.page, pagination.pageSize, sourceView]);
+  }, [buildQueryParams, pagination.page, pagination.pageSize]);
 
   // 自动刷新 Hook (必须在 loadData 定义之后)
   const autoRefresh = useAutoRefresh(loadData);
@@ -250,10 +250,6 @@ const RequestsPage = () => {
     loadData();
   }, [loadData]);
 
-  useEffect(() => {
-    setPagination(prev => (prev.page === 1 ? prev : { ...prev, page: 1 }));
-  }, [sourceView]);
-
   // ==================== 渲染 ====================
 
   if (error) {
@@ -298,8 +294,6 @@ const RequestsPage = () => {
           groups={groups}
           activeGroup={activeGroup}
           onGroupSwitch={handleGroupSwitch}
-          sourceView={sourceView}
-          onSourceViewChange={setSourceView}
         />
 
         {/* 筛选面板（弹出式） */}

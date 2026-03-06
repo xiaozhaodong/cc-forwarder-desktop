@@ -287,8 +287,8 @@ func TestAccountPipeline_429FailoverThenSuccess(t *testing.T) {
 
 	service := &mockAccountPoolService{
 		accounts: []*store.UpstreamAccountRecord{
-			{ID: 11, SourceName: "source-a", AccountName: "acc-a", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: firstServer.URL, Enabled: true},
-			{ID: 12, SourceName: "source-b", AccountName: "acc-b", ProviderType: "api_key", CredentialRaw: "sk-b", BaseURL: secondServer.URL, Enabled: true},
+			{ID: 11, AccountName: "acc-a", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: firstServer.URL, Enabled: true},
+			{ID: 12, AccountName: "acc-b", ProviderType: "api_key", CredentialRaw: "sk-b", BaseURL: secondServer.URL, Enabled: true},
 		},
 	}
 	handler := newAccountPipelineTestHandler(t, firstServer.URL, service)
@@ -330,8 +330,8 @@ func TestAccountPipeline_AuthFailedSwitchToNextAccount(t *testing.T) {
 
 	service := &mockAccountPoolService{
 		accounts: []*store.UpstreamAccountRecord{
-			{ID: 21, SourceName: "source-a", AccountName: "acc-a", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: firstServer.URL, Enabled: true},
-			{ID: 22, SourceName: "source-a", AccountName: "acc-b", ProviderType: "api_key", CredentialRaw: "sk-b", BaseURL: secondServer.URL, Enabled: true},
+			{ID: 21, AccountName: "acc-a", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: firstServer.URL, Enabled: true},
+			{ID: 22, AccountName: "acc-b", ProviderType: "api_key", CredentialRaw: "sk-b", BaseURL: secondServer.URL, Enabled: true},
 		},
 	}
 	handler := newAccountPipelineTestHandler(t, firstServer.URL, service)
@@ -376,8 +376,8 @@ func TestAccountPipeline_Upstream4xxPassthroughWithoutSwitch(t *testing.T) {
 
 	service := &mockAccountPoolService{
 		accounts: []*store.UpstreamAccountRecord{
-			{ID: 31, SourceName: "source-a", AccountName: "acc-a", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: firstServer.URL, Enabled: true},
-			{ID: 32, SourceName: "source-a", AccountName: "acc-b", ProviderType: "api_key", CredentialRaw: "sk-b", BaseURL: secondServer.URL, Enabled: true},
+			{ID: 31, AccountName: "acc-a", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: firstServer.URL, Enabled: true},
+			{ID: 32, AccountName: "acc-b", ProviderType: "api_key", CredentialRaw: "sk-b", BaseURL: secondServer.URL, Enabled: true},
 		},
 	}
 	handler := newAccountPipelineTestHandler(t, firstServer.URL, service)
@@ -422,7 +422,7 @@ func TestAccountPipeline_ResponsesStreamingCompleted_TreatedAsSuccess(t *testing
 
 	service := &mockAccountPoolService{
 		accounts: []*store.UpstreamAccountRecord{
-			{ID: 41, SourceName: "source-a", AccountName: "acc-stream", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: upstream.URL, Enabled: true},
+			{ID: 41, AccountName: "acc-stream", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: upstream.URL, Enabled: true},
 		},
 	}
 	handler := newAccountPipelineTestHandler(t, upstream.URL, service)

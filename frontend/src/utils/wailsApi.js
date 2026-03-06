@@ -413,31 +413,8 @@ export const resumeGroup = async (groupName) => {
 // v6.0+ 账号池 API (Wails)
 // ============================================
 
-const normalizeSubscriptionSource = (source = {}) => ({
-  id: source.id ?? source.ID ?? null,
-  name: source.name || source.Name || '',
-  url: source.url || source.URL || '',
-  enabled: (source.enabled ?? source.Enabled) !== false,
-  sync_mode: source.sync_mode || source.syncMode || source.SyncMode || 'manual',
-  syncMode: source.sync_mode || source.syncMode || source.SyncMode || 'manual',
-  last_sync_at: source.last_sync_at || source.lastSyncAt || source.LastSyncAt || '',
-  lastSyncAt: source.last_sync_at || source.lastSyncAt || source.LastSyncAt || '',
-  last_status: source.last_status || source.lastStatus || source.LastStatus || '',
-  lastStatus: source.last_status || source.lastStatus || source.LastStatus || '',
-  last_error: source.last_error || source.lastError || source.LastError || '',
-  lastError: source.last_error || source.lastError || source.LastError || '',
-  created_at: source.created_at || source.createdAt || source.CreatedAt || '',
-  createdAt: source.created_at || source.createdAt || source.CreatedAt || '',
-  updated_at: source.updated_at || source.updatedAt || source.UpdatedAt || '',
-  updatedAt: source.updated_at || source.updatedAt || source.UpdatedAt || ''
-});
-
 const normalizeUpstreamAccount = (account = {}) => ({
   id: parseEntityId(account.id ?? account.ID ?? account.Id ?? account.account_id ?? account.accountId ?? account.AccountID ?? null),
-  source_id: parseEntityId(account.source_id ?? account.sourceId ?? account.SourceID ?? account.SourceId ?? account.sourceID ?? null),
-  sourceId: parseEntityId(account.source_id ?? account.sourceId ?? account.SourceID ?? account.SourceId ?? account.sourceID ?? null),
-  source_name: account.source_name || account.sourceName || account.SourceName || '',
-  sourceName: account.source_name || account.sourceName || account.SourceName || '',
   provider_type: account.provider_type || account.providerType || account.ProviderType || '',
   providerType: account.provider_type || account.providerType || account.ProviderType || '',
   account_name: account.account_name || account.accountName || account.AccountName || '',
@@ -464,18 +441,8 @@ const normalizeUpstreamAccount = (account = {}) => ({
   updatedAt: account.updated_at || account.updatedAt || account.UpdatedAt || ''
 });
 
-const buildSubscriptionSourcePayload = (input = {}) => ({
-  ...input,
-  name: input.name || '',
-  url: input.url || '',
-  enabled: input.enabled !== false,
-  sync_mode: input.sync_mode || input.syncMode || 'manual'
-});
-
 const buildUpstreamAccountPayload = (input = {}) => {
-  const sourceId = input.source_id ?? input.sourceId;
-  const sourceName = input.source_name ?? input.sourceName;
-  const payload = {
+  return {
     ...input,
     account_name: input.account_name || input.accountName || '',
     provider_type: input.provider_type || input.providerType || '',
@@ -484,71 +451,6 @@ const buildUpstreamAccountPayload = (input = {}) => {
     priority: Number.parseInt(input.priority, 10) || 1,
     enabled: input.enabled !== false
   };
-
-  if (sourceId !== undefined && sourceId !== null && sourceId !== '') {
-    payload.source_id = normalizeEntityId(sourceId);
-  }
-
-  if (sourceName !== undefined) {
-    payload.source_name = sourceName || '';
-  }
-
-  return payload;
-};
-
-export const getSubscriptionSources = async () => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  const method = getWailsMethod('GetSubscriptionSources');
-  const result = await method();
-  const list = Array.isArray(result) ? result : (result?.sources || result?.data || []);
-  return (list || []).map(normalizeSubscriptionSource);
-};
-
-export const createSubscriptionSource = async (input) => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  const method = getWailsMethod('CreateSubscriptionSource');
-  const result = await method(buildSubscriptionSourcePayload(input));
-  return result ?? { success: true };
-};
-
-export const updateSubscriptionSource = async (id, input) => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  const method = getWailsMethod('UpdateSubscriptionSource');
-  const result = await method(normalizeEntityId(id), buildSubscriptionSourcePayload(input));
-  return result ?? { success: true };
-};
-
-export const deleteSubscriptionSource = async (id) => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  const method = getWailsMethod('DeleteSubscriptionSource');
-  const result = await method(normalizeEntityId(id));
-  return result ?? { success: true };
-};
-
-export const toggleSubscriptionSource = async (id, enabled) => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  const method = getWailsMethod('ToggleSubscriptionSource');
-  const result = await method(normalizeEntityId(id), enabled !== false);
-  return result ?? { success: true };
-};
-
-export const syncSubscriptionSource = async (id) => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  const method = getWailsMethod('SyncSubscriptionSource');
-  const result = await method(normalizeEntityId(id));
-  return result ?? { success: true, message: '同步任务已触发' };
 };
 
 export const getUpstreamAccounts = async () => {
@@ -710,7 +612,7 @@ export const getUsageStats = async (params = {}) => {
     channel: params.channel || '',
     endpoint: params.endpoint || '',
     group: params.group || '',
-    source_view: params.source_view || params.sourceView || 'endpoint'
+    source_view: params.source_view || params.sourceView || 'all'
   };
 
   console.log('📊 [Wails] GetUsageStats 参数:', queryParams);
@@ -767,7 +669,7 @@ export const getRequests = async (params = {}) => {
     channel: params.channel || '',
     endpoint: params.endpoint || '',
     group: params.group || '',
-    source_view: params.source_view || params.sourceView || 'endpoint'
+    source_view: params.source_view || params.sourceView || 'all'
   };
 
   console.log('🔍 [Wails] GetRequests 参数:', queryParams);
