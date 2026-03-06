@@ -4,10 +4,13 @@
 // ============================================
 
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { BrowserOpenURL } from '@wailsjs/runtime/runtime';
 import {
   AlertCircle,
   CheckCircle2,
   Edit3,
+  Info,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -174,6 +177,92 @@ const Modal = ({
   );
 };
 
+const AccountFormModal = ({
+  open,
+  title,
+  submitText,
+  cancelText = '取消',
+  onClose,
+  onSubmit,
+  submitting,
+  children
+}) => {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[15vh]">
+      <div className="absolute inset-0 bg-slate-900/40" onClick={() => !submitting && onClose()} />
+      <form
+        onSubmit={onSubmit}
+        className="relative flex w-full max-w-2xl max-h-[75vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
+          <button
+            type="button"
+            className="text-sm text-slate-400 hover:text-slate-600"
+            onClick={onClose}
+            disabled={submitting}
+          >
+            关闭
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="space-y-6">
+            {children}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-white px-6 py-4">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
+            {cancelText}
+          </Button>
+          <Button type="submit" loading={submitting}>
+            {submitText}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+const NoticeToast = ({ notice, onClose }) => {
+  if (!notice || typeof document === 'undefined') return null;
+
+  return createPortal(
+    <div
+      className="fixed top-4 right-4 z-[70] pointer-events-none"
+      style={{ animation: 'account-pool-toast-slide-in 0.25s ease-out' }}
+    >
+      <style>{`
+        @keyframes account-pool-toast-slide-in {
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+      <div className={`
+        pointer-events-auto flex items-center gap-2 px-4 py-3 rounded-lg text-sm border shadow-lg max-w-md
+        ${notice.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : ''}
+        ${notice.type === 'error' ? 'bg-rose-50 text-rose-700 border-rose-200' : ''}
+        ${notice.type === 'info' ? 'bg-slate-50 text-slate-600 border-slate-200' : ''}
+      `}>
+        {notice.type === 'success' ? <CheckCircle2 size={16} className="shrink-0" /> : notice.type === 'info' ? <Info size={16} className="shrink-0" /> : <AlertCircle size={16} className="shrink-0" />}
+        <span className="break-words">{notice.text}</span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="ml-auto shrink-0 p-0.5 rounded hover:bg-black/5 transition-colors"
+        >
+          <span className="sr-only">关闭</span>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7" /></svg>
+        </button>
+      </div>
+    </div>,
+    document.body
+  );
+};
+
 const toDisplayTime = (value) => (value ? formatTimestamp(value) : '-');
 
 const normalizePlanType = (value = '') => {
@@ -322,6 +411,19 @@ const maskSessionId = (sessionId = '') => {
   return `${text.slice(0, 6)}***`;
 };
 
+const openExternalURL = (url = '') => {
+  const target = String(url || '').trim();
+  if (!target) return false;
+
+  if (typeof window !== 'undefined' && window.runtime?.BrowserOpenURL) {
+    BrowserOpenURL(target);
+    return true;
+  }
+
+  const opened = window.open(target, '_blank', 'noopener,noreferrer');
+  return opened !== null;
+};
+
 const AccountPoolPage = () => {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -334,6 +436,7 @@ const AccountPoolPage = () => {
   const [editingAccount, setEditingAccount] = useState(null);
   const [accountForm, setAccountForm] = useState(EMPTY_ACCOUNT_FORM);
   const [oauthActionLoading, setOauthActionLoading] = useState(false);
+  const [oauthSectionExpanded, setOauthSectionExpanded] = useState(true);
   const [oauthSession, setOauthSession] = useState(null);
   const [oauthCallbackURL, setOauthCallbackURL] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -506,6 +609,7 @@ const AccountPoolPage = () => {
   const openCreateAccount = () => {
     setEditingAccount(null);
     setAccountForm(EMPTY_ACCOUNT_FORM);
+    setOauthSectionExpanded(true);
     resetOAuthWorkflow();
     setAccountModalOpen(true);
   };
@@ -522,6 +626,7 @@ const AccountPoolPage = () => {
       credential_raw: account.credential_raw || account.credentialRaw || '',
       base_url: account.base_url || account.baseURL || DEFAULT_BASE_URL
     });
+    setOauthSectionExpanded(false);
     resetOAuthWorkflow();
     setAccountModalOpen(true);
   };
@@ -697,17 +802,7 @@ const AccountPoolPage = () => {
         </Button>
       </div>
 
-      {notice && (
-        <div className={`
-          flex items-center gap-2 px-4 py-3 rounded-lg text-sm border
-          ${notice.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : ''}
-          ${notice.type === 'error' ? 'bg-rose-50 text-rose-700 border-rose-200' : ''}
-          ${notice.type === 'info' ? 'bg-slate-50 text-slate-600 border-slate-200' : ''}
-        `}>
-          {notice.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-          {notice.text}
-        </div>
-      )}
+      <NoticeToast notice={notice} onClose={() => setNotice(null)} />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white rounded-xl border border-slate-200/60 p-4 shadow-sm">
@@ -934,7 +1029,7 @@ const AccountPoolPage = () => {
         )}
       </section>
 
-      <Modal
+      <AccountFormModal
         open={accountModalOpen}
         title={editingAccount ? '编辑账号' : '新增账号'}
         submitText={editingAccount ? '保存修改' : '创建账号'}
@@ -943,191 +1038,234 @@ const AccountPoolPage = () => {
           setAccountModalOpen(false);
           setEditingAccount(null);
           setAccountForm(EMPTY_ACCOUNT_FORM);
+          setOauthSectionExpanded(true);
           resetOAuthWorkflow();
         }}
         onSubmit={submitAccountForm}
         submitting={accountSubmitting}
       >
-        <FormField label="账号名称" required>
-          <input
-            type="text"
-            value={accountForm.account_name}
-            onChange={(event) => setAccountForm(prev => ({ ...prev, account_name: event.target.value }))}
-            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
-            placeholder="例如：openai-auth-main"
-          />
-        </FormField>
+        <section className="space-y-4">
+          <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">基本信息</h4>
 
-        <div className="space-y-2">
-          <div className="text-xs font-medium text-slate-600">
-            授权方式
-            <span className="text-rose-500 ml-1">*</span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {AUTH_METHOD_OPTIONS.map((option) => {
-              const active = accountForm.auth_method === option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => {
-                    setAccountForm(prev => ({
-                      ...prev,
-                      auth_method: option.value,
-                      provider_type: authMethodToProviderType(option.value)
-                    }));
-                    if (option.value !== 'chatgpt_refresh_token') {
-                      resetOAuthWorkflow();
-                    }
-                  }}
-                  className={`text-left px-3 py-2 rounded-lg border transition-colors ${
-                    active
-                      ? 'border-emerald-300 bg-emerald-50'
-                      : 'border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className={`text-sm font-medium ${active ? 'text-emerald-700' : 'text-slate-700'}`}>{option.label}</div>
-                  <div className="text-xs text-slate-500">{option.description}</div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+          <FormField label="账号名称" required>
+            <input
+              type="text"
+              value={accountForm.account_name}
+              onChange={(event) => setAccountForm(prev => ({ ...prev, account_name: event.target.value }))}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              placeholder="例如：openai-auth-main"
+            />
+          </FormField>
 
-        {accountForm.auth_method === 'chatgpt_refresh_token' && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 space-y-3">
-            <div className="text-sm font-semibold text-emerald-800">OAuth 快速提取 RT</div>
-            <div className="text-xs text-emerald-700">
-              1) 先生成授权链接并完成登录 2) 复制浏览器最终回调 URL 3) 粘贴后自动提取 refresh token
+          <div className="space-y-2">
+            <div className="text-xs font-medium text-slate-600">
+              授权方式
+              <span className="ml-1 text-rose-500">*</span>
             </div>
-
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={handleGenerateOAuthLink}
-                loading={oauthActionLoading}
-              >
-                生成授权链接
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  if (!oauthSession?.auth_url) {
-                    showNotice('error', '请先生成授权链接');
-                    return;
-                  }
-                  window.open(oauthSession.auth_url, '_blank', 'noopener,noreferrer');
-                }}
-                disabled={!oauthSession?.auth_url || oauthActionLoading}
-              >
-                打开授权页
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={async () => {
-                  if (!oauthSession?.auth_url) {
-                    showNotice('error', '请先生成授权链接');
-                    return;
-                  }
-                  try {
-                    await navigator.clipboard.writeText(oauthSession.auth_url);
-                    showNotice('success', '授权链接已复制');
-                  } catch {
-                    showNotice('error', '复制失败，请手动复制');
-                  }
-                }}
-                disabled={!oauthSession?.auth_url || oauthActionLoading}
-              >
-                复制授权链接
-              </Button>
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+              {AUTH_METHOD_OPTIONS.map((option) => {
+                const active = accountForm.auth_method === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => {
+                      const switchingIntoChatGPT = accountForm.auth_method !== 'chatgpt_refresh_token' && option.value === 'chatgpt_refresh_token';
+                      setAccountForm(prev => ({
+                        ...prev,
+                        auth_method: option.value,
+                        provider_type: authMethodToProviderType(option.value)
+                      }));
+                      if (option.value !== 'chatgpt_refresh_token') {
+                        setOauthSectionExpanded(false);
+                        resetOAuthWorkflow();
+                      } else if (!editingAccount || switchingIntoChatGPT) {
+                        setOauthSectionExpanded(true);
+                      }
+                    }}
+                    className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                      active
+                        ? 'border-emerald-300 bg-emerald-50'
+                        : 'border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className={`text-sm font-medium ${active ? 'text-emerald-700' : 'text-slate-700'}`}>{option.label}</div>
+                    <div className="text-xs text-slate-500">{option.description}</div>
+                  </button>
+                );
+              })}
             </div>
+          </div>
+        </section>
 
-            {oauthSession?.auth_url && (
-              <div className="space-y-1">
-                <div className="text-xs text-slate-600">授权链接</div>
-                <textarea
-                  value={oauthSession.auth_url}
-                  readOnly
-                  rows={2}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-mono bg-white"
-                />
-              </div>
-            )}
+        <section className="space-y-4">
+          <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">路由配置</h4>
 
-            <div className="space-y-1">
-              <div className="text-xs text-slate-600">回调 URL</div>
-              <textarea
-                value={oauthCallbackURL}
-                onChange={(event) => setOauthCallbackURL(event.target.value)}
-                rows={2}
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
-                placeholder="粘贴登录后浏览器地址栏中的完整回调 URL"
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <FormField label="优先级">
+              <input
+                type="number"
+                min="1"
+                value={accountForm.priority}
+                onChange={(event) => setAccountForm(prev => ({ ...prev, priority: event.target.value }))}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
               />
-            </div>
+            </FormField>
 
-            <Button
-              type="button"
-              size="sm"
-              onClick={handleExtractRTFromCallback}
-              loading={oauthActionLoading}
-              disabled={!oauthSession?.session_id || !oauthCallbackURL.trim()}
-            >
-              从回调 URL 自动提取 RT
-            </Button>
+            <FormField label="Base URL（可选）">
+              <input
+                type="url"
+                value={accountForm.base_url}
+                onChange={(event) => setAccountForm(prev => ({ ...prev, base_url: event.target.value }))}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                placeholder={DEFAULT_BASE_URL}
+              />
+            </FormField>
           </div>
-        )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <FormField label="优先级">
+          <label className="inline-flex items-start gap-2 text-sm text-slate-700">
             <input
-              type="number"
-              min="1"
-              value={accountForm.priority}
-              onChange={(event) => setAccountForm(prev => ({ ...prev, priority: event.target.value }))}
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
+              type="checkbox"
+              checked={accountForm.enabled}
+              onChange={(event) => setAccountForm(prev => ({ ...prev, enabled: event.target.checked }))}
+              className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            <span>{editingAccount ? '保持账号启用状态' : '创建后立即启用'}</span>
+          </label>
+        </section>
+
+        <section className="space-y-4">
+          <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">认证信息</h4>
+
+          <FormField label={accountForm.auth_method === 'chatgpt_refresh_token' ? 'ChatGPT Refresh Token (rt)' : 'API Key'} required>
+            <textarea
+              value={accountForm.credential_raw}
+              onChange={(event) => setAccountForm(prev => ({ ...prev, credential_raw: event.target.value }))}
+              className="min-h-[120px] w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              placeholder={
+                accountForm.auth_method === 'chatgpt_refresh_token'
+                  ? '粘贴 Refresh Token，例如：rt-xxxxxx'
+                  : '例如: sk-xxxxxx'
+              }
             />
           </FormField>
 
-          <FormField label="Base URL（可选）">
-            <input
-              type="url"
-              value={accountForm.base_url}
-              onChange={(event) => setAccountForm(prev => ({ ...prev, base_url: event.target.value }))}
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
-              placeholder={DEFAULT_BASE_URL}
-            />
-          </FormField>
-        </div>
+          {accountForm.auth_method === 'chatgpt_refresh_token' && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 space-y-3">
+              <button
+                type="button"
+                onClick={() => setOauthSectionExpanded(prev => !prev)}
+                className="flex w-full items-start justify-between gap-3 text-left"
+              >
+                <div>
+                  <div className="text-sm font-semibold text-emerald-800">
+                    {editingAccount ? '重新授权 / 更新 RT（可选）' : 'OAuth 快速提取 RT'}
+                  </div>
+                  <div className="mt-1 text-xs text-emerald-700">
+                    {editingAccount
+                      ? '已有 RT 可直接在上方凭据框修改；仅在需要重新登录提取时再展开。'
+                      : '不想手动复制 RT 时，可在这里完成登录并自动提取。'}
+                  </div>
+                </div>
+                <span className="shrink-0 text-xs font-medium text-emerald-700">
+                  {oauthSectionExpanded ? '收起' : '展开'}
+                </span>
+              </button>
 
-        <FormField label={accountForm.auth_method === 'chatgpt_refresh_token' ? 'ChatGPT Refresh Token (rt)' : 'API Key'} required>
-          <textarea
-            value={accountForm.credential_raw}
-            onChange={(event) => setAccountForm(prev => ({ ...prev, credential_raw: event.target.value }))}
-            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm font-mono min-h-[92px] focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
-            placeholder={
-              accountForm.auth_method === 'chatgpt_refresh_token'
-                ? '粘贴 Refresh Token，例如：rt-xxxxxx'
-                : '例如: sk-xxxxxx'
-            }
-          />
-        </FormField>
+              {oauthSectionExpanded && (
+                <div className="space-y-3 border-t border-emerald-200/80 pt-3">
+                  <div className="text-xs text-emerald-700">
+                    1) 生成授权链接并完成登录 2) 复制浏览器最终回调 URL 3) 粘贴后自动提取 refresh token
+                  </div>
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-          <input
-            type="checkbox"
-            checked={accountForm.enabled}
-            onChange={(event) => setAccountForm(prev => ({ ...prev, enabled: event.target.checked }))}
-            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-          />
-          创建后立即启用
-        </label>
-      </Modal>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={handleGenerateOAuthLink}
+                      loading={oauthActionLoading}
+                    >
+                      生成授权链接
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        if (!oauthSession?.auth_url) {
+                          showNotice('error', '请先生成授权链接');
+                          return;
+                        }
+                        const opened = openExternalURL(oauthSession.auth_url);
+                        if (!opened) {
+                          showNotice('error', '打开授权页失败，请改用复制授权链接');
+                        }
+                      }}
+                      disabled={!oauthSession?.auth_url || oauthActionLoading}
+                    >
+                      打开授权页
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={async () => {
+                        if (!oauthSession?.auth_url) {
+                          showNotice('error', '请先生成授权链接');
+                          return;
+                        }
+                        try {
+                          await navigator.clipboard.writeText(oauthSession.auth_url);
+                          showNotice('success', '授权链接已复制');
+                        } catch {
+                          showNotice('error', '复制失败，请手动复制');
+                        }
+                      }}
+                      disabled={!oauthSession?.auth_url || oauthActionLoading}
+                    >
+                      复制授权链接
+                    </Button>
+                  </div>
+
+                  {oauthSession?.auth_url && (
+                    <div className="space-y-1">
+                      <div className="text-xs text-slate-600">授权链接</div>
+                      <textarea
+                        value={oauthSession.auth_url}
+                        readOnly
+                        rows={2}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-mono"
+                      />
+                    </div>
+                  )}
+
+                  <div className="space-y-1">
+                    <div className="text-xs text-slate-600">回调 URL</div>
+                    <textarea
+                      value={oauthCallbackURL}
+                      onChange={(event) => setOauthCallbackURL(event.target.value)}
+                      rows={2}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-mono focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      placeholder="粘贴登录后浏览器地址栏中的完整回调 URL"
+                    />
+                  </div>
+
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleExtractRTFromCallback}
+                    loading={oauthActionLoading}
+                    disabled={!oauthSession?.session_id || !oauthCallbackURL.trim()}
+                  >
+                    从回调 URL 自动提取 RT
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      </AccountFormModal>
 
       <Modal
         open={Boolean(deleteTarget)}
