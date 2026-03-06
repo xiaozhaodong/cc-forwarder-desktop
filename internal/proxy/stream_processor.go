@@ -58,7 +58,9 @@ type StreamProcessor struct {
 	completionRecorded bool // 是否已经记录完成状态，防止重复记录
 
 	// 🔍 [调试缓冲区] 轻量级调试数据收集（仅在token解析失败时使用）
-	debugLines []string // SSE行数据收集，最多保存DebugLineLimit行
+	debugLines []string // SSE行数据收集，默认最多保存DebugLineLimit行
+	// 临时调试开关：启用 token_debug 时完整保留所有 SSE 行，便于定位 terminal/usage 丢失
+	captureAllDebugLines bool
 	// 去重日志签名：仅在Token统计变化时输出实时更新日志
 	lastTokenLogSignature string
 }
@@ -68,18 +70,19 @@ func NewStreamProcessor(tokenParser *TokenParser, usageTracker *tracking.UsageTr
 	w http.ResponseWriter, flusher http.Flusher, requestID, endpoint string) *StreamProcessor {
 
 	sp := &StreamProcessor{
-		tokenParser:    tokenParser,
-		usageTracker:   usageTracker,
-		responseWriter: w,
-		flusher:        flusher,
-		errorRecovery:  NewErrorRecoveryManager(usageTracker),
-		requestID:      requestID,
-		endpoint:       endpoint,
-		startTime:      time.Now(),
-		lineBuffer:     make([]byte, 0, LineBufferInitSize),
-		partialData:    make([]byte, 0, BackgroundBufferSize),
-		maxParseErrors: 10,                                // 最多允许10个解析错误
-		debugLines:     make([]string, 0, DebugLineLimit), // 🔍 [调试] 初始化调试缓冲区
+		tokenParser:          tokenParser,
+		usageTracker:         usageTracker,
+		responseWriter:       w,
+		flusher:              flusher,
+		errorRecovery:        NewErrorRecoveryManager(usageTracker),
+		requestID:            requestID,
+		endpoint:             endpoint,
+		startTime:            time.Now(),
+		lineBuffer:           make([]byte, 0, LineBufferInitSize),
+		partialData:          make([]byte, 0, BackgroundBufferSize),
+		maxParseErrors:       10,                                // 最多允许10个解析错误
+		debugLines:           make([]string, 0, DebugLineLimit), // 🔍 [调试] 初始化调试缓冲区
+		captureAllDebugLines: utils.IsTokenDebugEnabled(),
 	}
 
 	return sp
@@ -220,7 +223,7 @@ func (sp *StreamProcessor) parseTokensInBackground(data []byte) {
 // 修改版本：仅进行 Token 解析，不再直接记录到 usageTracker
 func (sp *StreamProcessor) processSSELine(line string) {
 	// 🔍 [调试数据收集] 轻量级收集SSE行数据（无性能影响）
-	if len(sp.debugLines) < DebugLineLimit {
+	if sp.captureAllDebugLines || len(sp.debugLines) < DebugLineLimit {
 		sp.debugLines = append(sp.debugLines, line)
 	}
 
@@ -483,6 +486,12 @@ func (sp *StreamProcessor) waitForBackgroundParsing() {
 		} else if result.TokenUsage != nil {
 			slog.Debug(fmt.Sprintf("🔄 [Flush成功] [%s] 成功解析待处理事件的Token信息", sp.requestID))
 		}
+	}
+
+	// 🔧 [Responses兼容] 某些上游会在 SSE 流尾部直接附带完整 JSON 响应对象。
+	// 当标准 terminal 事件未命中时，从原始尾部窗口中恢复 usage 与完成状态。
+	if len(sp.partialData) > 0 && sp.tokenParser.RecoverResponsesUsageFromRawTail(string(sp.partialData)) {
+		slog.Info(fmt.Sprintf("🔧 [Responses恢复] [%s] 从流尾原始 JSON 恢复 usage 信息", sp.requestID))
 	}
 
 	sp.parseMutex.Unlock()

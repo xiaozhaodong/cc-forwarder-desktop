@@ -454,3 +454,85 @@ func TestFindEndpointIndex(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadConfig_AccountPoolEnabledDefaultWhenMissing(t *testing.T) {
+	configContent := `
+endpoints_storage:
+  type: "sqlite"
+`
+
+	tmpFile, err := os.CreateTemp("", "test-account-pool-default-*.yaml")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(configContent); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	tmpFile.Close()
+
+	cfg, err := LoadConfig(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if cfg.AccountPool.Enabled {
+		t.Fatalf("expected account_pool.enabled=false when missing explicit config")
+	}
+}
+
+func TestLoadConfig_AccountPoolEnabledExplicitFalse(t *testing.T) {
+	configContent := `
+endpoints_storage:
+  type: "sqlite"
+account_pool:
+  enabled: false
+`
+
+	tmpFile, err := os.CreateTemp("", "test-account-pool-false-*.yaml")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(configContent); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	tmpFile.Close()
+
+	cfg, err := LoadConfig(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if cfg.AccountPool.Enabled {
+		t.Fatalf("expected account_pool.enabled=false when explicitly configured false")
+	}
+}
+
+func TestLoadConfig_AccountPoolEnabledExplicitTrue(t *testing.T) {
+	configContent := `
+endpoints_storage:
+  type: "sqlite"
+account_pool:
+  enabled: true
+`
+
+	tmpFile, err := os.CreateTemp("", "test-account-pool-true-*.yaml")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(configContent); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	tmpFile.Close()
+
+	cfg, err := LoadConfig(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if !cfg.AccountPool.Enabled {
+		t.Fatalf("expected account_pool.enabled=true when explicitly configured true")
+	}
+}

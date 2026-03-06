@@ -28,6 +28,7 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
     // { name: 'groups', label: '组管理' },
     { name: 'requests', label: '请求追踪' },
     { name: 'pricing', label: '基础定价' },
+    { name: 'account-pool', label: '账号池' },
     // v5.1: 新增日志页面
     { name: 'logs', label: '系统日志' },
     // v5.1: 配置改为设置

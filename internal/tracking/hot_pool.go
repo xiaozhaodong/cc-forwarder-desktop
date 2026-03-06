@@ -20,15 +20,19 @@ type ActiveRequest struct {
 	IsStreaming bool      `json:"is_streaming"`
 
 	// 可变状态（频繁更新）
-	Status        string `json:"status"`         // pending/forwarding/processing/completed/failed/cancelled
-	Channel       string `json:"channel"`        // 渠道标签（来自端点配置）
-	EndpointName  string `json:"endpoint_name"`  // 当前使用的端点
-	GroupName     string `json:"group_name"`     // 当前使用的组
-	RetryCount    int    `json:"retry_count"`    // 重试次数
-	HTTPStatus    int    `json:"http_status"`    // HTTP状态码
-	ModelName     string `json:"model_name"`     // 模型名称
-	FailureReason string `json:"failure_reason"` // 失败原因
-	CancelReason  string `json:"cancel_reason"`  // 取消原因
+	Status             string `json:"status"`               // pending/forwarding/processing/completed/failed/cancelled
+	Channel            string `json:"channel"`              // 渠道标签（来自端点配置）
+	EndpointName       string `json:"endpoint_name"`        // 当前使用的端点
+	GroupName          string `json:"group_name"`           // 当前使用的组
+	UpstreamType       string `json:"upstream_type"`        // endpoint/account
+	UpstreamSourceName string `json:"upstream_source_name"` // 订阅源名（账号链路）或固定来源
+	UpstreamName       string `json:"upstream_name"`        // 账号名或端点名
+	UpstreamID         int64  `json:"upstream_id"`          // 上游ID（账号ID）
+	RetryCount         int    `json:"retry_count"`          // 重试次数
+	HTTPStatus         int    `json:"http_status"`          // HTTP状态码
+	ModelName          string `json:"model_name"`           // 模型名称
+	FailureReason      string `json:"failure_reason"`       // 失败原因
+	CancelReason       string `json:"cancel_reason"`        // 取消原因
 
 	// Token 累积（流式请求实时更新）
 	InputTokens           int64 `json:"input_tokens"`
@@ -89,14 +93,14 @@ type HotPool struct {
 
 // HotPoolStats 热池统计信息
 type HotPoolStats struct {
-	mu              sync.RWMutex
-	TotalAdded      int64 `json:"total_added"`       // 累计添加次数
-	TotalRemoved    int64 `json:"total_removed"`     // 累计移除次数
-	TotalArchived   int64 `json:"total_archived"`    // 累计归档次数
-	TotalExpired    int64 `json:"total_expired"`     // 累计过期清理次数
-	TotalOverflow   int64 `json:"total_overflow"`    // 累计溢出丢弃次数
-	CurrentSize     int   `json:"current_size"`      // 当前大小
-	PeakSize        int   `json:"peak_size"`         // 峰值大小
+	mu            sync.RWMutex
+	TotalAdded    int64 `json:"total_added"`    // 累计添加次数
+	TotalRemoved  int64 `json:"total_removed"`  // 累计移除次数
+	TotalArchived int64 `json:"total_archived"` // 累计归档次数
+	TotalExpired  int64 `json:"total_expired"`  // 累计过期清理次数
+	TotalOverflow int64 `json:"total_overflow"` // 累计溢出丢弃次数
+	CurrentSize   int   `json:"current_size"`   // 当前大小
+	PeakSize      int   `json:"peak_size"`      // 峰值大小
 }
 
 // NewHotPool 创建热池
@@ -380,7 +384,6 @@ func (hp *HotPool) startCleaner() {
 // cleanup 清理过期请求
 func (hp *HotPool) cleanup() {
 	hp.mu.Lock()
-	defer hp.mu.Unlock()
 
 	now := time.Now()
 	expiredRequests := make([]*ActiveRequest, 0)
@@ -412,14 +415,18 @@ func (hp *HotPool) cleanup() {
 			"expired_count", len(expiredRequests),
 			"remaining", len(hp.requests))
 
-		// 归档过期请求（如果启用）
-		if hp.config.ArchiveOnCleanup && hp.archiveCallback != nil {
-			for _, req := range expiredRequests {
-				hp.archiveCallback(req)
-				hp.stats.mu.Lock()
-				hp.stats.TotalArchived++
-				hp.stats.mu.Unlock()
-			}
+	}
+	archiveOnCleanup := hp.config.ArchiveOnCleanup
+	callback := hp.archiveCallback
+	hp.mu.Unlock()
+
+	// 归档过期请求（如果启用），在锁外执行回调，避免全局锁被外部逻辑占用
+	if archiveOnCleanup && callback != nil {
+		for _, req := range expiredRequests {
+			callback(req)
+			hp.stats.mu.Lock()
+			hp.stats.TotalArchived++
+			hp.stats.mu.Unlock()
 		}
 	}
 }
@@ -427,9 +434,9 @@ func (hp *HotPool) cleanup() {
 // Close 关闭热池
 func (hp *HotPool) Close() error {
 	hp.mu.Lock()
-	defer hp.mu.Unlock()
 
 	if hp.closed {
+		hp.mu.Unlock()
 		return nil
 	}
 
@@ -438,6 +445,8 @@ func (hp *HotPool) Close() error {
 
 	// 归档所有剩余请求
 	now := time.Now()
+	remainingRequests := make([]*ActiveRequest, 0, len(hp.requests))
+	callback := hp.archiveCallback
 	for _, req := range hp.requests {
 		req.mu.Lock()
 		if req.EndTime == nil {
@@ -449,14 +458,18 @@ func (hp *HotPool) Close() error {
 			req.CancelReason = "hot pool shutdown"
 		}
 		req.mu.Unlock()
-
-		if hp.archiveCallback != nil {
-			hp.archiveCallback(req)
-		}
+		remainingRequests = append(remainingRequests, req)
 	}
 
 	remaining := len(hp.requests)
 	hp.requests = make(map[string]*ActiveRequest)
+	hp.mu.Unlock()
+
+	for _, req := range remainingRequests {
+		if callback != nil {
+			callback(req)
+		}
+	}
 
 	slog.Info("🔥 HotPool 已关闭",
 		"archived_remaining", remaining,
@@ -469,13 +482,14 @@ func (hp *HotPool) Close() error {
 // NewActiveRequest 创建新的活跃请求
 func NewActiveRequest(requestID, clientIP, userAgent, method, path string, isStreaming bool) *ActiveRequest {
 	return &ActiveRequest{
-		RequestID:   requestID,
-		StartTime:   time.Now(),
-		ClientIP:    clientIP,
-		UserAgent:   userAgent,
-		Method:      method,
-		Path:        path,
-		IsStreaming: isStreaming,
-		Status:      "pending",
+		RequestID:    requestID,
+		StartTime:    time.Now(),
+		ClientIP:     clientIP,
+		UserAgent:    userAgent,
+		Method:       method,
+		Path:         path,
+		IsStreaming:  isStreaming,
+		Status:       "pending",
+		UpstreamType: "endpoint",
 	}
 }

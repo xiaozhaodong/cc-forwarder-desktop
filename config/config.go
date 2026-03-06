@@ -21,18 +21,19 @@ type Config struct {
 	Health           HealthConfig           `yaml:"health"`
 	Logging          LoggingConfig          `yaml:"logging"`
 	Streaming        StreamingConfig        `yaml:"streaming"`
-	Group            GroupConfig            `yaml:"group"`                   // Group configuration (DEPRECATED: use Failover instead)
-	Failover         FailoverConfig         `yaml:"failover"`                // Failover configuration (v4.0+)
-	FailureTracker   FailureTrackerConfig   `yaml:"failure_tracker"`         // Failure tracker configuration (v5.2.6+)
-	RequestSuspend   RequestSuspendConfig   `yaml:"request_suspend"`         // Request suspension configuration
-	UsageTracking    UsageTrackingConfig    `yaml:"usage_tracking"`          // Usage tracking configuration
-	TokenCounting    TokenCountingConfig    `yaml:"token_counting"`          // Token counting configuration
-	EndpointsStorage EndpointsStorageConfig `yaml:"endpoints_storage"`       // Endpoints storage configuration (v5.0+)
+	Group            GroupConfig            `yaml:"group"`             // Group configuration (DEPRECATED: use Failover instead)
+	Failover         FailoverConfig         `yaml:"failover"`          // Failover configuration (v4.0+)
+	FailureTracker   FailureTrackerConfig   `yaml:"failure_tracker"`   // Failure tracker configuration (v5.2.6+)
+	RequestSuspend   RequestSuspendConfig   `yaml:"request_suspend"`   // Request suspension configuration
+	UsageTracking    UsageTrackingConfig    `yaml:"usage_tracking"`    // Usage tracking configuration
+	TokenCounting    TokenCountingConfig    `yaml:"token_counting"`    // Token counting configuration
+	EndpointsStorage EndpointsStorageConfig `yaml:"endpoints_storage"` // Endpoints storage configuration (v5.0+)
+	AccountPool      AccountPoolConfig      `yaml:"account_pool"`      // Account pool routing configuration (v6.0+)
 	Proxy            ProxyConfig            `yaml:"proxy"`
 	Auth             AuthConfig             `yaml:"auth"`
-	TUI              TUIConfig              `yaml:"tui"`                     // TUI configuration (DEPRECATED: TUI has been removed)
-	GlobalTimeout    time.Duration          `yaml:"global_timeout"`          // Global timeout for non-streaming requests
-	Timezone         string                 `yaml:"timezone"`                // Global timezone setting for all components
+	TUI              TUIConfig              `yaml:"tui"`            // TUI configuration (DEPRECATED: TUI has been removed)
+	GlobalTimeout    time.Duration          `yaml:"global_timeout"` // Global timeout for non-streaming requests
+	Timezone         string                 `yaml:"timezone"`       // Global timezone setting for all components
 	Endpoints        []EndpointConfig       `yaml:"endpoints"`
 
 	// Runtime priority override (not serialized to YAML)
@@ -45,11 +46,11 @@ type ServerConfig struct {
 }
 
 type StrategyConfig struct {
-	Type              string        `yaml:"type"` // "priority" or "fastest"
-	FastTestEnabled   bool          `yaml:"fast_test_enabled"`   // Enable pre-request fast testing
-	FastTestCacheTTL  time.Duration `yaml:"fast_test_cache_ttl"` // Cache TTL for fast test results
-	FastTestTimeout   time.Duration `yaml:"fast_test_timeout"`   // Timeout for individual fast tests
-	FastTestPath      string        `yaml:"fast_test_path"`      // Path for fast testing (default: health path)
+	Type             string        `yaml:"type"`                // "priority" or "fastest"
+	FastTestEnabled  bool          `yaml:"fast_test_enabled"`   // Enable pre-request fast testing
+	FastTestCacheTTL time.Duration `yaml:"fast_test_cache_ttl"` // Cache TTL for fast test results
+	FastTestTimeout  time.Duration `yaml:"fast_test_timeout"`   // Timeout for individual fast tests
+	FastTestPath     string        `yaml:"fast_test_path"`      // Path for fast testing (default: health path)
 }
 
 type RetryConfig struct {
@@ -66,15 +67,15 @@ type HealthConfig struct {
 }
 
 type LoggingConfig struct {
-	Level              string           `yaml:"level"`
-	Format             string           `yaml:"format"`               // "json" or "text"
-	FileEnabled        bool             `yaml:"file_enabled"`         // Enable file logging
-	FilePath           string           `yaml:"file_path"`            // Log file path
-	MaxFileSize        string           `yaml:"max_file_size"`        // Max file size (e.g., "100MB")
-	MaxFiles           int              `yaml:"max_files"`            // Max number of rotated files to keep
-	CompressRotated    bool             `yaml:"compress_rotated"`     // Compress rotated log files
-	DisableResponseLimit bool           `yaml:"disable_response_limit"` // Disable response content output limit when file logging is enabled
-	TokenDebug         TokenDebugConfig `yaml:"token_debug"`          // Token debug configuration
+	Level                string           `yaml:"level"`
+	Format               string           `yaml:"format"`                 // "json" or "text"
+	FileEnabled          bool             `yaml:"file_enabled"`           // Enable file logging
+	FilePath             string           `yaml:"file_path"`              // Log file path
+	MaxFileSize          string           `yaml:"max_file_size"`          // Max file size (e.g., "100MB")
+	MaxFiles             int              `yaml:"max_files"`              // Max number of rotated files to keep
+	CompressRotated      bool             `yaml:"compress_rotated"`       // Compress rotated log files
+	DisableResponseLimit bool             `yaml:"disable_response_limit"` // Disable response content output limit when file logging is enabled
+	TokenDebug           TokenDebugConfig `yaml:"token_debug"`            // Token debug configuration
 }
 
 // TokenDebugConfig Token调试配置
@@ -95,14 +96,14 @@ type StreamingConfig struct {
 // GroupConfig (DEPRECATED in v4.0: use FailoverConfig instead)
 // Kept for backward compatibility with v3.x configurations
 type GroupConfig struct {
-	Cooldown               time.Duration `yaml:"cooldown"`                 // Cooldown duration for groups when all endpoints fail
+	Cooldown                time.Duration `yaml:"cooldown"`                   // Cooldown duration for groups when all endpoints fail
 	AutoSwitchBetweenGroups bool          `yaml:"auto_switch_between_groups"` // Whether to automatically switch between groups, default: true
 }
 
 // FailoverConfig v4.0 故障转移配置
 type FailoverConfig struct {
-	Enabled         bool          `yaml:"enabled"`           // 启用故障转移，默认: true
-	DefaultCooldown time.Duration `yaml:"default_cooldown"`  // 默认冷却时间，默认: 10m
+	Enabled         bool          `yaml:"enabled"`          // 启用故障转移，默认: true
+	DefaultCooldown time.Duration `yaml:"default_cooldown"` // 默认冷却时间，默认: 10m
 }
 
 // FailureTrackerConfig v5.2.6 失败追踪器配置
@@ -115,10 +116,10 @@ type FailureTrackerConfig struct {
 }
 
 type RequestSuspendConfig struct {
-	Enabled            bool          `yaml:"enabled"`               // Enable request suspension feature, default: false
-	Timeout            time.Duration `yaml:"timeout"`               // Timeout for suspended requests, default: 300s
-	MaxSuspendedRequests int          `yaml:"max_suspended_requests"` // Maximum number of suspended requests, default: 100
-	EOFRetryHint       bool          `yaml:"eof_retry_hint"`        // Send retryable error format on streaming errors (triggers client auto-retry), default: false
+	Enabled              bool          `yaml:"enabled"`                // Enable request suspension feature, default: false
+	Timeout              time.Duration `yaml:"timeout"`                // Timeout for suspended requests, default: 300s
+	MaxSuspendedRequests int           `yaml:"max_suspended_requests"` // Maximum number of suspended requests, default: 100
+	EOFRetryHint         bool          `yaml:"eof_retry_hint"`         // Send retryable error format on streaming errors (triggers client auto-retry), default: false
 }
 
 // ModelPricing 模型定价配置
@@ -132,25 +133,25 @@ type ModelPricing struct {
 }
 
 type UsageTrackingConfig struct {
-	Enabled         bool                     `yaml:"enabled"`          // Enable usage tracking, default: false
+	Enabled bool `yaml:"enabled"` // Enable usage tracking, default: false
 
 	// 向后兼容：保留原有的 database_path 配置
-	DatabasePath    string                   `yaml:"database_path"`    // SQLite database file path, default: data/usage.db
+	DatabasePath string `yaml:"database_path"` // SQLite database file path, default: data/usage.db
 
 	// 新增：数据库配置（可选，优先级高于 database_path）
-	Database        *DatabaseBackendConfig   `yaml:"database,omitempty"` // Database configuration (optional)
+	Database *DatabaseBackendConfig `yaml:"database,omitempty"` // Database configuration (optional)
 
-	BufferSize      int                      `yaml:"buffer_size"`      // Event buffer size, default: 1000
-	BatchSize       int                      `yaml:"batch_size"`       // Batch write size, default: 100
-	FlushInterval   time.Duration            `yaml:"flush_interval"`   // Force flush interval, default: 30s
-	MaxRetry        int                      `yaml:"max_retry"`        // Max retry count for write failures, default: 3
-	RetentionDays   int                      `yaml:"retention_days"`   // Data retention days (0=permanent), default: 90
-	CleanupInterval time.Duration            `yaml:"cleanup_interval"` // Cleanup task execution interval, default: 24h
+	BufferSize      int           `yaml:"buffer_size"`      // Event buffer size, default: 1000
+	BatchSize       int           `yaml:"batch_size"`       // Batch write size, default: 100
+	FlushInterval   time.Duration `yaml:"flush_interval"`   // Force flush interval, default: 30s
+	MaxRetry        int           `yaml:"max_retry"`        // Max retry count for write failures, default: 3
+	RetentionDays   int           `yaml:"retention_days"`   // Data retention days (0=permanent), default: 90
+	CleanupInterval time.Duration `yaml:"cleanup_interval"` // Cleanup task execution interval, default: 24h
 
 	// Deprecated: v5.0+ 以下定价配置已废弃，迁移到 SQLite model_pricing 表
 	// 通过前端「定价」页面管理，这些字段仅保留用于向后兼容解析
-	ModelPricing    map[string]ModelPricing  `yaml:"model_pricing,omitempty"`    // [废弃] Model pricing configuration
-	DefaultPricing  ModelPricing             `yaml:"default_pricing,omitempty"`  // [废弃] Default pricing for unknown models
+	ModelPricing   map[string]ModelPricing `yaml:"model_pricing,omitempty"`   // [废弃] Model pricing configuration
+	DefaultPricing ModelPricing            `yaml:"default_pricing,omitempty"` // [废弃] Default pricing for unknown models
 }
 
 // DatabaseBackendConfig 数据库后端配置
@@ -166,16 +167,16 @@ type DatabaseBackendConfig struct {
 
 	// ===== 以下字段已废弃，保留用于配置文件向后兼容（解析不报错）=====
 	// 这些字段不再生效，请从配置文件中删除
-	Host            string        `yaml:"host,omitempty"`              // DEPRECATED: MySQL not supported in v4.1+
-	Port            int           `yaml:"port,omitempty"`              // DEPRECATED: MySQL not supported in v4.1+
-	Database        string        `yaml:"database,omitempty"`          // DEPRECATED: MySQL not supported in v4.1+
-	Username        string        `yaml:"username,omitempty"`          // DEPRECATED: MySQL not supported in v4.1+
-	Password        string        `yaml:"password,omitempty"`          // DEPRECATED: MySQL not supported in v4.1+
-	MaxOpenConns    int           `yaml:"max_open_conns,omitempty"`    // DEPRECATED: MySQL not supported in v4.1+
-	MaxIdleConns    int           `yaml:"max_idle_conns,omitempty"`    // DEPRECATED: MySQL not supported in v4.1+
-	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime,omitempty"` // DEPRECATED: MySQL not supported in v4.1+
+	Host            string        `yaml:"host,omitempty"`               // DEPRECATED: MySQL not supported in v4.1+
+	Port            int           `yaml:"port,omitempty"`               // DEPRECATED: MySQL not supported in v4.1+
+	Database        string        `yaml:"database,omitempty"`           // DEPRECATED: MySQL not supported in v4.1+
+	Username        string        `yaml:"username,omitempty"`           // DEPRECATED: MySQL not supported in v4.1+
+	Password        string        `yaml:"password,omitempty"`           // DEPRECATED: MySQL not supported in v4.1+
+	MaxOpenConns    int           `yaml:"max_open_conns,omitempty"`     // DEPRECATED: MySQL not supported in v4.1+
+	MaxIdleConns    int           `yaml:"max_idle_conns,omitempty"`     // DEPRECATED: MySQL not supported in v4.1+
+	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime,omitempty"`  // DEPRECATED: MySQL not supported in v4.1+
 	ConnMaxIdleTime time.Duration `yaml:"conn_max_idle_time,omitempty"` // DEPRECATED: MySQL not supported in v4.1+
-	Charset         string        `yaml:"charset,omitempty"`           // DEPRECATED: MySQL not supported in v4.1+
+	Charset         string        `yaml:"charset,omitempty"`            // DEPRECATED: MySQL not supported in v4.1+
 }
 
 type ProxyConfig struct {
@@ -189,8 +190,8 @@ type ProxyConfig struct {
 }
 
 type AuthConfig struct {
-	Enabled bool   `yaml:"enabled"`                   // Enable authentication, default: false
-	Token   string `yaml:"token,omitempty"`           // Bearer token for authentication
+	Enabled bool   `yaml:"enabled"`         // Enable authentication, default: false
+	Token   string `yaml:"token,omitempty"` // Bearer token for authentication
 }
 
 // TUIConfig is DEPRECATED - TUI has been removed in v4.0
@@ -213,19 +214,25 @@ type EndpointsStorageConfig struct {
 	Type string `yaml:"type"` // 存储类型: "yaml" | "sqlite"，默认 "yaml"
 }
 
+// AccountPoolConfig 账号池路由配置
+// v6.0+: 当 enabled=true 时，/v1/responses 走 Codex 账号池链路，与 Claude endpoint 链路分离
+type AccountPoolConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
 type EndpointConfig struct {
 	Name                string            `yaml:"name"`
 	URL                 string            `yaml:"url"`
-	Channel             string            `yaml:"channel,omitempty"`        // v5.0: 渠道标签（用于分组展示）
+	Channel             string            `yaml:"channel,omitempty"` // v5.0: 渠道标签（用于分组展示）
 	Priority            int               `yaml:"priority"`
-	Group               string            `yaml:"group,omitempty"`          // DEPRECATED in v4.0
-	GroupPriority       int               `yaml:"group-priority,omitempty"` // DEPRECATED in v4.0: use Priority instead
+	Group               string            `yaml:"group,omitempty"`            // DEPRECATED in v4.0
+	GroupPriority       int               `yaml:"group-priority,omitempty"`   // DEPRECATED in v4.0: use Priority instead
 	FailoverEnabled     *bool             `yaml:"failover_enabled,omitempty"` // v4.0: 是否参与故障转移，默认: true
-	Cooldown            *time.Duration    `yaml:"cooldown,omitempty"`       // v4.0: 端点级冷却时间（可选），默认使用全局配置
-	Token               string            `yaml:"token,omitempty"`      // 单 Token 配置（向后兼容）
-	ApiKey              string            `yaml:"api-key,omitempty"`    // 单 API Key 配置（向后兼容）
-	Tokens              []TokenConfig     `yaml:"tokens,omitempty"`     // 多 Token 配置（新功能）
-	ApiKeys             []ApiKeyConfig    `yaml:"api-keys,omitempty"`   // 多 API Key 配置（新功能）
+	Cooldown            *time.Duration    `yaml:"cooldown,omitempty"`         // v4.0: 端点级冷却时间（可选），默认使用全局配置
+	Token               string            `yaml:"token,omitempty"`            // 单 Token 配置（向后兼容）
+	ApiKey              string            `yaml:"api-key,omitempty"`          // 单 API Key 配置（向后兼容）
+	Tokens              []TokenConfig     `yaml:"tokens,omitempty"`           // 多 Token 配置（新功能）
+	ApiKeys             []ApiKeyConfig    `yaml:"api-keys,omitempty"`         // 多 API Key 配置（新功能）
 	Timeout             time.Duration     `yaml:"timeout"`
 	Headers             map[string]string `yaml:"headers,omitempty"`
 	SupportsCountTokens bool              `yaml:"supports_count_tokens,omitempty"` // 是否支持count_tokens端点
@@ -260,6 +267,9 @@ func LoadConfig(path string) (*Config, error) {
 	// Check if v5.2.6 failure_tracker config is present
 	hasFailureTrackerConfig := strings.Contains(string(data), "failure_tracker:")
 
+	// Check if account_pool.enabled is explicitly set in YAML
+	hasAccountPoolEnabledConfig := hasYAMLNestedKey(data, "account_pool", "enabled")
+
 	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
@@ -287,12 +297,42 @@ func LoadConfig(path string) (*Config, error) {
 		config.FailureTracker.Enabled = true
 	}
 
+	// v6.0+: 账号池路由默认保持关闭，必须显式启用后才接管 Codex /v1/responses
+	if !hasAccountPoolEnabledConfig {
+		config.AccountPool.Enabled = false
+	}
+
 	// Validate configuration
 	if err := config.validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	return &config, nil
+}
+
+func hasYAMLNestedKey(data []byte, parentKey, childKey string) bool {
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	parent, ok := raw[parentKey]
+	if !ok || parent == nil {
+		return false
+	}
+	switch m := parent.(type) {
+	case map[string]any:
+		_, exists := m[childKey]
+		return exists
+	case map[any]any:
+		for k := range m {
+			if key, ok := k.(string); ok && key == childKey {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 // setDefaults sets default values for configuration
@@ -476,8 +516,8 @@ func (c *Config) setDefaults() {
 	}
 
 	// Handle group inheritance - endpoints inherit group settings from previous endpoint
-	var currentGroup string = "Default"       // Default group name
-	var currentGroupPriority int = 1          // Default group priority
+	var currentGroup string = "Default" // Default group name
+	var currentGroupPriority int = 1    // Default group priority
 
 	for i := range c.Endpoints {
 		// v3.x → v4.0 兼容：group-priority 映射到 priority
@@ -513,15 +553,15 @@ func (c *Config) setDefaults() {
 				c.Endpoints[i].Timeout = c.GlobalTimeout
 			}
 		}
-		
+
 		// NOTE: We do NOT inherit tokens here - tokens will be resolved dynamically at runtime
 		// This allows for proper group-based token switching when groups fail
-		
+
 		// Inherit api-key from first endpoint if not specified
 		if c.Endpoints[i].ApiKey == "" && defaultEndpoint != nil && defaultEndpoint.ApiKey != "" {
 			c.Endpoints[i].ApiKey = defaultEndpoint.ApiKey
 		}
-		
+
 		// Inherit headers from first endpoint if not specified
 		if len(c.Endpoints[i].Headers) == 0 && defaultEndpoint != nil && len(defaultEndpoint.Headers) > 0 {
 			// Copy headers from first endpoint
@@ -532,17 +572,17 @@ func (c *Config) setDefaults() {
 		} else if len(c.Endpoints[i].Headers) > 0 && defaultEndpoint != nil && len(defaultEndpoint.Headers) > 0 {
 			// Merge headers: inherit from first endpoint, but allow override
 			mergedHeaders := make(map[string]string)
-			
+
 			// First, copy all headers from the first endpoint
 			for key, value := range defaultEndpoint.Headers {
 				mergedHeaders[key] = value
 			}
-			
+
 			// Then, override with endpoint-specific headers
 			for key, value := range c.Endpoints[i].Headers {
 				mergedHeaders[key] = value
 			}
-			
+
 			c.Endpoints[i].Headers = mergedHeaders
 		}
 	}
@@ -554,7 +594,7 @@ func (c *Config) ApplyPrimaryEndpoint(logger *slog.Logger) error {
 	if c.PrimaryEndpoint == "" {
 		return nil
 	}
-	
+
 	// Find the specified endpoint
 	primaryIndex := c.findEndpointIndex(c.PrimaryEndpoint)
 	if primaryIndex == -1 {
@@ -563,21 +603,21 @@ func (c *Config) ApplyPrimaryEndpoint(logger *slog.Logger) error {
 		for _, endpoint := range c.Endpoints {
 			availableEndpoints = append(availableEndpoints, endpoint.Name)
 		}
-		
+
 		err := fmt.Errorf("指定的主端点 '%s' 未找到，可用端点: %v", c.PrimaryEndpoint, availableEndpoints)
 		if logger != nil {
-			logger.Error(fmt.Sprintf("❌ 主端点设置失败 - 端点: %s, 可用端点: %v", 
+			logger.Error(fmt.Sprintf("❌ 主端点设置失败 - 端点: %s, 可用端点: %v",
 				c.PrimaryEndpoint, availableEndpoints))
 		}
 		return err
 	}
-	
+
 	// Store original priority for logging
 	originalPriority := c.Endpoints[primaryIndex].Priority
-	
+
 	// Set the primary endpoint to priority 1
 	c.Endpoints[primaryIndex].Priority = 1
-	
+
 	// Adjust other endpoints' priorities to ensure they are lower than primary
 	adjustedCount := 0
 	for i := range c.Endpoints {
@@ -586,12 +626,12 @@ func (c *Config) ApplyPrimaryEndpoint(logger *slog.Logger) error {
 			adjustedCount++
 		}
 	}
-	
+
 	if logger != nil {
 		logger.Info(fmt.Sprintf("✅ 主端点优先级设置成功 - 端点: %s, 原优先级: %d → 新优先级: %d, 调整了%d个其他端点",
 			c.PrimaryEndpoint, originalPriority, 1, adjustedCount))
 	}
-	
+
 	return nil
 }
 
@@ -804,7 +844,7 @@ func (cw *ConfigWatcher) watchLoop() {
 				}
 
 				cw.lastModTime = fileInfo.ModTime()
-				
+
 				// Cancel any existing debounce timer
 				if cw.debounceTimer != nil {
 					cw.debounceTimer.Stop()
@@ -944,18 +984,18 @@ func SaveConfig(config *Config, path string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
-	
+
 	// Ensure directory exists
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
-	
+
 	// Write to file
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -984,7 +1024,7 @@ func SavePriorityConfigWithComments(config *Config, path string) error {
 	// Update endpoint priorities in the YAML node tree
 	if len(rootNode.Content) > 0 {
 		mappingNode := rootNode.Content[0]
-		
+
 		// Find endpoints section
 		for i := 0; i < len(mappingNode.Content); i += 2 {
 			keyNode := mappingNode.Content[i]
@@ -995,19 +1035,19 @@ func SavePriorityConfigWithComments(config *Config, path string) error {
 				for _, endpointNode := range valueNode.Content {
 					var endpointName string
 					var priorityNode *yaml.Node
-					
+
 					// Find name and priority nodes for this endpoint
 					for j := 0; j < len(endpointNode.Content); j += 2 {
 						fieldKey := endpointNode.Content[j]
 						fieldValue := endpointNode.Content[j+1]
-						
+
 						if fieldKey.Value == "name" {
 							endpointName = fieldValue.Value
 						} else if fieldKey.Value == "priority" {
 							priorityNode = fieldValue
 						}
 					}
-					
+
 					// Find the corresponding endpoint in config and update priority
 					if endpointName != "" && priorityNode != nil {
 						for _, endpoint := range config.Endpoints {

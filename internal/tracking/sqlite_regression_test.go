@@ -2,12 +2,189 @@ package tracking
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestSQLiteSchemaInit_OldRequestLogsWithoutUpstreamColumns
+// 回归场景：旧库 request_logs 不包含 upstream_* 列时，Schema 初始化不应失败
+func TestSQLiteSchemaInit_OldRequestLogsWithoutUpstreamColumns(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "old-schema.db")
+
+	// 构造旧版本 request_logs（缺少 upstream_* 和 5m/1h 字段）
+	rawDB, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = rawDB.Exec(`
+		CREATE TABLE IF NOT EXISTS request_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			request_id TEXT UNIQUE NOT NULL,
+			client_ip TEXT,
+			user_agent TEXT,
+			method TEXT DEFAULT 'POST',
+			path TEXT DEFAULT '/v1/messages',
+			start_time DATETIME NOT NULL,
+			end_time DATETIME,
+			duration_ms INTEGER,
+			channel TEXT DEFAULT '',
+			endpoint_name TEXT,
+			group_name TEXT,
+			model_name TEXT,
+			is_streaming BOOLEAN DEFAULT FALSE,
+			status TEXT NOT NULL DEFAULT 'pending',
+			http_status_code INTEGER,
+			retry_count INTEGER DEFAULT 0,
+			failure_reason TEXT,
+			last_failure_reason TEXT,
+			cancel_reason TEXT,
+			input_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			cache_creation_tokens INTEGER DEFAULT 0,
+			cache_read_tokens INTEGER DEFAULT 0,
+			input_cost_usd REAL DEFAULT 0,
+			output_cost_usd REAL DEFAULT 0,
+			cache_creation_cost_usd REAL DEFAULT 0,
+			cache_read_cost_usd REAL DEFAULT 0,
+			total_cost_usd REAL DEFAULT 0,
+			created_at DATETIME,
+			updated_at DATETIME
+		);
+	`)
+	require.NoError(t, err)
+	require.NoError(t, rawDB.Close())
+
+	cfg := &Config{
+		Enabled:         true,
+		DatabasePath:    dbPath,
+		BufferSize:      10,
+		BatchSize:       5,
+		FlushInterval:   100 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
+	}
+
+	tracker, err := NewUsageTracker(cfg)
+	require.NoError(t, err, "旧库升级初始化不应失败")
+	defer tracker.Close()
+
+	db := tracker.GetReadDB()
+	require.NotNil(t, db)
+
+	// 校验迁移后列存在
+	requiredColumns := []string{
+		"upstream_type",
+		"upstream_source_name",
+		"upstream_name",
+		"upstream_id",
+	}
+	for _, col := range requiredColumns {
+		var count int
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('request_logs') WHERE name = ?`, col).Scan(&count)
+		require.NoError(t, err)
+		assert.Equalf(t, 1, count, "column %s should exist after migration", col)
+	}
+
+	// 校验索引也已创建
+	requiredIndexes := []string{
+		"idx_request_logs_upstream_type",
+		"idx_request_logs_upstream_name",
+	}
+	for _, idx := range requiredIndexes {
+		var count int
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_index_list('request_logs') WHERE name = ?`, idx).Scan(&count)
+		require.NoError(t, err)
+		assert.Equalf(t, 1, count, "index %s should exist after migration", idx)
+	}
+}
+
+func TestSQLiteAccountRequestLogsDirectArchiveRouting(t *testing.T) {
+	cfg := &Config{
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      10,
+		BatchSize:       5,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
+	}
+
+	tracker, err := NewUsageTracker(cfg)
+	require.NoError(t, err)
+	defer tracker.Close()
+
+	requestID := "req-account-mirror-001"
+	statusProcessing := "processing"
+	httpStatus200 := 200
+
+	tracker.RecordRequestStart(requestID, "127.0.0.1", "codex-cli", "POST", "/v1/responses", true)
+
+	upstreamType := "account"
+	sourceName := "pool-a"
+	accountName := "acc-001"
+	accountID := int64(101)
+	tracker.RecordRequestUpdate(requestID, UpdateOptions{
+		UpstreamType:       &upstreamType,
+		UpstreamSourceName: &sourceName,
+		UpstreamName:       &accountName,
+		UpstreamID:         &accountID,
+		Status:             &statusProcessing,
+		HttpStatus:         &httpStatus200,
+	})
+
+	tracker.RecordRequestSuccess(requestID, "gpt-5-codex", &TokenUsage{
+		InputTokens:         20,
+		OutputTokens:        5,
+		CacheCreationTokens: 0,
+		CacheReadTokens:     2,
+	}, 60*time.Millisecond)
+
+	db := tracker.GetReadDB()
+	require.NotNil(t, db)
+
+	var (
+		gotAccountID   int64
+		gotSourceName  string
+		gotAccountName string
+		status         string
+		modelName      string
+		inputTokens    int64
+		outputTokens   int64
+		cacheReadToken int64
+	)
+
+	require.Eventually(t, func() bool {
+		err := db.QueryRow(`
+			SELECT account_id, source_name, account_name, status, model_name,
+			       input_tokens, output_tokens, cache_read_tokens
+			FROM account_request_logs
+			WHERE request_id = ?
+		`, requestID).Scan(
+			&gotAccountID, &gotSourceName, &gotAccountName, &status, &modelName,
+			&inputTokens, &outputTokens, &cacheReadToken,
+		)
+		return err == nil
+	}, 2*time.Second, 50*time.Millisecond, "account_request_logs should contain archived account request")
+
+	assert.Equal(t, int64(101), gotAccountID)
+	assert.Equal(t, "pool-a", gotSourceName)
+	assert.Equal(t, "acc-001", gotAccountName)
+	assert.Equal(t, "completed", status)
+	assert.Equal(t, "gpt-5-codex", modelName)
+	assert.Equal(t, int64(20), inputTokens)
+	assert.Equal(t, int64(5), outputTokens)
+	assert.Equal(t, int64(2), cacheReadToken)
+
+	var requestLogsCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM request_logs WHERE request_id = ?`, requestID).Scan(&requestLogsCount)
+	require.NoError(t, err)
+	assert.Equal(t, 0, requestLogsCount, "account request should not be written into request_logs")
+}
 
 // TestSQLiteDataPersistence 测试SQLite数据持久化完整性
 // 防止INSERT OR REPLACE导致的数据丢失回归

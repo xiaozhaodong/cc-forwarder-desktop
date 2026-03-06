@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -149,6 +150,64 @@ func TestStreamProcessor_Reset(t *testing.T) {
 	}
 	if len(processor.parseErrors) != 0 {
 		t.Error("Parse errors not reset")
+	}
+}
+
+func TestStreamProcessor_ProcessSSELine_CaptureAllDebugLines(t *testing.T) {
+	tokenParser := NewTokenParser()
+	writer := &mockResponseWriter{}
+	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-debug-capture", "endpoint")
+	processor.captureAllDebugLines = true
+
+	for i := 0; i < DebugLineLimit+5; i++ {
+		processor.processSSELine("data: line-" + strconv.Itoa(i))
+	}
+
+	if len(processor.debugLines) != DebugLineLimit+5 {
+		t.Fatalf("debugLines should capture all lines when captureAllDebugLines is enabled, got %d", len(processor.debugLines))
+	}
+
+	if processor.debugLines[len(processor.debugLines)-1] != "data: line-104" {
+		t.Fatalf("unexpected last debug line: %s", processor.debugLines[len(processor.debugLines)-1])
+	}
+}
+
+func TestStreamProcessor_ProcessStreamWithRetry_RecoversResponsesUsageFromRawTail(t *testing.T) {
+	streamBody := strings.Join([]string{
+		"event: response.output_text.delta\n",
+		`data: {"type":"response.output_text.delta","delta":"hello","output_index":0,"sequence_number":1}` + "\n",
+		"\n",
+		"event: response.output_text.done\n",
+		`data: {"type":"response.output_text.done","output_index":0,"sequence_number":2,"text":"hello"}` + "\n",
+		"\n",
+		`{"id":"resp_test_123","model":"gpt-5.3-codex","output":[{"id":"msg_123","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"hello"}]}],"usage":{"input_tokens":88,"output_tokens":9,"input_tokens_details":{"cached_tokens":6}}}`,
+	}, "")
+
+	resp := mockResponse(streamBody, http.StatusOK)
+	tokenParser := NewTokenParserWithRequestID("test-responses-raw-tail")
+	writer := &mockResponseWriter{}
+	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-responses-raw-tail", "endpoint")
+
+	tokenUsage, modelName, err := processor.ProcessStreamWithRetry(context.Background(), resp)
+	if err != nil {
+		t.Fatalf("ProcessStreamWithRetry should recover usage from raw tail, got error: %v", err)
+	}
+
+	if tokenUsage == nil {
+		t.Fatal("expected tokenUsage to be recovered from raw tail")
+	}
+
+	if tokenUsage.InputTokens != 88 || tokenUsage.OutputTokens != 9 || tokenUsage.CacheReadTokens != 6 {
+		t.Fatalf("unexpected recovered usage: input=%d output=%d cache=%d", tokenUsage.InputTokens, tokenUsage.OutputTokens, tokenUsage.CacheReadTokens)
+	}
+
+	if modelName != "gpt-5.3-codex" {
+		t.Fatalf("expected recovered modelName=gpt-5.3-codex, got %s", modelName)
+	}
+
+	completeness := tokenParser.GetStreamCompleteness()
+	if !completeness.IsComplete {
+		t.Fatalf("expected recovered raw tail responses stream to be complete, got reason=%s failure=%s", completeness.Reason, completeness.FailureReason)
 	}
 }
 

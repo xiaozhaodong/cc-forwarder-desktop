@@ -44,6 +44,40 @@ export const initWails = async () => {
   return wailsInitPromise;
 };
 
+const getWailsMethod = (methodName, { optional = false } = {}) => {
+  const method = WailsApp?.[methodName];
+  if (typeof method === 'function') {
+    return method;
+  }
+  const runtimeMethod = typeof window !== 'undefined' ? window?.go?.main?.App?.[methodName] : null;
+  if (typeof runtimeMethod === 'function') {
+    return (...args) => runtimeMethod(...args);
+  }
+  if (optional) {
+    return null;
+  }
+  throw new Error(`当前后端版本暂未提供 ${methodName}，请升级后端后重试`);
+};
+
+const parseEntityId = (id) => {
+  if (id === null || id === undefined) return null;
+  if (typeof id === 'number') {
+    return Number.isFinite(id) ? id : null;
+  }
+  if (typeof id === 'string') {
+    const trimmed = id.trim();
+    if (!trimmed) return null;
+    const numeric = Number(trimmed);
+    return Number.isNaN(numeric) ? trimmed : numeric;
+  }
+  return null;
+};
+
+const normalizeEntityId = (id) => {
+  const normalized = parseEntityId(id);
+  return normalized === null ? id : normalized;
+};
+
 // ============================================
 // Wails Events 适配
 // ============================================
@@ -376,6 +410,276 @@ export const resumeGroup = async (groupName) => {
 };
 
 // ============================================
+// v6.0+ 账号池 API (Wails)
+// ============================================
+
+const normalizeSubscriptionSource = (source = {}) => ({
+  id: source.id ?? source.ID ?? null,
+  name: source.name || source.Name || '',
+  url: source.url || source.URL || '',
+  enabled: (source.enabled ?? source.Enabled) !== false,
+  sync_mode: source.sync_mode || source.syncMode || source.SyncMode || 'manual',
+  syncMode: source.sync_mode || source.syncMode || source.SyncMode || 'manual',
+  last_sync_at: source.last_sync_at || source.lastSyncAt || source.LastSyncAt || '',
+  lastSyncAt: source.last_sync_at || source.lastSyncAt || source.LastSyncAt || '',
+  last_status: source.last_status || source.lastStatus || source.LastStatus || '',
+  lastStatus: source.last_status || source.lastStatus || source.LastStatus || '',
+  last_error: source.last_error || source.lastError || source.LastError || '',
+  lastError: source.last_error || source.lastError || source.LastError || '',
+  created_at: source.created_at || source.createdAt || source.CreatedAt || '',
+  createdAt: source.created_at || source.createdAt || source.CreatedAt || '',
+  updated_at: source.updated_at || source.updatedAt || source.UpdatedAt || '',
+  updatedAt: source.updated_at || source.updatedAt || source.UpdatedAt || ''
+});
+
+const normalizeUpstreamAccount = (account = {}) => ({
+  id: parseEntityId(account.id ?? account.ID ?? account.Id ?? account.account_id ?? account.accountId ?? account.AccountID ?? null),
+  source_id: parseEntityId(account.source_id ?? account.sourceId ?? account.SourceID ?? account.SourceId ?? account.sourceID ?? null),
+  sourceId: parseEntityId(account.source_id ?? account.sourceId ?? account.SourceID ?? account.SourceId ?? account.sourceID ?? null),
+  source_name: account.source_name || account.sourceName || account.SourceName || '',
+  sourceName: account.source_name || account.sourceName || account.SourceName || '',
+  provider_type: account.provider_type || account.providerType || account.ProviderType || '',
+  providerType: account.provider_type || account.providerType || account.ProviderType || '',
+  account_name: account.account_name || account.accountName || account.AccountName || '',
+  accountName: account.account_name || account.accountName || account.AccountName || '',
+  credential_raw: account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
+  credentialRaw: account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
+  base_url: account.base_url || account.baseURL || account.BaseURL || '',
+  baseURL: account.base_url || account.baseURL || account.BaseURL || '',
+  priority: Number.parseInt(account.priority ?? account.Priority, 10) || 1,
+  enabled: (account.enabled ?? account.Enabled) !== false,
+  state: account.state || account.State || 'active',
+  cooldown_until: account.cooldown_until || account.cooldownUntil || account.CooldownUntil || '',
+  cooldownUntil: account.cooldown_until || account.cooldownUntil || account.CooldownUntil || '',
+  fail_count: account.fail_count || account.failCount || account.FailCount || 0,
+  failCount: account.fail_count || account.failCount || account.FailCount || 0,
+  last_success_at: account.last_success_at || account.lastSuccessAt || account.LastSuccessAt || '',
+  lastSuccessAt: account.last_success_at || account.lastSuccessAt || account.LastSuccessAt || '',
+  last_error: account.last_error || account.lastError || account.LastError || '',
+  lastError: account.last_error || account.lastError || account.LastError || '',
+  fingerprint: account.fingerprint || account.Fingerprint || '',
+  created_at: account.created_at || account.createdAt || account.CreatedAt || '',
+  createdAt: account.created_at || account.createdAt || account.CreatedAt || '',
+  updated_at: account.updated_at || account.updatedAt || account.UpdatedAt || '',
+  updatedAt: account.updated_at || account.updatedAt || account.UpdatedAt || ''
+});
+
+const buildSubscriptionSourcePayload = (input = {}) => ({
+  ...input,
+  name: input.name || '',
+  url: input.url || '',
+  enabled: input.enabled !== false,
+  sync_mode: input.sync_mode || input.syncMode || 'manual'
+});
+
+const buildUpstreamAccountPayload = (input = {}) => {
+  const sourceId = input.source_id ?? input.sourceId;
+  const sourceName = input.source_name ?? input.sourceName;
+  const payload = {
+    ...input,
+    account_name: input.account_name || input.accountName || '',
+    provider_type: input.provider_type || input.providerType || '',
+    credential_raw: input.credential_raw || input.credentialRaw || '',
+    base_url: input.base_url || input.baseURL || '',
+    priority: Number.parseInt(input.priority, 10) || 1,
+    enabled: input.enabled !== false
+  };
+
+  if (sourceId !== undefined && sourceId !== null && sourceId !== '') {
+    payload.source_id = normalizeEntityId(sourceId);
+  }
+
+  if (sourceName !== undefined) {
+    payload.source_name = sourceName || '';
+  }
+
+  return payload;
+};
+
+export const getSubscriptionSources = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('GetSubscriptionSources');
+  const result = await method();
+  const list = Array.isArray(result) ? result : (result?.sources || result?.data || []);
+  return (list || []).map(normalizeSubscriptionSource);
+};
+
+export const createSubscriptionSource = async (input) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('CreateSubscriptionSource');
+  const result = await method(buildSubscriptionSourcePayload(input));
+  return result ?? { success: true };
+};
+
+export const updateSubscriptionSource = async (id, input) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('UpdateSubscriptionSource');
+  const result = await method(normalizeEntityId(id), buildSubscriptionSourcePayload(input));
+  return result ?? { success: true };
+};
+
+export const deleteSubscriptionSource = async (id) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('DeleteSubscriptionSource');
+  const result = await method(normalizeEntityId(id));
+  return result ?? { success: true };
+};
+
+export const toggleSubscriptionSource = async (id, enabled) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('ToggleSubscriptionSource');
+  const result = await method(normalizeEntityId(id), enabled !== false);
+  return result ?? { success: true };
+};
+
+export const syncSubscriptionSource = async (id) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('SyncSubscriptionSource');
+  const result = await method(normalizeEntityId(id));
+  return result ?? { success: true, message: '同步任务已触发' };
+};
+
+export const getUpstreamAccounts = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('GetUpstreamAccounts');
+  const result = await method();
+  const list = Array.isArray(result) ? result : (result?.accounts || result?.data || []);
+  return (list || []).map(normalizeUpstreamAccount);
+};
+
+export const createUpstreamAccount = async (input) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('CreateUpstreamAccount');
+  const result = await method(buildUpstreamAccountPayload(input));
+  return result ?? { success: true };
+};
+
+export const updateUpstreamAccount = async (id, input) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('UpdateUpstreamAccount');
+  const result = await method(normalizeEntityId(id), buildUpstreamAccountPayload(input));
+  return result ?? { success: true };
+};
+
+export const deleteUpstreamAccount = async (id) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('DeleteUpstreamAccount');
+  const result = await method(normalizeEntityId(id));
+  return result ?? { success: true };
+};
+
+export const toggleUpstreamAccount = async (id, enabled) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('ToggleUpstreamAccount');
+  const result = await method(normalizeEntityId(id), enabled !== false);
+  return result ?? { success: true };
+};
+
+export const testUpstreamAccount = async (id) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('TestUpstreamAccount', { optional: true });
+  if (!method) {
+    return {
+      success: false,
+      unsupported: true,
+      message: '当前后端版本暂未提供 TestUpstreamAccount'
+    };
+  }
+
+  try {
+    const result = await method(normalizeEntityId(id));
+    if (result && typeof result === 'object') {
+      return result;
+    }
+    return { success: true, message: '连通性测试已触发' };
+  } catch (error) {
+    const errorText = error?.message || String(error || '');
+    if (/not found|undefined|is not a function/i.test(errorText)) {
+      return {
+        success: false,
+        unsupported: true,
+        message: '当前后端版本暂未提供 TestUpstreamAccount'
+      };
+    }
+    throw error;
+  }
+};
+
+export const generateChatGPTOAuthLink = async () => {
+  await initWails();
+  const runtimeApp = typeof window !== 'undefined' ? window?.go?.main?.App : null;
+  if (!WailsApp && !runtimeApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('GenerateChatGPTOAuthLink', { optional: true });
+  if (!method) {
+    return {
+      success: false,
+      unsupported: true,
+      message: '当前后端版本暂未提供 GenerateChatGPTOAuthLink'
+    };
+  }
+
+  const result = await method();
+  return {
+    success: true,
+    ...(result || {})
+  };
+};
+
+export const exchangeChatGPTOAuthCallback = async (sessionId, callbackUrl) => {
+  await initWails();
+  const runtimeApp = typeof window !== 'undefined' ? window?.go?.main?.App : null;
+  if (!WailsApp && !runtimeApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('ExchangeChatGPTOAuthCallback', { optional: true });
+  if (!method) {
+    return {
+      success: false,
+      unsupported: true,
+      message: '当前后端版本暂未提供 ExchangeChatGPTOAuthCallback'
+    };
+  }
+
+  const result = await method({
+    session_id: sessionId || '',
+    callback_url: callbackUrl || ''
+  });
+
+  if (result && typeof result === 'object') {
+    return result;
+  }
+
+  return {
+    success: false,
+    message: '提取 RT 失败：无响应数据'
+  };
+};
+
+// ============================================
 // 使用统计 API
 // ============================================
 
@@ -405,7 +709,8 @@ export const getUsageStats = async (params = {}) => {
     model: params.model || '',
     channel: params.channel || '',
     endpoint: params.endpoint || '',
-    group: params.group || ''
+    group: params.group || '',
+    source_view: params.source_view || params.sourceView || 'endpoint'
   };
 
   console.log('📊 [Wails] GetUsageStats 参数:', queryParams);
@@ -461,7 +766,8 @@ export const getRequests = async (params = {}) => {
     model: params.model || '',
     channel: params.channel || '',
     endpoint: params.endpoint || '',
-    group: params.group || ''
+    group: params.group || '',
+    source_view: params.source_view || params.sourceView || 'endpoint'
   };
 
   console.log('🔍 [Wails] GetRequests 参数:', queryParams);
@@ -475,10 +781,14 @@ export const getRequests = async (params = {}) => {
     timestamp: r.timestamp,
     start_time: r.timestamp,
     channel: r.channel || '',
-    endpoint_name: r.endpoint,
-    endpoint: r.endpoint,
-    group_name: r.group,
-    group: r.group,
+    upstream_type: r.upstream_type || 'endpoint',
+    upstream_name: r.upstream_name || '',
+    upstream_source_name: r.upstream_source_name || '',
+    upstream_id: r.upstream_id || null,
+    endpoint_name: r.endpoint || r.upstream_name || '',
+    endpoint: r.endpoint || r.upstream_name || '',
+    group_name: r.group || r.upstream_source_name || '',
+    group: r.group || r.upstream_source_name || '',
     model_name: r.model,
     model: r.model,
     status: r.status,

@@ -379,8 +379,12 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 	}
 
 	// 使用适配器构建INSERT OR REPLACE查询
-	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "start_time", "status", "is_streaming", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", "'pending'", "?", ut.adapter.BuildDateTimeNow()}
+	upstreamType := data.UpstreamType
+	if upstreamType == "" {
+		upstreamType = "endpoint"
+	}
+	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "updated_at"}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
 
 	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
@@ -392,6 +396,10 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 		data.Path,
 		event.Timestamp,
 		data.IsStreaming,
+		upstreamType,
+		data.UpstreamSourceName,
+		data.UpstreamName,
+		data.UpstreamID,
 	}
 
 	return query, args, nil
@@ -466,6 +474,22 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 	if opts.GroupName != nil {
 		setParts = append(setParts, "group_name = ?")
 		args = append(args, *opts.GroupName)
+	}
+	if opts.UpstreamType != nil {
+		setParts = append(setParts, "upstream_type = ?")
+		args = append(args, *opts.UpstreamType)
+	}
+	if opts.UpstreamSourceName != nil {
+		setParts = append(setParts, "upstream_source_name = ?")
+		args = append(args, *opts.UpstreamSourceName)
+	}
+	if opts.UpstreamName != nil {
+		setParts = append(setParts, "upstream_name = ?")
+		args = append(args, *opts.UpstreamName)
+	}
+	if opts.UpstreamID != nil {
+		setParts = append(setParts, "upstream_id = ?")
+		args = append(args, *opts.UpstreamID)
 	}
 	if opts.Status != nil {
 		setParts = append(setParts, "status = ?")
@@ -750,8 +774,12 @@ func (ut *UsageTracker) insertRequestStart(ctx context.Context, tx *sql.Tx, even
 	}
 
 	// 使用适配器构建INSERT OR REPLACE查询
-	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "start_time", "status", "is_streaming", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", "'pending'", "?", ut.adapter.BuildDateTimeNow()}
+	upstreamType := data.UpstreamType
+	if upstreamType == "" {
+		upstreamType = "endpoint"
+	}
+	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "updated_at"}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
 	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
 	_, err := tx.ExecContext(ctx, query,
@@ -761,7 +789,11 @@ func (ut *UsageTracker) insertRequestStart(ctx context.Context, tx *sql.Tx, even
 		data.Method,
 		data.Path,
 		event.Timestamp,
-		data.IsStreaming)
+		data.IsStreaming,
+		upstreamType,
+		data.UpstreamSourceName,
+		data.UpstreamName,
+		data.UpstreamID)
 
 	return err
 }

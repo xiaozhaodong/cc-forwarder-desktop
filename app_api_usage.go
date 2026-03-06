@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"strings"
 	"time"
 
 	"cc-forwarder/internal/tracking"
@@ -16,18 +18,18 @@ import (
 
 // UsageSummary 使用统计摘要
 type UsageSummary struct {
-	TotalRequests           int64   `json:"total_requests"`              // 运行时请求数
-	AllTimeTotalRequests    int64   `json:"all_time_total_requests"`     // 全部历史请求数（数据库）
-	TodayRequests           int64   `json:"today_requests"`              // 今日请求数（数据库）
-	SuccessRequests         int64   `json:"success_requests"`
-	FailedRequests          int64   `json:"failed_requests"`
-	TotalInputTokens        int64   `json:"total_input_tokens"`
-	TotalOutputTokens       int64   `json:"total_output_tokens"`
-	TotalCost               float64 `json:"total_cost"`                  // 运行时成本
-	TodayCost               float64 `json:"today_cost"`                  // 今日成本（数据库）
-	AllTimeTotalCost        float64 `json:"all_time_total_cost"`         // 全部历史成本（数据库）
-	TodayTokens             int64   `json:"today_tokens"`                // 今日 tokens（数据库）
-	AllTimeTotalTokens      int64   `json:"all_time_total_tokens"`       // 全部历史 tokens（数据库）
+	TotalRequests        int64   `json:"total_requests"`          // 运行时请求数
+	AllTimeTotalRequests int64   `json:"all_time_total_requests"` // 全部历史请求数（数据库）
+	TodayRequests        int64   `json:"today_requests"`          // 今日请求数（数据库）
+	SuccessRequests      int64   `json:"success_requests"`
+	FailedRequests       int64   `json:"failed_requests"`
+	TotalInputTokens     int64   `json:"total_input_tokens"`
+	TotalOutputTokens    int64   `json:"total_output_tokens"`
+	TotalCost            float64 `json:"total_cost"`            // 运行时成本
+	TodayCost            float64 `json:"today_cost"`            // 今日成本（数据库）
+	AllTimeTotalCost     float64 `json:"all_time_total_cost"`   // 全部历史成本（数据库）
+	TodayTokens          int64   `json:"today_tokens"`          // 今日 tokens（数据库）
+	AllTimeTotalTokens   int64   `json:"all_time_total_tokens"` // 全部历史 tokens（数据库）
 }
 
 // GetUsageSummary 获取使用统计摘要
@@ -70,29 +72,29 @@ func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, er
 				}
 			}
 
-			// 直接从 request_logs 表查询全部历史统计
-			allTimeTotalCost, allTimeTotalTokens, allTimeTotal = a.queryStatsFromDB(ctx, time.Time{}, time.Now())
+			// 查询全部历史统计（endpoint + account）
+			allTimeTotalCost, allTimeTotalTokens, allTimeTotal = a.queryStatsFromDB(ctx, time.Time{}, time.Now(), "all")
 
 			// 查询今日统计（使用配置的时区）
 			now := time.Now().In(loc)
 			todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 			todayEnd := todayStart.Add(24 * time.Hour)
-			todayCost, todayTokens, todayRequests = a.queryStatsFromDB(ctx, todayStart, todayEnd)
+			todayCost, todayTokens, todayRequests = a.queryStatsFromDB(ctx, todayStart, todayEnd, "all")
 		}
 
 		return UsageSummary{
-			TotalRequests:           stats.TotalRequests,
-			AllTimeTotalRequests:    allTimeTotal,
-			TodayRequests:           todayRequests,
-			SuccessRequests:         stats.SuccessfulRequests,
-			FailedRequests:          stats.FailedRequests,
-			TotalInputTokens:        totalInputTokens,
-			TotalOutputTokens:       totalOutputTokens,
-			TotalCost:               0, // 运行时统计不计算成本
-			TodayCost:               todayCost,
-			AllTimeTotalCost:        allTimeTotalCost,
-			TodayTokens:             todayTokens,
-			AllTimeTotalTokens:      allTimeTotalTokens,
+			TotalRequests:        stats.TotalRequests,
+			AllTimeTotalRequests: allTimeTotal,
+			TodayRequests:        todayRequests,
+			SuccessRequests:      stats.SuccessfulRequests,
+			FailedRequests:       stats.FailedRequests,
+			TotalInputTokens:     totalInputTokens,
+			TotalOutputTokens:    totalOutputTokens,
+			TotalCost:            0, // 运行时统计不计算成本
+			TodayCost:            todayCost,
+			AllTimeTotalCost:     allTimeTotalCost,
+			TodayTokens:          todayTokens,
+			AllTimeTotalTokens:   allTimeTotalTokens,
 		}, nil
 	}
 
@@ -143,8 +145,54 @@ func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, er
 	return result, nil
 }
 
-// queryStatsFromDB 直接从 request_logs 表查询成本、tokens 和请求数
-func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time) (cost float64, tokens int64, requests int64) {
+func normalizeSourceView(sourceView string) string {
+	switch strings.ToLower(strings.TrimSpace(sourceView)) {
+	case "account":
+		return "account"
+	case "all":
+		return "all"
+	default:
+		// 向后兼容：未传或非法值都按 endpoint 处理
+		return "endpoint"
+	}
+}
+
+func sourceViewToUpstreamType(sourceView string) string {
+	switch normalizeSourceView(sourceView) {
+	case "account":
+		return "account"
+	case "all":
+		return ""
+	default:
+		return "endpoint"
+	}
+}
+
+func (a *App) queryStatsFromSingleTable(ctx context.Context, db *sql.DB, tableName string, startTime, endTime time.Time, upstreamType string) (cost float64, tokens int64, requests int64, err error) {
+	query := "SELECT COALESCE(SUM(total_cost_usd), 0), COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0), COUNT(*) FROM " + tableName
+
+	var conditions []string
+	var args []interface{}
+
+	if upstreamType != "" {
+		conditions = append(conditions, "COALESCE(upstream_type, 'endpoint') = ?")
+		args = append(args, upstreamType)
+	}
+	if !startTime.IsZero() {
+		conditions = append(conditions, "start_time >= ? AND start_time < ?")
+		args = append(args, startTime, endTime)
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	err = db.QueryRowContext(ctx, query, args...).Scan(&cost, &tokens, &requests)
+	return
+}
+
+// queryStatsFromDB 按 source_view 查询成本、tokens 和请求数：
+// endpoint -> request_logs(endpoint)；account -> account_request_logs；all -> 两表聚合
+func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time, sourceView string) (cost float64, tokens int64, requests int64) {
 	if a.usageTracker == nil {
 		return 0, 0, 0
 	}
@@ -154,50 +202,94 @@ func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time
 		return 0, 0, 0
 	}
 
-	var query string
-	var args []interface{}
+	switch normalizeSourceView(sourceView) {
+	case "account":
+		// 账号视图优先走账号专表；若不存在则降级 request_logs(account)
+		accountCost, accountTokens, accountRequests, err := a.queryStatsFromSingleTable(ctx, db, "account_request_logs", startTime, endTime, "")
+		if err == nil {
+			return accountCost, accountTokens, accountRequests
+		}
 
-	if startTime.IsZero() {
-		// 查询全部历史（包含所有 token 类型：输入、输出、缓存创建、缓存读取）
-		query = "SELECT COALESCE(SUM(total_cost_usd), 0), COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0), COUNT(*) FROM request_logs"
-	} else {
-		// 查询指定时间范围（包含所有 token 类型）
-		query = "SELECT COALESCE(SUM(total_cost_usd), 0), COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0), COUNT(*) FROM request_logs WHERE start_time >= ? AND start_time < ?"
-		args = append(args, startTime, endTime)
+		if a.logger != nil {
+			a.logger.Debug("查询 account_request_logs 失败，降级 request_logs(account)", "error", err)
+		}
+		fallbackCost, fallbackTokens, fallbackRequests, fallbackErr := a.queryStatsFromSingleTable(ctx, db, "request_logs", startTime, endTime, "account")
+		if fallbackErr != nil {
+			if a.logger != nil {
+				a.logger.Debug("降级查询 request_logs(account) 失败", "error", fallbackErr)
+			}
+			return 0, 0, 0
+		}
+		return fallbackCost, fallbackTokens, fallbackRequests
+
+	case "all":
+		// all 聚合 endpoint + account，避免 account 在 request_logs 与专表双计数
+		endpointCost, endpointTokens, endpointRequests, endpointErr := a.queryStatsFromSingleTable(ctx, db, "request_logs", startTime, endTime, "endpoint")
+		if endpointErr != nil {
+			if a.logger != nil {
+				a.logger.Debug("查询 request_logs(endpoint) 失败", "error", endpointErr)
+			}
+			return 0, 0, 0
+		}
+
+		accountCost, accountTokens, accountRequests, accountErr := a.queryStatsFromSingleTable(ctx, db, "account_request_logs", startTime, endTime, "")
+		if accountErr != nil {
+			// 兼容旧库：没有账号专表时回退到 request_logs 全量统计
+			if a.logger != nil {
+				a.logger.Debug("查询 account_request_logs 失败，降级 request_logs(all)", "error", accountErr)
+			}
+			fallbackCost, fallbackTokens, fallbackRequests, fallbackErr := a.queryStatsFromSingleTable(ctx, db, "request_logs", startTime, endTime, "")
+			if fallbackErr != nil {
+				if a.logger != nil {
+					a.logger.Debug("降级查询 request_logs(all) 失败", "error", fallbackErr)
+				}
+				return 0, 0, 0
+			}
+			return fallbackCost, fallbackTokens, fallbackRequests
+		}
+
+		return endpointCost + accountCost, endpointTokens + accountTokens, endpointRequests + accountRequests
+
+	default:
+		// endpoint（默认）
+		endpointCost, endpointTokens, endpointRequests, err := a.queryStatsFromSingleTable(ctx, db, "request_logs", startTime, endTime, "endpoint")
+		if err != nil {
+			if a.logger != nil {
+				a.logger.Debug("查询 request_logs(endpoint) 失败", "error", err)
+			}
+			return 0, 0, 0
+		}
+		return endpointCost, endpointTokens, endpointRequests
 	}
-
-	err := db.QueryRowContext(ctx, query, args...).Scan(&cost, &tokens, &requests)
-	if err != nil {
-		a.logger.Debug("查询统计数据失败", "error", err)
-		return 0, 0, 0
-	}
-
-	return cost, tokens, requests
 }
 
 // RequestRecord 请求记录
 type RequestRecord struct {
-	ID                     string  `json:"id"`
-	RequestID              string  `json:"request_id"`
-	Timestamp              string  `json:"timestamp"`
-	Channel                string  `json:"channel"` // v5.0: 渠道标签
-	Endpoint               string  `json:"endpoint"`
-	Group                  string  `json:"group"`
-	Model                  string  `json:"model"`
-	Status                 string  `json:"status"`
-	HTTPStatus             int     `json:"http_status"`
-	RetryCount             int     `json:"retry_count"`              // 重试次数
-	FailureReason          string  `json:"failure_reason,omitempty"` // 失败原因
-	CancelReason           string  `json:"cancel_reason,omitempty"`  // 取消原因
-	InputTokens            int64   `json:"input_tokens"`
-	OutputTokens           int64   `json:"output_tokens"`
-	CacheCreationTokens    int64   `json:"cache_creation_tokens"`     // 总缓存创建（向后兼容）
-	CacheCreation5mTokens  int64   `json:"cache_creation_5m_tokens"`  // v5.0.1: 5分钟缓存
-	CacheCreation1hTokens  int64   `json:"cache_creation_1h_tokens"`  // v5.0.1: 1小时缓存
-	CacheReadTokens        int64   `json:"cache_read_tokens"`
-	ResponseTime           int64   `json:"response_time"`
-	IsStreaming            bool    `json:"is_streaming"`
-	Cost                   float64 `json:"cost"`
+	ID                    string  `json:"id"`
+	RequestID             string  `json:"request_id"`
+	Timestamp             string  `json:"timestamp"`
+	Channel               string  `json:"channel"` // v5.0: 渠道标签
+	Endpoint              string  `json:"endpoint"`
+	Group                 string  `json:"group"`
+	Model                 string  `json:"model"`
+	Status                string  `json:"status"`
+	HTTPStatus            int     `json:"http_status"`
+	RetryCount            int     `json:"retry_count"`              // 重试次数
+	FailureReason         string  `json:"failure_reason,omitempty"` // 失败原因
+	CancelReason          string  `json:"cancel_reason,omitempty"`  // 取消原因
+	UpstreamType          string  `json:"upstream_type"`            // endpoint/account
+	UpstreamSourceName    string  `json:"upstream_source_name"`     // 订阅源
+	UpstreamName          string  `json:"upstream_name"`            // 账号名/端点名
+	UpstreamID            int64   `json:"upstream_id"`              // 账号ID（可空）
+	InputTokens           int64   `json:"input_tokens"`
+	OutputTokens          int64   `json:"output_tokens"`
+	CacheCreationTokens   int64   `json:"cache_creation_tokens"`    // 总缓存创建（向后兼容）
+	CacheCreation5mTokens int64   `json:"cache_creation_5m_tokens"` // v5.0.1: 5分钟缓存
+	CacheCreation1hTokens int64   `json:"cache_creation_1h_tokens"` // v5.0.1: 1小时缓存
+	CacheReadTokens       int64   `json:"cache_read_tokens"`
+	ResponseTime          int64   `json:"response_time"`
+	IsStreaming           bool    `json:"is_streaming"`
+	Cost                  float64 `json:"cost"`
 }
 
 // RequestListResult 请求列表结果
@@ -210,15 +302,16 @@ type RequestListResult struct {
 
 // RequestQueryParams 请求查询参数
 type RequestQueryParams struct {
-	Page      int    `json:"page"`
-	PageSize  int    `json:"page_size"`
-	StartDate string `json:"start_date"` // 格式：2025-12-05T00:00 或 2025-12-05T00:00:00+08:00
-	EndDate   string `json:"end_date"`   // 格式：2025-12-05T23:59 或 2025-12-05T23:59:59+08:00
-	Status    string `json:"status"`     // 可选：completed, failed, pending 等
-	Model     string `json:"model"`      // 可选：模型名称
-	Channel   string `json:"channel"`    // 可选：渠道名称（v5.0）
-	Endpoint  string `json:"endpoint"`   // 可选：端点名称
-	Group     string `json:"group"`      // 可选：组名称
+	Page       int    `json:"page"`
+	PageSize   int    `json:"page_size"`
+	StartDate  string `json:"start_date"`  // 格式：2025-12-05T00:00 或 2025-12-05T00:00:00+08:00
+	EndDate    string `json:"end_date"`    // 格式：2025-12-05T23:59 或 2025-12-05T23:59:59+08:00
+	Status     string `json:"status"`      // 可选：completed, failed, pending 等
+	Model      string `json:"model"`       // 可选：模型名称
+	Channel    string `json:"channel"`     // 可选：渠道名称（v5.0）
+	Endpoint   string `json:"endpoint"`    // 可选：端点名称
+	Group      string `json:"group"`       // 可选：组名称
+	SourceView string `json:"source_view"` // 可选：endpoint/account/all，默认 endpoint
 }
 
 // GetRequests 获取请求记录列表（热池+数据库双源查询）
@@ -289,6 +382,7 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 		Limit:        pageSize,
 		Offset:       offset,
 	}
+	opts.UpstreamType = sourceViewToUpstreamType(params.SourceView)
 
 	requests, total, err := a.usageTracker.QueryRequestDetailsWithHotPool(ctx, opts)
 	if err != nil {
@@ -316,6 +410,10 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 			RetryCount:            r.RetryCount,
 			FailureReason:         r.FailureReason,
 			CancelReason:          r.CancelReason,
+			UpstreamType:          r.UpstreamType,
+			UpstreamSourceName:    r.UpstreamSourceName,
+			UpstreamName:          r.UpstreamName,
+			UpstreamID:            r.UpstreamID,
 			InputTokens:           r.InputTokens,
 			OutputTokens:          r.OutputTokens,
 			CacheCreationTokens:   r.CacheCreationTokens,
@@ -357,14 +455,15 @@ type UsageStatsData struct {
 
 // UsageStatsQueryParams 使用统计查询参数
 type UsageStatsQueryParams struct {
-	Period    string `json:"period"`     // 时间周期: "1h", "1d", "7d", "30d", "90d"
-	StartDate string `json:"start_date"` // 开始时间（优先于 period）
-	EndDate   string `json:"end_date"`   // 结束时间（优先于 period）
-	Status    string `json:"status"`     // 可选：状态筛选
-	Model     string `json:"model"`      // 可选：模型筛选
-	Channel   string `json:"channel"`    // 可选：渠道筛选（v5.0）
-	Endpoint  string `json:"endpoint"`   // 可选：端点筛选
-	Group     string `json:"group"`      // 可选：组筛选
+	Period     string `json:"period"`      // 时间周期: "1h", "1d", "7d", "30d", "90d"
+	StartDate  string `json:"start_date"`  // 开始时间（优先于 period）
+	EndDate    string `json:"end_date"`    // 结束时间（优先于 period）
+	Status     string `json:"status"`      // 可选：状态筛选
+	Model      string `json:"model"`       // 可选：模型筛选
+	Channel    string `json:"channel"`     // 可选：渠道筛选（v5.0）
+	Endpoint   string `json:"endpoint"`    // 可选：端点筛选
+	Group      string `json:"group"`       // 可选：组筛选
+	SourceView string `json:"source_view"` // 可选：endpoint/account/all，默认 endpoint
 }
 
 // GetUsageStats 获取使用统计（与 HTTP API 格式一致）
@@ -377,6 +476,7 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 	if period == "" {
 		period = "30d"
 	}
+	normalizedSourceView := normalizeSourceView(params.SourceView)
 
 	result := UsageStatsData{
 		Period: period,
@@ -427,78 +527,38 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 		}
 	}
 
-	// 如果有 usageTracker，从热池+数据库组合查询（与 HTTP API 一致）
+	// 如果有 usageTracker，使用数据库聚合 + 热池补偿，避免加载大量明细到内存
 	if a.usageTracker != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		// 使用 QueryOptions 查询请求详情（热池+数据库双源查询）
-		// 支持完整筛选参数
 		opts := &tracking.QueryOptions{
 			StartDate:    &startTime,
 			EndDate:      &endTime,
 			ModelName:    params.Model,
-			Channel:      params.Channel, // v5.0: 渠道筛选
+			Channel:      params.Channel,
 			EndpointName: params.Endpoint,
 			GroupName:    params.Group,
+			UpstreamType: sourceViewToUpstreamType(normalizedSourceView),
 			Status:       params.Status,
-			Limit:        100000, // 大 limit 获取所有记录
-			Offset:       0,
 		}
 
-		requests, _, err := a.usageTracker.QueryRequestDetailsWithHotPool(ctx, opts)
-		if err == nil && len(requests) > 0 {
-			// 有数据，计算统计
-			var totalRequests, successRequests, errorRequests int
-			var totalTokens int64
-			var totalCost float64
-			var totalDuration int64
-			var durationCount int
-
-			for _, req := range requests {
-				totalRequests++
-
-				// 统计成功/失败（与原版 HTTP API 逻辑一致）
-				switch req.Status {
-				case "completed", "processing":
-					successRequests++
-				case "failed", "error", "auth_error", "rate_limited", "server_error", "network_error", "stream_error", "timeout":
-					errorRequests++
+		stats, err := a.usageTracker.QueryAggregatedRequestStatsWithHotPool(ctx, opts)
+		if err == nil && stats != nil {
+			if stats.TotalRequests > 0 {
+				result.TotalRequests = int(stats.TotalRequests)
+				result.TotalTokens = stats.TotalTokens
+				result.TotalCostUSD = stats.TotalCostUSD
+				result.FailedCount = int(stats.FailedRequests)
+				result.SuccessRate = float64(stats.SuccessRequests) / float64(stats.TotalRequests) * 100
+				if stats.DurationCount > 0 {
+					result.AvgDurationMs = float64(stats.TotalDurationMs) / float64(stats.DurationCount)
 				}
-
-				// 累计 Token 和成本
-				totalTokens += req.InputTokens + req.OutputTokens + req.CacheCreationTokens + req.CacheReadTokens
-				totalCost += req.TotalCostUSD
-
-				// 计算耗时
-				if req.DurationMs != nil && *req.DurationMs > 0 {
-					totalDuration += *req.DurationMs
-					durationCount++
-				}
+				return result, nil
 			}
-
-			// 计算平均耗时
-			avgDuration := 0.0
-			if durationCount > 0 {
-				avgDuration = float64(totalDuration) / float64(durationCount)
-			}
-
-			// 计算成功率
-			successRate := 0.0
-			if totalRequests > 0 {
-				successRate = float64(successRequests) / float64(totalRequests) * 100
-			}
-
-			result.TotalRequests = totalRequests
-			result.SuccessRate = successRate
-			result.AvgDurationMs = avgDuration
-			result.TotalCostUSD = totalCost
-			result.TotalTokens = totalTokens
-			result.FailedCount = errorRequests
-
 			return result, nil
 		}
-		// 查询失败或无数据，继续使用运行时统计
+		// 查询失败时继续使用运行时统计
 	}
 
 	// 从运行时 Metrics 获取统计（降级方案，或无 usageTracker 时）

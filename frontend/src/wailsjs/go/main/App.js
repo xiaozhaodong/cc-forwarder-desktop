@@ -26,12 +26,36 @@ export function CreateModelPricing(arg1) {
   return window['go']['main']['App']['CreateModelPricing'](arg1);
 }
 
+export function CreateSubscriptionSource(arg1) {
+  return window['go']['main']['App']['CreateSubscriptionSource'](arg1);
+}
+
+export function CreateUpstreamAccount(arg1) {
+  return window['go']['main']['App']['CreateUpstreamAccount'](arg1);
+}
+
 export function DeleteEndpointRecord(arg1) {
   return window['go']['main']['App']['DeleteEndpointRecord'](arg1);
 }
 
 export function DeleteModelPricing(arg1) {
   return window['go']['main']['App']['DeleteModelPricing'](arg1);
+}
+
+export function DeleteSubscriptionSource(arg1) {
+  return window['go']['main']['App']['DeleteSubscriptionSource'](arg1);
+}
+
+export function DeleteUpstreamAccount(arg1) {
+  return window['go']['main']['App']['DeleteUpstreamAccount'](arg1);
+}
+
+export function ExchangeChatGPTOAuthCallback(arg1) {
+  return window['go']['main']['App']['ExchangeChatGPTOAuthCallback'](arg1);
+}
+
+export function GenerateChatGPTOAuthLink() {
+  return window['go']['main']['App']['GenerateChatGPTOAuthLink']();
 }
 
 export function GetAllSettings() {
@@ -142,12 +166,20 @@ export function GetSettingsStorageStatus() {
   return window['go']['main']['App']['GetSettingsStorageStatus']();
 }
 
+export function GetSubscriptionSources() {
+  return window['go']['main']['App']['GetSubscriptionSources']();
+}
+
 export function GetSystemStatus() {
   return window['go']['main']['App']['GetSystemStatus']();
 }
 
 export function GetTokenUsage() {
   return window['go']['main']['App']['GetTokenUsage']();
+}
+
+export function GetUpstreamAccounts() {
+  return window['go']['main']['App']['GetUpstreamAccounts']();
 }
 
 export function GetUsageStats(arg1) {
@@ -194,8 +226,24 @@ export function SwitchKey(arg1, arg2, arg3) {
   return window['go']['main']['App']['SwitchKey'](arg1, arg2, arg3);
 }
 
+export function SyncSubscriptionSource(arg1) {
+  return window['go']['main']['App']['SyncSubscriptionSource'](arg1);
+}
+
+export function TestUpstreamAccount(arg1) {
+  return window['go']['main']['App']['TestUpstreamAccount'](arg1);
+}
+
 export function ToggleEndpointRecord(arg1, arg2) {
   return window['go']['main']['App']['ToggleEndpointRecord'](arg1, arg2);
+}
+
+export function ToggleSubscriptionSource(arg1, arg2) {
+  return window['go']['main']['App']['ToggleSubscriptionSource'](arg1, arg2);
+}
+
+export function ToggleUpstreamAccount(arg1, arg2) {
+  return window['go']['main']['App']['ToggleUpstreamAccount'](arg1, arg2);
 }
 
 export function TriggerHealthCheck(arg1) {
@@ -216,4 +264,12 @@ export function UpdatePreferredPort(arg1) {
 
 export function UpdateSetting(arg1) {
   return window['go']['main']['App']['UpdateSetting'](arg1);
+}
+
+export function UpdateSubscriptionSource(arg1, arg2) {
+  return window['go']['main']['App']['UpdateSubscriptionSource'](arg1, arg2);
+}
+
+export function UpdateUpstreamAccount(arg1, arg2) {
+  return window['go']['main']['App']['UpdateUpstreamAccount'](arg1, arg2);
 }

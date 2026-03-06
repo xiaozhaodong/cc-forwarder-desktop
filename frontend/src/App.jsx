@@ -21,6 +21,8 @@ const SettingsPage = lazy(() => import('@pages/settings/index.jsx'));
 const ConfigPage = lazy(() => import('@pages/config/index.jsx'));
 // v5.1: 系统日志页面
 const LogsPage = lazy(() => import('@pages/log-viewer/index.jsx'));
+// v6.0: 账号池页面
+const AccountPoolPage = lazy(() => import('@pages/account-pool/index.jsx'));
 
 // ============================================
 // App 组件
@@ -58,6 +60,7 @@ function App() {
       // groups: <GroupsPage />,
       requests: <RequestsPage />,
       pricing: <PricingPage />,
+      'account-pool': <AccountPoolPage />,
       // v5.1: 设置页面（可编辑）
       settings: <SettingsPage />,
       // 保留只读配置页面

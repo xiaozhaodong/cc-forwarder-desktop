@@ -279,3 +279,48 @@ func TestStreamCompleteness_MultipleMessageDelta(t *testing.T) {
 
 	t.Log("✅ 多 message_delta 测试通过")
 }
+
+func TestStreamCompleteness_ResponsesCompleted(t *testing.T) {
+	parser := NewTokenParserWithRequestID("test-responses-complete")
+
+	lines := []string{
+		"event: response.in_progress",
+		`data: {"type":"response.in_progress","response":{"model":"gpt-5-codex"}}`,
+		"",
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{"model":"gpt-5-codex"},"usage":{"input_tokens":10,"output_tokens":2,"input_tokens_details":{"cached_tokens":0}}}`,
+		"",
+	}
+
+	for _, line := range lines {
+		parser.ParseSSELineV2(line)
+	}
+
+	completeness := parser.GetStreamCompleteness()
+	if !completeness.IsComplete {
+		t.Errorf("expected responses stream complete, got reason=%s failure=%s",
+			completeness.Reason, completeness.FailureReason)
+	}
+}
+
+func TestStreamCompleteness_ResponsesMissingCompleted(t *testing.T) {
+	parser := NewTokenParserWithRequestID("test-responses-missing-completed")
+
+	lines := []string{
+		"event: response.in_progress",
+		`data: {"type":"response.in_progress","response":{"model":"gpt-5-codex"}}`,
+		"",
+	}
+
+	for _, line := range lines {
+		parser.ParseSSELineV2(line)
+	}
+
+	completeness := parser.GetStreamCompleteness()
+	if completeness.IsComplete {
+		t.Fatal("expected responses stream incomplete when missing response.completed")
+	}
+	if completeness.FailureReason != "stream_truncated" {
+		t.Fatalf("expected stream_truncated, got %s", completeness.FailureReason)
+	}
+}

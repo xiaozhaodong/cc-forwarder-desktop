@@ -6,9 +6,11 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"cc-forwarder/config"
+	"cc-forwarder/internal/accountauth"
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/middleware"
@@ -29,13 +31,20 @@ type Handler struct {
 	config               *config.Config
 	retryHandler         *RetryHandler
 	usageTracker         *tracking.UsageTracker
+	accountPoolService   AccountPoolService
 	monitoringMiddleware *middleware.MonitoringMiddleware
 	responseProcessor    *response.Processor
 	tokenAnalyzer        *response.TokenAnalyzer
 	forwarder            *handlers.Forwarder
+	refreshTokenManager  *accountauth.OpenAIRefreshTokenManager
 	regularHandler       *handlers.RegularHandler
 	streamingHandler     *handlers.StreamingHandler
 	eventBus             events.EventBus // EventBus事件总线
+	accountHTTPInitOnce  sync.Once
+	accountHTTPInitErr   error
+	accountHTTPTransport *http.Transport
+	accountHTTPClient    *http.Client
+	accountSSEHTTPClient *http.Client
 	// 🔧 [Critical修复] 保存共享的SuspensionManager实例的引用
 	// 确保在SetUsageTracker中重建Handler时保持共享状态
 	sharedSuspensionManager handlers.SuspensionManager
@@ -251,6 +260,7 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 		retryHandler:          retryHandler,
 		responseProcessor:     response.NewProcessor(),
 		forwarder:             forwarder,
+		refreshTokenManager:   accountauth.NewOpenAIRefreshTokenManager(cfg),
 		recoverySignalManager: recoverySignalManager, // 🚀 [端点自愈] 保存恢复信号管理器引用
 	}
 
@@ -413,6 +423,11 @@ func (h *Handler) SetEventBus(eventBus events.EventBus) {
 	h.eventBus = eventBus
 }
 
+// SetAccountPoolService 设置账号池服务
+func (h *Handler) SetAccountPoolService(service AccountPoolService) {
+	h.accountPoolService = service
+}
+
 // extractModelFromRequestBody 从请求体中提取模型名称
 // 仅对 /v1/messages 相关路径进行解析，避免不必要的JSON解析开销
 func (h *Handler) extractModelFromRequestBody(bodyBytes []byte, path string) string {
@@ -474,8 +489,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 创建统一的请求生命周期管理器
 	lifecycleManager := NewRequestLifecycleManagerWithRecoverySignal(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus, h.recoverySignalManager)
-	// 📊 [失败追踪] 设置端点管理器，用于记录成功/失败
-	lifecycleManager.SetEndpointManager(h.endpointManager)
+	// Codex /v1/responses 与 Claude endpoint 链路分离，不挂载 endpoint 失败追踪语义
+	if !h.isAccountPipelinePath(r.URL.Path) {
+		// 📊 [失败追踪] 设置端点管理器，用于记录成功/失败
+		lifecycleManager.SetEndpointManager(h.endpointManager)
+	}
 
 	// 克隆请求体用于重试
 	var bodyBytes []byte
@@ -505,6 +523,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	userAgent := r.Header.Get("User-Agent")
 	lifecycleManager.StartRequest(clientIP, userAgent, r.Method, r.URL.Path, isSSE)
 
+	// Codex /v1/responses 仅由账号池链路处理，不回退到 endpoint
+	if h.shouldUseAccountPipeline(r.URL.Path) {
+		h.handleAccountPipeline(ctx, w, r, bodyBytes, lifecycleManager)
+		return
+	}
+	if h.isAccountPipelinePath(r.URL.Path) {
+		h.handleUnavailableAccountPipeline(w, lifecycleManager)
+		return
+	}
+
 	// 统一请求处理
 	if isSSE {
 		// 流式请求处理 - 使用StreamingHandler
@@ -519,6 +547,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// 常规请求处理 - 使用RegularHandler
 		h.regularHandler.HandleRegularRequestUnified(ctx, w, r, bodyBytes, lifecycleManager)
 	}
+}
+
+// shouldUseAccountPipeline 判断当前请求是否应走账号池链路
+func (h *Handler) shouldUseAccountPipeline(path string) bool {
+	return h.isAccountPipelinePath(path) &&
+		h.config != nil &&
+		h.config.AccountPool.Enabled &&
+		h.accountPoolService != nil
+}
+
+func (h *Handler) isAccountPipelinePath(path string) bool {
+	return path == "/v1/responses"
+}
+
+func (h *Handler) handleUnavailableAccountPipeline(w http.ResponseWriter, lifecycleManager *RequestLifecycleManager) {
+	errType := "account_pool_disabled"
+	message := "account pool is disabled for Codex /v1/responses"
+	failureKey := "account_pool_disabled"
+
+	if h.config != nil && h.config.AccountPool.Enabled {
+		errType = "account_pool_unavailable"
+		failureKey = "account_pool_not_ready"
+		message = "account pool service is not initialized"
+	}
+
+	lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
+	lifecycleManager.FailRequest(failureKey, message, http.StatusServiceUnavailable)
+	writeAccountPipelineError(w, http.StatusServiceUnavailable, errType, message)
 }
 
 // detectSSERequest 统一SSE请求检测逻辑

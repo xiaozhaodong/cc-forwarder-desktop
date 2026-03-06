@@ -15,9 +15,21 @@ export function CreateEndpointRecord(arg1:main.CreateEndpointInput):Promise<void
 
 export function CreateModelPricing(arg1:main.CreateModelPricingInput):Promise<void>;
 
+export function CreateSubscriptionSource(arg1:main.CreateSubscriptionSourceInput):Promise<void>;
+
+export function CreateUpstreamAccount(arg1:main.CreateUpstreamAccountInput):Promise<void>;
+
 export function DeleteEndpointRecord(arg1:string):Promise<void>;
 
 export function DeleteModelPricing(arg1:string):Promise<void>;
+
+export function DeleteSubscriptionSource(arg1:number):Promise<void>;
+
+export function DeleteUpstreamAccount(arg1:number):Promise<void>;
+
+export function ExchangeChatGPTOAuthCallback(arg1:main.ExchangeChatGPTOAuthCallbackInput):Promise<main.ExchangeChatGPTOAuthCallbackResult>;
+
+export function GenerateChatGPTOAuthLink():Promise<main.GenerateChatGPTOAuthLinkResult>;
 
 export function GetAllSettings():Promise<Array<main.SettingInfo>>;
 
@@ -73,9 +85,13 @@ export function GetSettingsByCategory(arg1:string):Promise<Array<main.SettingInf
 
 export function GetSettingsStorageStatus():Promise<main.SettingsStorageStatus>;
 
+export function GetSubscriptionSources():Promise<Array<main.SubscriptionSourceInfo>>;
+
 export function GetSystemStatus():Promise<main.SystemStatus>;
 
 export function GetTokenUsage():Promise<main.TokenUsageData>;
+
+export function GetUpstreamAccounts():Promise<Array<main.UpstreamAccountInfo>>;
 
 export function GetUsageStats(arg1:main.UsageStatsQueryParams):Promise<main.UsageStatsData>;
 
@@ -99,7 +115,15 @@ export function StopLogStream():Promise<void>;
 
 export function SwitchKey(arg1:string,arg2:string,arg3:number):Promise<main.SwitchKeyResult>;
 
+export function SyncSubscriptionSource(arg1:number):Promise<main.SyncSubscriptionSourceResultInfo>;
+
+export function TestUpstreamAccount(arg1:number):Promise<main.TestUpstreamAccountResult>;
+
 export function ToggleEndpointRecord(arg1:string,arg2:boolean):Promise<void>;
+
+export function ToggleSubscriptionSource(arg1:number,arg2:boolean):Promise<void>;
+
+export function ToggleUpstreamAccount(arg1:number,arg2:boolean):Promise<void>;
 
 export function TriggerHealthCheck(arg1:string):Promise<void>;
 
@@ -110,3 +134,7 @@ export function UpdateModelPricing(arg1:string,arg2:main.CreateModelPricingInput
 export function UpdatePreferredPort(arg1:number):Promise<void>;
 
 export function UpdateSetting(arg1:main.UpdateSettingInput):Promise<void>;
+
+export function UpdateSubscriptionSource(arg1:number,arg2:main.CreateSubscriptionSourceInput):Promise<void>;
+
+export function UpdateUpstreamAccount(arg1:number,arg2:main.CreateUpstreamAccountInput):Promise<void>;

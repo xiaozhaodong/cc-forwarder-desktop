@@ -37,6 +37,11 @@ func isDebugEnabled() bool {
 	return debugConfig != nil && debugConfig.Enabled
 }
 
+// IsTokenDebugEnabled 返回当前是否启用了 Token 调试。
+func IsTokenDebugEnabled() bool {
+	return isDebugEnabled()
+}
+
 // getDebugLogDir 获取调试日志目录
 // 如果配置的是相对路径，则使用应用数据目录下的日志目录
 // 如果配置的是绝对路径，则直接使用配置的路径

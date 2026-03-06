@@ -75,6 +75,12 @@ request_suspend:
   timeout: "300s"             # 挂起请求的超时时间，默认: 300s (5分钟)
   max_suspended_requests: 100 # 最大挂起请求数量，默认: 100
 
+# 账号池路由配置 (v6.0+)
+# 当 enabled=true 时，/v1/responses 走账号池链路，不再走 endpoint 链路
+# 账号池数据依赖 usage_tracking 的 SQLite 数据库
+account_pool:
+  enabled: false              # 是否启用账号池路由，默认: false
+
 # 全局超时配置
 global_timeout: "300s"       # 非流式请求的全局默认超时时间，默认: 300s (5分钟)
 

@@ -275,13 +275,17 @@ export const fetchRequests = async (params = {}) => {
   // 标准化请求数据（提取到外部，Wails和HTTP环境共用）
   const normalizeRequest = (request) => ({
     ...request,
+    upstreamType: request.upstream_type || request.upstreamType || 'endpoint',
+    upstreamName: request.upstream_name || request.upstreamName || '',
+    upstreamSourceName: request.upstream_source_name || request.upstreamSourceName || '',
+    upstreamId: request.upstream_id || request.upstreamId || null,
     requestId: request.request_id || request.requestId || request.id,
     id: request.request_id || request.requestId || request.id,
     timestamp: request.start_time || request.timestamp,
     model: request.model_name || request.model || 'unknown',
     channel: request.channel || '',
-    endpoint: request.endpoint_name || request.endpoint || 'unknown',
-    group: request.group_name || request.group || 'default',
+    endpoint: request.endpoint_name || request.endpoint || request.upstream_name || request.upstreamName || 'unknown',
+    group: request.group_name || request.group || request.upstream_source_name || request.upstreamSourceName || 'default',
     duration: request.duration_ms || request.duration || 0,
     inputTokens: request.input_tokens || request.inputTokens || 0,
     outputTokens: request.output_tokens || request.outputTokens || 0,
@@ -713,6 +717,289 @@ export const fetchChannels = async () => {
     return await WailsApi.getChannels();
   }
   return [];
+};
+
+// ============================================
+// v6.0+ 账号池 API
+// ============================================
+
+const parseEntityId = (id) => {
+  if (id === null || id === undefined) return null;
+  if (typeof id === 'number') {
+    return Number.isFinite(id) ? id : null;
+  }
+  if (typeof id === 'string') {
+    const trimmed = id.trim();
+    if (!trimmed) return null;
+    const numeric = Number(trimmed);
+    return Number.isNaN(numeric) ? trimmed : numeric;
+  }
+  return null;
+};
+
+const normalizeSubscriptionSourceList = (data) => {
+  const list = Array.isArray(data)
+    ? data
+    : (data?.sources || data?.subscription_sources || data?.data || []);
+
+  return (Array.isArray(list) ? list : []).map(source => ({
+    id: source.id ?? source.ID ?? null,
+    name: source.name || source.Name || '',
+    url: source.url || source.URL || '',
+    enabled: (source.enabled ?? source.Enabled) !== false,
+    sync_mode: source.sync_mode || source.syncMode || source.SyncMode || 'manual',
+    syncMode: source.sync_mode || source.syncMode || source.SyncMode || 'manual',
+    last_sync_at: source.last_sync_at || source.lastSyncAt || source.LastSyncAt || '',
+    lastSyncAt: source.last_sync_at || source.lastSyncAt || source.LastSyncAt || '',
+    last_status: source.last_status || source.lastStatus || source.LastStatus || '',
+    lastStatus: source.last_status || source.lastStatus || source.LastStatus || '',
+    last_error: source.last_error || source.lastError || source.LastError || '',
+    lastError: source.last_error || source.lastError || source.LastError || '',
+    created_at: source.created_at || source.createdAt || source.CreatedAt || '',
+    createdAt: source.created_at || source.createdAt || source.CreatedAt || '',
+    updated_at: source.updated_at || source.updatedAt || source.UpdatedAt || '',
+    updatedAt: source.updated_at || source.updatedAt || source.UpdatedAt || ''
+  }));
+};
+
+const normalizeUpstreamAccountList = (data) => {
+  const list = Array.isArray(data)
+    ? data
+    : (data?.accounts || data?.upstream_accounts || data?.data || []);
+
+  return (Array.isArray(list) ? list : []).map(account => ({
+    id: parseEntityId(account.id ?? account.ID ?? account.Id ?? account.account_id ?? account.accountId ?? account.AccountID ?? null),
+    source_id: parseEntityId(account.source_id ?? account.sourceId ?? account.SourceID ?? account.SourceId ?? account.sourceID ?? null),
+    sourceId: parseEntityId(account.source_id ?? account.sourceId ?? account.SourceID ?? account.SourceId ?? account.sourceID ?? null),
+    source_name: account.source_name || account.sourceName || account.SourceName || '',
+    sourceName: account.source_name || account.sourceName || account.SourceName || '',
+    account_name: account.account_name || account.accountName || account.AccountName || '',
+    accountName: account.account_name || account.accountName || account.AccountName || '',
+    provider_type: account.provider_type || account.providerType || account.ProviderType || '',
+    providerType: account.provider_type || account.providerType || account.ProviderType || '',
+    credential_raw: account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
+    credentialRaw: account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
+    base_url: account.base_url || account.baseURL || account.BaseURL || '',
+    baseURL: account.base_url || account.baseURL || account.BaseURL || '',
+    priority: Number.parseInt(account.priority ?? account.Priority, 10) || 1,
+    enabled: (account.enabled ?? account.Enabled) !== false,
+    state: account.state || account.State || 'active',
+    cooldown_until: account.cooldown_until || account.cooldownUntil || account.CooldownUntil || '',
+    cooldownUntil: account.cooldown_until || account.cooldownUntil || account.CooldownUntil || '',
+    fail_count: account.fail_count || account.failCount || account.FailCount || 0,
+    failCount: account.fail_count || account.failCount || account.FailCount || 0,
+    last_success_at: account.last_success_at || account.lastSuccessAt || account.LastSuccessAt || '',
+    lastSuccessAt: account.last_success_at || account.lastSuccessAt || account.LastSuccessAt || '',
+    last_error: account.last_error || account.lastError || account.LastError || '',
+    lastError: account.last_error || account.lastError || account.LastError || '',
+    fingerprint: account.fingerprint || account.Fingerprint || '',
+    created_at: account.created_at || account.createdAt || account.CreatedAt || '',
+    createdAt: account.created_at || account.createdAt || account.CreatedAt || '',
+    updated_at: account.updated_at || account.updatedAt || account.UpdatedAt || '',
+    updatedAt: account.updated_at || account.updatedAt || account.UpdatedAt || ''
+  }));
+};
+
+const normalizeEntityIdForUrl = (id) => encodeURIComponent(String(id));
+
+const buildSubscriptionSourcePayload = (input = {}) => ({
+  ...input,
+  name: input.name || '',
+  url: input.url || '',
+  enabled: input.enabled !== false,
+  sync_mode: input.sync_mode || input.syncMode || 'manual'
+});
+
+const buildUpstreamAccountPayload = (input = {}) => {
+  const sourceId = input.source_id ?? input.sourceId;
+  const sourceName = input.source_name ?? input.sourceName;
+  const payload = {
+    ...input,
+    account_name: input.account_name || input.accountName || '',
+    provider_type: input.provider_type || input.providerType || '',
+    credential_raw: input.credential_raw || input.credentialRaw || '',
+    base_url: input.base_url || input.baseURL || '',
+    priority: Number.parseInt(input.priority, 10) || 1,
+    enabled: input.enabled !== false
+  };
+
+  if (sourceId !== undefined && sourceId !== null && sourceId !== '') {
+    payload.source_id = sourceId;
+  }
+
+  if (sourceName !== undefined) {
+    payload.source_name = sourceName || '';
+  }
+
+  return payload;
+};
+
+export const fetchSubscriptionSources = async () => {
+  if (isWailsEnvironment()) {
+    const list = await WailsApi.getSubscriptionSources();
+    return normalizeSubscriptionSourceList(list);
+  }
+
+  const data = await fetchWithTimeout('/api/v1/subscription-sources');
+  return normalizeSubscriptionSourceList(data);
+};
+
+export const createSubscriptionSource = async (input) => {
+  const payload = buildSubscriptionSourcePayload(input);
+
+  if (isWailsEnvironment()) {
+    return await WailsApi.createSubscriptionSource(payload);
+  }
+
+  return await fetchWithTimeout('/api/v1/subscription-sources', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+};
+
+export const updateSubscriptionSource = async (id, input) => {
+  const payload = buildSubscriptionSourcePayload(input);
+
+  if (isWailsEnvironment()) {
+    return await WailsApi.updateSubscriptionSource(id, payload);
+  }
+
+  return await fetchWithTimeout(`/api/v1/subscription-sources/${normalizeEntityIdForUrl(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+};
+
+export const deleteSubscriptionSource = async (id) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.deleteSubscriptionSource(id);
+  }
+
+  return await fetchWithTimeout(`/api/v1/subscription-sources/${normalizeEntityIdForUrl(id)}`, {
+    method: 'DELETE'
+  });
+};
+
+export const toggleSubscriptionSource = async (id, enabled) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.toggleSubscriptionSource(id, enabled);
+  }
+
+  return await fetchWithTimeout(`/api/v1/subscription-sources/${normalizeEntityIdForUrl(id)}/toggle`, {
+    method: 'POST',
+    body: JSON.stringify({ enabled: enabled !== false })
+  });
+};
+
+export const syncSubscriptionSource = async (id) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.syncSubscriptionSource(id);
+  }
+
+  return await fetchWithTimeout(`/api/v1/subscription-sources/${normalizeEntityIdForUrl(id)}/sync`, {
+    method: 'POST'
+  });
+};
+
+export const fetchUpstreamAccounts = async () => {
+  if (isWailsEnvironment()) {
+    const list = await WailsApi.getUpstreamAccounts();
+    return normalizeUpstreamAccountList(list);
+  }
+
+  const data = await fetchWithTimeout('/api/v1/upstream-accounts');
+  return normalizeUpstreamAccountList(data);
+};
+
+export const createUpstreamAccount = async (input) => {
+  const payload = buildUpstreamAccountPayload(input);
+
+  if (isWailsEnvironment()) {
+    return await WailsApi.createUpstreamAccount(payload);
+  }
+
+  return await fetchWithTimeout('/api/v1/upstream-accounts', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+};
+
+export const updateUpstreamAccount = async (id, input) => {
+  const payload = buildUpstreamAccountPayload(input);
+
+  if (isWailsEnvironment()) {
+    return await WailsApi.updateUpstreamAccount(id, payload);
+  }
+
+  return await fetchWithTimeout(`/api/v1/upstream-accounts/${normalizeEntityIdForUrl(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+};
+
+export const deleteUpstreamAccount = async (id) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.deleteUpstreamAccount(id);
+  }
+
+  return await fetchWithTimeout(`/api/v1/upstream-accounts/${normalizeEntityIdForUrl(id)}`, {
+    method: 'DELETE'
+  });
+};
+
+export const toggleUpstreamAccount = async (id, enabled) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.toggleUpstreamAccount(id, enabled);
+  }
+
+  return await fetchWithTimeout(`/api/v1/upstream-accounts/${normalizeEntityIdForUrl(id)}/toggle`, {
+    method: 'POST',
+    body: JSON.stringify({ enabled: enabled !== false })
+  });
+};
+
+export const testUpstreamAccount = async (id) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.testUpstreamAccount(id);
+  }
+
+  try {
+    return await fetchWithTimeout(`/api/v1/upstream-accounts/${normalizeEntityIdForUrl(id)}/test`, {
+      method: 'POST'
+    });
+  } catch (error) {
+    const errorText = error?.message || String(error || '');
+    if (/404|not found/i.test(errorText)) {
+      return {
+        success: false,
+        unsupported: true,
+        message: '当前后端版本暂未提供 TestUpstreamAccount'
+      };
+    }
+    throw error;
+  }
+};
+
+export const generateChatGPTOAuthLink = async () => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.generateChatGPTOAuthLink();
+  }
+  return {
+    success: false,
+    unsupported: true,
+    message: '仅桌面版支持此功能'
+  };
+};
+
+export const exchangeChatGPTOAuthCallback = async (sessionId, callbackUrl) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.exchangeChatGPTOAuthCallback(sessionId, callbackUrl);
+  }
+  return {
+    success: false,
+    unsupported: true,
+    message: '仅桌面版支持此功能'
+  };
 };
 
 // ============================================

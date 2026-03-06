@@ -36,12 +36,13 @@ func DefaultArchiveManagerConfig() ArchiveManagerConfig {
 
 // ArchiveManager 管理归档写入
 type ArchiveManager struct {
-	archiveChan chan *ArchiveEvent
-	adapter     DatabaseAdapter
-	config      ArchiveManagerConfig
-	pricing     map[string]ModelPricing       // 模型定价缓存
-	endpointMu  map[string]EndpointMultiplier // 端点倍率缓存
-	location    *time.Location
+	archiveChan         chan *ArchiveEvent
+	adapter             DatabaseAdapter
+	config              ArchiveManagerConfig
+	cacheMu             sync.RWMutex
+	pricing             map[string]ModelPricing       // 模型定价缓存
+	endpointMultipliers map[string]EndpointMultiplier // 端点倍率缓存
+	location            *time.Location
 
 	// 热池引用（用于归档成功后清理）
 	hotPool *HotPool
@@ -90,7 +91,7 @@ func NewArchiveManager(adapter DatabaseAdapter, config ArchiveManagerConfig, pri
 		archiveChan: make(chan *ArchiveEvent, config.ChannelSize),
 		adapter:     adapter,
 		config:      config,
-		pricing:     pricing,
+		pricing:     cloneModelPricingMap(pricing),
 		location:    location,
 		ctx:         ctx,
 		cancel:      cancel,
@@ -115,12 +116,16 @@ func (am *ArchiveManager) SetHotPool(hp *HotPool) {
 
 // UpdateEndpointMultipliers 更新端点成本倍率
 func (am *ArchiveManager) UpdateEndpointMultipliers(multipliers map[string]EndpointMultiplier) {
-	am.endpointMu = multipliers
+	am.cacheMu.Lock()
+	defer am.cacheMu.Unlock()
+	am.endpointMultipliers = cloneEndpointMultiplierMap(multipliers)
 }
 
 // UpdatePricing 更新模型定价（运行时动态更新）
 func (am *ArchiveManager) UpdatePricing(pricing map[string]ModelPricing) {
-	am.pricing = pricing
+	am.cacheMu.Lock()
+	defer am.cacheMu.Unlock()
+	am.pricing = cloneModelPricingMap(pricing)
 }
 
 // Archive 发送请求到归档通道
@@ -292,12 +297,13 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 	}
 	defer tx.Rollback()
 
-	// v5.0.1+: 添加分开的 5m/1h 缓存字段和成本
-	stmt, err := tx.PrepareContext(ctx, `
+	// endpoint 及其他非 account 请求写入 request_logs
+	requestStmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO request_logs (
 			request_id, client_ip, user_agent, method, path,
 			start_time, end_time, duration_ms,
 			channel, endpoint_name, group_name, model_name,
+			upstream_type, upstream_source_name, upstream_name, upstream_id,
 			status, http_status_code, retry_count,
 			failure_reason, cancel_reason,
 			is_streaming,
@@ -307,15 +313,40 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			input_cost_usd, output_cost_usd,
 			cache_creation_cost_usd, cache_creation_5m_cost_usd, cache_creation_1h_cost_usd,
 			cache_read_cost_usd, total_cost_usd
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare request_logs statement: %w", err)
+	}
+	defer requestStmt.Close()
+
+	// account 请求直接写入 account_request_logs，不再依赖 request_logs 镜像触发器
+	accountStmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO account_request_logs (
+			request_id, account_id, source_name, account_name,
+			client_ip, user_agent, method, path, is_streaming,
+			start_time, end_time, duration_ms,
+			status, http_status_code, retry_count,
+			failure_reason, cancel_reason,
+			model_name, input_tokens, output_tokens,
+			cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens,
+			cache_read_tokens,
+			input_cost_usd, output_cost_usd,
+			cache_creation_cost_usd, cache_creation_5m_cost_usd, cache_creation_1h_cost_usd,
+			cache_read_cost_usd, total_cost_usd
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to prepare statement: %w", err)
+		return fmt.Errorf("failed to prepare account_request_logs statement: %w", err)
 	}
-	defer stmt.Close()
+	defer accountStmt.Close()
 
 	for _, event := range events {
 		req := event.Request
+		upstreamType := strings.TrimSpace(req.UpstreamType)
+		if upstreamType == "" {
+			upstreamType = "endpoint"
+		}
 
 		// v5.0.1+: 计算分开的成本
 		costBreakdown := am.calculateCostV2(req)
@@ -329,39 +360,79 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			endTime = nil
 		}
 
-		_, err := stmt.ExecContext(ctx,
-			req.RequestID,
-			req.ClientIP,
-			req.UserAgent,
-			req.Method,
-			req.Path,
-			startTime,
-			endTime,
-			req.DurationMs,
-			req.Channel,
-			req.EndpointName,
-			req.GroupName,
-			req.ModelName,
-			req.Status,
-			req.HTTPStatus,
-			req.RetryCount,
-			nullString(req.FailureReason),
-			nullString(req.CancelReason),
-			req.IsStreaming,
-			req.InputTokens,
-			req.OutputTokens,
-			req.CacheCreationTokens,
-			req.CacheCreation5mTokens,
-			req.CacheCreation1hTokens,
-			req.CacheReadTokens,
-			costBreakdown.InputCost,
-			costBreakdown.OutputCost,
-			costBreakdown.CacheCreationCost,    // 总成本（向后兼容）
-			costBreakdown.CacheCreation5mCost,  // 5分钟缓存成本
-			costBreakdown.CacheCreation1hCost,  // 1小时缓存成本
-			costBreakdown.CacheReadCost,
-			costBreakdown.TotalCost,
-		)
+		if strings.EqualFold(upstreamType, "account") {
+			_, err = accountStmt.ExecContext(ctx,
+				req.RequestID,
+				nullInt64(req.UpstreamID),
+				req.UpstreamSourceName,
+				req.UpstreamName,
+				req.ClientIP,
+				req.UserAgent,
+				req.Method,
+				req.Path,
+				req.IsStreaming,
+				startTime,
+				endTime,
+				req.DurationMs,
+				req.Status,
+				req.HTTPStatus,
+				req.RetryCount,
+				nullString(req.FailureReason),
+				nullString(req.CancelReason),
+				req.ModelName,
+				req.InputTokens,
+				req.OutputTokens,
+				req.CacheCreationTokens,
+				req.CacheCreation5mTokens,
+				req.CacheCreation1hTokens,
+				req.CacheReadTokens,
+				costBreakdown.InputCost,
+				costBreakdown.OutputCost,
+				costBreakdown.CacheCreationCost,   // 总成本（向后兼容）
+				costBreakdown.CacheCreation5mCost, // 5分钟缓存成本
+				costBreakdown.CacheCreation1hCost, // 1小时缓存成本
+				costBreakdown.CacheReadCost,
+				costBreakdown.TotalCost,
+			)
+		} else {
+			_, err = requestStmt.ExecContext(ctx,
+				req.RequestID,
+				req.ClientIP,
+				req.UserAgent,
+				req.Method,
+				req.Path,
+				startTime,
+				endTime,
+				req.DurationMs,
+				req.Channel,
+				req.EndpointName,
+				req.GroupName,
+				req.ModelName,
+				upstreamType,
+				req.UpstreamSourceName,
+				req.UpstreamName,
+				nullInt64(req.UpstreamID),
+				req.Status,
+				req.HTTPStatus,
+				req.RetryCount,
+				nullString(req.FailureReason),
+				nullString(req.CancelReason),
+				req.IsStreaming,
+				req.InputTokens,
+				req.OutputTokens,
+				req.CacheCreationTokens,
+				req.CacheCreation5mTokens,
+				req.CacheCreation1hTokens,
+				req.CacheReadTokens,
+				costBreakdown.InputCost,
+				costBreakdown.OutputCost,
+				costBreakdown.CacheCreationCost,   // 总成本（向后兼容）
+				costBreakdown.CacheCreation5mCost, // 5分钟缓存成本
+				costBreakdown.CacheCreation1hCost, // 1小时缓存成本
+				costBreakdown.CacheReadCost,
+				costBreakdown.TotalCost,
+			)
+		}
 		if err != nil {
 			return fmt.Errorf("failed to insert request %s: %w", req.RequestID, err)
 		}
@@ -376,6 +447,9 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 
 // calculateCostV2 计算请求成本（v5.0.1+: 支持分开的 5m/1h 缓存）
 func (am *ArchiveManager) calculateCostV2(req *ActiveRequest) CostBreakdown {
+	am.cacheMu.RLock()
+	defer am.cacheMu.RUnlock()
+
 	if am.pricing == nil {
 		return CostBreakdown{}
 	}
@@ -391,8 +465,8 @@ func (am *ArchiveManager) calculateCostV2(req *ActiveRequest) CostBreakdown {
 
 	// 获取端点倍率
 	var multiplier *EndpointMultiplier
-	if am.endpointMu != nil {
-		if m, ok := am.endpointMu[req.EndpointName]; ok {
+	if am.endpointMultipliers != nil {
+		if m, ok := am.endpointMultipliers[req.EndpointName]; ok {
 			multiplier = &m
 		}
 	}
@@ -411,6 +485,28 @@ func (am *ArchiveManager) calculateCostV2(req *ActiveRequest) CostBreakdown {
 	return CalculateCostV2(usage, &pricing, multiplier)
 }
 
+func cloneModelPricingMap(src map[string]ModelPricing) map[string]ModelPricing {
+	if len(src) == 0 {
+		return nil
+	}
+	cloned := make(map[string]ModelPricing, len(src))
+	for key, value := range src {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func cloneEndpointMultiplierMap(src map[string]EndpointMultiplier) map[string]EndpointMultiplier {
+	if len(src) == 0 {
+		return nil
+	}
+	cloned := make(map[string]EndpointMultiplier, len(src))
+	for key, value := range src {
+		cloned[key] = value
+	}
+	return cloned
+}
+
 // formatTime 格式化时间为易读格式（使用配置的时区）
 // 格式：2025-12-04 17:18:48（北京时间，无时区后缀）
 func (am *ArchiveManager) formatTime(t time.Time) string {
@@ -426,6 +522,14 @@ func nullString(s string) interface{} {
 		return sql.NullString{}
 	}
 	return s
+}
+
+// nullInt64 处理非正整数为SQL NULL
+func nullInt64(v int64) interface{} {
+	if v <= 0 {
+		return sql.NullInt64{}
+	}
+	return v
 }
 
 // GetStats 获取统计信息（返回快照，不含锁）

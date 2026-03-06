@@ -3,7 +3,7 @@
 // 2025-12-06 10:40:38 v4.0: 简化端点切换（移除 Token 级联）
 // ============================================
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { BarChart3 } from 'lucide-react';
 import { ErrorMessage } from '@components/ui';
 import { fetchRequests, fetchModels, fetchUsageStats, fetchEndpoints, fetchGroups, activateGroup } from '@utils/api.js';
@@ -24,12 +24,14 @@ const RequestsPage = () => {
   // 数据状态
   const [requests, setRequests] = useState([]);
   const [stats, setStats] = useState(null);
+  const [sourceView, setSourceView] = useState('endpoint');
   const [models, setModels] = useState([]);
   const [endpoints, setEndpoints] = useState([]);
   const [groups, setGroups] = useState([]); // v4.0: 端点列表（一个端点=一个组）
   const [activeGroup, setActiveGroup] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const loadRequestIdRef = useRef(0);
 
   // 面板状态
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -83,6 +85,7 @@ const RequestsPage = () => {
   // ==================== 数据加载 ====================
 
   const loadData = useCallback(async (silent = false) => {
+    const requestId = ++loadRequestIdRef.current;
     try {
       // 静默刷新时不改变 loading 状态，避免闪屏
       if (!silent) {
@@ -91,17 +94,21 @@ const RequestsPage = () => {
       setError(null);
 
       const queryParams = buildQueryParams();
+      const requestsQueryParams = {
+        ...queryParams,
+        source_view: sourceView
+      };
 
       // 为stats API添加默认时间范围（30天），避免无数据问题
       const statsParams = {
-        ...queryParams,
+        ...requestsQueryParams,
         period: '30d'
       };
 
       // v4.0: 简化数据获取，移除 keysData
       const [requestsData, statsData, modelsData, endpointsData, groupsData] = await Promise.all([
         fetchRequests({
-          ...queryParams,
+          ...requestsQueryParams,
           page: pagination.page,
           pageSize: pagination.pageSize
         }),
@@ -110,6 +117,10 @@ const RequestsPage = () => {
         fetchEndpoints(),
         fetchGroups()
       ]);
+
+      if (loadRequestIdRef.current !== requestId) {
+        return;
+      }
 
       setRequests(requestsData.requests);
       setPagination(prev => ({
@@ -137,14 +148,17 @@ const RequestsPage = () => {
         setActiveGroup(activeGroupObj.name);
       }
     } catch (err) {
+      if (loadRequestIdRef.current !== requestId) {
+        return;
+      }
       setError(err.message);
     } finally {
       // 只有手动刷新才会改变 loading 状态
-      if (!silent) {
+      if (!silent && loadRequestIdRef.current === requestId) {
         setLoading(false);
       }
     }
-  }, [buildQueryParams, pagination.page, pagination.pageSize]);
+  }, [buildQueryParams, pagination.page, pagination.pageSize, sourceView]);
 
   // 自动刷新 Hook (必须在 loadData 定义之后)
   const autoRefresh = useAutoRefresh(loadData);
@@ -236,6 +250,10 @@ const RequestsPage = () => {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    setPagination(prev => (prev.page === 1 ? prev : { ...prev, page: 1 }));
+  }, [sourceView]);
+
   // ==================== 渲染 ====================
 
   if (error) {
@@ -280,6 +298,8 @@ const RequestsPage = () => {
           groups={groups}
           activeGroup={activeGroup}
           onGroupSwitch={handleGroupSwitch}
+          sourceView={sourceView}
+          onSourceViewChange={setSourceView}
         />
 
         {/* 筛选面板（弹出式） */}

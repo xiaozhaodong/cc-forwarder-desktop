@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS request_logs (
     endpoint_name TEXT,                     -- 使用的端点名称
     group_name TEXT,                        -- 所属组名
     model_name TEXT,                        -- Claude模型名称
+    upstream_type TEXT DEFAULT 'endpoint',  -- 上游来源类型: endpoint/account
+    upstream_source_name TEXT DEFAULT '',   -- 上游来源名称（账号链路用订阅源）
+    upstream_name TEXT DEFAULT '',          -- 上游名称（账号名或端点名）
+    upstream_id INTEGER,                    -- 上游ID（账号ID，可空）
     is_streaming BOOLEAN DEFAULT FALSE,     -- 是否为流式请求
     
     -- 状态信息 (v3.5.0更新: 生命周期状态与错误原因分离 - 2025-09-28)
@@ -109,6 +113,82 @@ CREATE TRIGGER IF NOT EXISTS update_request_logs_timestamp
 BEGIN
     UPDATE request_logs SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
 END;
+
+-- ============================================================================
+-- 账号池请求日志表 (v6.0.1 新增 - 2026-03-05)
+-- 专门记录 upstream_type='account' 的 /v1/responses 请求
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS account_request_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id TEXT UNIQUE NOT NULL,
+
+    -- 账号维度
+    account_id INTEGER,                        -- 对应 upstream_accounts.id
+    source_name TEXT DEFAULT '',               -- 订阅源名
+    account_name TEXT DEFAULT '',              -- 账号名
+
+    -- 请求基础信息
+    client_ip TEXT,
+    user_agent TEXT,
+    method TEXT DEFAULT 'POST',
+    path TEXT DEFAULT '/v1/responses',
+    is_streaming BOOLEAN DEFAULT FALSE,
+
+    -- 时间信息
+    start_time DATETIME NOT NULL,
+    end_time DATETIME,
+    duration_ms INTEGER,
+
+    -- 状态
+    status TEXT NOT NULL DEFAULT 'pending',
+    http_status_code INTEGER,
+    retry_count INTEGER DEFAULT 0,
+    failure_reason TEXT,
+    last_failure_reason TEXT,
+    cancel_reason TEXT,
+
+    -- 模型与Token
+    model_name TEXT,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    cache_creation_tokens INTEGER DEFAULT 0,
+    cache_creation_5m_tokens INTEGER DEFAULT 0,
+    cache_creation_1h_tokens INTEGER DEFAULT 0,
+    cache_read_tokens INTEGER DEFAULT 0,
+
+    -- 成本
+    input_cost_usd REAL DEFAULT 0,
+    output_cost_usd REAL DEFAULT 0,
+    cache_creation_cost_usd REAL DEFAULT 0,
+    cache_creation_5m_cost_usd REAL DEFAULT 0,
+    cache_creation_1h_cost_usd REAL DEFAULT 0,
+    cache_read_cost_usd REAL DEFAULT 0,
+    total_cost_usd REAL DEFAULT 0,
+
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+
+    FOREIGN KEY (account_id) REFERENCES upstream_accounts(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_request_logs_request_id ON account_request_logs(request_id);
+CREATE INDEX IF NOT EXISTS idx_account_request_logs_account_id ON account_request_logs(account_id);
+CREATE INDEX IF NOT EXISTS idx_account_request_logs_start_time ON account_request_logs(start_time);
+CREATE INDEX IF NOT EXISTS idx_account_request_logs_status ON account_request_logs(status);
+
+CREATE TRIGGER IF NOT EXISTS update_account_request_logs_timestamp
+    AFTER UPDATE ON account_request_logs
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE account_request_logs SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+END;
+
+-- v6.0.2: account 链路改为 ArchiveManager 直接写 account_request_logs，
+-- 不再依赖 request_logs 镜像触发器。对旧库执行显式清理，避免重复或错误镜像。
+DROP TRIGGER IF EXISTS mirror_account_logs_after_insert;
+DROP TRIGGER IF EXISTS mirror_account_logs_after_update;
+DROP TRIGGER IF EXISTS mirror_account_logs_after_delete;
 
 CREATE TRIGGER IF NOT EXISTS update_usage_summary_timestamp
     AFTER UPDATE ON usage_summary
@@ -257,3 +337,107 @@ CREATE TRIGGER IF NOT EXISTS update_settings_timestamp
 BEGIN
     UPDATE settings SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
 END;
+
+-- ============================================================================
+-- 订阅源表 (v6.0.0 新增 - 2026-03-05)
+-- 账号池订阅源配置（首版仅支持手动同步）
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS subscription_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- ========== 基本信息 ==========
+    name TEXT UNIQUE NOT NULL,                      -- 订阅源名称
+    url TEXT NOT NULL,                              -- 订阅地址
+    enabled INTEGER DEFAULT 1,                      -- 是否启用 (1=启用,0=禁用)
+    sync_mode TEXT DEFAULT 'manual',                -- 同步模式（首版 manual）
+
+    -- ========== 最近同步状态 ==========
+    last_sync_at DATETIME,                          -- 最近同步时间
+    last_status TEXT DEFAULT '',                    -- 最近状态 success|partial|failed
+    last_error TEXT DEFAULT '',                     -- 最近错误摘要
+
+    -- ========== 审计字段 ==========
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscription_sources_enabled ON subscription_sources(enabled);
+
+CREATE TRIGGER IF NOT EXISTS update_subscription_sources_timestamp
+    AFTER UPDATE ON subscription_sources
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE subscription_sources SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+END;
+
+-- ============================================================================
+-- 上游账号表 (v6.0.0 新增 - 2026-03-05)
+-- 账号池中的可调度账号
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS upstream_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- ========== 来源 ==========
+    source_id INTEGER,                              -- 关联订阅源，可空（手动录入）
+    provider_type TEXT NOT NULL DEFAULT 'api_key', -- api_key / session_cookie
+    account_name TEXT NOT NULL,                     -- 账号展示名
+    credential_raw TEXT NOT NULL,                   -- 凭据（首版明文）
+    base_url TEXT NOT NULL DEFAULT 'https://api.openai.com', -- 上游基础URL
+
+    -- ========== 调度 ==========
+    priority INTEGER DEFAULT 100,                   -- 优先级（数字越小越高）
+    enabled INTEGER DEFAULT 1,                      -- 是否可参与调度
+    state TEXT DEFAULT 'active',                    -- active/cooldown/disabled_auth
+    cooldown_until DATETIME,                        -- 冷却截止时间
+    fail_count INTEGER DEFAULT 0,                   -- 失败次数
+
+    -- ========== 状态 ==========
+    last_success_at DATETIME,                       -- 最近成功时间
+    last_error TEXT DEFAULT '',                     -- 最近错误
+    fingerprint TEXT UNIQUE NOT NULL,               -- 去重指纹
+
+    -- ========== 审计字段 ==========
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+
+    FOREIGN KEY (source_id) REFERENCES subscription_sources(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_upstream_accounts_source_id ON upstream_accounts(source_id);
+CREATE INDEX IF NOT EXISTS idx_upstream_accounts_priority ON upstream_accounts(priority);
+CREATE INDEX IF NOT EXISTS idx_upstream_accounts_enabled ON upstream_accounts(enabled);
+CREATE INDEX IF NOT EXISTS idx_upstream_accounts_state ON upstream_accounts(state);
+CREATE INDEX IF NOT EXISTS idx_upstream_accounts_cooldown_until ON upstream_accounts(cooldown_until);
+
+CREATE TRIGGER IF NOT EXISTS update_upstream_accounts_timestamp
+    AFTER UPDATE ON upstream_accounts
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE upstream_accounts SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+END;
+
+-- ============================================================================
+-- 同步日志表 (v6.0.0 新增 - 2026-03-05)
+-- 记录订阅源手动同步结果
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS sync_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id INTEGER NOT NULL,
+
+    started_at DATETIME NOT NULL,
+    finished_at DATETIME,
+    result TEXT DEFAULT '',                         -- success|partial|failed
+    added_count INTEGER DEFAULT 0,
+    updated_count INTEGER DEFAULT 0,
+    disabled_count INTEGER DEFAULT 0,
+    error_summary TEXT DEFAULT '',
+
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+
+    FOREIGN KEY (source_id) REFERENCES subscription_sources(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_logs_source_id ON sync_logs(source_id);
+CREATE INDEX IF NOT EXISTS idx_sync_logs_started_at ON sync_logs(started_at);

@@ -299,6 +299,34 @@ func TestHotPoolClose(t *testing.T) {
 	}
 }
 
+func TestHotPoolCleanup_ArchiveCallbackRunsOutsideLock(t *testing.T) {
+	config := DefaultHotPoolConfig()
+	config.MaxAge = time.Millisecond
+	config.ArchiveOnCleanup = true
+	pool := NewHotPool(config)
+	defer pool.Close()
+
+	req := NewActiveRequest("req-cleanup", "127.0.0.1", "test", "POST", "/", false)
+	req.StartTime = time.Now().Add(-2 * time.Minute)
+	if err := pool.Add(req); err != nil {
+		t.Fatalf("failed to add request: %v", err)
+	}
+
+	done := make(chan struct{})
+	pool.SetArchiveCallback(func(req *ActiveRequest) {
+		_ = pool.GetActiveCount()
+		close(done)
+	})
+
+	go pool.cleanup()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("archive callback did not finish; cleanup may still be holding the pool lock")
+	}
+}
+
 func TestNewActiveRequest(t *testing.T) {
 	req := NewActiveRequest("req-test", "192.168.1.1", "Mozilla/5.0", "POST", "/v1/messages", true)
 

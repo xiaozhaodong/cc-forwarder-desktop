@@ -50,10 +50,15 @@ type RequestLifecycleManager struct {
 	requestID             string                         // 请求唯一标识符
 	startTime             time.Time                      // 请求开始时间
 	modelMu               sync.RWMutex                   // 保护模型字段的读写锁
+	stateMu               sync.RWMutex                   // 保护生命周期状态字段
 	modelName             string                         // 模型名称
 	channel               string                         // 渠道标签
 	endpointName          string                         // 端点名称
 	groupName             string                         // 组名称
+	upstreamType          string                         // 上游类型：endpoint/account
+	upstreamSourceName    string                         // 上游来源名（订阅源等）
+	upstreamName          string                         // 上游名称（账号或端点）
+	upstreamID            int64                          // 上游ID（账号ID，可空）
 	retryCount            int                            // 重试计数
 	lastStatus            string                         // 最后状态
 	lastError             error                          // 最后一次错误
@@ -67,6 +72,39 @@ type RequestLifecycleManager struct {
 	pendingErrorMu        sync.Mutex                     // 保护预先计算错误上下文的互斥锁
 }
 
+type lifecycleStateSnapshot struct {
+	channel            string
+	endpointName       string
+	groupName          string
+	upstreamType       string
+	upstreamSourceName string
+	upstreamName       string
+	upstreamID         int64
+	retryCount         int
+	lastStatus         string
+	lastError          error
+	finalStatusCode    int
+}
+
+func (rlm *RequestLifecycleManager) snapshotState() lifecycleStateSnapshot {
+	rlm.stateMu.RLock()
+	defer rlm.stateMu.RUnlock()
+
+	return lifecycleStateSnapshot{
+		channel:            rlm.channel,
+		endpointName:       rlm.endpointName,
+		groupName:          rlm.groupName,
+		upstreamType:       rlm.upstreamType,
+		upstreamSourceName: rlm.upstreamSourceName,
+		upstreamName:       rlm.upstreamName,
+		upstreamID:         rlm.upstreamID,
+		retryCount:         rlm.retryCount,
+		lastStatus:         rlm.lastStatus,
+		lastError:          rlm.lastError,
+		finalStatusCode:    rlm.finalStatusCode,
+	}
+}
+
 // NewRequestLifecycleManager 创建新的请求生命周期管理器
 func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringMiddleware MonitoringMiddlewareInterface, requestID string, eventBus events.EventBus) *RequestLifecycleManager {
 	return &RequestLifecycleManager{
@@ -77,6 +115,7 @@ func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringM
 		requestID:            requestID,
 		startTime:            time.Now(),
 		lastStatus:           "pending",
+		upstreamType:         "endpoint",
 	}
 }
 
@@ -91,12 +130,15 @@ func NewRequestLifecycleManagerWithRecoverySignal(usageTracker *tracking.UsageTr
 		requestID:             requestID,
 		startTime:             time.Now(),
 		lastStatus:            "pending",
+		upstreamType:          "endpoint",
 	}
 }
 
 // StartRequest 开始请求跟踪
 // 调用 RecordRequestStart 记录请求开始，并发布请求开始事件
 func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, path string, isStreaming bool) {
+	state := rlm.snapshotState()
+
 	// 原有的数据记录逻辑
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		rlm.usageTracker.RecordRequestStart(rlm.requestID, clientIP, userAgent, method, path, isStreaming)
@@ -110,14 +152,32 @@ func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, pa
 			Source:   "lifecycle_manager",
 			Priority: events.PriorityNormal,
 			Data: map[string]interface{}{
-				"request_id":   rlm.requestID,
-				"client_ip":    clientIP,
-				"user_agent":   userAgent,
-				"method":       method,
-				"path":         path,
-				"is_streaming": isStreaming,
-				"change_type":  "request_started",
+				"request_id":           rlm.requestID,
+				"client_ip":            clientIP,
+				"user_agent":           userAgent,
+				"method":               method,
+				"path":                 path,
+				"is_streaming":         isStreaming,
+				"upstream_type":        state.upstreamType,
+				"upstream_source_name": state.upstreamSourceName,
+				"upstream_name":        state.upstreamName,
+				"upstream_id":          state.upstreamID,
+				"change_type":          "request_started",
 			},
+		})
+	}
+
+	// 请求开始时立即把上游维度写入 tracking，避免早期失败丢失来源信息
+	if rlm.usageTracker != nil && rlm.requestID != "" {
+		upstreamType := state.upstreamType
+		upstreamSourceName := state.upstreamSourceName
+		upstreamName := state.upstreamName
+		upstreamID := state.upstreamID
+		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
+			UpstreamType:       &upstreamType,
+			UpstreamSourceName: &upstreamSourceName,
+			UpstreamName:       &upstreamName,
+			UpstreamID:         &upstreamID,
 		})
 	}
 }
@@ -131,6 +191,8 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 	if retryCount == -1 {
 		actualRetryCount = rlm.GetAttemptCount()
 	}
+
+	state := rlm.snapshotState()
 
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		// 获取当前的模型信息（线程安全）
@@ -149,24 +211,32 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 		if shouldUpdateModel {
 			// 第一次有模型信息时，执行带模型的更新
 			opts := tracking.UpdateOptions{
-				EndpointName: &rlm.endpointName,
-				Channel:      &rlm.channel,
-				GroupName:    &rlm.groupName,
-				Status:       &status,
-				RetryCount:   &actualRetryCount,
-				HttpStatus:   &httpStatus,
-				ModelName:    &currentModel,
+				EndpointName:       &state.endpointName,
+				Channel:            &state.channel,
+				GroupName:          &state.groupName,
+				UpstreamType:       &state.upstreamType,
+				UpstreamSourceName: &state.upstreamSourceName,
+				UpstreamName:       &state.upstreamName,
+				UpstreamID:         &state.upstreamID,
+				Status:             &status,
+				RetryCount:         &actualRetryCount,
+				HttpStatus:         &httpStatus,
+				ModelName:          &currentModel,
 			}
 			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
 		} else {
 			// 正常状态更新（模型已更新过或尚未就绪）
 			opts := tracking.UpdateOptions{
-				EndpointName: &rlm.endpointName,
-				Channel:      &rlm.channel,
-				GroupName:    &rlm.groupName,
-				Status:       &status,
-				RetryCount:   &actualRetryCount,
-				HttpStatus:   &httpStatus,
+				EndpointName:       &state.endpointName,
+				Channel:            &state.channel,
+				GroupName:          &state.groupName,
+				UpstreamType:       &state.upstreamType,
+				UpstreamSourceName: &state.upstreamSourceName,
+				UpstreamName:       &state.upstreamName,
+				UpstreamID:         &state.upstreamID,
+				Status:             &status,
+				RetryCount:         &actualRetryCount,
+				HttpStatus:         &httpStatus,
 			}
 			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
 		}
@@ -181,8 +251,21 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 // 这个方法被 UpdateStatus、CompleteRequest、FailRequest、CancelRequest 统一调用
 func (rlm *RequestLifecycleManager) notifyStatusChange(status string, retryCount, httpStatus int) {
 	// 更新内部状态
+	rlm.stateMu.Lock()
 	rlm.retryCount = retryCount
 	rlm.lastStatus = status
+	state := lifecycleStateSnapshot{
+		channel:            rlm.channel,
+		endpointName:       rlm.endpointName,
+		groupName:          rlm.groupName,
+		upstreamType:       rlm.upstreamType,
+		upstreamSourceName: rlm.upstreamSourceName,
+		upstreamName:       rlm.upstreamName,
+		upstreamID:         rlm.upstreamID,
+		retryCount:         rlm.retryCount,
+		lastStatus:         rlm.lastStatus,
+	}
+	rlm.stateMu.Unlock()
 
 	// 发布请求状态更新事件
 	if rlm.eventBus != nil {
@@ -212,15 +295,19 @@ func (rlm *RequestLifecycleManager) notifyStatusChange(status string, retryCount
 			Source:   "lifecycle_manager",
 			Priority: priority,
 			Data: map[string]interface{}{
-				"request_id":    rlm.requestID,
-				"endpoint_name": rlm.endpointName,
-				"channel":       rlm.channel, // v5.0: 渠道标签
-				"group_name":    rlm.groupName,
-				"status":        status,
-				"retry_count":   retryCount,
-				"http_status":   httpStatus,
-				"model_name":    rlm.GetModelName(),
-				"change_type":   changeType,
+				"request_id":           rlm.requestID,
+				"endpoint_name":        state.endpointName,
+				"channel":              state.channel, // v5.0: 渠道标签
+				"group_name":           state.groupName,
+				"upstream_type":        state.upstreamType,
+				"upstream_source_name": state.upstreamSourceName,
+				"upstream_name":        state.upstreamName,
+				"upstream_id":          state.upstreamID,
+				"status":               status,
+				"retry_count":          retryCount,
+				"http_status":          httpStatus,
+				"model_name":           rlm.GetModelName(),
+				"change_type":          changeType,
 			},
 		})
 	}
@@ -229,27 +316,27 @@ func (rlm *RequestLifecycleManager) notifyStatusChange(status string, retryCount
 	switch status {
 	case "forwarding":
 		slog.Info(fmt.Sprintf("🎯 [请求转发] [%s] 选择端点: %s",
-			rlm.requestID, rlm.endpointName))
+			rlm.requestID, state.endpointName))
 	case "retry":
 		slog.Info(fmt.Sprintf("🔄 [需要重试] [%s] 端点: %s (重试次数: %d)",
-			rlm.requestID, rlm.endpointName, retryCount))
+			rlm.requestID, state.endpointName, retryCount))
 	case "processing":
 		slog.Info(fmt.Sprintf("⚙️ [请求处理] [%s] 端点: %s, 状态码: %d",
-			rlm.requestID, rlm.endpointName, httpStatus))
+			rlm.requestID, state.endpointName, httpStatus))
 	case "suspended":
 		slog.Warn(fmt.Sprintf("⏸️ [请求挂起] [%s] 端点: %s",
-			rlm.requestID, rlm.endpointName))
+			rlm.requestID, state.endpointName))
 	case "cancelled":
 		// 取消日志已在 CancelRequest 方法中记录完整信息，此处跳过避免重复
 	case "error":
 		slog.Error(fmt.Sprintf("❌ [请求错误] [%s] 端点: %s, 状态码: %d",
-			rlm.requestID, rlm.endpointName, httpStatus))
+			rlm.requestID, state.endpointName, httpStatus))
 	case "timeout":
 		slog.Error(fmt.Sprintf("⏰ [请求超时] [%s] 端点: %s",
-			rlm.requestID, rlm.endpointName))
+			rlm.requestID, state.endpointName))
 	case "completed":
 		slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s",
-			rlm.requestID, rlm.endpointName))
+			rlm.requestID, state.endpointName))
 	case "failed":
 		// 失败日志已在 FailRequest 方法中记录完整信息，此处跳过避免重复
 	}
@@ -260,15 +347,16 @@ func (rlm *RequestLifecycleManager) notifyStatusChange(status string, retryCount
 // 这是所有请求完成的统一入口，确保架构一致性
 func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage) {
 	duration := time.Since(rlm.startTime)
+	state := rlm.snapshotState()
 	// 🚀 [端点自愈] 无论usageTracker是否为空，都应该广播端点成功信号
 	// 这是端点自愈功能的关键，不应该依赖于数据库跟踪功能
-	if rlm.recoverySignalManager != nil && rlm.endpointName != "" {
-		rlm.recoverySignalManager.BroadcastEndpointSuccess(rlm.endpointName)
+	if rlm.recoverySignalManager != nil && state.endpointName != "" {
+		rlm.recoverySignalManager.BroadcastEndpointSuccess(state.endpointName)
 	}
 
 	// 📊 [失败追踪] 记录端点成功，清空失败计数
-	if rlm.endpointManager != nil && rlm.endpointName != "" {
-		rlm.endpointManager.RecordSuccess(rlm.endpointName)
+	if rlm.endpointManager != nil && state.endpointName != "" {
+		rlm.endpointManager.RecordSuccess(state.endpointName)
 	}
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		// 使用线程安全的方式获取模型信息
@@ -284,7 +372,7 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 				CacheCreationTokens: tokens.CacheCreationTokens,
 				CacheReadTokens:     tokens.CacheReadTokens,
 			}
-			rlm.monitoringMiddleware.RecordTokenUsage(rlm.requestID, rlm.endpointName, monitorTokens)
+			rlm.monitoringMiddleware.RecordTokenUsage(rlm.requestID, state.endpointName, monitorTokens)
 		}
 
 		// 增强的完成日志，包含更详细信息
@@ -293,13 +381,13 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 			cacheTokens := tokens.CacheCreationTokens + tokens.CacheReadTokens
 
 			slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s (总尝试 %d 个端点)",
-				rlm.requestID, rlm.endpointName, rlm.retryCount+1))
+				rlm.requestID, state.endpointName, state.retryCount+1))
 			slog.Info(fmt.Sprintf("📊 [Token统计] [%s] 模型: %s, 输入[%d] 输出[%d] 总计[%d] 缓存[%d], 耗时: %dms",
 				rlm.requestID, modelName, tokens.InputTokens, tokens.OutputTokens,
 				totalTokens, cacheTokens, duration.Milliseconds()))
 		} else {
 			slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s, 组: %s, 模型: %s, 耗时: %dms (无Token统计)",
-				rlm.requestID, rlm.endpointName, rlm.groupName, modelName, duration.Milliseconds()))
+				rlm.requestID, state.endpointName, state.groupName, modelName, duration.Milliseconds()))
 		}
 		// 记录请求成功完成到使用跟踪器（包括状态、耗时、Token、成本）
 		rlm.usageTracker.RecordRequestSuccess(rlm.requestID, modelName, tokens, duration)
@@ -307,7 +395,7 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 	}
 
 	// 调用统一的状态通知方法
-	rlm.notifyStatusChange("completed", rlm.retryCount, 200)
+	rlm.notifyStatusChange("completed", state.retryCount, 200)
 }
 
 // CompleteRequestWithQuality 完成请求并标记数据质量问题
@@ -319,15 +407,16 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 //   - failureReason: 数据质量问题标识（如 "incomplete_stream", "stream_truncated"）
 func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.TokenUsage, failureReason string) {
 	duration := time.Since(rlm.startTime)
+	state := rlm.snapshotState()
 
 	// 🚀 [端点自愈] 无论usageTracker是否为空，都应该广播端点成功信号
-	if rlm.recoverySignalManager != nil && rlm.endpointName != "" {
-		rlm.recoverySignalManager.BroadcastEndpointSuccess(rlm.endpointName)
+	if rlm.recoverySignalManager != nil && state.endpointName != "" {
+		rlm.recoverySignalManager.BroadcastEndpointSuccess(state.endpointName)
 	}
 
 	// 📊 [失败追踪] 记录端点成功，清空失败计数
-	if rlm.endpointManager != nil && rlm.endpointName != "" {
-		rlm.endpointManager.RecordSuccess(rlm.endpointName)
+	if rlm.endpointManager != nil && state.endpointName != "" {
+		rlm.endpointManager.RecordSuccess(state.endpointName)
 	}
 
 	if rlm.usageTracker != nil && rlm.requestID != "" {
@@ -344,7 +433,7 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.
 				CacheCreationTokens: tokens.CacheCreationTokens,
 				CacheReadTokens:     tokens.CacheReadTokens,
 			}
-			rlm.monitoringMiddleware.RecordTokenUsage(rlm.requestID, rlm.endpointName, monitorTokens)
+			rlm.monitoringMiddleware.RecordTokenUsage(rlm.requestID, state.endpointName, monitorTokens)
 		}
 
 		// 日志记录
@@ -352,7 +441,7 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.
 			totalTokens := tokens.InputTokens + tokens.OutputTokens
 			cacheTokens := tokens.CacheCreationTokens + tokens.CacheReadTokens
 			slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s (总尝试 %d 个端点)",
-				rlm.requestID, rlm.endpointName, rlm.retryCount+1))
+				rlm.requestID, state.endpointName, state.retryCount+1))
 			slog.Info(fmt.Sprintf("📊 [Token统计] [%s] 模型: %s, 输入[%d] 输出[%d] 总计[%d] 缓存[%d], 耗时: %dms",
 				rlm.requestID, modelName, tokens.InputTokens, tokens.OutputTokens,
 				totalTokens, cacheTokens, duration.Milliseconds()))
@@ -369,7 +458,7 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.
 	}
 
 	// 调用统一的状态通知方法
-	rlm.notifyStatusChange("completed", rlm.retryCount, 200)
+	rlm.notifyStatusChange("completed", state.retryCount, 200)
 }
 
 // HandleNonTokenResponse 处理非Token响应的Fallback机制
@@ -423,16 +512,58 @@ func (rlm *RequestLifecycleManager) analyzeResponseType(responseContent string) 
 // SetEndpoint 设置端点信息
 // v5.0: 立即更新热池中的端点和渠道信息，确保前端实时显示
 func (rlm *RequestLifecycleManager) SetEndpoint(endpointName, groupName, channel string) {
+	rlm.stateMu.Lock()
 	rlm.channel = channel
 	rlm.endpointName = endpointName
 	rlm.groupName = groupName
+	if rlm.upstreamType == "" {
+		rlm.upstreamType = "endpoint"
+	}
+	if rlm.upstreamName == "" {
+		rlm.upstreamName = endpointName
+	}
+	upstreamType := rlm.upstreamType
+	upstreamSourceName := rlm.upstreamSourceName
+	upstreamName := rlm.upstreamName
+	upstreamID := rlm.upstreamID
+	rlm.stateMu.Unlock()
 
 	// 立即更新热池中的端点和渠道信息
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
-			EndpointName: &endpointName,
-			GroupName:    &groupName,
-			Channel:      &channel,
+			EndpointName:       &endpointName,
+			GroupName:          &groupName,
+			Channel:            &channel,
+			UpstreamType:       &upstreamType,
+			UpstreamSourceName: &upstreamSourceName,
+			UpstreamName:       &upstreamName,
+			UpstreamID:         &upstreamID,
+		})
+	}
+}
+
+// SetUpstream 设置上游来源维度信息（账号链路/端点链路通用）
+func (rlm *RequestLifecycleManager) SetUpstream(upstreamType, sourceName, upstreamName string, upstreamID int64) {
+	if upstreamType == "" {
+		upstreamType = "endpoint"
+	}
+	rlm.stateMu.Lock()
+	rlm.upstreamType = upstreamType
+	rlm.upstreamSourceName = sourceName
+	rlm.upstreamName = upstreamName
+	rlm.upstreamID = upstreamID
+	currentUpstreamType := rlm.upstreamType
+	currentSourceName := rlm.upstreamSourceName
+	currentUpstreamName := rlm.upstreamName
+	currentUpstreamID := rlm.upstreamID
+	rlm.stateMu.Unlock()
+
+	if rlm.usageTracker != nil && rlm.requestID != "" {
+		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
+			UpstreamType:       &currentUpstreamType,
+			UpstreamSourceName: &currentSourceName,
+			UpstreamName:       &currentUpstreamName,
+			UpstreamID:         &currentUpstreamID,
 		})
 	}
 }
@@ -512,16 +643,22 @@ func (rlm *RequestLifecycleManager) GetRequestID() string {
 
 // GetEndpointName 获取端点名称
 func (rlm *RequestLifecycleManager) GetEndpointName() string {
+	rlm.stateMu.RLock()
+	defer rlm.stateMu.RUnlock()
 	return rlm.endpointName
 }
 
 // GetGroupName 获取组名称
 func (rlm *RequestLifecycleManager) GetGroupName() string {
+	rlm.stateMu.RLock()
+	defer rlm.stateMu.RUnlock()
 	return rlm.groupName
 }
 
 // GetChannel 获取渠道标签
 func (rlm *RequestLifecycleManager) GetChannel() string {
+	rlm.stateMu.RLock()
+	defer rlm.stateMu.RUnlock()
 	return rlm.channel
 }
 
@@ -532,38 +669,45 @@ func (rlm *RequestLifecycleManager) GetDuration() time.Duration {
 
 // GetLastStatus 获取最后状态
 func (rlm *RequestLifecycleManager) GetLastStatus() string {
+	rlm.stateMu.RLock()
+	defer rlm.stateMu.RUnlock()
 	return rlm.lastStatus
 }
 
 // GetRetryCount 获取重试次数
 func (rlm *RequestLifecycleManager) GetRetryCount() int {
+	rlm.stateMu.RLock()
+	defer rlm.stateMu.RUnlock()
 	return rlm.retryCount
 }
 
 // IsCompleted 检查请求是否已完成
 func (rlm *RequestLifecycleManager) IsCompleted() bool {
+	rlm.stateMu.RLock()
+	defer rlm.stateMu.RUnlock()
 	return rlm.lastStatus == "completed"
 }
 
 // GetStats 获取生命周期统计信息
 func (rlm *RequestLifecycleManager) GetStats() map[string]any {
+	state := rlm.snapshotState()
 	stats := map[string]any{
 		"request_id":  rlm.requestID,
-		"endpoint":    rlm.endpointName,
-		"group":       rlm.groupName,
+		"endpoint":    state.endpointName,
+		"group":       state.groupName,
 		"model":       rlm.GetModelName(), // 线程安全获取
-		"status":      rlm.lastStatus,
-		"retry_count": rlm.retryCount,
+		"status":      state.lastStatus,
+		"retry_count": state.retryCount,
 		"duration_ms": time.Since(rlm.startTime).Milliseconds(),
 		"start_time":  rlm.startTime.Format(time.RFC3339),
 	}
 
 	// 如果有错误信息，包含在统计中
-	if rlm.lastError != nil {
-		stats["last_error"] = rlm.lastError.Error()
+	if state.lastError != nil {
+		stats["last_error"] = state.lastError.Error()
 
 		// 使用错误恢复管理器分析错误类型
-		errorCtx := rlm.errorRecovery.ClassifyError(rlm.lastError, rlm.requestID, rlm.endpointName, rlm.groupName, rlm.retryCount)
+		errorCtx := rlm.errorRecovery.ClassifyError(state.lastError, rlm.requestID, state.endpointName, state.groupName, state.retryCount)
 		stats["error_type"] = rlm.errorRecovery.getErrorTypeName(errorCtx.ErrorType)
 		stats["retryable"] = rlm.errorRecovery.ShouldRetry(errorCtx)
 	}
@@ -633,12 +777,15 @@ func (rlm *RequestLifecycleManager) HandleError(err error) {
 		return
 	}
 
+	rlm.stateMu.Lock()
 	rlm.lastError = err
+	rlm.stateMu.Unlock()
 
 	// 优先复用预计算的错误分类，避免重复日志
 	errorCtx := rlm.consumePreparedErrorContext(err)
 	if errorCtx == nil {
-		errorCtx = rlm.errorRecovery.ClassifyError(err, rlm.requestID, rlm.endpointName, rlm.groupName, rlm.retryCount)
+		state := rlm.snapshotState()
+		errorCtx = rlm.errorRecovery.ClassifyError(err, rlm.requestID, state.endpointName, state.groupName, state.retryCount)
 	}
 
 	// Phase 3核心逻辑: 状态与错误分离
@@ -664,8 +811,11 @@ func (rlm *RequestLifecycleManager) HandleError(err error) {
 
 // IncrementRetry 增加重试计数
 func (rlm *RequestLifecycleManager) IncrementRetry() {
+	rlm.stateMu.Lock()
 	rlm.retryCount++
-	slog.Info(fmt.Sprintf("🔄 [重试计数] [%s] 重试次数: %d", rlm.requestID, rlm.retryCount))
+	retryCount := rlm.retryCount
+	rlm.stateMu.Unlock()
+	slog.Info(fmt.Sprintf("🔄 [重试计数] [%s] 重试次数: %d", rlm.requestID, retryCount))
 }
 
 // getModelNameForCost 获取用于成本计算的模型名
@@ -685,6 +835,7 @@ func (rlm *RequestLifecycleManager) getModelNameForCost() string {
 func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail string, httpStatus int) {
 	duration := time.Since(rlm.startTime)
 	modelName := rlm.getModelNameForCost()
+	state := rlm.snapshotState()
 
 	// 🚀 [架构重构] 使用统一的最终失败记录方法，一次性更新所有相关字段
 	if rlm.usageTracker != nil {
@@ -692,10 +843,10 @@ func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail strin
 	}
 
 	slog.Error(fmt.Sprintf("❌ [请求最终失败] [%s] 端点: %s, 原因: %s, 状态码: %d, 耗时: %dms",
-		rlm.requestID, rlm.endpointName, failureReason, httpStatus, duration.Milliseconds()))
+		rlm.requestID, state.endpointName, failureReason, httpStatus, duration.Milliseconds()))
 
 	// 调用统一的状态通知方法
-	rlm.notifyStatusChange("failed", rlm.retryCount, httpStatus)
+	rlm.notifyStatusChange("failed", state.retryCount, httpStatus)
 }
 
 // CancelRequest 标记请求被取消
@@ -704,6 +855,7 @@ func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail strin
 func (rlm *RequestLifecycleManager) CancelRequest(cancelReason string, tokens *tracking.TokenUsage) {
 	duration := time.Since(rlm.startTime)
 	modelName := rlm.getModelNameForCost()
+	state := rlm.snapshotState()
 
 	// 🚀 [架构重构] 使用统一的最终失败记录方法，一次性更新所有相关字段
 	if rlm.usageTracker != nil {
@@ -713,18 +865,20 @@ func (rlm *RequestLifecycleManager) CancelRequest(cancelReason string, tokens *t
 	if tokens != nil {
 		totalTokens := tokens.InputTokens + tokens.OutputTokens
 		slog.Info(fmt.Sprintf("🚫 [请求被取消] [%s] 端点: %s, 组: %s, 耗时: %dms, 原因: %s, Token: %d",
-			rlm.requestID, rlm.endpointName, rlm.groupName, duration.Milliseconds(), cancelReason, totalTokens))
+			rlm.requestID, state.endpointName, state.groupName, duration.Milliseconds(), cancelReason, totalTokens))
 	} else {
 		slog.Info(fmt.Sprintf("🚫 [请求被取消] [%s] 端点: %s, 组: %s, 耗时: %dms, 原因: %s",
-			rlm.requestID, rlm.endpointName, rlm.groupName, duration.Milliseconds(), cancelReason))
+			rlm.requestID, state.endpointName, state.groupName, duration.Milliseconds(), cancelReason))
 	}
 
 	// 调用统一的状态通知方法
-	rlm.notifyStatusChange("cancelled", rlm.retryCount, 499)
+	rlm.notifyStatusChange("cancelled", state.retryCount, 499)
 }
 
 // GetLastError 获取最后一次错误
 func (rlm *RequestLifecycleManager) GetLastError() error {
+	rlm.stateMu.RLock()
+	defer rlm.stateMu.RUnlock()
 	return rlm.lastError
 }
 
@@ -744,11 +898,15 @@ func (rlm *RequestLifecycleManager) calculateCost(tokens *tracking.TokenUsage, p
 // SetFinalStatusCode 设置最终状态码
 // 用于记录请求的实际HTTP状态码，替代硬编码的状态码
 func (rlm *RequestLifecycleManager) SetFinalStatusCode(statusCode int) {
+	rlm.stateMu.Lock()
 	rlm.finalStatusCode = statusCode
+	rlm.stateMu.Unlock()
 }
 
 // GetFinalStatusCode 获取最终状态码
 func (rlm *RequestLifecycleManager) GetFinalStatusCode() int {
+	rlm.stateMu.RLock()
+	defer rlm.stateMu.RUnlock()
 	return rlm.finalStatusCode
 }
 
@@ -756,6 +914,7 @@ func (rlm *RequestLifecycleManager) GetFinalStatusCode() int {
 // 与 CompleteRequest 的区别：只记录Token统计，不改变请求状态
 func (rlm *RequestLifecycleManager) RecordTokensForFailedRequest(tokens *tracking.TokenUsage, failureReason string) {
 	if rlm.requestID != "" && tokens != nil {
+		state := rlm.snapshotState()
 		// 负数Token属于无效数据，必须跳过，避免异常计费
 		hasNegativeTokens := tokens.InputTokens < 0 || tokens.OutputTokens < 0 ||
 			tokens.CacheCreationTokens < 0 || tokens.CacheReadTokens < 0 ||
@@ -796,11 +955,11 @@ func (rlm *RequestLifecycleManager) RecordTokensForFailedRequest(tokens *trackin
 				CacheReadTokens:     tokens.CacheReadTokens,
 			}
 			// 新增失败请求Token记录方法
-			rlm.monitoringMiddleware.RecordFailedRequestTokens(rlm.requestID, rlm.endpointName, monitorTokens, failureReason)
+			rlm.monitoringMiddleware.RecordFailedRequestTokens(rlm.requestID, state.endpointName, monitorTokens, failureReason)
 		}
 
 		slog.Info(fmt.Sprintf("💾 [失败请求Token记录] [%s] 端点: %s, 原因: %s, 模型: %s, 输入: %d, 输出: %d",
-			rlm.requestID, rlm.endpointName, failureReason, modelName, tokens.InputTokens, tokens.OutputTokens))
+			rlm.requestID, state.endpointName, failureReason, modelName, tokens.InputTokens, tokens.OutputTokens))
 	}
 }
 
@@ -840,7 +999,8 @@ func (rlm *RequestLifecycleManager) OnRetryDecision(decision RetryDecision, http
 // GetRetryContext 获取重试上下文信息
 func (rlm *RequestLifecycleManager) GetRetryContext(endpoint *endpoint.Endpoint, err error, attempt int) RetryContext {
 	errorRecovery := rlm.errorRecovery
-	errorCtx := errorRecovery.ClassifyError(err, rlm.requestID, rlm.endpointName, rlm.groupName, attempt-1)
+	state := rlm.snapshotState()
+	errorCtx := errorRecovery.ClassifyError(err, rlm.requestID, state.endpointName, state.groupName, attempt-1)
 
 	return RetryContext{
 		RequestID:     rlm.requestID,

@@ -61,11 +61,15 @@ type RequestEvent struct {
 
 // RequestStartData 请求开始事件数据
 type RequestStartData struct {
-	ClientIP    string `json:"client_ip"`
-	UserAgent   string `json:"user_agent"`
-	Method      string `json:"method"`
-	Path        string `json:"path"`
-	IsStreaming bool   `json:"is_streaming"` // 是否为流式请求
+	ClientIP           string `json:"client_ip"`
+	UserAgent          string `json:"user_agent"`
+	Method             string `json:"method"`
+	Path               string `json:"path"`
+	IsStreaming        bool   `json:"is_streaming"`                   // 是否为流式请求
+	UpstreamType       string `json:"upstream_type,omitempty"`        // endpoint/account
+	UpstreamSourceName string `json:"upstream_source_name,omitempty"` // 订阅源名或固定来源
+	UpstreamName       string `json:"upstream_name,omitempty"`        // 账号名或端点名
+	UpstreamID         int64  `json:"upstream_id,omitempty"`          // 上游ID（账号ID）
 }
 
 // RequestUpdateData 请求更新事件数据
@@ -301,16 +305,20 @@ type WriteRequest struct {
 // UpdateOptions 统一的请求更新选项
 // 支持可选字段更新，只更新非nil的字段
 type UpdateOptions struct {
-	EndpointName  *string        // 端点名称
-	Channel       *string        // 渠道标签（v5.0）
-	GroupName     *string        // 组名称
-	Status        *string        // 状态
-	RetryCount    *int           // 重试次数
-	HttpStatus    *int           // HTTP状态码
-	ModelName     *string        // 模型名称
-	EndTime       *time.Time     // 结束时间
-	Duration      *time.Duration // 持续时间
-	FailureReason *string        // 失败原因（用于中间过程记录）
+	EndpointName       *string        // 端点名称
+	Channel            *string        // 渠道标签（v5.0）
+	GroupName          *string        // 组名称
+	UpstreamType       *string        // 上游类型 endpoint/account
+	UpstreamSourceName *string        // 上游来源（订阅源）
+	UpstreamName       *string        // 上游名称（账号名/端点名）
+	UpstreamID         *int64         // 上游ID（账号ID）
+	Status             *string        // 状态
+	RetryCount         *int           // 重试次数
+	HttpStatus         *int           // HTTP状态码
+	ModelName          *string        // 模型名称
+	EndTime            *time.Time     // 结束时间
+	Duration           *time.Duration // 持续时间
+	FailureReason      *string        // 失败原因（用于中间过程记录）
 }
 
 // UsageTracker 使用跟踪器
@@ -344,6 +352,64 @@ type UsageTracker struct {
 	hotPool        *HotPool        // 内存热池（活跃请求）
 	archiveManager *ArchiveManager // 归档管理器（批量写入）
 	hotPoolEnabled bool            // 是否启用热池模式
+}
+
+func (ut *UsageTracker) reconnectDatabases() error {
+	if ut.config == nil || !ut.config.Enabled {
+		return fmt.Errorf("usage tracker is not enabled")
+	}
+
+	ut.mu.RLock()
+	config := ut.config
+	timezone := ""
+	if ut.location != nil {
+		timezone = ut.location.String()
+	}
+	ut.mu.RUnlock()
+
+	dbConfig, err := buildDatabaseConfig(config, timezone)
+	if err != nil {
+		return fmt.Errorf("failed to build database config: %w", err)
+	}
+
+	adapter, err := NewDatabaseAdapter(dbConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create database adapter: %w", err)
+	}
+	if err := adapter.Open(); err != nil {
+		return fmt.Errorf("failed to open database adapter: %w", err)
+	}
+	if err := adapter.InitSchema(); err != nil {
+		_ = adapter.Close()
+		return fmt.Errorf("failed to initialize database schema after reconnect: %w", err)
+	}
+
+	readDB := adapter.GetReadDB()
+	writeDB := adapter.GetWriteDB()
+	if readDB == nil || writeDB == nil {
+		_ = adapter.Close()
+		return fmt.Errorf("database adapter returned nil read/write connection")
+	}
+
+	ut.writeMu.Lock()
+	oldAdapter := ut.adapter
+
+	ut.mu.Lock()
+	ut.adapter = adapter
+	ut.readDB = readDB
+	ut.writeDB = writeDB
+	ut.db = readDB
+	ut.mu.Unlock()
+
+	ut.writeMu.Unlock()
+
+	if oldAdapter != nil {
+		if err := oldAdapter.Close(); err != nil {
+			slog.Warn("Failed to close previous database adapter during reconnect", "error", err)
+		}
+	}
+
+	return nil
 }
 
 // NewUsageTracker 创建新的使用跟踪器
@@ -770,6 +836,18 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 			}
 			if opts.GroupName != nil {
 				req.GroupName = *opts.GroupName
+			}
+			if opts.UpstreamType != nil {
+				req.UpstreamType = *opts.UpstreamType
+			}
+			if opts.UpstreamSourceName != nil {
+				req.UpstreamSourceName = *opts.UpstreamSourceName
+			}
+			if opts.UpstreamName != nil {
+				req.UpstreamName = *opts.UpstreamName
+			}
+			if opts.UpstreamID != nil {
+				req.UpstreamID = *opts.UpstreamID
 			}
 			if opts.Status != nil {
 				req.Status = *opts.Status
@@ -1814,6 +1892,10 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 		EndpointName:          req.EndpointName,
 		Channel:               req.Channel, // v5.0: 渠道标签
 		GroupName:             req.GroupName,
+		UpstreamType:          req.UpstreamType,
+		UpstreamSourceName:    req.UpstreamSourceName,
+		UpstreamName:          req.UpstreamName,
+		UpstreamID:            req.UpstreamID,
 		ModelName:             req.ModelName,
 		IsStreaming:           req.IsStreaming,
 		Status:                req.Status,
@@ -1842,7 +1924,9 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 // 返回合并后的请求列表，热池中的活跃请求排在前面
 // 🔧 [修复] 2025-12-11: 正确处理分页，确保返回数量不超过 limit
 func (ut *UsageTracker) QueryRequestDetailsWithHotPool(ctx context.Context, opts *QueryOptions) ([]RequestDetail, int64, error) {
-	var results []RequestDetail
+	if opts == nil {
+		opts = &QueryOptions{}
+	}
 
 	// 获取分页参数
 	limit := opts.Limit
@@ -1850,6 +1934,10 @@ func (ut *UsageTracker) QueryRequestDetailsWithHotPool(ctx context.Context, opts
 	if limit <= 0 {
 		limit = 20 // 默认每页20条
 	}
+	if offset < 0 {
+		offset = 0
+	}
+	results := make([]RequestDetail, 0, limit)
 
 	// 1. 从热池获取所有符合过滤条件的活跃请求（用于计算总数和分页）
 	allHotPoolRequests := ut.getFilteredHotPoolRequests(opts)
@@ -1858,14 +1946,10 @@ func (ut *UsageTracker) QueryRequestDetailsWithHotPool(ctx context.Context, opts
 	// 2. 获取数据库总数（用于分页计算）
 	dbCount, err := ut.CountRequestDetails(ctx, opts)
 	if err != nil {
-		slog.Warn("Failed to count database requests", "error", err)
-		dbCount = 0
+		return nil, 0, fmt.Errorf("failed to count database requests: %w", err)
 	}
 
-	// 3. 计算总数：热池 + 数据库
-	totalCount := int64(hotPoolCount) + int64(dbCount)
-
-	// 4. 热池数据按开始时间倒序排列（最新的在前）
+	// 3. 热池数据按开始时间倒序排列（最新的在前）
 	if hotPoolCount > 0 {
 		sort.Slice(allHotPoolRequests, func(i, j int) bool {
 			return allHotPoolRequests[i].StartTime.After(allHotPoolRequests[j].StartTime)
@@ -1873,61 +1957,132 @@ func (ut *UsageTracker) QueryRequestDetailsWithHotPool(ctx context.Context, opts
 	}
 
 	// 创建热池请求ID集合用于去重
-	hotPoolIDs := make(map[string]bool)
+	hotPoolIDs := make(map[string]struct{}, hotPoolCount)
+	hotPoolRequestIDs := make([]string, 0, hotPoolCount)
 	for _, req := range allHotPoolRequests {
-		hotPoolIDs[req.RequestID] = true
+		if _, exists := hotPoolIDs[req.RequestID]; exists {
+			continue
+		}
+		hotPoolIDs[req.RequestID] = struct{}{}
+		hotPoolRequestIDs = append(hotPoolRequestIDs, req.RequestID)
 	}
 
-	// 5. 根据 offset 和 limit 决定从哪里取数据
+	// 4. 计算去重后的总数（DB + 热池唯一请求）
+	overlapCount, err := ut.countRequestDetailsOverlapsByRequestIDs(ctx, opts, hotPoolRequestIDs)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count hot pool overlap requests: %w", err)
+	}
+	if overlapCount > dbCount {
+		overlapCount = dbCount
+	}
+	totalCount := int64(hotPoolCount + dbCount - overlapCount)
+	if totalCount < 0 {
+		totalCount = 0
+	}
+
+	// 5. 先填充热池数据（热池优先）
 	if offset < hotPoolCount {
-		// 当前页包含热池数据
 		hotPoolEnd := offset + limit
 		if hotPoolEnd > hotPoolCount {
 			hotPoolEnd = hotPoolCount
 		}
-		// 从热池取数据
 		results = append(results, allHotPoolRequests[offset:hotPoolEnd]...)
+	}
 
-		// 如果热池数据不够一页，从数据库补充
-		remaining := limit - len(results)
-		if remaining > 0 {
-			// 从数据库查询，offset=0 因为热池数据已经占据了前面的位置
-			dbOpts := *opts
-			dbOpts.Offset = 0
-			dbOpts.Limit = remaining + hotPoolCount // 多取一些用于去重
-			dbRequests, err := ut.QueryRequestDetails(ctx, &dbOpts)
-			if err != nil {
-				slog.Warn("Failed to query database requests", "error", err)
-			} else {
-				// 添加数据库请求（排除已在热池中的）
-				for _, req := range dbRequests {
-					if !hotPoolIDs[req.RequestID] && len(results) < limit {
-						results = append(results, req)
-					}
-				}
-			}
+	// 6. 从数据库补齐（排除热池重复，并正确跳过 offset 对应的唯一 DB 记录）
+	remaining := limit - len(results)
+	if remaining > 0 {
+		dbSkip := offset - hotPoolCount
+		if dbSkip < 0 {
+			dbSkip = 0
 		}
-	} else {
-		// 当前页只有数据库数据
-		// 调整数据库查询的 offset（减去热池数据的数量）
-		dbOpts := *opts
-		dbOpts.Offset = offset - hotPoolCount
-		dbOpts.Limit = limit + hotPoolCount // 多取一些用于去重
-
-		dbRequests, err := ut.QueryRequestDetails(ctx, &dbOpts)
+		dbRequests, err := ut.queryRequestDetailsFromDBExcludingHotPool(ctx, opts, dbSkip, remaining, hotPoolIDs)
 		if err != nil {
-			return nil, 0, fmt.Errorf("failed to query database: %w", err)
+			return nil, 0, err
 		}
-
-		// 添加数据库请求（排除已在热池中的）
-		for _, req := range dbRequests {
-			if !hotPoolIDs[req.RequestID] && len(results) < limit {
-				results = append(results, req)
-			}
-		}
+		results = append(results, dbRequests...)
 	}
 
 	return results, totalCount, nil
+}
+
+func (ut *UsageTracker) queryRequestDetailsFromDBExcludingHotPool(
+	ctx context.Context,
+	opts *QueryOptions,
+	skip int,
+	limit int,
+	hotPoolIDs map[string]struct{},
+) ([]RequestDetail, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	if opts == nil {
+		opts = &QueryOptions{}
+	}
+
+	results := make([]RequestDetail, 0, limit)
+	skipped := 0
+	fetchOffset := 0
+	chunkSize := limit + len(hotPoolIDs)
+	if chunkSize < 64 {
+		chunkSize = 64
+	}
+	if chunkSize > 512 {
+		chunkSize = 512
+	}
+
+	for {
+		dbOpts := *opts
+		dbOpts.Offset = fetchOffset
+		dbOpts.Limit = chunkSize
+
+		batch, err := ut.QueryRequestDetails(ctx, &dbOpts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query database: %w", err)
+		}
+		if len(batch) == 0 {
+			break
+		}
+
+		for _, req := range batch {
+			if _, exists := hotPoolIDs[req.RequestID]; exists {
+				continue
+			}
+			if skipped < skip {
+				skipped++
+				continue
+			}
+			results = append(results, req)
+			if len(results) >= limit {
+				return results, nil
+			}
+		}
+
+		if len(batch) < chunkSize {
+			break
+		}
+		fetchOffset += len(batch)
+	}
+
+	return results, nil
+}
+
+func requestStatusMatchesFilter(statusFilter string, requestStatus string) bool {
+	if statusFilter == "" {
+		return true
+	}
+	switch statusFilter {
+	case "failed":
+		switch requestStatus {
+		case "failed", "error", "auth_error", "rate_limited", "server_error", "network_error", "stream_error", "timeout":
+			return true
+		default:
+			return false
+		}
+	default:
+		return requestStatus == statusFilter
+	}
 }
 
 // getFilteredHotPoolRequests 获取过滤后的热池请求
@@ -1946,7 +2101,7 @@ func (ut *UsageTracker) getFilteredHotPoolRequests(opts *QueryOptions) []Request
 		// 应用过滤条件
 		if opts != nil {
 			// 状态过滤
-			if opts.Status != "" && req.Status != opts.Status {
+			if !requestStatusMatchesFilter(opts.Status, req.Status) {
 				continue
 			}
 			// 模型过滤
@@ -1960,6 +2115,21 @@ func (ut *UsageTracker) getFilteredHotPoolRequests(opts *QueryOptions) []Request
 			// 端点过滤
 			if opts.EndpointName != "" && req.EndpointName != opts.EndpointName {
 				continue
+			}
+			// 上游类型过滤
+			switch resolveRequestQuerySource(opts.UpstreamType) {
+			case requestQuerySourceAccount:
+				if req.UpstreamType != "account" {
+					continue
+				}
+			case requestQuerySourceEndpoint:
+				if req.UpstreamType != "endpoint" {
+					continue
+				}
+			case requestQuerySourceRaw:
+				if opts.UpstreamType != "" && req.UpstreamType != opts.UpstreamType {
+					continue
+				}
 			}
 			// 组过滤
 			if opts.GroupName != "" && req.GroupName != opts.GroupName {

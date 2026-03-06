@@ -5,8 +5,323 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 )
+
+type requestQuerySource string
+
+const (
+	requestQuerySourceAll      requestQuerySource = "all"
+	requestQuerySourceEndpoint requestQuerySource = "endpoint"
+	requestQuerySourceAccount  requestQuerySource = "account"
+	requestQuerySourceRaw      requestQuerySource = "raw"
+)
+
+const requestDetailsSelectFromEndpoint = `SELECT id, request_id,
+	COALESCE(client_ip, '') as client_ip,
+	COALESCE(user_agent, '') as user_agent,
+	method, path, start_time, end_time, duration_ms,
+	COALESCE(channel, '') as channel,
+	COALESCE(endpoint_name, '') as endpoint_name,
+	COALESCE(group_name, '') as group_name,
+	COALESCE(upstream_type, 'endpoint') as upstream_type,
+	COALESCE(upstream_source_name, '') as upstream_source_name,
+	COALESCE(upstream_name, '') as upstream_name,
+	COALESCE(upstream_id, 0) as upstream_id,
+	COALESCE(model_name, '') as model_name,
+	COALESCE(is_streaming, false) as is_streaming,
+	status, http_status_code, retry_count,
+	COALESCE(failure_reason, '') as failure_reason,
+	COALESCE(last_failure_reason, '') as last_failure_reason,
+	COALESCE(cancel_reason, '') as cancel_reason,
+	input_tokens, output_tokens,
+	cache_creation_tokens, COALESCE(cache_creation_5m_tokens, 0) as cache_creation_5m_tokens, COALESCE(cache_creation_1h_tokens, 0) as cache_creation_1h_tokens,
+	cache_read_tokens,
+	input_cost_usd, output_cost_usd, cache_creation_cost_usd,
+	cache_read_cost_usd, total_cost_usd,
+	created_at, updated_at
+	FROM request_logs WHERE 1=1`
+
+const requestDetailsSelectFromAccount = `SELECT id, request_id,
+	COALESCE(client_ip, '') as client_ip,
+	COALESCE(user_agent, '') as user_agent,
+	COALESCE(method, 'POST') as method,
+	COALESCE(path, '/v1/responses') as path,
+	start_time, end_time, duration_ms,
+	'' as channel,
+	COALESCE(account_name, '') as endpoint_name,
+	COALESCE(source_name, '') as group_name,
+	'account' as upstream_type,
+	COALESCE(source_name, '') as upstream_source_name,
+	COALESCE(account_name, '') as upstream_name,
+	COALESCE(account_id, 0) as upstream_id,
+	COALESCE(model_name, '') as model_name,
+	COALESCE(is_streaming, false) as is_streaming,
+	status, http_status_code, COALESCE(retry_count, 0) as retry_count,
+	COALESCE(failure_reason, '') as failure_reason,
+	COALESCE(last_failure_reason, '') as last_failure_reason,
+	COALESCE(cancel_reason, '') as cancel_reason,
+	COALESCE(input_tokens, 0) as input_tokens,
+	COALESCE(output_tokens, 0) as output_tokens,
+	COALESCE(cache_creation_tokens, 0) as cache_creation_tokens,
+	COALESCE(cache_creation_5m_tokens, 0) as cache_creation_5m_tokens,
+	COALESCE(cache_creation_1h_tokens, 0) as cache_creation_1h_tokens,
+	COALESCE(cache_read_tokens, 0) as cache_read_tokens,
+	COALESCE(input_cost_usd, 0.0) as input_cost_usd,
+	COALESCE(output_cost_usd, 0.0) as output_cost_usd,
+	COALESCE(cache_creation_cost_usd, 0.0) as cache_creation_cost_usd,
+	COALESCE(cache_read_cost_usd, 0.0) as cache_read_cost_usd,
+	COALESCE(total_cost_usd, 0.0) as total_cost_usd,
+	created_at, updated_at
+	FROM account_request_logs WHERE 1=1`
+
+func resolveRequestQuerySource(upstreamType string) requestQuerySource {
+	switch upstreamType {
+	case "", "all":
+		return requestQuerySourceAll
+	case "endpoint":
+		return requestQuerySourceEndpoint
+	case "account":
+		return requestQuerySourceAccount
+	default:
+		return requestQuerySourceRaw
+	}
+}
+
+func appendRequestStatusFilter(query string, args []interface{}, status string) (string, []interface{}) {
+	// v3.5.0 状态机重构：状态过滤兼容旧状态
+	switch status {
+	case "completed":
+		query += " AND status = ?"
+		args = append(args, "completed")
+	case "failed":
+		query += " AND status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout')"
+	case "processing":
+		query += " AND status = ?"
+		args = append(args, "processing")
+	case "cancelled":
+		query += " AND status = ?"
+		args = append(args, "cancelled")
+	case "suspended":
+		query += " AND status = ?"
+		args = append(args, "suspended")
+	case "pending":
+		query += " AND status = ?"
+		args = append(args, "pending")
+	case "forwarding":
+		query += " AND status = ?"
+		args = append(args, "forwarding")
+	case "retry":
+		query += " AND status = ?"
+		args = append(args, "retry")
+	default:
+		query += " AND status = ?"
+		args = append(args, status)
+	}
+	return query, args
+}
+
+func appendRequestQueryFilters(query string, args []interface{}, opts *QueryOptions, source requestQuerySource) (string, []interface{}) {
+	if opts == nil {
+		return query, args
+	}
+
+	if opts.StartDate != nil {
+		query += " AND start_time >= ?"
+		args = append(args, opts.StartDate.Format("2006-01-02 15:04:05-07:00"))
+	}
+	if opts.EndDate != nil {
+		query += " AND start_time <= ?"
+		args = append(args, opts.EndDate.Format("2006-01-02 15:04:05-07:00"))
+	}
+	if opts.ModelName != "" {
+		query += " AND model_name = ?"
+		args = append(args, opts.ModelName)
+	}
+
+	if opts.Channel != "" {
+		if source != requestQuerySourceAccount {
+			query += " AND channel = ?"
+			args = append(args, opts.Channel)
+		}
+	}
+	if opts.EndpointName != "" {
+		if source == requestQuerySourceAccount {
+			query += " AND account_name = ?"
+			args = append(args, opts.EndpointName)
+		} else {
+			query += " AND endpoint_name = ?"
+			args = append(args, opts.EndpointName)
+		}
+	}
+	if opts.GroupName != "" {
+		if source == requestQuerySourceAccount {
+			query += " AND source_name = ?"
+			args = append(args, opts.GroupName)
+		} else {
+			query += " AND group_name = ?"
+			args = append(args, opts.GroupName)
+		}
+	}
+
+	switch source {
+	case requestQuerySourceEndpoint:
+		query += " AND COALESCE(upstream_type, 'endpoint') = 'endpoint'"
+	case requestQuerySourceRaw:
+		if opts.UpstreamType != "" {
+			query += " AND COALESCE(upstream_type, 'endpoint') = ?"
+			args = append(args, opts.UpstreamType)
+		}
+	}
+
+	if opts.Status != "" {
+		query, args = appendRequestStatusFilter(query, args, opts.Status)
+	}
+
+	return query, args
+}
+
+func requestDetailsBaseSelectForSource(source requestQuerySource) string {
+	if source == requestQuerySourceAccount {
+		return requestDetailsSelectFromAccount
+	}
+	return requestDetailsSelectFromEndpoint
+}
+
+func requestCountBaseQueryForSource(source requestQuerySource) string {
+	if source == requestQuerySourceAccount {
+		return "SELECT COUNT(*) FROM account_request_logs WHERE 1=1"
+	}
+	return "SELECT COUNT(*) FROM request_logs WHERE 1=1"
+}
+
+func appendRequestIDInFilter(query string, args []interface{}, requestIDs []string) (string, []interface{}) {
+	if len(requestIDs) == 0 {
+		query += " AND 1=0"
+		return query, args
+	}
+	placeholders := strings.Repeat("?,", len(requestIDs))
+	placeholders = strings.TrimSuffix(placeholders, ",")
+	query += " AND request_id IN (" + placeholders + ")"
+	for _, id := range requestIDs {
+		args = append(args, id)
+	}
+	return query, args
+}
+
+func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail, error) {
+	var details []RequestDetail
+	for rows.Next() {
+		var detail RequestDetail
+		err := rows.Scan(
+			&detail.ID, &detail.RequestID,
+			&detail.ClientIP, &detail.UserAgent, &detail.Method, &detail.Path,
+			&detail.StartTime, &detail.EndTime, &detail.DurationMs,
+			&detail.Channel, &detail.EndpointName, &detail.GroupName,
+			&detail.UpstreamType, &detail.UpstreamSourceName, &detail.UpstreamName, &detail.UpstreamID,
+			&detail.ModelName, &detail.IsStreaming,
+			&detail.Status, &detail.HTTPStatusCode, &detail.RetryCount,
+			&detail.FailureReason, &detail.LastFailureReason, &detail.CancelReason,
+			&detail.InputTokens, &detail.OutputTokens,
+			&detail.CacheCreationTokens, &detail.CacheCreation5mTokens, &detail.CacheCreation1hTokens, &detail.CacheReadTokens,
+			&detail.InputCostUSD, &detail.OutputCostUSD,
+			&detail.CacheCreationCostUSD, &detail.CacheReadCostUSD, &detail.TotalCostUSD,
+			&detail.CreatedAt, &detail.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan request detail: %w", err)
+		}
+		details = append(details, detail)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating request detail rows: %w", err)
+	}
+	return details, nil
+}
+
+func (ut *UsageTracker) queryRequestDetailsBySource(ctx context.Context, opts *QueryOptions, source requestQuerySource) ([]RequestDetail, error) {
+	query := requestDetailsBaseSelectForSource(source)
+	args := make([]interface{}, 0, 16)
+	query, args = appendRequestQueryFilters(query, args, opts, source)
+	query += " ORDER BY start_time DESC"
+
+	if opts != nil {
+		if opts.Limit > 0 {
+			query += " LIMIT ?"
+			args = append(args, opts.Limit)
+		}
+		if opts.Offset > 0 {
+			query += " OFFSET ?"
+			args = append(args, opts.Offset)
+		}
+	}
+
+	rows, err := ut.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query request details: %w", err)
+	}
+	defer rows.Close()
+
+	return ut.scanRequestDetailsRows(rows)
+}
+
+func (ut *UsageTracker) countRequestDetailsBySource(ctx context.Context, opts *QueryOptions, source requestQuerySource) (int, error) {
+	query := requestCountBaseQueryForSource(source)
+	args := make([]interface{}, 0, 16)
+	query, args = appendRequestQueryFilters(query, args, opts, source)
+
+	var count int
+	if err := ut.readDB.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to count request details: %w", err)
+	}
+	return count, nil
+}
+
+func (ut *UsageTracker) countRequestDetailsBySourceAndRequestIDs(ctx context.Context, opts *QueryOptions, source requestQuerySource, requestIDs []string) (int, error) {
+	query := requestCountBaseQueryForSource(source)
+	args := make([]interface{}, 0, 16+len(requestIDs))
+	query, args = appendRequestQueryFilters(query, args, opts, source)
+	query, args = appendRequestIDInFilter(query, args, requestIDs)
+
+	var count int
+	if err := ut.readDB.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to count request details by request IDs: %w", err)
+	}
+	return count, nil
+}
+
+func (ut *UsageTracker) countRequestDetailsOverlapsByRequestIDs(ctx context.Context, opts *QueryOptions, requestIDs []string) (int, error) {
+	if ut.readDB == nil {
+		return 0, fmt.Errorf("read database not initialized")
+	}
+	if len(requestIDs) == 0 {
+		return 0, nil
+	}
+
+	if opts == nil {
+		opts = &QueryOptions{}
+	}
+
+	source := resolveRequestQuerySource(opts.UpstreamType)
+	switch source {
+	case requestQuerySourceAll:
+		endpointCount, err := ut.countRequestDetailsBySourceAndRequestIDs(ctx, opts, requestQuerySourceEndpoint, requestIDs)
+		if err != nil {
+			return 0, err
+		}
+		accountCount, err := ut.countRequestDetailsBySourceAndRequestIDs(ctx, opts, requestQuerySourceAccount, requestIDs)
+		if err != nil {
+			return 0, err
+		}
+		return endpointCount + accountCount, nil
+	case requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
+		return ut.countRequestDetailsBySourceAndRequestIDs(ctx, opts, source, requestIDs)
+	default:
+		return ut.countRequestDetailsBySourceAndRequestIDs(ctx, opts, requestQuerySourceRaw, requestIDs)
+	}
+}
 
 // QueryOptions represents options for querying usage data
 type QueryOptions struct {
@@ -16,6 +331,7 @@ type QueryOptions struct {
 	Channel      string
 	EndpointName string
 	GroupName    string
+	UpstreamType string
 	Status       string
 	Limit        int
 	Offset       int
@@ -23,43 +339,47 @@ type QueryOptions struct {
 
 // UsageSummary represents a summary of usage data
 type UsageSummary struct {
-	Date         string    `json:"date"`
-	ModelName    string    `json:"model_name"`
-	EndpointName string    `json:"endpoint_name"`
-	GroupName    string    `json:"group_name"`
-	RequestCount int       `json:"request_count"`
-	SuccessCount int       `json:"success_count"`
-	ErrorCount   int       `json:"error_count"`
-	
+	Date         string `json:"date"`
+	ModelName    string `json:"model_name"`
+	EndpointName string `json:"endpoint_name"`
+	GroupName    string `json:"group_name"`
+	RequestCount int    `json:"request_count"`
+	SuccessCount int    `json:"success_count"`
+	ErrorCount   int    `json:"error_count"`
+
 	TotalInputTokens         int64   `json:"total_input_tokens"`
 	TotalOutputTokens        int64   `json:"total_output_tokens"`
 	TotalCacheCreationTokens int64   `json:"total_cache_creation_tokens"`
 	TotalCacheReadTokens     int64   `json:"total_cache_read_tokens"`
-	TotalCostUSD            float64 `json:"total_cost_usd"`
-	
-	AvgDurationMs float64 `json:"avg_duration_ms"`
+	TotalCostUSD             float64 `json:"total_cost_usd"`
+
+	AvgDurationMs float64   `json:"avg_duration_ms"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // RequestDetail represents a detailed request record
 type RequestDetail struct {
-	ID          int64      `json:"id"`
-	RequestID   string     `json:"request_id"`
-	ClientIP    string     `json:"client_ip"`
-	UserAgent   string     `json:"user_agent"`
-	Method      string     `json:"method"`
-	Path        string     `json:"path"`
+	ID        int64  `json:"id"`
+	RequestID string `json:"request_id"`
+	ClientIP  string `json:"client_ip"`
+	UserAgent string `json:"user_agent"`
+	Method    string `json:"method"`
+	Path      string `json:"path"`
 
-	StartTime   time.Time  `json:"start_time"`
-	EndTime     *time.Time `json:"end_time"`
-	DurationMs  *int64     `json:"duration_ms"`
+	StartTime  time.Time  `json:"start_time"`
+	EndTime    *time.Time `json:"end_time"`
+	DurationMs *int64     `json:"duration_ms"`
 
-	Channel      string    `json:"channel"`      // 渠道标签
-	EndpointName string    `json:"endpoint_name"`
-	GroupName    string    `json:"group_name"`
-	ModelName    string    `json:"model_name"`
-	IsStreaming  bool      `json:"is_streaming"` // 是否为流式请求
+	Channel            string `json:"channel"` // 渠道标签
+	EndpointName       string `json:"endpoint_name"`
+	GroupName          string `json:"group_name"`
+	UpstreamType       string `json:"upstream_type"`
+	UpstreamSourceName string `json:"upstream_source_name"`
+	UpstreamName       string `json:"upstream_name"`
+	UpstreamID         int64  `json:"upstream_id"`
+	ModelName          string `json:"model_name"`
+	IsStreaming        bool   `json:"is_streaming"` // 是否为流式请求
 
 	Status         string `json:"status"`
 	HTTPStatusCode *int   `json:"http_status_code"`
@@ -96,19 +416,145 @@ type UsageStats struct {
 	TotalCost     float64 `json:"total_cost_usd"`
 }
 
+// AggregatedRequestStats 表示带筛选条件的请求聚合统计。
+type AggregatedRequestStats struct {
+	TotalRequests   int64
+	SuccessRequests int64
+	FailedRequests  int64
+	TotalTokens     int64
+	TotalCostUSD    float64
+	TotalDurationMs int64
+	DurationCount   int64
+}
+
+const aggregatedRequestStatsSelectFromEndpoint = `SELECT
+	COUNT(*) as total_requests,
+	COALESCE(SUM(CASE WHEN status IN ('completed', 'processing') THEN 1 ELSE 0 END), 0) as success_requests,
+	COALESCE(SUM(CASE WHEN status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout') THEN 1 ELSE 0 END), 0) as failed_requests,
+	COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
+	COALESCE(SUM(total_cost_usd), 0.0) as total_cost_usd,
+	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE 0 END), 0) as total_duration_ms,
+	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN 1 ELSE 0 END), 0) as duration_count
+	FROM request_logs WHERE 1=1`
+
+const aggregatedRequestStatsSelectFromAccount = `SELECT
+	COUNT(*) as total_requests,
+	COALESCE(SUM(CASE WHEN status IN ('completed', 'processing') THEN 1 ELSE 0 END), 0) as success_requests,
+	COALESCE(SUM(CASE WHEN status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout') THEN 1 ELSE 0 END), 0) as failed_requests,
+	COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
+	COALESCE(SUM(total_cost_usd), 0.0) as total_cost_usd,
+	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE 0 END), 0) as total_duration_ms,
+	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN 1 ELSE 0 END), 0) as duration_count
+	FROM account_request_logs WHERE 1=1`
+
+func aggregatedRequestStatsBaseQueryForSource(source requestQuerySource) string {
+	if source == requestQuerySourceAccount {
+		return aggregatedRequestStatsSelectFromAccount
+	}
+	return aggregatedRequestStatsSelectFromEndpoint
+}
+
+func (stats *AggregatedRequestStats) add(other AggregatedRequestStats) {
+	stats.TotalRequests += other.TotalRequests
+	stats.SuccessRequests += other.SuccessRequests
+	stats.FailedRequests += other.FailedRequests
+	stats.TotalTokens += other.TotalTokens
+	stats.TotalCostUSD += other.TotalCostUSD
+	stats.TotalDurationMs += other.TotalDurationMs
+	stats.DurationCount += other.DurationCount
+}
+
+func (ut *UsageTracker) queryAggregatedRequestStatsBySource(ctx context.Context, opts *QueryOptions, source requestQuerySource) (*AggregatedRequestStats, error) {
+	query := aggregatedRequestStatsBaseQueryForSource(source)
+	args := make([]interface{}, 0, 16)
+	query, args = appendRequestQueryFilters(query, args, opts, source)
+
+	var stats AggregatedRequestStats
+	err := ut.readDB.QueryRowContext(ctx, query, args...).Scan(
+		&stats.TotalRequests,
+		&stats.SuccessRequests,
+		&stats.FailedRequests,
+		&stats.TotalTokens,
+		&stats.TotalCostUSD,
+		&stats.TotalDurationMs,
+		&stats.DurationCount,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query aggregated request stats: %w", err)
+	}
+	return &stats, nil
+}
+
+// QueryAggregatedRequestStatsWithHotPool 查询带筛选条件的请求聚合统计（数据库 + 热池）。
+func (ut *UsageTracker) QueryAggregatedRequestStatsWithHotPool(ctx context.Context, opts *QueryOptions) (*AggregatedRequestStats, error) {
+	if ut.readDB == nil {
+		return nil, fmt.Errorf("read database not initialized")
+	}
+	if opts == nil {
+		opts = &QueryOptions{}
+	}
+
+	source := resolveRequestQuerySource(opts.UpstreamType)
+	var stats AggregatedRequestStats
+
+	switch source {
+	case requestQuerySourceAll:
+		endpointStats, err := ut.queryAggregatedRequestStatsBySource(ctx, opts, requestQuerySourceEndpoint)
+		if err != nil {
+			return nil, err
+		}
+		accountStats, err := ut.queryAggregatedRequestStatsBySource(ctx, opts, requestQuerySourceAccount)
+		if err != nil {
+			return nil, err
+		}
+		stats.add(*endpointStats)
+		stats.add(*accountStats)
+	case requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
+		sourceStats, err := ut.queryAggregatedRequestStatsBySource(ctx, opts, source)
+		if err != nil {
+			return nil, err
+		}
+		stats.add(*sourceStats)
+	default:
+		sourceStats, err := ut.queryAggregatedRequestStatsBySource(ctx, opts, requestQuerySourceRaw)
+		if err != nil {
+			return nil, err
+		}
+		stats.add(*sourceStats)
+	}
+
+	for _, req := range ut.getFilteredHotPoolRequests(opts) {
+		stats.TotalRequests++
+		switch req.Status {
+		case "completed", "processing":
+			stats.SuccessRequests++
+		case "failed", "error", "auth_error", "rate_limited", "server_error", "network_error", "stream_error", "timeout":
+			stats.FailedRequests++
+		}
+		stats.TotalTokens += req.InputTokens + req.OutputTokens + req.CacheCreationTokens + req.CacheReadTokens
+		stats.TotalCostUSD += req.TotalCostUSD
+		if req.DurationMs != nil && *req.DurationMs > 0 {
+			stats.TotalDurationMs += *req.DurationMs
+			stats.DurationCount++
+		}
+	}
+
+	return &stats, nil
+}
+
 // EndpointCostSummary represents cost summary data for an endpoint
 type EndpointCostSummary struct {
-	EndpointName   string  `json:"endpoint_name"`
-	GroupName      string  `json:"group_name"`
-	TotalTokens    int64   `json:"total_tokens"`
-	TotalCostUSD   float64 `json:"total_cost_usd"`
-	RequestCount   int     `json:"request_count"`
-	SuccessCount   int     `json:"success_count"`
+	EndpointName string  `json:"endpoint_name"`
+	GroupName    string  `json:"group_name"`
+	TotalTokens  int64   `json:"total_tokens"`
+	TotalCostUSD float64 `json:"total_cost_usd"`
+	RequestCount int     `json:"request_count"`
+	SuccessCount int     `json:"success_count"`
 
-	InputTokens         int64   `json:"input_tokens"`
-	OutputTokens        int64   `json:"output_tokens"`
-	CacheCreationTokens int64   `json:"cache_creation_tokens"`
-	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	InputTokens         int64 `json:"input_tokens"`
+	OutputTokens        int64 `json:"output_tokens"`
+	CacheCreationTokens int64 `json:"cache_creation_tokens"`
+	CacheReadTokens     int64 `json:"cache_read_tokens"`
 
 	InputCostUSD         float64 `json:"input_cost_usd"`
 	OutputCostUSD        float64 `json:"output_cost_usd"`
@@ -144,9 +590,9 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 		total_cache_creation_tokens, total_cache_read_tokens,
 		total_cost_usd, COALESCE(avg_duration_ms, 0.0) as avg_duration_ms, created_at, updated_at
 		FROM usage_summary WHERE 1=1`
-	
+
 	var args []interface{}
-	
+
 	if opts.StartDate != nil {
 		query += " AND date >= ?"
 		args = append(args, opts.StartDate.Format("2006-01-02"))
@@ -167,9 +613,9 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 		query += " AND group_name = ?"
 		args = append(args, opts.GroupName)
 	}
-	
+
 	query += " ORDER BY date DESC, total_cost_usd DESC"
-	
+
 	if opts.Limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, opts.Limit)
@@ -178,13 +624,13 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 		query += " OFFSET ?"
 		args = append(args, opts.Offset)
 	}
-	
+
 	rows, err := ut.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query usage summary: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var summaries []UsageSummary
 	for rows.Next() {
 		var summary UsageSummary
@@ -201,11 +647,11 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 		}
 		summaries = append(summaries, summary)
 	}
-	
+
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating usage summary rows: %w", err)
 	}
-	
+
 	return summaries, nil
 }
 
@@ -214,139 +660,43 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 	if ut.readDB == nil {
 		return nil, fmt.Errorf("read database not initialized")
 	}
+	if opts == nil {
+		opts = &QueryOptions{}
+	}
 
-	query := `SELECT id, request_id,
-		COALESCE(client_ip, '') as client_ip,
-		COALESCE(user_agent, '') as user_agent,
-		method, path, start_time, end_time, duration_ms,
-		COALESCE(channel, '') as channel,
-		COALESCE(endpoint_name, '') as endpoint_name,
-		COALESCE(group_name, '') as group_name,
-		COALESCE(model_name, '') as model_name,
-		COALESCE(is_streaming, false) as is_streaming,
-		status, http_status_code, retry_count,
-		COALESCE(failure_reason, '') as failure_reason,
-		COALESCE(last_failure_reason, '') as last_failure_reason,
-		COALESCE(cancel_reason, '') as cancel_reason,
-		input_tokens, output_tokens,
-		cache_creation_tokens, COALESCE(cache_creation_5m_tokens, 0) as cache_creation_5m_tokens, COALESCE(cache_creation_1h_tokens, 0) as cache_creation_1h_tokens,
-		cache_read_tokens,
-		input_cost_usd, output_cost_usd, cache_creation_cost_usd,
-		cache_read_cost_usd, total_cost_usd,
-		created_at, updated_at
-		FROM request_logs WHERE 1=1`
+	source := resolveRequestQuerySource(opts.UpstreamType)
+	switch source {
+	case requestQuerySourceAll:
+		endpointQuery := requestDetailsBaseSelectForSource(requestQuerySourceEndpoint)
+		endpointArgs := make([]interface{}, 0, 16)
+		endpointQuery, endpointArgs = appendRequestQueryFilters(endpointQuery, endpointArgs, opts, requestQuerySourceEndpoint)
 
-	var args []interface{}
+		accountQuery := requestDetailsBaseSelectForSource(requestQuerySourceAccount)
+		accountArgs := make([]interface{}, 0, 16)
+		accountQuery, accountArgs = appendRequestQueryFilters(accountQuery, accountArgs, opts, requestQuerySourceAccount)
 
-	if opts.StartDate != nil {
-		query += " AND start_time >= ?"
-		args = append(args, opts.StartDate.Format("2006-01-02 15:04:05-07:00"))
-	}
-	if opts.EndDate != nil {
-		query += " AND start_time <= ?"
-		args = append(args, opts.EndDate.Format("2006-01-02 15:04:05-07:00"))
-	}
-	if opts.ModelName != "" {
-		query += " AND model_name = ?"
-		args = append(args, opts.ModelName)
-	}
-	if opts.Channel != "" {
-		query += " AND channel = ?"
-		args = append(args, opts.Channel)
-	}
-	if opts.EndpointName != "" {
-		query += " AND endpoint_name = ?"
-		args = append(args, opts.EndpointName)
-	}
-	if opts.GroupName != "" {
-		query += " AND group_name = ?"
-		args = append(args, opts.GroupName)
-	}
-	if opts.Status != "" {
-		// v3.5.0状态机重构 - 状态与错误分离的兼容查询
-		switch opts.Status {
-		case "completed":
-			// 已完成状态：精确匹配
-			query += " AND status = ?"
-			args = append(args, "completed")
-		case "failed":
-			// 失败状态：包含新架构的failed状态 + 旧版本的各种错误状态
-			query += " AND status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout')"
-		case "processing":
-			// 处理中状态：精确匹配
-			query += " AND status = ?"
-			args = append(args, "processing")
-		case "cancelled":
-			// 取消状态：精确匹配
-			query += " AND status = ?"
-			args = append(args, "cancelled")
-		case "suspended":
-			// 挂起状态：精确匹配
-			query += " AND status = ?"
-			args = append(args, "suspended")
-		case "pending":
-			// 等待状态：精确匹配
-			query += " AND status = ?"
-			args = append(args, "pending")
-		case "forwarding":
-			// 转发状态：精确匹配
-			query += " AND status = ?"
-			args = append(args, "forwarding")
-		case "retry":
-			// 重试状态：精确匹配
-			query += " AND status = ?"
-			args = append(args, "retry")
-		default:
-			// 精确匹配其他状态
-			query += " AND status = ?"
-			args = append(args, opts.Status)
+		query := "SELECT * FROM (" + endpointQuery + " UNION ALL " + accountQuery + ") AS merged_requests ORDER BY start_time DESC"
+		args := append(endpointArgs, accountArgs...)
+		if opts.Limit > 0 {
+			query += " LIMIT ?"
+			args = append(args, opts.Limit)
 		}
-	}
+		if opts.Offset > 0 {
+			query += " OFFSET ?"
+			args = append(args, opts.Offset)
+		}
 
-	query += " ORDER BY start_time DESC"
-	
-	if opts.Limit > 0 {
-		query += " LIMIT ?"
-		args = append(args, opts.Limit)
-	}
-	if opts.Offset > 0 {
-		query += " OFFSET ?"
-		args = append(args, opts.Offset)
-	}
-	
-	rows, err := ut.readDB.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query request details: %w", err)
-	}
-	defer rows.Close()
-	
-	var details []RequestDetail
-	for rows.Next() {
-		var detail RequestDetail
-		err := rows.Scan(
-			&detail.ID, &detail.RequestID,
-			&detail.ClientIP, &detail.UserAgent, &detail.Method, &detail.Path,
-			&detail.StartTime, &detail.EndTime, &detail.DurationMs,
-			&detail.Channel, &detail.EndpointName, &detail.GroupName, &detail.ModelName, &detail.IsStreaming,
-			&detail.Status, &detail.HTTPStatusCode, &detail.RetryCount,
-			&detail.FailureReason, &detail.LastFailureReason, &detail.CancelReason,
-			&detail.InputTokens, &detail.OutputTokens,
-			&detail.CacheCreationTokens, &detail.CacheCreation5mTokens, &detail.CacheCreation1hTokens, &detail.CacheReadTokens,
-			&detail.InputCostUSD, &detail.OutputCostUSD,
-			&detail.CacheCreationCostUSD, &detail.CacheReadCostUSD, &detail.TotalCostUSD,
-			&detail.CreatedAt, &detail.UpdatedAt,
-		)
+		rows, err := ut.readDB.QueryContext(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan request detail: %w", err)
+			return nil, fmt.Errorf("failed to query request details: %w", err)
 		}
-		details = append(details, detail)
+		defer rows.Close()
+		return ut.scanRequestDetailsRows(rows)
+	case requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
+		return ut.queryRequestDetailsBySource(ctx, opts, source)
+	default:
+		return ut.queryRequestDetailsBySource(ctx, opts, requestQuerySourceRaw)
 	}
-	
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating request detail rows: %w", err)
-	}
-	
-	return details, nil
 }
 
 // QueryUsageStats queries aggregated usage statistics
@@ -358,7 +708,7 @@ func (ut *UsageTracker) QueryUsageStats(ctx context.Context, period string) (*Us
 	// Calculate date range based on period
 	endDate := time.Now()
 	var startDate time.Time
-	
+
 	switch period {
 	case "1d":
 		startDate = endDate.AddDate(0, 0, -1)
@@ -371,7 +721,7 @@ func (ut *UsageTracker) QueryUsageStats(ctx context.Context, period string) (*Us
 	default:
 		startDate = endDate.AddDate(0, 0, -7) // default to 7 days
 	}
-	
+
 	query := `SELECT 
 		COUNT(*) as total_requests,
 		CAST(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*) * 100 as success_rate,
@@ -379,10 +729,10 @@ func (ut *UsageTracker) QueryUsageStats(ctx context.Context, period string) (*Us
 		SUM(total_cost_usd) as total_cost
 		FROM request_logs 
 		WHERE start_time >= ? AND start_time <= ?`
-	
+
 	var stats UsageStats
 	stats.Period = period
-	
+
 	err := ut.readDB.QueryRowContext(ctx, query, startDate, endDate).Scan(
 		&stats.TotalRequests,
 		&stats.SuccessRate,
@@ -392,15 +742,15 @@ func (ut *UsageTracker) QueryUsageStats(ctx context.Context, period string) (*Us
 	if err != nil {
 		return nil, fmt.Errorf("failed to query usage stats: %w", err)
 	}
-	
+
 	// 添加调试日志
-	slog.Debug("Usage stats query result", 
+	slog.Debug("Usage stats query result",
 		"total_requests", stats.TotalRequests,
 		"success_rate", stats.SuccessRate,
 		"period", period,
 		"start_date", startDate,
 		"end_date", endDate)
-	
+
 	return &stats, nil
 }
 
@@ -409,46 +759,27 @@ func (ut *UsageTracker) CountRequestDetails(ctx context.Context, opts *QueryOpti
 	if ut.readDB == nil {
 		return 0, fmt.Errorf("read database not initialized")
 	}
-
-	query := "SELECT COUNT(*) FROM request_logs WHERE 1=1"
-	var args []interface{}
-
-	if opts.StartDate != nil {
-		query += " AND start_time >= ?"
-		args = append(args, opts.StartDate.Format("2006-01-02 15:04:05-07:00"))
-	}
-	if opts.EndDate != nil {
-		query += " AND start_time <= ?"
-		args = append(args, opts.EndDate.Format("2006-01-02 15:04:05-07:00"))
-	}
-	if opts.ModelName != "" {
-		query += " AND model_name = ?"
-		args = append(args, opts.ModelName)
-	}
-	if opts.Channel != "" {
-		query += " AND channel = ?"
-		args = append(args, opts.Channel)
-	}
-	if opts.EndpointName != "" {
-		query += " AND endpoint_name = ?"
-		args = append(args, opts.EndpointName)
-	}
-	if opts.GroupName != "" {
-		query += " AND group_name = ?"
-		args = append(args, opts.GroupName)
-	}
-	if opts.Status != "" {
-		query += " AND status = ?"
-		args = append(args, opts.Status)
+	if opts == nil {
+		opts = &QueryOptions{}
 	}
 
-	var count int
-	err := ut.readDB.QueryRowContext(ctx, query, args...).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count request details: %w", err)
+	source := resolveRequestQuerySource(opts.UpstreamType)
+	switch source {
+	case requestQuerySourceAll:
+		endpointCount, err := ut.countRequestDetailsBySource(ctx, opts, requestQuerySourceEndpoint)
+		if err != nil {
+			return 0, err
+		}
+		accountCount, err := ut.countRequestDetailsBySource(ctx, opts, requestQuerySourceAccount)
+		if err != nil {
+			return 0, err
+		}
+		return endpointCount + accountCount, nil
+	case requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
+		return ut.countRequestDetailsBySource(ctx, opts, source)
+	default:
+		return ut.countRequestDetailsBySource(ctx, opts, requestQuerySourceRaw)
 	}
-
-	return count, nil
 }
 
 // GetEndpointCostsForDate queries endpoint cost summary data for a specific date

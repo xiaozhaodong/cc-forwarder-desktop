@@ -60,6 +60,10 @@ type App struct {
 	settingsService *service.SettingsService // 设置业务服务
 	portManager     *utils.PortManager       // 端口管理器
 
+	// v6.0+ 账号池存储 (SQLite)
+	accountPoolStore   store.AccountPoolStore      // 账号池数据持久化
+	accountPoolService *service.AccountPoolService // 账号池业务服务
+
 	// HTTP 代理服务器 (保留，监听配置的端口)
 	proxyServer *http.Server
 
@@ -71,6 +75,10 @@ type App struct {
 	mu        sync.RWMutex
 	isRunning bool
 
+	// OpenAI OAuth 临时会话（用于授权链接 -> 回调URL换RT）
+	oauthSessionMu sync.Mutex
+	oauthSessions  map[string]openAIOAuthSession
+
 	// 日志处理器（用于查询和广播）
 	logHandler *logging.BroadcastHandler
 	logEmitter *logging.EventEmitter
@@ -79,7 +87,8 @@ type App struct {
 // NewApp 创建新的应用实例
 func NewApp() *App {
 	return &App{
-		startTime: time.Now(),
+		startTime:     time.Now(),
+		oauthSessions: make(map[string]openAIOAuthSession),
 	}
 }
 
@@ -145,6 +154,9 @@ func (a *App) startup(ctx context.Context) {
 
 	// 7.5 初始化模型定价存储 (v5.0+ SQLite)
 	a.setupModelPricingStore()
+
+	// 7.7 初始化账号池存储 (v6.0+ SQLite)
+	a.setupAccountPoolStore()
 
 	// 7.6 同步端点倍率到 UsageTracker（用于成本计算）
 	a.syncEndpointMultipliersToTracker(ctx)
@@ -415,9 +427,9 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 			Description:          "未知模型使用的默认定价",
 			InputPrice:           3.0,
 			OutputPrice:          15.0,
-			CacheCreationPrice5m: 3.75,  // 3.0 * 1.25
-			CacheCreationPrice1h: 6.0,   // 3.0 * 2.0
-			CacheReadPrice:       0.30,  // 3.0 * 0.1
+			CacheCreationPrice5m: 3.75, // 3.0 * 1.25
+			CacheCreationPrice1h: 6.0,  // 3.0 * 2.0
+			CacheReadPrice:       0.30, // 3.0 * 0.1
 			IsDefault:            true,
 		},
 		// Claude Sonnet 4
@@ -449,9 +461,9 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 			Description:          "Claude 3.5 Haiku (2024-10-22)",
 			InputPrice:           0.80,
 			OutputPrice:          4.0,
-			CacheCreationPrice5m: 1.0,   // 0.80 * 1.25
-			CacheCreationPrice1h: 1.6,   // 0.80 * 2.0
-			CacheReadPrice:       0.08,  // 0.80 * 0.1
+			CacheCreationPrice5m: 1.0,  // 0.80 * 1.25
+			CacheCreationPrice1h: 1.6,  // 0.80 * 2.0
+			CacheReadPrice:       0.08, // 0.80 * 0.1
 		},
 		// Claude Opus 4
 		{
@@ -472,9 +484,9 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 			Description:          "Claude Sonnet 4.5 (2025-09-29)",
 			InputPrice:           3.0,
 			OutputPrice:          15.0,
-			CacheCreationPrice5m: 3.75,  // 3.0 * 1.25
-			CacheCreationPrice1h: 6.0,   // 3.0 * 2.0
-			CacheReadPrice:       0.30,  // 3.0 * 0.1
+			CacheCreationPrice5m: 3.75, // 3.0 * 1.25
+			CacheCreationPrice1h: 6.0,  // 3.0 * 2.0
+			CacheReadPrice:       0.30, // 3.0 * 0.1
 		},
 		// Claude Haiku 4.5
 		{
@@ -494,9 +506,9 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 			Description:          "Claude Opus 4.5 (2025-11-01)",
 			InputPrice:           5.0,
 			OutputPrice:          25.0,
-			CacheCreationPrice5m: 6.25,  // 5.0 * 1.25
-			CacheCreationPrice1h: 10.0,  // 5.0 * 2.0
-			CacheReadPrice:       0.50,  // 5.0 * 0.1
+			CacheCreationPrice5m: 6.25, // 5.0 * 1.25
+			CacheCreationPrice1h: 10.0, // 5.0 * 2.0
+			CacheReadPrice:       0.50, // 5.0 * 0.1
 		},
 		// ========== 旧版本兼容 ==========
 		{
@@ -525,9 +537,9 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 			Description:          "Claude 3 Haiku (2024-03-07)",
 			InputPrice:           0.25,
 			OutputPrice:          1.25,
-			CacheCreationPrice5m: 0.31,   // 0.25 * 1.25
-			CacheCreationPrice1h: 0.50,   // 0.25 * 2.0
-			CacheReadPrice:       0.025,  // 0.25 * 0.1
+			CacheCreationPrice5m: 0.31,  // 0.25 * 1.25
+			CacheCreationPrice1h: 0.50,  // 0.25 * 2.0
+			CacheReadPrice:       0.025, // 0.25 * 0.1
 		},
 	}
 
@@ -621,7 +633,7 @@ func (a *App) setupUsageTracker() {
 		MaxRetry:        a.config.UsageTracking.MaxRetry,
 		RetentionDays:   a.config.UsageTracking.RetentionDays,
 		CleanupInterval: a.config.UsageTracking.CleanupInterval,
-		ModelPricing:    nil, // v5.0+: 定价从 SQLite model_pricing 表加载
+		ModelPricing:    nil,                     // v5.0+: 定价从 SQLite model_pricing 表加载
 		DefaultPricing:  tracking.ModelPricing{}, // v5.0+: 默认定价从 SQLite 加载
 	}
 
@@ -657,6 +669,10 @@ func (a *App) setupProxyHandler() {
 		if retryHandler := a.proxyHandler.GetRetryHandler(); retryHandler != nil {
 			retryHandler.SetUsageTracker(a.usageTracker)
 		}
+	}
+
+	if a.accountPoolService != nil {
+		a.proxyHandler.SetAccountPoolService(a.accountPoolService)
 	}
 }
 
@@ -922,6 +938,32 @@ func (a *App) setupSettingsStore() {
 	a.portManager = utils.NewPortManager(preferredPort)
 
 	a.logger.Info("✅ 系统设置存储已启用 (SQLite)")
+}
+
+// setupAccountPoolStore 设置账号池存储 (v6.0+ SQLite)
+func (a *App) setupAccountPoolStore() {
+	// 使用 usageTracker 的数据库连接
+	if a.usageTracker == nil {
+		if a.config != nil && a.config.AccountPool.Enabled {
+			a.logger.Warn("⚠️ 账号池路由已启用，但 usage_tracking 未启用；Codex /v1/responses 将返回账号池未就绪错误")
+		} else {
+			a.logger.Debug("账号池存储跳过初始化 (usage_tracking 未启用)")
+		}
+		return
+	}
+
+	db := a.usageTracker.GetDB()
+	if db == nil {
+		a.logger.Error("❌ 无法获取数据库连接 (账号池存储)")
+		if a.config != nil && a.config.AccountPool.Enabled {
+			a.logger.Warn("⚠️ 账号池路由已启用，但数据库未就绪；Codex /v1/responses 将返回账号池未就绪错误")
+		}
+		return
+	}
+
+	a.accountPoolStore = store.NewSQLiteAccountPoolStore(db)
+	a.accountPoolService = service.NewAccountPoolService(a.accountPoolStore, a.config)
+	a.logger.Info("✅ 账号池存储已启用 (SQLite)")
 }
 
 // applySettingsToConfig 从数据库加载设置并应用到运行时配置

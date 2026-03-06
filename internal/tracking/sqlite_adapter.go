@@ -206,6 +206,26 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN cache_creation_1h_cost_usd REAL DEFAULT 0",
 			description: "1小时缓存创建成本字段",
 		},
+		{
+			checkColumn: "upstream_type",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_type TEXT DEFAULT 'endpoint'",
+			description: "上游来源类型字段",
+		},
+		{
+			checkColumn: "upstream_source_name",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_source_name TEXT DEFAULT ''",
+			description: "上游来源名称字段",
+		},
+		{
+			checkColumn: "upstream_name",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_name TEXT DEFAULT ''",
+			description: "上游名称字段",
+		},
+		{
+			checkColumn: "upstream_id",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_id INTEGER",
+			description: "上游ID字段",
+		},
 	}
 
 	for _, m := range migrations {
@@ -220,6 +240,17 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 				return fmt.Errorf("failed to add column %s: %w", m.checkColumn, err)
 			}
 			s.logger.Info(fmt.Sprintf("✅ [数据库迁移] %s 添加成功", m.description))
+		}
+	}
+
+	// 索引迁移（幂等）
+	indexSQLs := []string{
+		"CREATE INDEX IF NOT EXISTS idx_request_logs_upstream_type ON request_logs(upstream_type)",
+		"CREATE INDEX IF NOT EXISTS idx_request_logs_upstream_name ON request_logs(upstream_name)",
+	}
+	for _, sqlStmt := range indexSQLs {
+		if _, err := s.db.ExecContext(ctx, sqlStmt); err != nil {
+			return fmt.Errorf("failed to create index: %w", err)
 		}
 	}
 

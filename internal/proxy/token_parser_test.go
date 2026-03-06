@@ -282,6 +282,217 @@ func TestTokenParserV2_ErrorEvent(t *testing.T) {
 	}
 }
 
+func TestTokenParserV2_ResponsesCompletedWithUsage(t *testing.T) {
+	parser := NewTokenParserWithRequestID("test-responses-usage")
+
+	lines := []string{
+		"event: response.in_progress",
+		`data: {"type":"response.in_progress","response":{"model":"gpt-5-codex"}}`,
+		"",
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{"model":"gpt-5-codex"},"usage":{"input_tokens":16069,"output_tokens":27,"input_tokens_details":{"cached_tokens":13}}}`,
+		"",
+	}
+
+	var result *ParseResult
+	for _, line := range lines {
+		if parseResult := parser.ParseSSELineV2(line); parseResult != nil {
+			result = parseResult
+		}
+	}
+
+	if result == nil {
+		t.Fatal("Expected ParseResult for response.completed, got nil")
+	}
+	if result.TokenUsage == nil {
+		t.Fatal("Expected TokenUsage in ParseResult, got nil")
+	}
+	if result.TokenUsage.InputTokens != 16069 {
+		t.Errorf("Expected InputTokens=16069, got %d", result.TokenUsage.InputTokens)
+	}
+	if result.TokenUsage.OutputTokens != 27 {
+		t.Errorf("Expected OutputTokens=27, got %d", result.TokenUsage.OutputTokens)
+	}
+	if result.TokenUsage.CacheReadTokens != 13 {
+		t.Errorf("Expected CacheReadTokens=13, got %d", result.TokenUsage.CacheReadTokens)
+	}
+	if result.ModelName != "gpt-5-codex" {
+		t.Errorf("Expected ModelName=gpt-5-codex, got %s", result.ModelName)
+	}
+	if !result.IsCompleted {
+		t.Error("Expected IsCompleted=true for response.completed")
+	}
+	if result.Status != "completed" {
+		t.Errorf("Expected Status=completed, got %s", result.Status)
+	}
+}
+
+func TestTokenParserV2_ResponsesCompletedWithUsage_DataOnlyLines(t *testing.T) {
+	parser := NewTokenParserWithRequestID("test-responses-usage-data-only")
+
+	lines := []string{
+		`data: {"type":"response.in_progress","response":{"model":"gpt-5-codex"}}`,
+		"",
+		`data: {"type":"response.completed","response":{"model":"gpt-5-codex"},"usage":{"input_tokens":42,"output_tokens":7,"input_tokens_details":{"cached_tokens":5}}}`,
+		"",
+	}
+
+	var result *ParseResult
+	for _, line := range lines {
+		if parseResult := parser.ParseSSELineV2(line); parseResult != nil {
+			result = parseResult
+		}
+	}
+
+	if result == nil {
+		t.Fatal("Expected ParseResult for data-only response.completed, got nil")
+	}
+	if result.TokenUsage == nil {
+		t.Fatal("Expected TokenUsage in ParseResult, got nil")
+	}
+	if result.TokenUsage.InputTokens != 42 || result.TokenUsage.OutputTokens != 7 || result.TokenUsage.CacheReadTokens != 5 {
+		t.Fatalf("unexpected usage: input=%d output=%d cache=%d", result.TokenUsage.InputTokens, result.TokenUsage.OutputTokens, result.TokenUsage.CacheReadTokens)
+	}
+	completeness := parser.GetStreamCompleteness()
+	if !completeness.IsComplete {
+		t.Fatalf("Expected data-only responses stream complete, got reason=%s failure=%s", completeness.Reason, completeness.FailureReason)
+	}
+}
+
+func TestTokenParserV2_ResponsesCompletedWithoutUsage(t *testing.T) {
+	parser := NewTokenParserWithRequestID("test-responses-no-usage")
+
+	lines := []string{
+		"event: response.in_progress",
+		`data: {"type":"response.in_progress","response":{"model":"gpt-5-codex"}}`,
+		"",
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{"model":"gpt-5-codex"}}`,
+		"",
+	}
+
+	var result *ParseResult
+	for _, line := range lines {
+		if parseResult := parser.ParseSSELineV2(line); parseResult != nil {
+			result = parseResult
+		}
+	}
+
+	if result == nil {
+		t.Fatal("Expected ParseResult for response.completed without usage, got nil")
+	}
+	if result.TokenUsage == nil {
+		t.Fatal("Expected empty TokenUsage in ParseResult, got nil")
+	}
+	if result.TokenUsage.InputTokens != 0 || result.TokenUsage.OutputTokens != 0 {
+		t.Errorf("Expected empty usage for no-usage response.completed, got input=%d output=%d",
+			result.TokenUsage.InputTokens, result.TokenUsage.OutputTokens)
+	}
+	if result.Status != "non_token_response" {
+		t.Errorf("Expected Status=non_token_response, got %s", result.Status)
+	}
+}
+
+func TestTokenParserV2_ResponseDeltaOnly_UsesResponsesCompleteness(t *testing.T) {
+	parser := NewTokenParserWithRequestID("test-responses-delta-only")
+
+	lines := []string{
+		`data: {"type":"response.output_text.delta","delta":"hello"}`,
+		"",
+	}
+
+	for _, line := range lines {
+		_ = parser.ParseSSELineV2(line)
+	}
+
+	completeness := parser.GetStreamCompleteness()
+	if completeness.IsComplete {
+		t.Fatal("expected incomplete responses stream when response.completed is missing")
+	}
+	if completeness.Reason != "未收到 response terminal 事件" {
+		t.Fatalf("expected response terminal completeness failure, got %s", completeness.Reason)
+	}
+	if completeness.FailureReason != "stream_truncated" {
+		t.Fatalf("expected stream_truncated, got %s", completeness.FailureReason)
+	}
+}
+
+func TestTokenParserV2_ResponsesDoneWithUsage(t *testing.T) {
+	parser := NewTokenParserWithRequestID("test-responses-done")
+
+	lines := []string{
+		`data: {"type":"response.output_text.delta","delta":"hello"}`,
+		"",
+		`data: {"type":"response.done","response":{"model":"gpt-5.3-codex"},"usage":{"input_tokens":88,"output_tokens":9,"input_tokens_details":{"cached_tokens":6}}}`,
+		"",
+	}
+
+	var result *ParseResult
+	for _, line := range lines {
+		if parseResult := parser.ParseSSELineV2(line); parseResult != nil {
+			result = parseResult
+		}
+	}
+
+	if result == nil {
+		t.Fatal("Expected ParseResult for response.done, got nil")
+	}
+	if result.TokenUsage == nil {
+		t.Fatal("Expected TokenUsage for response.done, got nil")
+	}
+	if result.TokenUsage.InputTokens != 88 || result.TokenUsage.OutputTokens != 9 || result.TokenUsage.CacheReadTokens != 6 {
+		t.Fatalf("unexpected usage: input=%d output=%d cache=%d", result.TokenUsage.InputTokens, result.TokenUsage.OutputTokens, result.TokenUsage.CacheReadTokens)
+	}
+	completeness := parser.GetStreamCompleteness()
+	if !completeness.IsComplete {
+		t.Fatalf("expected response.done to mark stream complete, got reason=%s failure=%s", completeness.Reason, completeness.FailureReason)
+	}
+}
+
+func TestTokenParserV2_ResponsesCompletedWithUsage_FallbackWhenPayloadInvalid(t *testing.T) {
+	parser := NewTokenParserWithRequestID("test-responses-usage-fallback")
+
+	lines := []string{
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{"model":"gpt-5-codex"},"usage":{"input_tokens":12,"output_tokens":3,"input_tokens_details":{"cached_tokens":1}},"broken": }`,
+		"",
+	}
+
+	var result *ParseResult
+	for _, line := range lines {
+		if parseResult := parser.ParseSSELineV2(line); parseResult != nil {
+			result = parseResult
+		}
+	}
+
+	if result == nil {
+		t.Fatal("Expected ParseResult for response.completed fallback, got nil")
+	}
+	if result.TokenUsage == nil {
+		t.Fatal("Expected TokenUsage in ParseResult, got nil")
+	}
+	if result.TokenUsage.InputTokens != 12 {
+		t.Errorf("Expected InputTokens=12, got %d", result.TokenUsage.InputTokens)
+	}
+	if result.TokenUsage.OutputTokens != 3 {
+		t.Errorf("Expected OutputTokens=3, got %d", result.TokenUsage.OutputTokens)
+	}
+	if result.TokenUsage.CacheReadTokens != 1 {
+		t.Errorf("Expected CacheReadTokens=1, got %d", result.TokenUsage.CacheReadTokens)
+	}
+	if result.ModelName != "gpt-5-codex" {
+		t.Errorf("Expected ModelName=gpt-5-codex, got %s", result.ModelName)
+	}
+	if result.Status != "completed" {
+		t.Errorf("Expected Status=completed, got %s", result.Status)
+	}
+
+	completeness := parser.GetStreamCompleteness()
+	if !completeness.IsComplete {
+		t.Fatalf("Expected responses stream complete after fallback, got reason=%s failure=%s", completeness.Reason, completeness.FailureReason)
+	}
+}
+
 // ===== v5.0.1+: Cache Creation 5m/1h 分开解析测试 =====
 
 // TestTokenParserV2_CacheCreation1hTokens 测试 1 小时缓存 token 解析
