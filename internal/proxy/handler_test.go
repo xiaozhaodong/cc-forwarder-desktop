@@ -37,9 +37,9 @@ func TestSensitiveHeaderRemoval(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Host", "localhost:8080")
 	req.Header.Set("User-Agent", "Test-Client/1.0")
-	req.Header.Set("X-API-Key", "client-api-key-12345")        // Should be removed
-	req.Header.Set("Authorization", "Bearer client-token")     // Should be removed
-	req.Header.Set("X-Custom-Header", "should-be-preserved")   // Should be kept
+	req.Header.Set("X-API-Key", "client-api-key-12345")      // Should be removed
+	req.Header.Set("Authorization", "Bearer client-token")   // Should be removed
+	req.Header.Set("X-Custom-Header", "should-be-preserved") // Should be kept
 
 	// Test the copyHeaders function
 	targetURL := "https://api.example.com/v1/messages"
@@ -109,7 +109,7 @@ func TestHostHeaderOverride(t *testing.T) {
 	originalBody := `{"test": "data"}`
 	req := httptest.NewRequest("POST", "/v1/messages", bytes.NewBufferString(originalBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Host", "localhost:8080")  // Original host
+	req.Header.Set("Host", "localhost:8080") // Original host
 	req.Header.Set("User-Agent", "Test-Client/1.0")
 	req.Header.Set("X-Original", "original-value")
 
@@ -204,5 +204,23 @@ func TestHostHeaderWithDifferentPorts(t *testing.T) {
 				t.Errorf("Expected Host field '%s', got '%s'", tc.expectedHost, targetReq.Host)
 			}
 		})
+	}
+}
+func TestExtractModelFromRequestBody_SupportsResponsesPath(t *testing.T) {
+	handler := &Handler{}
+
+	responsesModel := handler.extractModelFromRequestBody([]byte(`{"model":"gpt-5-codex","input":"hello"}`), "/v1/responses")
+	if responsesModel != "gpt-5-codex" {
+		t.Fatalf("expected gpt-5-codex for /v1/responses, got %s", responsesModel)
+	}
+
+	messagesModel := handler.extractModelFromRequestBody([]byte(`{"model":"claude-sonnet-4-20250514","messages":[]}`), "/v1/messages")
+	if messagesModel != "claude-sonnet-4-20250514" {
+		t.Fatalf("expected claude-sonnet-4-20250514 for /v1/messages, got %s", messagesModel)
+	}
+
+	otherModel := handler.extractModelFromRequestBody([]byte(`{"model":"should-not-be-used"}`), "/v1/other")
+	if otherModel != "" {
+		t.Fatalf("expected empty model for unrelated path, got %s", otherModel)
 	}
 }

@@ -429,10 +429,10 @@ func (h *Handler) SetAccountPoolService(service AccountPoolService) {
 }
 
 // extractModelFromRequestBody 从请求体中提取模型名称
-// 仅对 /v1/messages 相关路径进行解析，避免不必要的JSON解析开销
+// 仅对已知会携带 model 字段的路径进行解析，避免不必要的JSON解析开销
 func (h *Handler) extractModelFromRequestBody(bodyBytes []byte, path string) string {
-	// 仅对包含 messages 的路径尝试解析模型
-	if !strings.Contains(path, "/v1/messages") {
+	// 仅对 Claude /v1/messages 与 Codex /v1/responses 尝试解析模型
+	if !strings.Contains(path, "/v1/messages") && path != "/v1/responses" {
 		return ""
 	}
 

@@ -126,6 +126,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			processErr = h.processAccountRegularResponse(w, resp, lifecycleManager, accountName, r)
 		}
 		if processErr != nil {
+			if isCancelledAccountStreamError(processErr) {
+				return
+			}
 			lastErr = processErr
 			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, processErr.Error(), 10*time.Second)
 			// 流式响应一旦开始输出，无法切换到下一个账号，直接终止
@@ -348,6 +351,18 @@ func (h *Handler) processAccountStreamingResponse(ctx context.Context, w http.Re
 			return nil
 		}
 
+		status, parsedModelName := parseAccountStreamStatusError(err)
+		if parsedModelName != "unknown" && parsedModelName != "" && parsedModelName != "default" {
+			lifecycleManager.SetModelWithComparison(parsedModelName, "account_stream_status")
+		} else if modelName != "unknown" && modelName != "" && modelName != "default" {
+			lifecycleManager.SetModelWithComparison(modelName, "account_stream_processor")
+		}
+
+		if status == "cancelled" {
+			lifecycleManager.CancelRequest("account stream processing cancelled", tokenUsage)
+			return context.Canceled
+		}
+
 		if tokenUsage != nil {
 			lifecycleManager.RecordTokensForFailedRequest(tokenUsage, "account_stream_error")
 		}
@@ -449,4 +464,32 @@ func writeAccountPipelineError(w http.ResponseWriter, status int, errType, messa
 			"message": message,
 		},
 	})
+}
+
+func parseAccountStreamStatusError(err error) (string, string) {
+	if err == nil {
+		return "error", "unknown"
+	}
+
+	status := "error"
+	modelName := "unknown"
+	errText := err.Error()
+	if strings.HasPrefix(errText, "stream_status:") {
+		parts := strings.SplitN(errText, ":", 5)
+		if len(parts) >= 4 {
+			status = parts[1]
+			if parts[2] == "model" && parts[3] != "" {
+				modelName = parts[3]
+			}
+		}
+	} else if strings.Contains(strings.ToLower(errText), "context canceled") {
+		status = "cancelled"
+	}
+
+	return status, modelName
+}
+
+func isCancelledAccountStreamError(err error) bool {
+	status, _ := parseAccountStreamStatusError(err)
+	return status == "cancelled"
 }

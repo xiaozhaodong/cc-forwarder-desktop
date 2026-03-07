@@ -3,11 +3,14 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"testing"
+
+	"cc-forwarder/internal/tracking"
 )
 
 // mockResponseWriter 实现 http.ResponseWriter 和 http.Flusher
@@ -211,6 +214,41 @@ func TestStreamProcessor_ProcessStreamWithRetry_RecoversResponsesUsageFromRawTai
 	}
 }
 
+func TestStreamProcessor_ProcessStreamWithRetry_ParsesLargeResponsesCompletedEvent(t *testing.T) {
+	largeText := strings.Repeat("调度说明", StreamBufferSize*2)
+	streamBody := strings.Join([]string{
+		"event: response.in_progress\n",
+		`data: {"type":"response.in_progress","response":{"model":"gpt-5-codex"}}` + "\n",
+		"\n",
+		"event: response.completed\n",
+		fmt.Sprintf(`data: {"type":"response.completed","response":{"model":"gpt-5-codex"},"usage":{"input_tokens":85388,"output_tokens":1929,"input_tokens_details":{"cached_tokens":85248},"output_tokens_details":{"reasoning_tokens":892},"total_tokens":87317},"text":"%s"}`+"\n", largeText),
+		"\n",
+	}, "")
+
+	resp := mockResponse(streamBody, http.StatusOK)
+	tokenParser := NewTokenParserWithRequestID("test-responses-large-terminal")
+	writer := &mockResponseWriter{}
+	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-responses-large-terminal", "endpoint")
+
+	tokenUsage, modelName, err := processor.ProcessStreamWithRetry(context.Background(), resp)
+	if err != nil {
+		t.Fatalf("ProcessStreamWithRetry should parse large response.completed event, got error: %v", err)
+	}
+	if tokenUsage == nil {
+		t.Fatal("expected tokenUsage for large response.completed event")
+	}
+	if tokenUsage.InputTokens != 85388 || tokenUsage.OutputTokens != 1929 || tokenUsage.CacheReadTokens != 85248 {
+		t.Fatalf("unexpected usage: input=%d output=%d cache=%d", tokenUsage.InputTokens, tokenUsage.OutputTokens, tokenUsage.CacheReadTokens)
+	}
+	if modelName != "gpt-5-codex" {
+		t.Fatalf("expected modelName=gpt-5-codex, got %s", modelName)
+	}
+	completeness := tokenParser.GetStreamCompleteness()
+	if !completeness.IsComplete {
+		t.Fatalf("expected large responses stream complete, got reason=%s failure=%s", completeness.Reason, completeness.FailureReason)
+	}
+}
+
 func TestStreamProcessor_IsNetworkError(t *testing.T) {
 	processor := &StreamProcessor{}
 	// 创建错误恢复管理器用于测试
@@ -246,4 +284,31 @@ type mockNetError struct {
 
 func (e *mockNetError) Error() string {
 	return e.msg
+}
+
+func TestStreamProcessor_CollectAvailableInfoV2_CompleteResponsesTreatsCancelAsSuccess(t *testing.T) {
+	tokenParser := NewTokenParserWithRequestID("test-complete-cancel")
+	tokenParser.hasResponsesEvent = true
+	tokenParser.hasResponseCompleted = true
+	tokenParser.hasResponseCompletedUsage = true
+	tokenParser.modelName = "gpt-5.4"
+	tokenParser.finalUsage = &tracking.TokenUsage{
+		InputTokens:     100,
+		OutputTokens:    20,
+		CacheReadTokens: 80,
+	}
+
+	writer := &mockResponseWriter{}
+	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-complete-cancel", "endpoint")
+
+	tokenUsage, err := processor.collectAvailableInfoV2(context.Canceled, "cancelled_with_data")
+	if err != nil {
+		t.Fatalf("expected nil error for completed stream cancellation, got %v", err)
+	}
+	if tokenUsage == nil {
+		t.Fatal("expected tokenUsage for completed stream cancellation")
+	}
+	if tokenUsage.InputTokens != 100 || tokenUsage.OutputTokens != 20 || tokenUsage.CacheReadTokens != 80 {
+		t.Fatalf("unexpected token usage: %+v", tokenUsage)
+	}
 }

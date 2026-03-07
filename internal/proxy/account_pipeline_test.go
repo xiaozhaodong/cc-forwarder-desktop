@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -540,5 +541,26 @@ func TestApplyOpenAIChatGPTOAuthHeaders_SetsRequiredHeaders(t *testing.T) {
 	}
 	if req.Header.Get("chatgpt-account-id") != "acc-1" {
 		t.Fatalf("unexpected chatgpt-account-id header: %s", req.Header.Get("chatgpt-account-id"))
+	}
+}
+
+func TestParseAccountStreamStatusError_Cancelled(t *testing.T) {
+	status, modelName := parseAccountStreamStatusError(context.Canceled)
+	if status != "cancelled" {
+		t.Fatalf("expected cancelled status for context.Canceled, got %s", status)
+	}
+	if modelName != "unknown" {
+		t.Fatalf("expected unknown model for context.Canceled, got %s", modelName)
+	}
+
+	status, modelName = parseAccountStreamStatusError(errors.New("stream_status:cancelled:model:gpt-5.4: context canceled"))
+	if status != "cancelled" {
+		t.Fatalf("expected cancelled status for structured stream error, got %s", status)
+	}
+	if modelName != "gpt-5.4" {
+		t.Fatalf("expected gpt-5.4 model for structured stream error, got %s", modelName)
+	}
+	if !isCancelledAccountStreamError(errors.New("stream_status:cancelled:model:gpt-5.4: context canceled")) {
+		t.Fatal("expected structured cancelled stream error to be recognized")
 	}
 }

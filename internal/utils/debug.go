@@ -19,8 +19,13 @@ var (
 	debugConfig     *config.TokenDebugConfig
 	debugConfigOnce sync.Once
 	// 清理节流控制：每 24 小时最多执行一次清理
-	lastCleanupTime time.Time
-	cleanupMutex    sync.Mutex
+	lastCleanupTime            time.Time
+	cleanupMutex               sync.Mutex
+	debugInputTokensRe         = regexp.MustCompile(`"input_tokens"\s*:\s*(\d+)`)
+	debugOutputTokensRe        = regexp.MustCompile(`"output_tokens"\s*:\s*(\d+)`)
+	debugCacheCreationTokensRe = regexp.MustCompile(`"cache_creation_input_tokens"\s*:\s*(\d+)`)
+	debugCacheReadTokensRe     = regexp.MustCompile(`"cache_read_input_tokens"\s*:\s*(\d+)`)
+	debugCachedTokensRe        = regexp.MustCompile(`"cached_tokens"\s*:\s*(\d+)`)
 )
 
 // SetDebugConfig 设置调试配置（应该在程序启动时调用）
@@ -280,42 +285,20 @@ func RecoverUsageFromDebugFile(requestID string) (*tracking.TokenUsage, error) {
 }
 
 // extractUsageFromDebugContent 从debug文件内容中提取usage信息
-// 🔧 [Fallback修复] 使用正则表达式提取完整的token统计，优先使用message_stop中的usage
+// 🔧 [Fallback修复] 同时兼容 Claude message_stop 与 Codex /v1/responses usage 结构
 func extractUsageFromDebugContent(content string) (*tracking.TokenUsage, error) {
-	// 正则表达式匹配 usage 对象
-	// 优先匹配 message_stop 事件中的 usage，因为它包含完整信息
-	usagePattern := `"usage":\s*\{\s*"input_tokens":\s*(\d+),\s*"cache_creation_input_tokens":\s*(\d+),\s*"cache_read_input_tokens":\s*(\d+),\s*"output_tokens":\s*(\d+)`
-
-	re, err := regexp.Compile(usagePattern)
-	if err != nil {
-		return nil, fmt.Errorf("正则表达式编译失败: %v", err)
+	inputTokens, okInput := extractLastInt64FromDebugContent(content, debugInputTokensRe)
+	outputTokens, okOutput := extractLastInt64FromDebugContent(content, debugOutputTokensRe)
+	if !okInput || !okOutput {
+		return nil, fmt.Errorf("未找到完整usage信息")
 	}
 
-	// 查找所有匹配项
-	matches := re.FindAllStringSubmatch(content, -1)
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("未找到usage信息")
-	}
-
-	// 使用最后一个匹配项，通常是最完整的usage信息
-	lastMatch := matches[len(matches)-1]
-	if len(lastMatch) != 5 { // 完整匹配 + 4个捕获组
-		return nil, fmt.Errorf("usage信息格式不完整")
-	}
-
-	// 解析数值
-	var inputTokens, cacheCreationTokens, cacheReadTokens, outputTokens int64
-	if _, err := fmt.Sscanf(lastMatch[1], "%d", &inputTokens); err != nil {
-		return nil, fmt.Errorf("解析input_tokens失败: %v", err)
-	}
-	if _, err := fmt.Sscanf(lastMatch[2], "%d", &cacheCreationTokens); err != nil {
-		return nil, fmt.Errorf("解析cache_creation_input_tokens失败: %v", err)
-	}
-	if _, err := fmt.Sscanf(lastMatch[3], "%d", &cacheReadTokens); err != nil {
-		return nil, fmt.Errorf("解析cache_read_input_tokens失败: %v", err)
-	}
-	if _, err := fmt.Sscanf(lastMatch[4], "%d", &outputTokens); err != nil {
-		return nil, fmt.Errorf("解析output_tokens失败: %v", err)
+	cacheCreationTokens, _ := extractLastInt64FromDebugContent(content, debugCacheCreationTokensRe)
+	cacheReadTokens, okCacheRead := extractLastInt64FromDebugContent(content, debugCacheReadTokensRe)
+	if !okCacheRead {
+		if cachedTokens, ok := extractLastInt64FromDebugContent(content, debugCachedTokensRe); ok {
+			cacheReadTokens = cachedTokens
+		}
 	}
 
 	return &tracking.TokenUsage{
@@ -324,6 +307,25 @@ func extractUsageFromDebugContent(content string) (*tracking.TokenUsage, error) 
 		CacheCreationTokens: cacheCreationTokens,
 		CacheReadTokens:     cacheReadTokens,
 	}, nil
+}
+
+func extractLastInt64FromDebugContent(content string, re *regexp.Regexp) (int64, bool) {
+	if content == "" || re == nil {
+		return 0, false
+	}
+	matches := re.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return 0, false
+	}
+	lastMatch := matches[len(matches)-1]
+	if len(lastMatch) < 2 {
+		return 0, false
+	}
+	var value int64
+	if _, err := fmt.Sscanf(lastMatch[1], "%d", &value); err != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 // RecoverAndUpdateUsage 从debug文件恢复usage并更新数据库

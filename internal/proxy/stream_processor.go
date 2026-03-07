@@ -187,36 +187,21 @@ func (sp *StreamProcessor) forwardToClient(data []byte) error {
 // parseTokensInBackground 并发Token解析，不阻塞主流
 // 这个方法在后台goroutine中解析SSE事件，提取模型信息和Token使用统计
 func (sp *StreamProcessor) parseTokensInBackground(data []byte) {
-	// 为每个数据块启动一个后台goroutine
-	sp.parseWg.Add(1)
+	parseBuffer := make([]byte, len(data))
+	copy(parseBuffer, data)
 
-	go func() {
-		defer sp.parseWg.Done()
+	sp.parseMutex.Lock()
+	defer sp.parseMutex.Unlock()
 
-		// 创建后台处理缓冲区
-		parseBuffer := make([]byte, len(data))
-		copy(parseBuffer, data)
+	for _, b := range parseBuffer {
+		sp.lineBuffer = append(sp.lineBuffer, b)
 
-		// 逐字节处理，构建SSE行
-		sp.parseMutex.Lock()
-		defer sp.parseMutex.Unlock()
-
-		for _, b := range parseBuffer {
-			// 构建行缓冲区
-			sp.lineBuffer = append(sp.lineBuffer, b)
-
-			// 检测换行符，处理完整的SSE行
-			if b == '\n' {
-				line := strings.TrimSpace(string(sp.lineBuffer))
-
-				// ✅ 修复：处理所有行，包括空行（空行触发SSE事件解析）
-				sp.processSSELine(line)
-
-				// 重置行缓冲区，准备下一行
-				sp.lineBuffer = sp.lineBuffer[:0]
-			}
+		if b == '\n' {
+			line := strings.TrimSpace(string(sp.lineBuffer))
+			sp.processSSELine(line)
+			sp.lineBuffer = sp.lineBuffer[:0]
 		}
-	}()
+	}
 }
 
 // processSSELine 处理单个SSE行
@@ -774,6 +759,12 @@ func (sp *StreamProcessor) collectAvailableInfoV2(cancelErr error, status string
 		}
 		slog.Info(fmt.Sprintf("💾 [取消保存] [%s] 状态: %s, 模型: %s, 无token信息",
 			sp.requestID, statusClassified, modelName))
+	}
+
+	completeness := sp.tokenParser.GetStreamCompleteness()
+	if completeness.IsComplete {
+		slog.Info(fmt.Sprintf("✅ [取消转完成] [%s] 流已完整，忽略后续 context canceled", sp.requestID))
+		return tokenUsage, nil
 	}
 
 	// ✅ 返回包含完整信息的错误
