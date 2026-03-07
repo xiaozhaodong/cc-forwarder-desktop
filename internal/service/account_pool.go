@@ -42,7 +42,7 @@ func NewAccountPoolService(st store.AccountPoolStore, cfg *config.Config) *Accou
 		config:              cfg,
 		refreshTokenManager: accountauth.NewOpenAIRefreshTokenManager(cfg),
 		scheduleSnapshots:   newLatestAccountScheduleSnapshotStore(),
-		softFailureTracker:  newAccountSoftFailureTracker(),
+		softFailureTracker:  newAccountSoftFailureTracker(cfg),
 	}
 	svc.quotaRefreshDispatcher = newAccountPoolQuotaRefreshDispatcher(context.Background(), svc.RefreshAccountProfile)
 	if cfg != nil && cfg.AccountPool.Enabled {
@@ -179,7 +179,7 @@ func (s *AccountPoolService) RecordAccountSoftFailure(ctx context.Context, id in
 
 	tracker := s.softFailureTracker
 	if tracker == nil {
-		tracker = newAccountSoftFailureTracker()
+		tracker = newAccountSoftFailureTracker(s.config)
 		s.softFailureTracker = tracker
 	}
 
@@ -189,7 +189,7 @@ func (s *AccountPoolService) RecordAccountSoftFailure(ctx context.Context, id in
 		return nil
 	}
 
-	cooldown := resolveAccountSoftFailureCooldown(category, retryAfter)
+	cooldown := resolveAccountSoftFailureCooldown(s.config, category, retryAfter)
 	if err := s.store.MarkAccountTransientFailure(ctx, id, reason, now.Add(cooldown)); err != nil {
 		return err
 	}

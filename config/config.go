@@ -217,7 +217,27 @@ type EndpointsStorageConfig struct {
 // AccountPoolConfig 账号池路由配置
 // v6.0+: 当 enabled=true 时，/v1/responses 走 Codex 账号池链路，与 Claude endpoint 链路分离
 type AccountPoolConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled       bool                           `yaml:"enabled"`        // 是否启用账号池路由，默认: false
+	FailurePolicy AccountPoolFailurePolicyConfig `yaml:"failure_policy"` // 账号池失败策略配置
+}
+
+// AccountPoolFailurePolicyConfig 账号池失败策略配置
+// 用于控制 Codex 账号池中的软失败窗口、冷却时间和本地特例标记。
+type AccountPoolFailurePolicyConfig struct {
+	SoftFailureWindow               time.Duration                     `yaml:"soft_failure_window"`                 // 429/5xx 软失败统计窗口，默认: 5m
+	SoftFailureThreshold            int                               `yaml:"soft_failure_threshold"`              // 软失败触发阈值，默认: 3
+	RespectRetryAfter               *bool                             `yaml:"respect_retry_after"`                 // 429 时是否优先使用上游 Retry-After，默认: true
+	LocalNoAvailableProvidersMarker string                            `yaml:"local_no_available_providers_marker"` // 本地 no_available_providers 透传标记，默认: no_available_providers::ccf_local
+	Cooldowns                       AccountPoolFailureCooldownsConfig `yaml:"cooldowns"`                           // 各类失败的冷却时间配置
+}
+
+// AccountPoolFailureCooldownsConfig 账号池失败冷却时间配置
+// 不同错误类型使用不同冷却时间，避免坏账号反复命中或瞬时抖动过度切换。
+type AccountPoolFailureCooldownsConfig struct {
+	ConnectionFailure time.Duration `yaml:"connection_failure"` // 连接失败 / 连接超时 / DNS / TLS 的冷却时间，默认: 90s
+	ProcessingFailure time.Duration `yaml:"processing_failure"` // 响应处理异常的冷却时间，默认: 60s
+	RateLimitDefault  time.Duration `yaml:"rate_limit_default"` // 429 无 Retry-After 时的默认冷却时间，默认: 180s
+	ServerError       time.Duration `yaml:"server_error"`       // 普通 5xx 的冷却时间，默认: 120s
 }
 
 type EndpointConfig struct {
@@ -454,6 +474,33 @@ func (c *Config) setDefaults() {
 	}
 	// v5.2.6+: FailureTracker.Enabled defaults to true for better fault tolerance
 	// 用户可以通过设置页面禁用
+
+	// Set account pool failure policy defaults (v6.0+)
+	if c.AccountPool.FailurePolicy.SoftFailureWindow == 0 {
+		c.AccountPool.FailurePolicy.SoftFailureWindow = 5 * time.Minute // Default soft failure window
+	}
+	if c.AccountPool.FailurePolicy.SoftFailureThreshold == 0 {
+		c.AccountPool.FailurePolicy.SoftFailureThreshold = 3 // Default soft failure threshold
+	}
+	if c.AccountPool.FailurePolicy.RespectRetryAfter == nil {
+		value := true
+		c.AccountPool.FailurePolicy.RespectRetryAfter = &value
+	}
+	if c.AccountPool.FailurePolicy.LocalNoAvailableProvidersMarker == "" {
+		c.AccountPool.FailurePolicy.LocalNoAvailableProvidersMarker = "no_available_providers::ccf_local"
+	}
+	if c.AccountPool.FailurePolicy.Cooldowns.ConnectionFailure == 0 {
+		c.AccountPool.FailurePolicy.Cooldowns.ConnectionFailure = 90 * time.Second // Default connection failure cooldown
+	}
+	if c.AccountPool.FailurePolicy.Cooldowns.ProcessingFailure == 0 {
+		c.AccountPool.FailurePolicy.Cooldowns.ProcessingFailure = 60 * time.Second // Default processing failure cooldown
+	}
+	if c.AccountPool.FailurePolicy.Cooldowns.RateLimitDefault == 0 {
+		c.AccountPool.FailurePolicy.Cooldowns.RateLimitDefault = 180 * time.Second // Default rate limit cooldown
+	}
+	if c.AccountPool.FailurePolicy.Cooldowns.ServerError == 0 {
+		c.AccountPool.FailurePolicy.Cooldowns.ServerError = 120 * time.Second // Default server error cooldown
+	}
 
 	// Set endpoints storage defaults (v5.0+)
 	if c.EndpointsStorage.Type == "" {

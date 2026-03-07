@@ -80,14 +80,14 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		resp, forwardErr := h.forwardRequestToAccount(ctx, r, bodyBytes, acc, isSSE)
 		if forwardErr != nil {
 			lastErr = forwardErr
-			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, forwardErr.Error(), defaultAccountConnectionFailureCooldown)
+			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, forwardErr.Error(), h.accountConnectionFailureCooldown())
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, forwardErr.Error())
 			continue
 		}
 
 		if resp == nil {
 			lastErr = fmt.Errorf("empty response from account %d", acc.ID)
-			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, lastErr.Error(), defaultAccountConnectionFailureCooldown)
+			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, lastErr.Error(), h.accountConnectionFailureCooldown())
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, lastErr.Error())
 			continue
 		}
@@ -103,10 +103,10 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			continue
 		}
 
-		if isLocalNoAvailableProviders503Response(resp) {
+		if h.isLocalNoAvailableProviders503Response(resp) {
 			detail := readAndRestoreResponseBody(resp, 1024)
 			if detail == "" {
-				detail = localNoAvailableProvidersMarker
+				detail = h.accountLocalNoAvailableProvidersMarker()
 			}
 			if writeErr := h.writeRawResponse(w, resp); writeErr != nil {
 				lifecycleManager.FailRequest("account_pipeline_response_write_error", writeErr.Error(), resp.StatusCode)
@@ -119,7 +119,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
-			retryAfter := parseAccountRetryAfter(resp)
+			retryAfter := h.accountRateLimitRetryAfter(resp)
 			detail := readAndCloseResponseBody(resp, 1024)
 			if detail == "" {
 				detail = fmt.Sprintf("upstream returned %d", resp.StatusCode)
@@ -146,7 +146,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			detail := fmt.Sprintf("upstream returned %d", resp.StatusCode)
 			if writeErr := h.writeRawResponse(w, resp); writeErr != nil {
 				lifecycleManager.FailRequest("account_pipeline_response_write_error", writeErr.Error(), resp.StatusCode)
-				_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, writeErr.Error(), defaultAccountProcessingFailureCooldown)
+				_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, writeErr.Error(), h.accountProcessingFailureCooldown())
 				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, writeErr.Error())
 				return
 			}
@@ -167,7 +167,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				return
 			}
 			lastErr = processErr
-			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, processErr.Error(), defaultAccountProcessingFailureCooldown)
+			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, processErr.Error(), h.accountProcessingFailureCooldown())
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, processErr.Error())
 			// 流式响应一旦开始输出，无法切换到下一个账号，直接终止
 			if isSSE {
@@ -242,7 +242,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	return resp, nil
 }
 
-func isLocalNoAvailableProviders503Response(resp *http.Response) bool {
+func (h *Handler) isLocalNoAvailableProviders503Response(resp *http.Response) bool {
 	if resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
 		return false
 	}
@@ -251,7 +251,38 @@ func isLocalNoAvailableProviders503Response(resp *http.Response) bool {
 	if lower == "" {
 		return false
 	}
-	return strings.Contains(lower, strings.ToLower(localNoAvailableProvidersMarker))
+	return strings.Contains(lower, strings.ToLower(h.accountLocalNoAvailableProvidersMarker()))
+}
+
+func (h *Handler) accountLocalNoAvailableProvidersMarker() string {
+	if h != nil && h.config != nil {
+		marker := strings.TrimSpace(h.config.AccountPool.FailurePolicy.LocalNoAvailableProvidersMarker)
+		if marker != "" {
+			return marker
+		}
+	}
+	return localNoAvailableProvidersMarker
+}
+
+func (h *Handler) accountConnectionFailureCooldown() time.Duration {
+	if h != nil && h.config != nil && h.config.AccountPool.FailurePolicy.Cooldowns.ConnectionFailure > 0 {
+		return h.config.AccountPool.FailurePolicy.Cooldowns.ConnectionFailure
+	}
+	return defaultAccountConnectionFailureCooldown
+}
+
+func (h *Handler) accountProcessingFailureCooldown() time.Duration {
+	if h != nil && h.config != nil && h.config.AccountPool.FailurePolicy.Cooldowns.ProcessingFailure > 0 {
+		return h.config.AccountPool.FailurePolicy.Cooldowns.ProcessingFailure
+	}
+	return defaultAccountProcessingFailureCooldown
+}
+
+func (h *Handler) accountRateLimitRetryAfter(resp *http.Response) time.Duration {
+	if h == nil || h.config == nil || h.config.AccountPool.FailurePolicy.RespectRetryAfter == nil || !*h.config.AccountPool.FailurePolicy.RespectRetryAfter {
+		return 0
+	}
+	return parseAccountRetryAfter(resp)
 }
 
 func parseAccountRetryAfter(resp *http.Response) time.Duration {

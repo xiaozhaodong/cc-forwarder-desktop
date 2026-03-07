@@ -536,3 +536,109 @@ account_pool:
 		t.Fatalf("expected account_pool.enabled=true when explicitly configured true")
 	}
 }
+
+func TestLoadConfig_AccountPoolFailurePolicyDefaults(t *testing.T) {
+	configContent := `
+endpoints_storage:
+  type: "sqlite"
+`
+
+	tmpFile, err := os.CreateTemp("", "test-account-pool-failure-defaults-*.yaml")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(configContent); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	tmpFile.Close()
+
+	cfg, err := LoadConfig(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if got := cfg.AccountPool.FailurePolicy.SoftFailureWindow; got != 5*time.Minute {
+		t.Fatalf("expected soft_failure_window=5m, got %v", got)
+	}
+	if got := cfg.AccountPool.FailurePolicy.SoftFailureThreshold; got != 3 {
+		t.Fatalf("expected soft_failure_threshold=3, got %d", got)
+	}
+	if cfg.AccountPool.FailurePolicy.RespectRetryAfter == nil || !*cfg.AccountPool.FailurePolicy.RespectRetryAfter {
+		t.Fatalf("expected respect_retry_after=true by default, got %+v", cfg.AccountPool.FailurePolicy.RespectRetryAfter)
+	}
+	if got := cfg.AccountPool.FailurePolicy.LocalNoAvailableProvidersMarker; got != "no_available_providers::ccf_local" {
+		t.Fatalf("unexpected local marker: %q", got)
+	}
+	if got := cfg.AccountPool.FailurePolicy.Cooldowns.ConnectionFailure; got != 90*time.Second {
+		t.Fatalf("expected connection_failure=90s, got %v", got)
+	}
+	if got := cfg.AccountPool.FailurePolicy.Cooldowns.ProcessingFailure; got != 60*time.Second {
+		t.Fatalf("expected processing_failure=60s, got %v", got)
+	}
+	if got := cfg.AccountPool.FailurePolicy.Cooldowns.RateLimitDefault; got != 180*time.Second {
+		t.Fatalf("expected rate_limit_default=180s, got %v", got)
+	}
+	if got := cfg.AccountPool.FailurePolicy.Cooldowns.ServerError; got != 120*time.Second {
+		t.Fatalf("expected server_error=120s, got %v", got)
+	}
+}
+
+func TestLoadConfig_AccountPoolFailurePolicyExplicitValues(t *testing.T) {
+	configContent := `
+endpoints_storage:
+  type: "sqlite"
+account_pool:
+  enabled: true
+  failure_policy:
+    soft_failure_window: "2m"
+    soft_failure_threshold: 5
+    respect_retry_after: false
+    local_no_available_providers_marker: "no_available_providers::custom_marker"
+    cooldowns:
+      connection_failure: "30s"
+      processing_failure: "45s"
+      rate_limit_default: "75s"
+      server_error: "95s"
+`
+
+	tmpFile, err := os.CreateTemp("", "test-account-pool-failure-explicit-*.yaml")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(configContent); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	tmpFile.Close()
+
+	cfg, err := LoadConfig(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if got := cfg.AccountPool.FailurePolicy.SoftFailureWindow; got != 2*time.Minute {
+		t.Fatalf("expected soft_failure_window=2m, got %v", got)
+	}
+	if got := cfg.AccountPool.FailurePolicy.SoftFailureThreshold; got != 5 {
+		t.Fatalf("expected soft_failure_threshold=5, got %d", got)
+	}
+	if cfg.AccountPool.FailurePolicy.RespectRetryAfter == nil || *cfg.AccountPool.FailurePolicy.RespectRetryAfter {
+		t.Fatalf("expected respect_retry_after=false, got %+v", cfg.AccountPool.FailurePolicy.RespectRetryAfter)
+	}
+	if got := cfg.AccountPool.FailurePolicy.LocalNoAvailableProvidersMarker; got != "no_available_providers::custom_marker" {
+		t.Fatalf("unexpected local marker: %q", got)
+	}
+	if got := cfg.AccountPool.FailurePolicy.Cooldowns.ConnectionFailure; got != 30*time.Second {
+		t.Fatalf("expected connection_failure=30s, got %v", got)
+	}
+	if got := cfg.AccountPool.FailurePolicy.Cooldowns.ProcessingFailure; got != 45*time.Second {
+		t.Fatalf("expected processing_failure=45s, got %v", got)
+	}
+	if got := cfg.AccountPool.FailurePolicy.Cooldowns.RateLimitDefault; got != 75*time.Second {
+		t.Fatalf("expected rate_limit_default=75s, got %v", got)
+	}
+	if got := cfg.AccountPool.FailurePolicy.Cooldowns.ServerError; got != 95*time.Second {
+		t.Fatalf("expected server_error=95s, got %v", got)
+	}
+}

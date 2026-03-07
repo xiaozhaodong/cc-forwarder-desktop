@@ -81,6 +81,22 @@ request_suspend:
 account_pool:
   enabled: false              # 是否启用账号池路由，默认: false
 
+  # 账号池失败策略配置
+  # - 连接失败 / 连接超时 / DNS / TLS: 一次直接冷却
+  # - 429 / 普通 5xx: 在软失败窗口内累计达到阈值后才进入冷却
+  # - 命中 local_no_available_providers_marker 时: 透传且不计入冷却/窗口
+  failure_policy:
+    soft_failure_window: "5m"                    # 429/5xx 软失败统计窗口，默认: 5m
+    soft_failure_threshold: 3                     # 软失败触发阈值，默认: 3
+    respect_retry_after: true                     # 429 时是否优先使用上游 Retry-After，默认: true
+    local_no_available_providers_marker: "no_available_providers::ccf_local"  # 本地 no_available_providers 透传标记
+
+    cooldowns:
+      connection_failure: "90s"                 # 连接失败 / 连接超时 / DNS / TLS 的冷却时间，默认: 90s
+      processing_failure: "60s"                 # 响应处理异常的冷却时间，默认: 60s
+      rate_limit_default: "180s"                # 429 无 Retry-After 时的默认冷却时间，默认: 180s
+      server_error: "120s"                      # 普通 5xx 的冷却时间，默认: 120s
+
 # 全局超时配置
 global_timeout: "300s"       # 非流式请求的全局默认超时时间，默认: 300s (5分钟)
 

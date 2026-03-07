@@ -4,6 +4,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"cc-forwarder/config"
 )
 
 const (
@@ -24,12 +26,12 @@ type accountSoftFailureTracker struct {
 	threshold int
 }
 
-func newAccountSoftFailureTracker() *accountSoftFailureTracker {
+func newAccountSoftFailureTracker(cfg *config.Config) *accountSoftFailureTracker {
 	return &accountSoftFailureTracker{
 		events:    make(map[int64][]time.Time),
 		now:       time.Now,
-		window:    defaultAccountSoftFailureWindow,
-		threshold: defaultAccountSoftFailureThreshold,
+		window:    accountPoolSoftFailureWindow(cfg),
+		threshold: accountPoolSoftFailureThreshold(cfg),
 	}
 }
 
@@ -71,14 +73,49 @@ func (t *accountSoftFailureTracker) Clear(accountID int64) {
 	delete(t.events, accountID)
 }
 
-func resolveAccountSoftFailureCooldown(category string, retryAfter time.Duration) time.Duration {
+func resolveAccountSoftFailureCooldown(cfg *config.Config, category string, retryAfter time.Duration) time.Duration {
 	switch strings.TrimSpace(strings.ToLower(category)) {
 	case accountSoftFailureCategoryRateLimit:
-		if retryAfter > 0 {
+		if accountPoolRespectRetryAfter(cfg) && retryAfter > 0 {
 			return retryAfter
 		}
-		return defaultAccountRateLimitCooldown
+		return accountPoolRateLimitDefaultCooldown(cfg)
 	default:
-		return defaultAccountServerErrorCooldown
+		return accountPoolServerErrorCooldown(cfg)
 	}
+}
+
+func accountPoolSoftFailureWindow(cfg *config.Config) time.Duration {
+	if cfg != nil && cfg.AccountPool.FailurePolicy.SoftFailureWindow > 0 {
+		return cfg.AccountPool.FailurePolicy.SoftFailureWindow
+	}
+	return defaultAccountSoftFailureWindow
+}
+
+func accountPoolSoftFailureThreshold(cfg *config.Config) int {
+	if cfg != nil && cfg.AccountPool.FailurePolicy.SoftFailureThreshold > 0 {
+		return cfg.AccountPool.FailurePolicy.SoftFailureThreshold
+	}
+	return defaultAccountSoftFailureThreshold
+}
+
+func accountPoolRespectRetryAfter(cfg *config.Config) bool {
+	if cfg != nil && cfg.AccountPool.FailurePolicy.RespectRetryAfter != nil {
+		return *cfg.AccountPool.FailurePolicy.RespectRetryAfter
+	}
+	return true
+}
+
+func accountPoolRateLimitDefaultCooldown(cfg *config.Config) time.Duration {
+	if cfg != nil && cfg.AccountPool.FailurePolicy.Cooldowns.RateLimitDefault > 0 {
+		return cfg.AccountPool.FailurePolicy.Cooldowns.RateLimitDefault
+	}
+	return defaultAccountRateLimitCooldown
+}
+
+func accountPoolServerErrorCooldown(cfg *config.Config) time.Duration {
+	if cfg != nil && cfg.AccountPool.FailurePolicy.Cooldowns.ServerError > 0 {
+		return cfg.AccountPool.FailurePolicy.Cooldowns.ServerError
+	}
+	return defaultAccountServerErrorCooldown
 }
