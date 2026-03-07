@@ -62,6 +62,44 @@ type RefreshUpstreamAccountProfileResult struct {
 	QuotaStatus string `json:"quota_status,omitempty"`
 }
 
+// AccountScheduleCandidateDecisionInfo 最近一次调度候选账号决策信息
+type AccountScheduleCandidateDecisionInfo struct {
+	AccountID               int64    `json:"account_id"`
+	AccountName             string   `json:"account_name"`
+	ProviderType            string   `json:"provider_type"`
+	Priority                int      `json:"priority"`
+	TierIndex               int      `json:"tier_index"`
+	TierLabel               string   `json:"tier_label"`
+	QuotaStatus             string   `json:"quota_status"`
+	EffectiveQuotaRemaining *float64 `json:"effective_quota_remaining,omitempty"`
+	FailCount               int      `json:"fail_count"`
+	LastSuccessAt           string   `json:"last_success_at"`
+	Decision                string   `json:"decision"`
+	Reason                  string   `json:"reason"`
+	ReasonDetail            string   `json:"reason_detail"`
+	RuntimeOutcome          string   `json:"runtime_outcome,omitempty"`
+	RuntimeError            string   `json:"runtime_error,omitempty"`
+}
+
+// LatestAccountScheduleSnapshotInfo 最近一次调度快照信息
+type LatestAccountScheduleSnapshotInfo struct {
+	HasSnapshot              bool                               `json:"has_snapshot"`
+	RequestID                string                             `json:"request_id,omitempty"`
+	CapturedAt               string                             `json:"captured_at"`
+	UpdatedAt                string                             `json:"updated_at"`
+	RequestPath              string                             `json:"request_path"`
+	SelectedPriority         int                                `json:"selected_priority"`
+	SelectedTierIndex        int                                `json:"selected_tier_index"`
+	SelectedTierLabel        string                             `json:"selected_tier_label"`
+	DegradedToLowerPriority  bool                               `json:"degraded_to_lower_priority"`
+	SelectedAccountID        int64                              `json:"selected_account_id"`
+	SelectedAccountName      string                             `json:"selected_account_name"`
+	FinalOutcome             string                             `json:"final_outcome"`
+	FinalError               string                             `json:"final_error"`
+	Summary                  string                             `json:"summary"`
+	Candidates               []AccountScheduleCandidateDecisionInfo `json:"candidates"`
+}
+
 // GetUpstreamAccounts 获取账号列表
 func (a *App) GetUpstreamAccounts() ([]UpstreamAccountInfo, error) {
 	a.mu.RLock()
@@ -107,6 +145,65 @@ func (a *App) GetUpstreamAccounts() ([]UpstreamAccountInfo, error) {
 			Fingerprint:            rec.Fingerprint,
 			CreatedAt:              formatTime(rec.CreatedAt),
 			UpdatedAt:              formatTime(rec.UpdatedAt),
+		})
+	}
+	return out, nil
+}
+
+// GetLatestAccountScheduleSnapshot 获取最近一次账号池调度快照
+func (a *App) GetLatestAccountScheduleSnapshot() (LatestAccountScheduleSnapshotInfo, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if a.accountPoolService == nil {
+		return LatestAccountScheduleSnapshotInfo{}, fmt.Errorf("账号池服务未启用")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	snapshot, err := a.accountPoolService.GetLatestAccountScheduleSnapshot(ctx)
+	if err != nil {
+		return LatestAccountScheduleSnapshotInfo{}, fmt.Errorf("获取最近一次调度快照失败: %w", err)
+	}
+	if snapshot == nil {
+		return LatestAccountScheduleSnapshotInfo{HasSnapshot: false}, nil
+	}
+
+	out := LatestAccountScheduleSnapshotInfo{
+		HasSnapshot:             true,
+		RequestID:               snapshot.RequestID,
+		CapturedAt:              formatTime(snapshot.CapturedAt),
+		UpdatedAt:               formatTime(snapshot.UpdatedAt),
+		RequestPath:             snapshot.RequestPath,
+		SelectedPriority:        snapshot.SelectedPriority,
+		SelectedTierIndex:       snapshot.SelectedTierIndex,
+		SelectedTierLabel:       snapshot.SelectedTierLabel,
+		DegradedToLowerPriority: snapshot.DegradedToLowerPriority,
+		SelectedAccountID:       snapshot.SelectedAccountID,
+		SelectedAccountName:     snapshot.SelectedAccountName,
+		FinalOutcome:            snapshot.FinalOutcome,
+		FinalError:              snapshot.FinalError,
+		Summary:                 snapshot.Summary,
+		Candidates:              make([]AccountScheduleCandidateDecisionInfo, 0, len(snapshot.Candidates)),
+	}
+	for _, candidate := range snapshot.Candidates {
+		out.Candidates = append(out.Candidates, AccountScheduleCandidateDecisionInfo{
+			AccountID:               candidate.AccountID,
+			AccountName:             candidate.AccountName,
+			ProviderType:            candidate.ProviderType,
+			Priority:                candidate.Priority,
+			TierIndex:               candidate.TierIndex,
+			TierLabel:               candidate.TierLabel,
+			QuotaStatus:             candidate.QuotaStatus,
+			EffectiveQuotaRemaining: candidate.EffectiveQuotaRemaining,
+			FailCount:               candidate.FailCount,
+			LastSuccessAt:           formatOptionalTime(candidate.LastSuccessAt),
+			Decision:                candidate.Decision,
+			Reason:                  candidate.Reason,
+			ReasonDetail:            candidate.ReasonDetail,
+			RuntimeOutcome:          candidate.RuntimeOutcome,
+			RuntimeError:            candidate.RuntimeError,
 		})
 	}
 	return out, nil

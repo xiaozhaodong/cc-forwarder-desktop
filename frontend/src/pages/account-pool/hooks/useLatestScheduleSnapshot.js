@@ -1,0 +1,81 @@
+// ============================================
+// Account Pool 最近一次调度快照 Hook
+// 2026-03-07
+// ============================================
+
+import { useCallback, useEffect, useState } from 'react';
+import { fetchLatestAccountScheduleSnapshot } from '@utils/api.js';
+
+const scheduleSnapshotPollIntervalMs = 5000;
+
+const isPageVisible = () => typeof document === 'undefined' || document.visibilityState === 'visible';
+
+const useLatestScheduleSnapshot = ({ showNotice }) => {
+  const [latestScheduleSnapshot, setLatestScheduleSnapshot] = useState({ hasSnapshot: false, candidates: [] });
+  const [snapshotUnsupported, setSnapshotUnsupported] = useState(false);
+
+  const loadLatestScheduleSnapshot = useCallback(async ({ silent = false } = {}) => {
+    try {
+      const snapshot = await fetchLatestAccountScheduleSnapshot();
+      if (snapshot?.unsupported) {
+        setSnapshotUnsupported(true);
+        setLatestScheduleSnapshot({
+          hasSnapshot: false,
+          has_snapshot: false,
+          candidates: [],
+          message: snapshot.message || ''
+        });
+        return;
+      }
+      setSnapshotUnsupported(false);
+      setLatestScheduleSnapshot(snapshot && typeof snapshot === 'object'
+        ? snapshot
+        : { hasSnapshot: false, has_snapshot: false, candidates: [] });
+    } catch (err) {
+      if (!silent) {
+        showNotice('error', err.message || '加载最近一次调度结果失败');
+      }
+    }
+  }, [showNotice]);
+
+  useEffect(() => {
+    loadLatestScheduleSnapshot({ silent: true });
+  }, [loadLatestScheduleSnapshot]);
+
+  useEffect(() => {
+    if (snapshotUnsupported || typeof document === 'undefined') {
+      return undefined;
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadLatestScheduleSnapshot({ silent: true });
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [loadLatestScheduleSnapshot, snapshotUnsupported]);
+
+  useEffect(() => {
+    if (snapshotUnsupported) {
+      return undefined;
+    }
+
+    const timer = setInterval(() => {
+      if (!isPageVisible()) {
+        return;
+      }
+      loadLatestScheduleSnapshot({ silent: true });
+    }, scheduleSnapshotPollIntervalMs);
+    return () => clearInterval(timer);
+  }, [loadLatestScheduleSnapshot, snapshotUnsupported]);
+
+  return {
+    latestScheduleSnapshot,
+    snapshotUnsupported,
+    loadLatestScheduleSnapshot
+  };
+};
+
+export default useLatestScheduleSnapshot;

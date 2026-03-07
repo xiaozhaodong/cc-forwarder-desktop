@@ -128,11 +128,11 @@ func TestTestUpstreamAccount_Treats503NoAvailableProvidersAsReachable(t *testing
 	}
 }
 
-func TestListSchedulableAccounts_V0ManualPriorityOrderIgnoresQuotaAndHealth(t *testing.T) {
+func TestListSchedulableAccounts_V1ReturnsHighestAvailablePriorityTier(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 
-	first, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+	_, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
 		ProviderType:           "chatgpt_refresh_token",
 		AccountName:            "tier-20-a",
 		CredentialRaw:          "rt-a",
@@ -161,7 +161,7 @@ func TestListSchedulableAccounts_V0ManualPriorityOrderIgnoresQuotaAndHealth(t *t
 		t.Fatalf("create second account failed: %v", err)
 	}
 
-	third, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+	_, err = st.CreateAccount(ctx, &store.UpstreamAccountRecord{
 		ProviderType:           "chatgpt_refresh_token",
 		AccountName:            "tier-20-b",
 		CredentialRaw:          "rt-b",
@@ -182,13 +182,13 @@ func TestListSchedulableAccounts_V0ManualPriorityOrderIgnoresQuotaAndHealth(t *t
 	}
 
 	gotIDs := collectAccountIDs(accounts)
-	wantIDs := []int64{second.ID, first.ID, third.ID}
+	wantIDs := []int64{second.ID}
 	if !reflect.DeepEqual(gotIDs, wantIDs) {
 		t.Fatalf("unexpected manual failover order: got %v want %v", gotIDs, wantIDs)
 	}
 }
 
-func TestListSchedulableAccounts_V0FiltersDisabledAuthAndFutureCooldown(t *testing.T) {
+func TestListSchedulableAccounts_V1FiltersDisabledAuthAndFutureCooldown(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -230,7 +230,7 @@ func TestListSchedulableAccounts_V0FiltersDisabledAuthAndFutureCooldown(t *testi
 		t.Fatalf("create future cooldown account failed: %v", err)
 	}
 
-	pastCooldown, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+	_, err = st.CreateAccount(ctx, &store.UpstreamAccountRecord{
 		ProviderType:  "api_key",
 		AccountName:   "cooldown-past",
 		CredentialRaw: "sk-past",
@@ -261,7 +261,7 @@ func TestListSchedulableAccounts_V0FiltersDisabledAuthAndFutureCooldown(t *testi
 	}
 
 	gotIDs := collectAccountIDs(accounts)
-	wantIDs := []int64{main.ID, pastCooldown.ID}
+	wantIDs := []int64{main.ID}
 	if !reflect.DeepEqual(gotIDs, wantIDs) {
 		t.Fatalf("unexpected schedulable accounts: got %v want %v", gotIDs, wantIDs)
 	}

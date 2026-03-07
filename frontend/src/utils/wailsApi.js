@@ -481,6 +481,76 @@ export const buildUpstreamAccountPayload = (input = {}) => {
   };
 };
 
+export const normalizeAccountScheduleCandidateDecision = (candidate = {}) => ({
+  account_id: parseEntityId(candidate.account_id ?? candidate.accountId ?? candidate.AccountID ?? null),
+  accountId: parseEntityId(candidate.account_id ?? candidate.accountId ?? candidate.AccountID ?? null),
+  account_name: candidate.account_name || candidate.accountName || candidate.AccountName || '',
+  accountName: candidate.account_name || candidate.accountName || candidate.AccountName || '',
+  provider_type: candidate.provider_type || candidate.providerType || candidate.ProviderType || '',
+  providerType: candidate.provider_type || candidate.providerType || candidate.ProviderType || '',
+  priority: Number.parseInt(candidate.priority ?? candidate.Priority, 10) || 0,
+  tier_index: Number.parseInt(candidate.tier_index ?? candidate.tierIndex ?? candidate.TierIndex, 10) || 0,
+  tierIndex: Number.parseInt(candidate.tier_index ?? candidate.tierIndex ?? candidate.TierIndex, 10) || 0,
+  tier_label: candidate.tier_label || candidate.tierLabel || candidate.TierLabel || '',
+  tierLabel: candidate.tier_label || candidate.tierLabel || candidate.TierLabel || '',
+  quota_status: candidate.quota_status || candidate.quotaStatus || candidate.QuotaStatus || '',
+  quotaStatus: candidate.quota_status || candidate.quotaStatus || candidate.QuotaStatus || '',
+  effective_quota_remaining: parseNullableNumber(candidate.effective_quota_remaining ?? candidate.effectiveQuotaRemaining ?? candidate.EffectiveQuotaRemaining ?? null),
+  effectiveQuotaRemaining: parseNullableNumber(candidate.effective_quota_remaining ?? candidate.effectiveQuotaRemaining ?? candidate.EffectiveQuotaRemaining ?? null),
+  fail_count: Number.parseInt(candidate.fail_count ?? candidate.failCount ?? candidate.FailCount, 10) || 0,
+  failCount: Number.parseInt(candidate.fail_count ?? candidate.failCount ?? candidate.FailCount, 10) || 0,
+  last_success_at: candidate.last_success_at || candidate.lastSuccessAt || candidate.LastSuccessAt || '',
+  lastSuccessAt: candidate.last_success_at || candidate.lastSuccessAt || candidate.LastSuccessAt || '',
+  decision: candidate.decision || candidate.Decision || '',
+  reason: candidate.reason || candidate.Reason || '',
+  reason_detail: candidate.reason_detail || candidate.reasonDetail || candidate.ReasonDetail || '',
+  reasonDetail: candidate.reason_detail || candidate.reasonDetail || candidate.ReasonDetail || '',
+  runtime_outcome: candidate.runtime_outcome || candidate.runtimeOutcome || candidate.RuntimeOutcome || '',
+  runtimeOutcome: candidate.runtime_outcome || candidate.runtimeOutcome || candidate.RuntimeOutcome || '',
+  runtime_error: candidate.runtime_error || candidate.runtimeError || candidate.RuntimeError || '',
+  runtimeError: candidate.runtime_error || candidate.runtimeError || candidate.RuntimeError || ''
+});
+
+export const normalizeLatestAccountScheduleSnapshot = (snapshot = {}) => {
+  const hasSnapshot = (snapshot.has_snapshot ?? snapshot.hasSnapshot ?? snapshot.HasSnapshot) === true;
+  const candidates = Array.isArray(snapshot.candidates || snapshot.Candidates)
+    ? (snapshot.candidates || snapshot.Candidates).map(normalizeAccountScheduleCandidateDecision)
+    : [];
+
+  return {
+    unsupported: snapshot.unsupported === true,
+    message: snapshot.message || '',
+    has_snapshot: hasSnapshot,
+    hasSnapshot,
+    request_id: snapshot.request_id || snapshot.requestId || snapshot.RequestID || '',
+    requestId: snapshot.request_id || snapshot.requestId || snapshot.RequestID || '',
+    captured_at: snapshot.captured_at || snapshot.capturedAt || snapshot.CapturedAt || '',
+    capturedAt: snapshot.captured_at || snapshot.capturedAt || snapshot.CapturedAt || '',
+    updated_at: snapshot.updated_at || snapshot.updatedAt || snapshot.UpdatedAt || '',
+    updatedAt: snapshot.updated_at || snapshot.updatedAt || snapshot.UpdatedAt || '',
+    request_path: snapshot.request_path || snapshot.requestPath || snapshot.RequestPath || '',
+    requestPath: snapshot.request_path || snapshot.requestPath || snapshot.RequestPath || '',
+    selected_priority: Number.parseInt(snapshot.selected_priority ?? snapshot.selectedPriority ?? snapshot.SelectedPriority, 10) || 0,
+    selectedPriority: Number.parseInt(snapshot.selected_priority ?? snapshot.selectedPriority ?? snapshot.SelectedPriority, 10) || 0,
+    selected_tier_index: Number.parseInt(snapshot.selected_tier_index ?? snapshot.selectedTierIndex ?? snapshot.SelectedTierIndex, 10) || 0,
+    selectedTierIndex: Number.parseInt(snapshot.selected_tier_index ?? snapshot.selectedTierIndex ?? snapshot.SelectedTierIndex, 10) || 0,
+    selected_tier_label: snapshot.selected_tier_label || snapshot.selectedTierLabel || snapshot.SelectedTierLabel || '',
+    selectedTierLabel: snapshot.selected_tier_label || snapshot.selectedTierLabel || snapshot.SelectedTierLabel || '',
+    degraded_to_lower_priority: (snapshot.degraded_to_lower_priority ?? snapshot.degradedToLowerPriority ?? snapshot.DegradedToLowerPriority) === true,
+    degradedToLowerPriority: (snapshot.degraded_to_lower_priority ?? snapshot.degradedToLowerPriority ?? snapshot.DegradedToLowerPriority) === true,
+    selected_account_id: parseEntityId(snapshot.selected_account_id ?? snapshot.selectedAccountId ?? snapshot.SelectedAccountID ?? null),
+    selectedAccountId: parseEntityId(snapshot.selected_account_id ?? snapshot.selectedAccountId ?? snapshot.SelectedAccountID ?? null),
+    selected_account_name: snapshot.selected_account_name || snapshot.selectedAccountName || snapshot.SelectedAccountName || '',
+    selectedAccountName: snapshot.selected_account_name || snapshot.selectedAccountName || snapshot.SelectedAccountName || '',
+    final_outcome: snapshot.final_outcome || snapshot.finalOutcome || snapshot.FinalOutcome || '',
+    finalOutcome: snapshot.final_outcome || snapshot.finalOutcome || snapshot.FinalOutcome || '',
+    final_error: snapshot.final_error || snapshot.finalError || snapshot.FinalError || '',
+    finalError: snapshot.final_error || snapshot.finalError || snapshot.FinalError || '',
+    summary: snapshot.summary || snapshot.Summary || '',
+    candidates
+  };
+};
+
 export const getUpstreamAccounts = async () => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
@@ -554,6 +624,35 @@ export const testUpstreamAccount = async (id) => {
         unsupported: true,
         message: '当前后端版本暂未提供 TestUpstreamAccount'
       };
+    }
+    throw error;
+  }
+};
+
+export const getLatestAccountScheduleSnapshot = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('GetLatestAccountScheduleSnapshot', { optional: true });
+  if (!method) {
+    return normalizeLatestAccountScheduleSnapshot({
+      unsupported: true,
+      has_snapshot: false,
+      message: '当前后端版本暂未提供 GetLatestAccountScheduleSnapshot'
+    });
+  }
+
+  try {
+    const result = await method();
+    return normalizeLatestAccountScheduleSnapshot(result || {});
+  } catch (error) {
+    const errorText = error?.message || String(error || '');
+    if (/not found|undefined|is not a function/i.test(errorText)) {
+      return normalizeLatestAccountScheduleSnapshot({
+        unsupported: true,
+        has_snapshot: false,
+        message: '当前后端版本暂未提供 GetLatestAccountScheduleSnapshot'
+      });
     }
     throw error;
   }

@@ -3,6 +3,8 @@ package proxy
 import (
 	"bytes"
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +15,7 @@ import (
 
 	"cc-forwarder/internal/accountauth"
 	"cc-forwarder/internal/proxy/handlers"
+	svc "cc-forwarder/internal/service"
 	"cc-forwarder/internal/store"
 	"cc-forwarder/internal/transport"
 )
@@ -34,7 +37,14 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		return
 	}
 
-	accounts, err := h.accountPoolService.ListSchedulableAccounts(ctx)
+	requestID := ""
+	if lifecycleManager != nil {
+		requestID = lifecycleManager.GetRequestID()
+	}
+	if strings.TrimSpace(requestID) == "" {
+		requestID = newFallbackAccountScheduleRequestID()
+	}
+	accounts, err := h.accountPoolService.PrepareSchedulableAccounts(ctx, requestID, r.URL.Path)
 	if err != nil {
 		lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
 		lifecycleManager.FailRequest("account_pool_load_failed", err.Error(), http.StatusServiceUnavailable)
@@ -42,6 +52,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		return
 	}
 	if len(accounts) == 0 {
+		_ = h.completeAccountScheduleSnapshot(ctx, requestID, 0, "", svc.AccountScheduleOutcomeNoSchedulableAccounts, "no schedulable account")
 		lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
 		lifecycleManager.FailRequest("account_pool_empty", "no schedulable account", http.StatusServiceUnavailable)
 		writeAccountPipelineError(w, http.StatusServiceUnavailable, "account_pool_unavailable", "no schedulable account")
@@ -65,12 +76,14 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		if forwardErr != nil {
 			lastErr = forwardErr
 			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, forwardErr.Error(), defaultAccountRetryCooldown)
+			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, forwardErr.Error())
 			continue
 		}
 
 		if resp == nil {
 			lastErr = fmt.Errorf("empty response from account %d", acc.ID)
 			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, lastErr.Error(), defaultAccountRetryCooldown)
+			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, lastErr.Error())
 			continue
 		}
 
@@ -81,6 +94,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			lastErr = fmt.Errorf("auth failed: %s", detail)
 			_ = h.accountPoolService.MarkAccountAuthFailed(ctx, acc.ID, detail)
+			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeAuthFailed, detail)
 			continue
 		}
 
@@ -91,8 +105,10 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			if writeErr := h.writeRawResponse(w, resp); writeErr != nil {
 				lifecycleManager.FailRequest("account_pipeline_response_write_error", writeErr.Error(), resp.StatusCode)
+				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, writeErr.Error())
 				return
 			}
+			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomePassthroughNoAvailableProvider, detail)
 			lifecycleManager.FailRequest("upstream_no_available_providers", detail, resp.StatusCode)
 			return
 		}
@@ -104,17 +120,21 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
 			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, detail, defaultAccountRetryCooldown)
+			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
 			continue
 		}
 
 		// 其余 4xx 视为客户端请求问题，直接透传，不进行账号切换
 		if resp.StatusCode >= 400 {
+			detail := fmt.Sprintf("upstream returned %d", resp.StatusCode)
 			if writeErr := h.writeRawResponse(w, resp); writeErr != nil {
 				lifecycleManager.FailRequest("account_pipeline_response_write_error", writeErr.Error(), resp.StatusCode)
 				_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, writeErr.Error(), defaultAccountRetryCooldown)
+				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, writeErr.Error())
 				return
 			}
-			lifecycleManager.FailRequest("upstream_client_error", fmt.Sprintf("upstream returned %d", resp.StatusCode), resp.StatusCode)
+			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomePassthroughOther4xx, detail)
+			lifecycleManager.FailRequest("upstream_client_error", detail, resp.StatusCode)
 			return
 		}
 
@@ -131,6 +151,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			lastErr = processErr
 			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, processErr.Error(), 10*time.Second)
+			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, processErr.Error())
 			// 流式响应一旦开始输出，无法切换到下一个账号，直接终止
 			if isSSE {
 				return
@@ -139,6 +160,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		}
 
 		_ = h.accountPoolService.MarkAccountSuccess(ctx, acc.ID)
+		_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeSuccess, "")
 		return
 	}
 
@@ -146,9 +168,25 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 	if lastErr != nil {
 		reason = lastErr.Error()
 	}
+	_ = h.completeAccountScheduleSnapshot(ctx, requestID, 0, "", svc.AccountScheduleOutcomeTransientFailure, reason)
 	lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
 	lifecycleManager.FailRequest("account_pool_exhausted", reason, http.StatusServiceUnavailable)
 	writeAccountPipelineError(w, http.StatusServiceUnavailable, "account_pool_unavailable", reason)
+}
+
+func (h *Handler) completeAccountScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, outcome, finalError string) error {
+	if h.accountPoolService == nil {
+		return nil
+	}
+	return h.accountPoolService.CompleteLatestScheduleSnapshot(ctx, requestID, accountID, accountName, outcome, finalError)
+}
+
+func newFallbackAccountScheduleRequestID() string {
+	var suffix [4]byte
+	if _, err := crand.Read(suffix[:]); err != nil {
+		return fmt.Sprintf("account-schedule-%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("account-schedule-%d-%s", time.Now().UnixNano(), hex.EncodeToString(suffix[:]))
 }
 
 func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, bodyBytes []byte, acc *store.UpstreamAccountRecord, isSSE bool) (*http.Response, error) {

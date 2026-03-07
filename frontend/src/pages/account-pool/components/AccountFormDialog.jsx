@@ -1,0 +1,197 @@
+// ============================================
+// 账号池账号表单弹窗
+// 2026-03-07
+// ============================================
+
+import { Button } from '@components/ui';
+import OAuthHelperPanel from './OAuthHelperPanel.jsx';
+import { FormField } from './shared.jsx';
+import { AUTH_METHOD_OPTIONS, DEFAULT_BASE_URL, authMethodToProviderType } from '../utils.js';
+
+const AccountFormDialog = ({
+  open,
+  editingAccount,
+  accountSubmitting,
+  accountForm,
+  setAccountForm,
+  onClose,
+  onSubmit,
+  oauthSectionExpanded,
+  setOauthSectionExpanded,
+  oauthActionLoading,
+  oauthSession,
+  oauthCallbackURL,
+  setOauthCallbackURL,
+  onGenerateOAuthLink,
+  onExtractRTFromCallback,
+  onResetOAuthWorkflow,
+  showNotice,
+  openExternalURL
+}) => {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[15vh]">
+      <div className="absolute inset-0 bg-slate-900/40" onClick={() => !accountSubmitting && onClose()} />
+      <form
+        onSubmit={onSubmit}
+        className="relative flex w-full max-w-2xl max-h-[75vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <h3 className="text-lg font-semibold text-slate-900">{editingAccount ? '编辑账号' : '新增账号'}</h3>
+          <button
+            type="button"
+            className="text-sm text-slate-400 hover:text-slate-600"
+            onClick={onClose}
+            disabled={accountSubmitting}
+          >
+            关闭
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="space-y-6">
+            <section className="space-y-4">
+              <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">基本信息</h4>
+
+              <FormField label="账号名称" required>
+                <input
+                  type="text"
+                  value={accountForm.account_name}
+                  onChange={(event) => setAccountForm(prev => ({ ...prev, account_name: event.target.value }))}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  placeholder="例如：openai-auth-main"
+                />
+              </FormField>
+
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-slate-600">
+                  授权方式
+                  <span className="ml-1 text-rose-500">*</span>
+                </div>
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                  {AUTH_METHOD_OPTIONS.map((option) => {
+                    const active = accountForm.auth_method === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => {
+                          const switchingIntoChatGPT = accountForm.auth_method !== 'chatgpt_refresh_token' && option.value === 'chatgpt_refresh_token';
+                          setAccountForm(prev => ({
+                            ...prev,
+                            auth_method: option.value,
+                            provider_type: authMethodToProviderType(option.value)
+                          }));
+                          if (option.value !== 'chatgpt_refresh_token') {
+                            setOauthSectionExpanded(false);
+                            onResetOAuthWorkflow();
+                          } else if (!editingAccount || switchingIntoChatGPT) {
+                            setOauthSectionExpanded(true);
+                          }
+                        }}
+                        className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                          active
+                            ? 'border-emerald-300 bg-emerald-50'
+                            : 'border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className={`text-sm font-medium ${active ? 'text-emerald-700' : 'text-slate-700'}`}>{option.label}</div>
+                        <div className="text-xs text-slate-500">{option.description}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </section>
+
+            <section className="space-y-4">
+              <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">路由配置</h4>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <FormField label="优先级">
+                  <div className="space-y-1.5">
+                    <input
+                      type="number"
+                      min="1"
+                      value={accountForm.priority}
+                      onChange={(event) => setAccountForm(prev => ({ ...prev, priority: event.target.value }))}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    />
+                    <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+                      priority 越小越优先；相同 priority 视为同一层。V1 会先按层选择，再在层内按额度与健康度自动择优。
+                    </div>
+                  </div>
+                </FormField>
+
+                <FormField label="Base URL（可选）">
+                  <input
+                    type="url"
+                    value={accountForm.base_url}
+                    onChange={(event) => setAccountForm(prev => ({ ...prev, base_url: event.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    placeholder={DEFAULT_BASE_URL}
+                  />
+                </FormField>
+              </div>
+
+              <label className="inline-flex items-start gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={accountForm.enabled}
+                  onChange={(event) => setAccountForm(prev => ({ ...prev, enabled: event.target.checked }))}
+                  className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span>{editingAccount ? '保持账号启用状态' : '创建后立即启用'}</span>
+              </label>
+            </section>
+
+            <section className="space-y-4">
+              <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">认证信息</h4>
+
+              <FormField label={accountForm.auth_method === 'chatgpt_refresh_token' ? 'ChatGPT Refresh Token (rt)' : 'API Key'} required>
+                <textarea
+                  value={accountForm.credential_raw}
+                  onChange={(event) => setAccountForm(prev => ({ ...prev, credential_raw: event.target.value }))}
+                  className="min-h-[120px] w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  placeholder={
+                    accountForm.auth_method === 'chatgpt_refresh_token'
+                      ? '粘贴 Refresh Token，例如：rt-xxxxxx'
+                      : '例如: sk-xxxxxx'
+                  }
+                />
+              </FormField>
+
+              {accountForm.auth_method === 'chatgpt_refresh_token' && (
+                <OAuthHelperPanel
+                  editingAccount={editingAccount}
+                  oauthSectionExpanded={oauthSectionExpanded}
+                  setOauthSectionExpanded={setOauthSectionExpanded}
+                  oauthActionLoading={oauthActionLoading}
+                  oauthSession={oauthSession}
+                  oauthCallbackURL={oauthCallbackURL}
+                  setOauthCallbackURL={setOauthCallbackURL}
+                  onGenerateOAuthLink={onGenerateOAuthLink}
+                  onExtractRTFromCallback={onExtractRTFromCallback}
+                  showNotice={showNotice}
+                  openExternalURL={openExternalURL}
+                />
+              )}
+            </section>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-white px-6 py-4">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={accountSubmitting}>
+            取消
+          </Button>
+          <Button type="submit" loading={accountSubmitting}>
+            {editingAccount ? '保存修改' : '创建账号'}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+export default AccountFormDialog;

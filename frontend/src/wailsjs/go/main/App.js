@@ -102,6 +102,10 @@ export function GetKeysOverview() {
   return window['go']['main']['App']['GetKeysOverview']();
 }
 
+export function GetLatestAccountScheduleSnapshot() {
+  return window['go']['main']['App']['GetLatestAccountScheduleSnapshot']();
+}
+
 export function GetLogStreamStatus() {
   return window['go']['main']['App']['GetLogStreamStatus']();
 }

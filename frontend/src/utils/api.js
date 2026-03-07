@@ -752,6 +752,20 @@ export const fetchUpstreamAccounts = async () => {
   return normalizeUpstreamAccountList(data);
 };
 
+export const fetchLatestAccountScheduleSnapshot = async () => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.getLatestAccountScheduleSnapshot();
+  }
+
+  return {
+    unsupported: true,
+    has_snapshot: false,
+    hasSnapshot: false,
+    candidates: [],
+    message: '仅桌面版支持最近一次调度结果面板'
+  };
+};
+
 export const createUpstreamAccount = async (input) => {
   const payload = WailsApi.buildUpstreamAccountPayload(input);
 

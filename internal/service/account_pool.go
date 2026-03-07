@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -30,6 +29,7 @@ type AccountPoolService struct {
 	store               store.AccountPoolStore
 	config              *config.Config
 	refreshTokenManager *accountauth.OpenAIRefreshTokenManager
+	scheduleSnapshots   *latestAccountScheduleSnapshotStore
 }
 
 // NewAccountPoolService 创建账号池服务
@@ -38,6 +38,7 @@ func NewAccountPoolService(st store.AccountPoolStore, cfg *config.Config) *Accou
 		store:               st,
 		config:              cfg,
 		refreshTokenManager: accountauth.NewOpenAIRefreshTokenManager(cfg),
+		scheduleSnapshots:   newLatestAccountScheduleSnapshotStore(),
 	}
 }
 
@@ -102,41 +103,7 @@ func (s *AccountPoolService) ToggleAccount(ctx context.Context, id int64, enable
 // ===== 调度/状态回写（供 proxy 使用） =====
 
 func (s *AccountPoolService) ListSchedulableAccounts(ctx context.Context) ([]*store.UpstreamAccountRecord, error) {
-	accounts, err := s.store.ListSchedulableAccounts(ctx, time.Now())
-	if err != nil {
-		return nil, err
-	}
-	return orderAccountsForManualFailover(accounts), nil
-}
-
-// orderAccountsForManualFailover 固化 V0 手动主备语义：
-//
-// 1. priority 越小越优先
-// 2. 相同 priority 视为同一顺序层，按 id 稳定兜底
-// 3. V0 不引入 quota / 健康度自动择优
-func orderAccountsForManualFailover(accounts []*store.UpstreamAccountRecord) []*store.UpstreamAccountRecord {
-	if len(accounts) <= 1 {
-		return accounts
-	}
-
-	ordered := append([]*store.UpstreamAccountRecord(nil), accounts...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		left := ordered[i]
-		right := ordered[j]
-
-		if left == nil {
-			return false
-		}
-		if right == nil {
-			return true
-		}
-		if left.Priority != right.Priority {
-			return left.Priority < right.Priority
-		}
-		return left.ID < right.ID
-	})
-
-	return ordered
+	return s.prepareSchedulableAccounts(ctx, "", "")
 }
 
 func (s *AccountPoolService) MarkAccountSuccess(ctx context.Context, id int64) error {

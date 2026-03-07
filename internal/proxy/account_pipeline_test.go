@@ -15,6 +15,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	servicepkg "cc-forwarder/internal/service"
 	"cc-forwarder/internal/store"
 )
 
@@ -29,14 +30,36 @@ type accountAuthCall struct {
 	reason string
 }
 
+type accountSchedulePrepareCall struct {
+	requestID   string
+	requestPath string
+}
+
+type accountScheduleCompleteCall struct {
+	requestID   string
+	accountID   int64
+	accountName string
+	outcome     string
+	finalError  string
+}
+
 type mockAccountPoolService struct {
 	accounts []*store.UpstreamAccountRecord
 	listErr  error
 
 	mu             sync.Mutex
+	prepareCalls   []accountSchedulePrepareCall
+	completeCalls  []accountScheduleCompleteCall
 	successCalls   []int64
 	authFailCalls  []accountAuthCall
 	transientCalls []accountTransientCall
+}
+
+func (m *mockAccountPoolService) PrepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) ([]*store.UpstreamAccountRecord, error) {
+	m.mu.Lock()
+	m.prepareCalls = append(m.prepareCalls, accountSchedulePrepareCall{requestID: requestID, requestPath: requestPath})
+	m.mu.Unlock()
+	return m.ListSchedulableAccounts(ctx)
 }
 
 func (m *mockAccountPoolService) ListSchedulableAccounts(ctx context.Context) ([]*store.UpstreamAccountRecord, error) {
@@ -49,6 +72,19 @@ func (m *mockAccountPoolService) ListSchedulableAccounts(ctx context.Context) ([
 		out = append(out, &cp)
 	}
 	return out, nil
+}
+
+func (m *mockAccountPoolService) CompleteLatestScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, outcome, finalError string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.completeCalls = append(m.completeCalls, accountScheduleCompleteCall{
+		requestID:   requestID,
+		accountID:   accountID,
+		accountName: accountName,
+		outcome:     outcome,
+		finalError:  finalError,
+	})
+	return nil
 }
 
 func (m *mockAccountPoolService) MarkAccountSuccess(ctx context.Context, id int64) error {
@@ -267,6 +303,53 @@ func TestHandler_GetAccountHTTPClient_ReusesSharedTransport(t *testing.T) {
 	}
 	if sseClient.Timeout != 0 {
 		t.Fatalf("expected SSE client timeout to be disabled, got %v", sseClient.Timeout)
+	}
+}
+
+func TestAccountPipeline_PreparesAndCompletesLatestScheduleSnapshot(t *testing.T) {
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_snapshot","status":"completed","output":[]}`))
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 7, AccountName: "snapshot-main", ProviderType: "api_key", CredentialRaw: "sk-snapshot", BaseURL: upstream.URL, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+
+	rec := performResponsesRequest(t, handler)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 1 {
+		t.Fatalf("expected upstream to be called once, got %d", upstreamHits)
+	}
+	if len(service.prepareCalls) != 1 {
+		t.Fatalf("expected one prepare call, got %+v", service.prepareCalls)
+	}
+	if service.prepareCalls[0].requestPath != "/v1/responses" {
+		t.Fatalf("expected request path /v1/responses, got %+v", service.prepareCalls[0])
+	}
+	if service.prepareCalls[0].requestID == "" {
+		t.Fatalf("expected non-empty request id in prepare call, got %+v", service.prepareCalls[0])
+	}
+	if len(service.completeCalls) == 0 {
+		t.Fatalf("expected complete call, got %+v", service.completeCalls)
+	}
+	last := service.completeCalls[len(service.completeCalls)-1]
+	if last.outcome != servicepkg.AccountScheduleOutcomeSuccess {
+		t.Fatalf("expected success outcome, got %+v", last)
+	}
+	if last.accountID != 7 || last.accountName != "snapshot-main" {
+		t.Fatalf("expected selected account to be recorded, got %+v", last)
+	}
+	if last.requestID == "" {
+		t.Fatalf("expected request id in complete call, got %+v", last)
 	}
 }
 

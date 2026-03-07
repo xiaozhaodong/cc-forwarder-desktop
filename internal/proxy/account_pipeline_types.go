@@ -9,7 +9,8 @@ import (
 
 // AccountPoolService 账号池调度接口（由 service 层实现）
 type AccountPoolService interface {
-	ListSchedulableAccounts(ctx context.Context) ([]*store.UpstreamAccountRecord, error)
+	PrepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) ([]*store.UpstreamAccountRecord, error)
+	CompleteLatestScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, outcome, finalError string) error
 	MarkAccountSuccess(ctx context.Context, id int64) error
 	MarkAccountAuthFailed(ctx context.Context, id int64, reason string) error
 	MarkAccountTransientFailure(ctx context.Context, id int64, reason string, cooldown time.Duration) error
