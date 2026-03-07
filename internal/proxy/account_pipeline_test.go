@@ -32,6 +32,13 @@ type accountAuthCall struct {
 	reason string
 }
 
+type accountSoftFailureCall struct {
+	id         int64
+	reason     string
+	category   string
+	retryAfter time.Duration
+}
+
 type accountSchedulePrepareCall struct {
 	requestID   string
 	requestPath string
@@ -62,6 +69,7 @@ type mockAccountPoolService struct {
 	successCalls      []int64
 	authFailCalls     []accountAuthCall
 	transientCalls    []accountTransientCall
+	softFailureCalls  []accountSoftFailureCall
 }
 
 func (m *mockAccountPoolService) PrepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) ([]*store.UpstreamAccountRecord, error) {
@@ -121,6 +129,13 @@ func (m *mockAccountPoolService) MarkAccountTransientFailure(ctx context.Context
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.transientCalls = append(m.transientCalls, accountTransientCall{id: id, reason: reason, cooldown: cooldown})
+	return nil
+}
+
+func (m *mockAccountPoolService) RecordAccountSoftFailure(ctx context.Context, id int64, reason, category string, retryAfter time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.softFailureCalls = append(m.softFailureCalls, accountSoftFailureCall{id: id, reason: reason, category: category, retryAfter: retryAfter})
 	return nil
 }
 
@@ -467,8 +482,14 @@ func TestAccountPipeline_429FailoverThenSuccess(t *testing.T) {
 		t.Fatalf("expected both accounts to be attempted once, got first=%d second=%d", firstHits, secondHits)
 	}
 
-	if len(service.transientCalls) != 1 || service.transientCalls[0].id != 11 {
-		t.Fatalf("expected transient failure on account 11, got %+v", service.transientCalls)
+	if len(service.softFailureCalls) != 1 || service.softFailureCalls[0].id != 11 {
+		t.Fatalf("expected soft failure on account 11, got %+v", service.softFailureCalls)
+	}
+	if service.softFailureCalls[0].category != accountSoftFailureCategoryRateLimit {
+		t.Fatalf("expected rate_limit soft failure, got %+v", service.softFailureCalls[0])
+	}
+	if len(service.transientCalls) != 0 {
+		t.Fatalf("expected no direct transient cooldown for first 429, got %+v", service.transientCalls)
 	}
 	if len(service.successCalls) != 1 || service.successCalls[0] != 12 {
 		t.Fatalf("expected success on account 12, got %+v", service.successCalls)
@@ -509,20 +530,23 @@ func TestAccountPipeline_UsesServiceReturnedOrderWithoutPriorityReordering(t *te
 	if firstHits != 1 || secondHits != 1 {
 		t.Fatalf("expected proxy to use returned order, got first=%d second=%d", firstHits, secondHits)
 	}
-	if len(service.transientCalls) != 1 || service.transientCalls[0].id != 41 {
-		t.Fatalf("expected first returned account to enter cooldown, got %+v", service.transientCalls)
+	if len(service.softFailureCalls) != 1 || service.softFailureCalls[0].id != 41 {
+		t.Fatalf("expected first returned account to record soft failure, got %+v", service.softFailureCalls)
+	}
+	if len(service.transientCalls) != 0 {
+		t.Fatalf("expected no immediate cooldown for first returned account, got %+v", service.transientCalls)
 	}
 	if len(service.successCalls) != 1 || service.successCalls[0] != 42 {
 		t.Fatalf("expected second returned account to succeed, got %+v", service.successCalls)
 	}
 }
 
-func TestAccountPipeline_503NoAvailableProviders_PassthroughWithoutCooldown(t *testing.T) {
+func TestAccountPipeline_Local503NoAvailableProviders_PassthroughWithoutCooldown(t *testing.T) {
 	firstHits := 0
 	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		firstHits++
 		w.Header().Set("Content-Type", "application/json")
-		http.Error(w, `{"error":{"type":"no_available_providers","message":"no_available_providers"}}`, http.StatusServiceUnavailable)
+		http.Error(w, `{"error":{"type":"no_available_providers","message":"no_available_providers::ccf_local"}}`, http.StatusServiceUnavailable)
 	}))
 	defer firstServer.Close()
 
@@ -552,6 +576,9 @@ func TestAccountPipeline_503NoAvailableProviders_PassthroughWithoutCooldown(t *t
 	if !strings.Contains(rec.Body.String(), "no_available_providers") {
 		t.Fatalf("expected passthrough body to contain no_available_providers, got %s", rec.Body.String())
 	}
+	if len(service.softFailureCalls) != 0 {
+		t.Fatalf("expected no soft failure calls, got %+v", service.softFailureCalls)
+	}
 	if len(service.transientCalls) != 0 {
 		t.Fatalf("expected no transient failure calls, got %+v", service.transientCalls)
 	}
@@ -560,6 +587,52 @@ func TestAccountPipeline_503NoAvailableProviders_PassthroughWithoutCooldown(t *t
 	}
 	if len(service.successCalls) != 0 {
 		t.Fatalf("expected no success calls, got %+v", service.successCalls)
+	}
+}
+
+func TestAccountPipeline_Generic503RecordedAsServerSoftFailure(t *testing.T) {
+	firstHits := 0
+	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstHits++
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":{"type":"service_unavailable","message":"upstream overloaded"}}`, http.StatusServiceUnavailable)
+	}))
+	defer firstServer.Close()
+
+	secondHits := 0
+	secondServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_after_503","status":"completed","output":[]}`))
+	}))
+	defer secondServer.Close()
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 51, AccountName: "acc-a", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: firstServer.URL, Enabled: true},
+			{ID: 52, AccountName: "acc-b", ProviderType: "api_key", CredentialRaw: "sk-b", BaseURL: secondServer.URL, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, firstServer.URL, service)
+
+	rec := performResponsesRequest(t, handler)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if firstHits != 1 || secondHits != 1 {
+		t.Fatalf("expected both accounts attempted, got first=%d second=%d", firstHits, secondHits)
+	}
+	if len(service.softFailureCalls) != 1 || service.softFailureCalls[0].id != 51 {
+		t.Fatalf("expected soft failure for first account, got %+v", service.softFailureCalls)
+	}
+	if service.softFailureCalls[0].category != accountSoftFailureCategoryServerError {
+		t.Fatalf("expected server_error soft failure, got %+v", service.softFailureCalls[0])
+	}
+	if len(service.transientCalls) != 0 {
+		t.Fatalf("expected no immediate transient cooldown, got %+v", service.transientCalls)
+	}
+	if len(service.successCalls) != 1 || service.successCalls[0] != 52 {
+		t.Fatalf("expected second account success, got %+v", service.successCalls)
 	}
 }
 

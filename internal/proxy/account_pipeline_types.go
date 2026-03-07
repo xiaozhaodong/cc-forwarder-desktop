@@ -15,4 +15,5 @@ type AccountPoolService interface {
 	MarkAccountSuccess(ctx context.Context, id int64) error
 	MarkAccountAuthFailed(ctx context.Context, id int64, reason string) error
 	MarkAccountTransientFailure(ctx context.Context, id int64, reason string, cooldown time.Duration) error
+	RecordAccountSoftFailure(ctx context.Context, id int64, reason, category string, retryAfter time.Duration) error
 }

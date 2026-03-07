@@ -30,6 +30,7 @@ type AccountPoolService struct {
 	config                 *config.Config
 	refreshTokenManager    *accountauth.OpenAIRefreshTokenManager
 	scheduleSnapshots      *latestAccountScheduleSnapshotStore
+	softFailureTracker     *accountSoftFailureTracker
 	quotaRefreshDispatcher *accountPoolQuotaRefreshDispatcher
 	quotaProbeScheduler    *accountPoolQuotaProbeScheduler
 }
@@ -41,6 +42,7 @@ func NewAccountPoolService(st store.AccountPoolStore, cfg *config.Config) *Accou
 		config:              cfg,
 		refreshTokenManager: accountauth.NewOpenAIRefreshTokenManager(cfg),
 		scheduleSnapshots:   newLatestAccountScheduleSnapshotStore(),
+		softFailureTracker:  newAccountSoftFailureTracker(),
 	}
 	svc.quotaRefreshDispatcher = newAccountPoolQuotaRefreshDispatcher(context.Background(), svc.RefreshAccountProfile)
 	if cfg != nil && cfg.AccountPool.Enabled {
@@ -138,18 +140,61 @@ func (s *AccountPoolService) ListSchedulableAccounts(ctx context.Context) ([]*st
 }
 
 func (s *AccountPoolService) MarkAccountSuccess(ctx context.Context, id int64) error {
-	return s.store.MarkAccountSuccess(ctx, id, time.Now())
+	if err := s.store.MarkAccountSuccess(ctx, id, time.Now()); err != nil {
+		return err
+	}
+	if s.softFailureTracker != nil {
+		s.softFailureTracker.Clear(id)
+	}
+	return nil
 }
 
 func (s *AccountPoolService) MarkAccountAuthFailed(ctx context.Context, id int64, reason string) error {
-	return s.store.MarkAccountAuthFailed(ctx, id, reason)
+	if err := s.store.MarkAccountAuthFailed(ctx, id, reason); err != nil {
+		return err
+	}
+	if s.softFailureTracker != nil {
+		s.softFailureTracker.Clear(id)
+	}
+	return nil
 }
 
 func (s *AccountPoolService) MarkAccountTransientFailure(ctx context.Context, id int64, reason string, cooldown time.Duration) error {
 	if cooldown <= 0 {
 		cooldown = 30 * time.Second
 	}
-	return s.store.MarkAccountTransientFailure(ctx, id, reason, time.Now().Add(cooldown))
+	if err := s.store.MarkAccountTransientFailure(ctx, id, reason, time.Now().Add(cooldown)); err != nil {
+		return err
+	}
+	if s.softFailureTracker != nil {
+		s.softFailureTracker.Clear(id)
+	}
+	return nil
+}
+
+func (s *AccountPoolService) RecordAccountSoftFailure(ctx context.Context, id int64, reason, category string, retryAfter time.Duration) error {
+	if id <= 0 {
+		return fmt.Errorf("invalid account id: %d", id)
+	}
+
+	tracker := s.softFailureTracker
+	if tracker == nil {
+		tracker = newAccountSoftFailureTracker()
+		s.softFailureTracker = tracker
+	}
+
+	now := tracker.Now()
+	count := tracker.Record(id)
+	if count < tracker.threshold {
+		return nil
+	}
+
+	cooldown := resolveAccountSoftFailureCooldown(category, retryAfter)
+	if err := s.store.MarkAccountTransientFailure(ctx, id, reason, now.Add(cooldown)); err != nil {
+		return err
+	}
+	tracker.Clear(id)
+	return nil
 }
 
 // TestUpstreamAccount 测试账号连通性

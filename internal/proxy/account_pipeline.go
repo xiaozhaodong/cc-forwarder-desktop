@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,9 +21,13 @@ import (
 	"cc-forwarder/internal/transport"
 )
 
-const defaultAccountRetryCooldown = 30 * time.Second
-
 const (
+	defaultAccountConnectionFailureCooldown = 90 * time.Second
+	defaultAccountProcessingFailureCooldown = 60 * time.Second
+	accountSoftFailureCategoryRateLimit     = "rate_limit"
+	accountSoftFailureCategoryServerError   = "server_error"
+	localNoAvailableProvidersMarker         = "no_available_providers::ccf_local"
+
 	chatGPTCodexResponsesURL = "https://chatgpt.com/backend-api/codex/responses"
 	openAIBetaResponsesValue = "responses=experimental"
 	defaultOAuthOriginator   = "codex_cli_rs"
@@ -75,14 +80,14 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		resp, forwardErr := h.forwardRequestToAccount(ctx, r, bodyBytes, acc, isSSE)
 		if forwardErr != nil {
 			lastErr = forwardErr
-			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, forwardErr.Error(), defaultAccountRetryCooldown)
+			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, forwardErr.Error(), defaultAccountConnectionFailureCooldown)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, forwardErr.Error())
 			continue
 		}
 
 		if resp == nil {
 			lastErr = fmt.Errorf("empty response from account %d", acc.ID)
-			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, lastErr.Error(), defaultAccountRetryCooldown)
+			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, lastErr.Error(), defaultAccountConnectionFailureCooldown)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, lastErr.Error())
 			continue
 		}
@@ -98,10 +103,10 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			continue
 		}
 
-		if isNoAvailableProviders503Response(resp) {
+		if isLocalNoAvailableProviders503Response(resp) {
 			detail := readAndRestoreResponseBody(resp, 1024)
 			if detail == "" {
-				detail = "no_available_providers"
+				detail = localNoAvailableProvidersMarker
 			}
 			if writeErr := h.writeRawResponse(w, resp); writeErr != nil {
 				lifecycleManager.FailRequest("account_pipeline_response_write_error", writeErr.Error(), resp.StatusCode)
@@ -113,13 +118,25 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			return
 		}
 
-		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			retryAfter := parseAccountRetryAfter(resp)
 			detail := readAndCloseResponseBody(resp, 1024)
 			if detail == "" {
 				detail = fmt.Sprintf("upstream returned %d", resp.StatusCode)
 			}
 			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
-			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, detail, defaultAccountRetryCooldown)
+			_ = h.accountPoolService.RecordAccountSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryRateLimit, retryAfter)
+			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
+			continue
+		}
+
+		if resp.StatusCode >= 500 {
+			detail := readAndCloseResponseBody(resp, 1024)
+			if detail == "" {
+				detail = fmt.Sprintf("upstream returned %d", resp.StatusCode)
+			}
+			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
+			_ = h.accountPoolService.RecordAccountSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryServerError, 0)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
 			continue
 		}
@@ -129,7 +146,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			detail := fmt.Sprintf("upstream returned %d", resp.StatusCode)
 			if writeErr := h.writeRawResponse(w, resp); writeErr != nil {
 				lifecycleManager.FailRequest("account_pipeline_response_write_error", writeErr.Error(), resp.StatusCode)
-				_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, writeErr.Error(), defaultAccountRetryCooldown)
+				_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, writeErr.Error(), defaultAccountProcessingFailureCooldown)
 				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, writeErr.Error())
 				return
 			}
@@ -150,7 +167,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				return
 			}
 			lastErr = processErr
-			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, processErr.Error(), 10*time.Second)
+			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, processErr.Error(), defaultAccountProcessingFailureCooldown)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, processErr.Error())
 			// 流式响应一旦开始输出，无法切换到下一个账号，直接终止
 			if isSSE {
@@ -225,7 +242,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	return resp, nil
 }
 
-func isNoAvailableProviders503Response(resp *http.Response) bool {
+func isLocalNoAvailableProviders503Response(resp *http.Response) bool {
 	if resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
 		return false
 	}
@@ -234,8 +251,31 @@ func isNoAvailableProviders503Response(resp *http.Response) bool {
 	if lower == "" {
 		return false
 	}
-	return strings.Contains(lower, "no_available_providers") ||
-		strings.Contains(lower, "no available providers")
+	return strings.Contains(lower, strings.ToLower(localNoAvailableProvidersMarker))
+}
+
+func parseAccountRetryAfter(resp *http.Response) time.Duration {
+	if resp == nil {
+		return 0
+	}
+	raw := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if raw == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(raw); err == nil {
+		if seconds > 0 {
+			return time.Duration(seconds) * time.Second
+		}
+		return 0
+	}
+	at, err := http.ParseTime(raw)
+	if err != nil {
+		return 0
+	}
+	if d := time.Until(at); d > 0 {
+		return d
+	}
+	return 0
 }
 
 func readAndRestoreResponseBody(resp *http.Response, limit int64) string {
