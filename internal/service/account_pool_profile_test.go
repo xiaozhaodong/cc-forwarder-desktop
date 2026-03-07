@@ -334,7 +334,9 @@ func newOAuthProfileTestService(t *testing.T, credentialRaw string) (*AccountPoo
 		t.Fatalf("create account failed: %v", err)
 	}
 
-	return NewAccountPoolService(st, nil), st, rec.ID
+	svc := NewAccountPoolService(st, nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	return svc, st, rec.ID
 }
 
 func testServiceIDTokenWithProfile(planType, accountID, userID, organizationID string) string {

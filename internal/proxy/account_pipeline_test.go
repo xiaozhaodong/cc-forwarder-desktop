@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"cc-forwarder/config"
+	"cc-forwarder/internal/accountauth"
 	"cc-forwarder/internal/endpoint"
 	servicepkg "cc-forwarder/internal/service"
 	"cc-forwarder/internal/store"
@@ -43,16 +45,23 @@ type accountScheduleCompleteCall struct {
 	finalError  string
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
 type mockAccountPoolService struct {
 	accounts []*store.UpstreamAccountRecord
 	listErr  error
 
-	mu             sync.Mutex
-	prepareCalls   []accountSchedulePrepareCall
-	completeCalls  []accountScheduleCompleteCall
-	successCalls   []int64
-	authFailCalls  []accountAuthCall
-	transientCalls []accountTransientCall
+	mu                sync.Mutex
+	prepareCalls      []accountSchedulePrepareCall
+	completeCalls     []accountScheduleCompleteCall
+	quotaRefreshCalls []int64
+	successCalls      []int64
+	authFailCalls     []accountAuthCall
+	transientCalls    []accountTransientCall
 }
 
 func (m *mockAccountPoolService) PrepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) ([]*store.UpstreamAccountRecord, error) {
@@ -85,6 +94,13 @@ func (m *mockAccountPoolService) CompleteLatestScheduleSnapshot(ctx context.Cont
 		finalError:  finalError,
 	})
 	return nil
+}
+
+func (m *mockAccountPoolService) TryEnqueueQuotaRefresh(id int64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.quotaRefreshCalls = append(m.quotaRefreshCalls, id)
+	return true
 }
 
 func (m *mockAccountPoolService) MarkAccountSuccess(ctx context.Context, id int64) error {
@@ -321,6 +337,18 @@ func TestAccountPipeline_PreparesAndCompletesLatestScheduleSnapshot(t *testing.T
 		},
 	}
 	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+	handler.accountHTTPInitOnce.Do(func() {})
+	handler.accountHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		upstreamHits++
+		body := io.NopCloser(strings.NewReader(`{"id":"resp_oauth","status":"completed","output":[]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       body,
+			Request:    req,
+		}, nil
+	})}
+	handler.accountSSEHTTPClient = handler.accountHTTPClient
 
 	rec := performResponsesRequest(t, handler)
 	if rec.Code != http.StatusOK {
@@ -350,6 +378,60 @@ func TestAccountPipeline_PreparesAndCompletesLatestScheduleSnapshot(t *testing.T
 	}
 	if last.requestID == "" {
 		t.Fatalf("expected request id in complete call, got %+v", last)
+	}
+	if len(service.quotaRefreshCalls) != 0 {
+		t.Fatalf("expected api_key success not to enqueue quota refresh, got %+v", service.quotaRefreshCalls)
+	}
+}
+
+func TestAccountPipeline_OAuthSuccessEnqueuesQuotaRefresh(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"at-oauth","refresh_token":"rt-oauth","expires_in":3600}`))
+	}))
+	defer authServer.Close()
+
+	oldRefreshURL := accountauth.CurrentOpenAIRefreshTokenURLForTest()
+	t.Cleanup(func() {
+		accountauth.SetOpenAIRefreshTokenURLForTest(oldRefreshURL)
+	})
+	accountauth.SetOpenAIRefreshTokenURLForTest(authServer.URL)
+
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_oauth","status":"completed","output":[]}`))
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 17, AccountName: "oauth-main", ProviderType: "chatgpt_refresh_token", CredentialRaw: `{"refresh_token":"rt-1","chatgpt_account_id":"acc-1"}`, BaseURL: upstream.URL, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+	handler.accountHTTPInitOnce.Do(func() {})
+	handler.accountHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		upstreamHits++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"resp_oauth","status":"completed","output":[]}`)),
+			Request:    req,
+		}, nil
+	})}
+	handler.accountSSEHTTPClient = handler.accountHTTPClient
+
+	rec := performResponsesRequest(t, handler)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 1 {
+		t.Fatalf("expected upstream to be called once, got %d", upstreamHits)
+	}
+	if len(service.quotaRefreshCalls) != 1 || service.quotaRefreshCalls[0] != 17 {
+		t.Fatalf("expected oauth success to enqueue quota refresh, got %+v", service.quotaRefreshCalls)
 	}
 }
 

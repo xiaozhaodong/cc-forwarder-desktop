@@ -26,20 +26,29 @@ var chatGPTCodexTestURL = defaultChatGPTCodexTestURL
 
 // AccountPoolService 账号池服务
 type AccountPoolService struct {
-	store               store.AccountPoolStore
-	config              *config.Config
-	refreshTokenManager *accountauth.OpenAIRefreshTokenManager
-	scheduleSnapshots   *latestAccountScheduleSnapshotStore
+	store                  store.AccountPoolStore
+	config                 *config.Config
+	refreshTokenManager    *accountauth.OpenAIRefreshTokenManager
+	scheduleSnapshots      *latestAccountScheduleSnapshotStore
+	quotaRefreshDispatcher *accountPoolQuotaRefreshDispatcher
+	quotaProbeScheduler    *accountPoolQuotaProbeScheduler
 }
 
 // NewAccountPoolService 创建账号池服务
 func NewAccountPoolService(st store.AccountPoolStore, cfg *config.Config) *AccountPoolService {
-	return &AccountPoolService{
+	svc := &AccountPoolService{
 		store:               st,
 		config:              cfg,
 		refreshTokenManager: accountauth.NewOpenAIRefreshTokenManager(cfg),
 		scheduleSnapshots:   newLatestAccountScheduleSnapshotStore(),
 	}
+	svc.quotaRefreshDispatcher = newAccountPoolQuotaRefreshDispatcher(context.Background(), svc.RefreshAccountProfile)
+	if cfg != nil && cfg.AccountPool.Enabled {
+		svc.quotaProbeScheduler = newAccountPoolQuotaProbeScheduler(context.Background(), func(ctx context.Context) ([]*store.UpstreamAccountRecord, error) {
+			return svc.ListAccounts(ctx, false)
+		}, svc.TryEnqueueQuotaRefresh)
+	}
+	return svc
 }
 
 // ===== 账号 =====
@@ -98,6 +107,28 @@ func (s *AccountPoolService) DeleteAccount(ctx context.Context, id int64) error 
 
 func (s *AccountPoolService) ToggleAccount(ctx context.Context, id int64, enabled bool) error {
 	return s.store.ToggleAccount(ctx, id, enabled)
+}
+
+func (s *AccountPoolService) Close() error {
+	var firstErr error
+	if s.quotaProbeScheduler != nil {
+		if err := s.quotaProbeScheduler.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if s.quotaRefreshDispatcher != nil {
+		if err := s.quotaRefreshDispatcher.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func (s *AccountPoolService) TryEnqueueQuotaRefresh(id int64) bool {
+	if s == nil || s.quotaRefreshDispatcher == nil {
+		return false
+	}
+	return s.quotaRefreshDispatcher.TryEnqueue(id)
 }
 
 // ===== 调度/状态回写（供 proxy 使用） =====

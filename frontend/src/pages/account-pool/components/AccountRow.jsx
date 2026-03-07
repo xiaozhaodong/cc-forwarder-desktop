@@ -22,6 +22,38 @@ import {
 
 const toDisplayTime = (value) => (value ? formatTimestamp(value) : '-');
 
+const formatQuotaResetTime = (value) => {
+  if (!value) return '';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+
+  return `${month}-${day} ${hours}:${minutes}`;
+};
+
+const buildQuotaDisplayText = (remaining, resetAt) => {
+  const remainingText = Number.isFinite(remaining) ? `${remaining.toFixed(0)}%` : '';
+  const resetText = formatQuotaResetTime(resetAt);
+
+  if (remainingText && resetText) {
+    return `${remainingText} · ${resetText} 重置`;
+  }
+  if (remainingText) {
+    return remainingText;
+  }
+  if (resetText) {
+    return `${resetText} 重置`;
+  }
+  return '-';
+};
+
 const AccountRow = ({
   account,
   accountCount,
@@ -58,6 +90,10 @@ const AccountRow = ({
   const quotaWeeklyRemaining = toRemainingPercent(quotaWeeklyUsed);
   const quota5hResetAt = account.quota_5h_reset_at || account.quota5hResetAt;
   const quotaWeeklyResetAt = account.quota_weekly_reset_at || account.quotaWeeklyResetAt;
+  const quota5hDisplayText = buildQuotaDisplayText(quota5hRemaining, quota5hResetAt);
+  const quotaWeeklyDisplayText = buildQuotaDisplayText(quotaWeeklyRemaining, quotaWeeklyResetAt);
+  const quota5hResetLabel = formatQuotaResetTime(quota5hResetAt);
+  const quotaWeeklyResetLabel = formatQuotaResetTime(quotaWeeklyResetAt);
 
   return (
     <div className={`px-5 py-4 hover:bg-slate-50/60 transition-colors ${!account.enabled ? 'opacity-60' : ''}`}>
@@ -195,7 +231,7 @@ const AccountRow = ({
       </div>
 
       <div className="mt-3 flex flex-col gap-3 md:ml-12 md:gap-4 lg:flex-row lg:items-center lg:gap-6">
-        <div className="flex min-w-0 w-full items-center gap-2 lg:max-w-[280px]">
+        <div className="flex min-w-0 w-full items-center gap-2 lg:max-w-[360px]">
           <span className="text-[11px] text-slate-400 shrink-0 w-10">5h</span>
           {isAPIKeyAccount ? (
             <span className="text-[11px] text-slate-500">无限额</span>
@@ -209,14 +245,15 @@ const AccountRow = ({
                   style={{ width: `${Number.isFinite(quota5hRemaining) ? quota5hRemaining : 0}%` }}
                 />
               </div>
-              <span className="text-[11px] font-medium text-slate-600 shrink-0 w-10 text-right" title={quota5hResetAt ? `重置 ${formatTimestamp(quota5hResetAt)}` : ''}>
+              <span className="text-[11px] font-medium text-slate-600 shrink-0 text-right whitespace-nowrap" title={quota5hResetAt ? `重置 ${formatTimestamp(quota5hResetAt)}` : ''}>
                 {Number.isFinite(quota5hRemaining) ? `${quota5hRemaining.toFixed(0)}%` : '-'}
+                {quota5hResetLabel ? ` · ${quota5hResetLabel} 重置` : ''}
               </span>
             </>
           )}
         </div>
 
-        <div className="flex min-w-0 w-full items-center gap-2 lg:max-w-[280px]">
+        <div className="flex min-w-0 w-full items-center gap-2 lg:max-w-[360px]">
           <span className="text-[11px] text-slate-400 shrink-0 w-10">d7</span>
           {isAPIKeyAccount ? (
             <span className="text-[11px] text-slate-500">无限额</span>
@@ -228,8 +265,9 @@ const AccountRow = ({
                   style={{ width: `${Number.isFinite(quotaWeeklyRemaining) ? quotaWeeklyRemaining : 0}%` }}
                 />
               </div>
-              <span className="text-[11px] font-medium text-slate-600 shrink-0 w-10 text-right" title={quotaWeeklyResetAt ? `重置 ${formatTimestamp(quotaWeeklyResetAt)}` : ''}>
+              <span className="text-[11px] font-medium text-slate-600 shrink-0 text-right whitespace-nowrap" title={quotaWeeklyResetAt ? `重置 ${formatTimestamp(quotaWeeklyResetAt)}` : ''}>
                 {Number.isFinite(quotaWeeklyRemaining) ? `${quotaWeeklyRemaining.toFixed(0)}%` : '-'}
+                {quotaWeeklyResetLabel ? ` · ${quotaWeeklyResetLabel} 重置` : ''}
               </span>
             </>
           )}

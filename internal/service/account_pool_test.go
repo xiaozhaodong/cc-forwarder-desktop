@@ -319,6 +319,7 @@ func newTestAccountPoolServiceForConnectivity(t *testing.T, baseURL, providerTyp
 	}
 
 	svc := NewAccountPoolService(st, nil)
+	t.Cleanup(func() { _ = svc.Close() })
 	return svc, rec.ID
 }
 
@@ -341,5 +342,7 @@ func newTestAccountPoolServiceWithStore(t *testing.T) (*AccountPoolService, *sto
 	}
 
 	st := store.NewSQLiteAccountPoolStore(db)
-	return NewAccountPoolService(st, nil), st
+	svc := NewAccountPoolService(st, nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	return svc, st
 }

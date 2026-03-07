@@ -160,6 +160,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		}
 
 		_ = h.accountPoolService.MarkAccountSuccess(ctx, acc.ID)
+		if accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
+			h.accountPoolService.TryEnqueueQuotaRefresh(acc.ID)
+		}
 		_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeSuccess, "")
 		return
 	}

@@ -33,6 +33,11 @@ const getModelColorClasses = (modelName) => {
     return 'bg-purple-50 text-purple-700 border-purple-200';
   }
 
+  // GPT / OpenAI 系列 - 稳重靛蓝色
+  if (lowerName.startsWith('gpt-') || lowerName.includes('gpt-')) {
+    return 'bg-indigo-50 text-indigo-700 border-indigo-200';
+  }
+
   // 其他未知模型 - 中性灰色
   return 'bg-slate-50 text-slate-600 border-slate-200';
 };

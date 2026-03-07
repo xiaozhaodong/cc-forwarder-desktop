@@ -206,14 +206,21 @@ func (a *App) shutdown(ctx context.Context) {
 		}
 	}
 
-	// 2. 关闭使用追踪 (flush 数据库)
+	// 2. 关闭账号池服务后台任务
+	if a.accountPoolService != nil {
+		if err := a.accountPoolService.Close(); err != nil {
+			a.logger.Error("账号池服务关闭失败", "error", err)
+		}
+	}
+
+	// 3. 关闭使用追踪 (flush 数据库)
 	if a.usageTracker != nil {
 		if err := a.usageTracker.Close(); err != nil {
 			a.logger.Error("使用追踪器关闭失败", "error", err)
 		}
 	}
 
-	// 3. 关闭端点管理器
+	// 4. 关闭端点管理器
 	if a.endpointManager != nil {
 		a.endpointManager.Stop()
 	}

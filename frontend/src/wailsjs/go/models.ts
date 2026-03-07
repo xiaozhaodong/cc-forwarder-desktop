@@ -39,11 +39,11 @@ export namespace main {
 	    reason_detail: string;
 	    runtime_outcome?: string;
 	    runtime_error?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AccountScheduleCandidateDecisionInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.account_id = source["account_id"];
@@ -652,11 +652,11 @@ export namespace main {
 	    final_error: string;
 	    summary: string;
 	    candidates: AccountScheduleCandidateDecisionInfo[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new LatestAccountScheduleSnapshotInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.has_snapshot = source["has_snapshot"];
@@ -675,7 +675,7 @@ export namespace main {
 	        this.summary = source["summary"];
 	        this.candidates = this.convertValues(source["candidates"], AccountScheduleCandidateDecisionInfo);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1190,3 +1190,4 @@ export namespace main {
 	}
 
 }
+
