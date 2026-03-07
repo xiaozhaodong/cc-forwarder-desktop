@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -68,8 +67,9 @@ type App struct {
 	proxyServer *http.Server
 
 	// 应用状态
-	startTime  time.Time
-	configPath string
+	startTime          time.Time
+	configPath         string
+	configPathExplicit bool
 
 	// 并发控制
 	mu        sync.RWMutex
@@ -271,50 +271,32 @@ func (a *App) loadConfig() {
 		tempLogger.Info("📁 应用目录已就绪",
 			"appdir", utils.GetAppDataDir(),
 			"data", utils.GetDataDir(),
-			"logs", utils.GetLogDir())
+			"logs", utils.GetLogDir(),
+			"config", utils.GetConfigDir())
 	}
 
-	// 直接从嵌入的配置加载（不写文件）
-	tempLogger.Info("📝 从嵌入配置加载")
-
-	// 将嵌入的配置写入临时文件进行解析
-	tmpConfigPath := filepath.Join(os.TempDir(), "cc-forwarder-config.yaml")
-
-	// 先修改配置内容，替换路径为用户目录
-	configContent := string(defaultConfigContent)
-	// 注意：不修改配置内容，而是加载后再覆盖路径
-
-	if err := os.WriteFile(tmpConfigPath, []byte(configContent), 0644); err != nil {
-		panic(fmt.Sprintf("无法创建临时配置文件: %v", err))
+	resolvedConfigPath, err := a.resolveStartupConfigPath(tempLogger)
+	if err != nil {
+		panic(fmt.Sprintf("无法准备配置文件: %v", err))
 	}
-	defer os.Remove(tmpConfigPath)
 
 	// 创建配置监听器（此时会调用 SetDefaults 设置默认路径）
-	configWatcher, err := config.NewConfigWatcher(tmpConfigPath, tempLogger)
+	configWatcher, err := config.NewConfigWatcher(resolvedConfigPath, tempLogger)
 	if err != nil {
 		panic(fmt.Sprintf("无法加载配置: %v", err))
 	}
 
 	a.configWatcher = configWatcher
 	cfg := configWatcher.GetConfig()
-
-	// ⚠️ 关键：立即覆盖所有路径为用户目录（在任何组件初始化之前）
-	cfg.Logging.FilePath = filepath.Join(utils.GetLogDir(), "app.log")
-	cfg.UsageTracking.DatabasePath = filepath.Join(utils.GetDataDir(), "usage.db")
-
-	// 同时设置 Database 配置（如果存在）
-	if cfg.UsageTracking.Database != nil {
-		// Database 配置中没有 DatabasePath 字段，UsageTracking.DatabasePath 是统一路径
-	}
-
+	a.applyDesktopRuntimePathOverrides(cfg)
 	a.config = cfg
+	a.configPath = resolvedConfigPath
 
 	tempLogger.Info("✅ 配置加载完成",
+		"config_file", a.configPath,
 		"log_path", a.config.Logging.FilePath,
 		"db_path", a.config.UsageTracking.DatabasePath,
 		"appdir", utils.GetAppDataDir())
-
-	a.configPath = tmpConfigPath
 }
 
 // setupLogger 设置日志
@@ -787,6 +769,9 @@ func (a *App) setupConfigReload() {
 	a.configWatcher.AddReloadCallback(func(newCfg *config.Config) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
+
+		// 桌面版运行时强制使用用户目录下的日志与数据库路径
+		a.applyDesktopRuntimePathOverrides(newCfg)
 
 		// 更新配置引用
 		a.config = newCfg

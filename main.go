@@ -74,6 +74,11 @@ func main() {
 	// 创建应用实例
 	app := NewApp()
 	app.configPath = *configPath
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			app.configPathExplicit = true
+		}
+	})
 
 	// 运行 Wails 应用
 	err := wails.Run(&options.App{
