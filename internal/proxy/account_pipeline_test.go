@@ -313,6 +313,45 @@ func TestAccountPipeline_429FailoverThenSuccess(t *testing.T) {
 	}
 }
 
+func TestAccountPipeline_UsesServiceReturnedOrderWithoutPriorityReordering(t *testing.T) {
+	firstHits := 0
+	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstHits++
+		http.Error(w, `{"error":"rate limited"}`, http.StatusTooManyRequests)
+	}))
+	defer firstServer.Close()
+
+	secondHits := 0
+	secondServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_service_order","status":"completed","output":[]}`))
+	}))
+	defer secondServer.Close()
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 41, AccountName: "manual-backup", ProviderType: "api_key", CredentialRaw: "sk-backup", BaseURL: firstServer.URL, Priority: 20, Enabled: true},
+			{ID: 42, AccountName: "manual-main", ProviderType: "api_key", CredentialRaw: "sk-main", BaseURL: secondServer.URL, Priority: 10, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, firstServer.URL, service)
+
+	rec := performResponsesRequest(t, handler)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if firstHits != 1 || secondHits != 1 {
+		t.Fatalf("expected proxy to use returned order, got first=%d second=%d", firstHits, secondHits)
+	}
+	if len(service.transientCalls) != 1 || service.transientCalls[0].id != 41 {
+		t.Fatalf("expected first returned account to enter cooldown, got %+v", service.transientCalls)
+	}
+	if len(service.successCalls) != 1 || service.successCalls[0] != 42 {
+		t.Fatalf("expected second returned account to succeed, got %+v", service.successCalls)
+	}
+}
+
 func TestAccountPipeline_503NoAvailableProviders_PassthroughWithoutCooldown(t *testing.T) {
 	firstHits := 0
 	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

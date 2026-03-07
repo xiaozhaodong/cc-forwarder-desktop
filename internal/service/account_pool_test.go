@@ -8,8 +8,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"cc-forwarder/internal/store"
 
@@ -126,6 +128,164 @@ func TestTestUpstreamAccount_Treats503NoAvailableProvidersAsReachable(t *testing
 	}
 }
 
+func TestListSchedulableAccounts_V0ManualPriorityOrderIgnoresQuotaAndHealth(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	first, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "tier-20-a",
+		CredentialRaw:          "rt-a",
+		Priority:               20,
+		Enabled:                true,
+		State:                  "active",
+		FailCount:              9,
+		QuotaStatus:            "exhausted",
+		QuotaWeeklyUsedPercent: testFloat64Ptr(95),
+	})
+	if err != nil {
+		t.Fatalf("create first account failed: %v", err)
+	}
+
+	second, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "api_key",
+		AccountName:            "tier-10-main",
+		CredentialRaw:          "sk-main",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		QuotaWeeklyUsedPercent: testFloat64Ptr(5),
+	})
+	if err != nil {
+		t.Fatalf("create second account failed: %v", err)
+	}
+
+	third, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "tier-20-b",
+		CredentialRaw:          "rt-b",
+		Priority:               20,
+		Enabled:                true,
+		State:                  "active",
+		FailCount:              0,
+		QuotaStatus:            "ok",
+		QuotaWeeklyUsedPercent: testFloat64Ptr(10),
+	})
+	if err != nil {
+		t.Fatalf("create third account failed: %v", err)
+	}
+
+	accounts, err := svc.ListSchedulableAccounts(ctx)
+	if err != nil {
+		t.Fatalf("ListSchedulableAccounts failed: %v", err)
+	}
+
+	gotIDs := collectAccountIDs(accounts)
+	wantIDs := []int64{second.ID, first.ID, third.ID}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Fatalf("unexpected manual failover order: got %v want %v", gotIDs, wantIDs)
+	}
+}
+
+func TestListSchedulableAccounts_V0FiltersDisabledAuthAndFutureCooldown(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	main, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "main",
+		CredentialRaw: "sk-main",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create main account failed: %v", err)
+	}
+
+	_, err = st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "disabled-auth",
+		CredentialRaw: "sk-disabled",
+		Priority:      5,
+		Enabled:       true,
+		State:         "disabled_auth",
+	})
+	if err != nil {
+		t.Fatalf("create disabled-auth account failed: %v", err)
+	}
+
+	_, err = st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "cooldown-future",
+		CredentialRaw: "sk-future",
+		Priority:      1,
+		Enabled:       true,
+		State:         "cooldown",
+		CooldownUntil: testTimePtr(now.Add(5 * time.Minute)),
+	})
+	if err != nil {
+		t.Fatalf("create future cooldown account failed: %v", err)
+	}
+
+	pastCooldown, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "cooldown-past",
+		CredentialRaw: "sk-past",
+		Priority:      20,
+		Enabled:       true,
+		State:         "cooldown",
+		CooldownUntil: testTimePtr(now.Add(-5 * time.Minute)),
+	})
+	if err != nil {
+		t.Fatalf("create past cooldown account failed: %v", err)
+	}
+
+	_, err = st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "disabled",
+		CredentialRaw: "sk-disabled-manual",
+		Priority:      2,
+		Enabled:       false,
+		State:         "disabled",
+	})
+	if err != nil {
+		t.Fatalf("create disabled account failed: %v", err)
+	}
+
+	accounts, err := svc.ListSchedulableAccounts(ctx)
+	if err != nil {
+		t.Fatalf("ListSchedulableAccounts failed: %v", err)
+	}
+
+	gotIDs := collectAccountIDs(accounts)
+	wantIDs := []int64{main.ID, pastCooldown.ID}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Fatalf("unexpected schedulable accounts: got %v want %v", gotIDs, wantIDs)
+	}
+}
+
+func collectAccountIDs(accounts []*store.UpstreamAccountRecord) []int64 {
+	ids := make([]int64, 0, len(accounts))
+	for _, account := range accounts {
+		if account == nil {
+			continue
+		}
+		ids = append(ids, account.ID)
+	}
+	return ids
+}
+
+func testFloat64Ptr(value float64) *float64 {
+	return &value
+}
+
+func testTimePtr(value time.Time) *time.Time {
+	return &value
+}
+
 func newTestAccountPoolServiceForConnectivity(t *testing.T, baseURL, providerType, credential string) (*AccountPoolService, int64) {
 	t.Helper()
 
@@ -160,4 +320,26 @@ func newTestAccountPoolServiceForConnectivity(t *testing.T, baseURL, providerTyp
 
 	svc := NewAccountPoolService(st, nil)
 	return svc, rec.ID
+}
+
+func newTestAccountPoolServiceWithStore(t *testing.T) (*AccountPoolService, *store.SQLiteAccountPoolStore) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite failed: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	schemaPath := filepath.Join("..", "tracking", "schema.sql")
+	schemaSQL, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("read schema failed: %v", err)
+	}
+	if _, err := db.Exec(string(schemaSQL)); err != nil {
+		t.Fatalf("exec schema failed: %v", err)
+	}
+
+	st := store.NewSQLiteAccountPoolStore(db)
+	return NewAccountPoolService(st, nil), st
 }

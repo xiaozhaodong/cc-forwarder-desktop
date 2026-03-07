@@ -3,7 +3,7 @@
 // 2026-03-05
 // ============================================
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { BrowserOpenURL } from '@wailsjs/runtime/runtime';
 import {
@@ -112,8 +112,8 @@ const buildOAuthCredentialRaw = (result = {}) => {
   return JSON.stringify(payload);
 };
 
-const Badge = ({ text, className }) => (
-  <span className={`inline-flex items-center px-2 py-0.5 text-xs rounded-full border ${className}`}>
+const Badge = ({ text, className, title }) => (
+  <span title={title} className={`inline-flex items-center px-2 py-0.5 text-xs rounded-full border ${className}`}>
     {text}
   </span>
 );
@@ -330,6 +330,147 @@ const toAccountStateLabel = (state) => {
   return stateMap[state] || (state || '未知');
 };
 
+const MANUAL_FAILOVER_TIER_PRESETS = [
+  {
+    label: '主组',
+    className: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+    description: '当前请求优先尝试这一层账号'
+  },
+  {
+    label: '备组',
+    className: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+    description: '主组全部失败后切到这一层'
+  },
+  {
+    label: '兜底组',
+    className: 'bg-violet-50 text-violet-700 border-violet-200',
+    description: '前两层都不可用时，再切到这一层'
+  }
+];
+
+const normalizePriorityValue = (value) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const buildManualFailoverTierSummary = (accounts = []) => {
+  const counts = new Map();
+
+  accounts.forEach((account) => {
+    const priority = normalizePriorityValue(account?.priority ?? account?.Priority);
+    if (!Number.isFinite(priority)) {
+      return;
+    }
+    counts.set(priority, (counts.get(priority) || 0) + 1);
+  });
+
+  return Array.from(counts.entries())
+    .sort((left, right) => left[0] - right[0])
+    .map(([priority, count], index) => {
+      const preset = MANUAL_FAILOVER_TIER_PRESETS[index];
+      return {
+        priority,
+        count,
+        order: index + 1,
+        label: preset?.label || `第 ${index + 1} 层`,
+        className: preset?.className || 'bg-slate-100 text-slate-700 border-slate-200',
+        description: preset?.description || '更低优先级的手动兜底层'
+      };
+    });
+};
+
+const compareAccountsByManualPriority = (left = {}, right = {}) => {
+  const leftPriority = normalizePriorityValue(left?.priority ?? left?.Priority);
+  const rightPriority = normalizePriorityValue(right?.priority ?? right?.Priority);
+
+  if (Number.isFinite(leftPriority) && Number.isFinite(rightPriority) && leftPriority !== rightPriority) {
+    return leftPriority - rightPriority;
+  }
+  if (Number.isFinite(leftPriority) && !Number.isFinite(rightPriority)) {
+    return -1;
+  }
+  if (!Number.isFinite(leftPriority) && Number.isFinite(rightPriority)) {
+    return 1;
+  }
+
+  const leftId = resolveAccountId(left);
+  const rightId = resolveAccountId(right);
+  if (typeof leftId === 'number' && typeof rightId === 'number' && leftId !== rightId) {
+    return leftId - rightId;
+  }
+  return String(leftId ?? '').localeCompare(String(rightId ?? ''));
+};
+
+const buildManualFailoverTierGroups = (accounts = []) => {
+  const sorted = [...accounts].sort(compareAccountsByManualPriority);
+  const groups = [];
+
+  sorted.forEach((account) => {
+    const priority = normalizePriorityValue(account?.priority ?? account?.Priority);
+    const lastGroup = groups[groups.length - 1];
+
+    if (lastGroup && lastGroup.priority === priority) {
+      lastGroup.accounts.push(account);
+      return;
+    }
+
+    groups.push({
+      priority,
+      accounts: [account]
+    });
+  });
+
+  return groups;
+};
+
+const buildManualFailoverPriorityPlan = ({ accounts = [], targetAccountId, targetTierIndex }) => {
+  const tiers = buildManualFailoverTierGroups(accounts);
+  if (!tiers.length || targetAccountId === null || targetAccountId === undefined) {
+    return [];
+  }
+
+  const remainingTiers = [];
+  let targetAccount = null;
+
+  tiers.forEach((tier) => {
+    const nextAccounts = [];
+    tier.accounts.forEach((account) => {
+      const accountId = resolveAccountId(account);
+      if (targetAccount === null && accountId === targetAccountId) {
+        targetAccount = account;
+        return;
+      }
+      nextAccounts.push(account);
+    });
+    if (nextAccounts.length > 0) {
+      remainingTiers.push({ priority: tier.priority, accounts: nextAccounts });
+    }
+  });
+
+  if (!targetAccount) {
+    return [];
+  }
+
+  const insertIndex = Math.max(0, Math.min(targetTierIndex, remainingTiers.length));
+  remainingTiers.splice(insertIndex, 0, { priority: null, accounts: [targetAccount] });
+
+  return remainingTiers.flatMap((tier, index) => {
+    const nextPriority = (index + 1) * 10;
+    return tier.accounts
+      .filter((account) => normalizePriorityValue(account?.priority ?? account?.Priority) !== nextPriority)
+      .map((account) => ({ account, priority: nextPriority }));
+  });
+};
+
+const buildAccountUpdatePayload = (account, priority) => ({
+  provider_type: String(account?.provider_type ?? account?.providerType ?? '').trim(),
+  account_name: String(account?.account_name ?? account?.accountName ?? '').trim(),
+  credential_raw: String(account?.credential_raw ?? account?.credentialRaw ?? '').trim(),
+  base_url: String(account?.base_url ?? account?.baseURL ?? DEFAULT_BASE_URL).trim() || DEFAULT_BASE_URL,
+  priority,
+  enabled: account?.enabled !== false
+});
+
 const normalizeEntityId = (value) => {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -449,6 +590,11 @@ const AccountPoolPage = () => {
   const accountCount = accounts.length;
   const activeAccountCount = accounts.filter(item => item.enabled && item.state !== 'disabled_auth').length;
   const authFailedCount = accounts.filter(item => item.state === 'disabled_auth').length;
+  const priorityTierSummary = useMemo(() => buildManualFailoverTierSummary(accounts), [accounts]);
+  const priorityTierMetaMap = useMemo(
+    () => new Map(priorityTierSummary.map(item => [item.priority, item])),
+    [priorityTierSummary]
+  );
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -734,6 +880,50 @@ const AccountPoolPage = () => {
     );
   };
 
+  const handleMoveAccountToTier = async (account, targetTier) => {
+    const accountId = resolveAccountId(account);
+    if (accountId === undefined || accountId === null || accountId === '') {
+      showNotice('error', '账号缺少 ID，无法切换顺序');
+      return;
+    }
+
+    const targetTierIndex = targetTier === 'backup' ? 1 : 0;
+    const changes = buildManualFailoverPriorityPlan({
+      accounts,
+      targetAccountId: accountId,
+      targetTierIndex
+    });
+
+    if (changes.length === 0) {
+      showNotice('info', targetTier === 'backup' ? '该账号已在备组位置' : '该账号已在主组位置');
+      return;
+    }
+
+    setBusyKey(`account-switch-${accountId}`);
+    try {
+      for (const change of changes) {
+        const changeId = resolveAccountId(change.account);
+        if (changeId === undefined || changeId === null || changeId === '') {
+          throw new Error('存在缺少 ID 的账号，无法更新顺序');
+        }
+        await updateUpstreamAccount(changeId, buildAccountUpdatePayload(change.account, change.priority));
+      }
+
+      const accountName = account.account_name || account.accountName || `账号 ${accountId}`;
+      showNotice(
+        'success',
+        targetTier === 'backup'
+          ? `已将「${accountName}」切到备组，顺序已立即生效`
+          : `已将「${accountName}」切到主组，顺序已立即生效`
+      );
+      await loadData({ silent: true });
+    } catch (err) {
+      showNotice('error', err.message || '手动切换顺序失败');
+    } finally {
+      setBusyKey('');
+    }
+  };
+
   const handleTestAccount = async (account) => {
     const accountId = resolveAccountId(account);
     if (accountId === undefined || accountId === null || accountId === '') {
@@ -830,6 +1020,37 @@ const AccountPoolPage = () => {
           </Button>
         </div>
 
+        <div className="px-5 pt-4">
+          <div className="rounded-xl border border-sky-100 bg-sky-50/70 px-4 py-3">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 rounded-lg bg-white/80 p-1.5 text-sky-600 shadow-sm">
+                <Info size={14} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-slate-900">当前为手动主备模式</div>
+                <div className="mt-1 text-xs leading-5 text-slate-600">
+                  priority 越小越优先，相同 priority 视为同一层；请求会按层顺序自动切换，V0 暂不在同层内按额度或健康度自动择优。
+                </div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">
+                  可直接在账号行点击“设为主组 / 设为备组”快速切换，也可以继续手动编辑 priority。
+                </div>
+                {priorityTierSummary.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {priorityTierSummary.map((tier) => (
+                      <Badge
+                        key={`tier-summary-${tier.priority}`}
+                        text={`${tier.label} · P${tier.priority}${tier.count > 1 ? ` · ${tier.count} 个账号` : ''}`}
+                        className={tier.className}
+                        title={tier.description}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
         {accountCount === 0 ? (
           <EmptyState
             icon={Users}
@@ -855,7 +1076,10 @@ const AccountPoolPage = () => {
               const normalizedProviderType = String(account.provider_type || account.providerType || '').trim().toLowerCase();
               const isAPIKeyAccount = normalizedProviderType === 'api_key';
               const planTypeLabel = toPlanTypeLabel(planType);
-              const priority = Number.parseInt(account.priority ?? account.Priority, 10);
+              const priority = normalizePriorityValue(account.priority ?? account.Priority);
+              const tierMeta = Number.isFinite(priority) ? priorityTierMetaMap.get(priority) : null;
+              const canSetAsPrimary = accountCount > 1 && (!tierMeta || tierMeta.order !== 1 || tierMeta.count > 1);
+              const canSetAsBackup = accountCount > 1 && (!tierMeta || tierMeta.order !== 2 || tierMeta.count > 1);
               const refreshedAt = account.quota_refreshed_at || account.quotaRefreshedAt;
               const rowBusy = busyKey.startsWith('account-') && busyKey.includes(String(accountId));
 
@@ -904,11 +1128,27 @@ const AccountPoolPage = () => {
                       className="bg-indigo-50 text-indigo-600 border-indigo-100"
                     />
 
+                    {tierMeta && (
+                      <Badge
+                        text={tierMeta.label}
+                        className={tierMeta.className}
+                        title={`${tierMeta.description}${tierMeta.count > 1 ? `（当前同层共 ${tierMeta.count} 个账号）` : ''}`}
+                      />
+                    )}
+
                     {/* 优先级徽章 */}
                     <Badge
                       text={`优先级 ${Number.isFinite(priority) ? priority : '-'}`}
                       className="bg-amber-50 text-amber-700 border-amber-100"
                     />
+
+                    {tierMeta?.count > 1 && (
+                      <Badge
+                        text={`同层 ${tierMeta.count} 个`}
+                        className="bg-white text-slate-500 border-slate-200"
+                        title="相同 priority 的账号属于同一层，按手动主备规则依次切换"
+                      />
+                    )}
 
                     {/* 账号类型徽章 */}
                     {planTypeLabel && (
@@ -923,6 +1163,38 @@ const AccountPoolPage = () => {
 
                     {/* 分隔线 */}
                     <div className="hidden h-5 w-px shrink-0 bg-slate-200 md:block" />
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      {canSetAsPrimary ? (
+                        <button
+                          type="button"
+                          onClick={() => handleMoveAccountToTier(account, 'primary')}
+                          disabled={rowBusy}
+                          className="inline-flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          title="将当前账号提升为新的主组，其他账号顺延"
+                        >
+                          设为主组
+                        </button>
+                      ) : (
+                        <Badge text="当前主组" className="bg-indigo-50 text-indigo-700 border-indigo-200" />
+                      )}
+
+                      {canSetAsBackup && (
+                        <button
+                          type="button"
+                          onClick={() => handleMoveAccountToTier(account, 'backup')}
+                          disabled={rowBusy}
+                          className="inline-flex items-center rounded-md border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs font-medium text-cyan-700 transition-colors hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          title="将当前账号切到备组，主组仍优先，其他组顺延"
+                        >
+                          设为备组
+                        </button>
+                      )}
+
+                      {!canSetAsBackup && tierMeta?.order === 2 && tierMeta.count === 1 && (
+                        <Badge text="当前备组" className="bg-cyan-50 text-cyan-700 border-cyan-200" />
+                      )}
+                    </div>
 
                     {/* 操作按钮 */}
                     <div className="flex items-center gap-0.5 shrink-0">
@@ -1103,13 +1375,18 @@ const AccountPoolPage = () => {
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <FormField label="优先级">
-              <input
-                type="number"
-                min="1"
-                value={accountForm.priority}
-                onChange={(event) => setAccountForm(prev => ({ ...prev, priority: event.target.value }))}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-              />
+              <div className="space-y-1.5">
+                <input
+                  type="number"
+                  min="1"
+                  value={accountForm.priority}
+                  onChange={(event) => setAccountForm(prev => ({ ...prev, priority: event.target.value }))}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                />
+                <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+                  priority 越小越优先；相同 priority 视为同一层。V0 只做手动主备切换，不会在同层内自动择优。
+                </div>
+              </div>
             </FormField>
 
             <FormField label="Base URL（可选）">
