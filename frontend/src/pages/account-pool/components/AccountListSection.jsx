@@ -34,8 +34,11 @@ const AccountListSection = ({
 
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <Info size={13} className="shrink-0 text-sky-600" />
-            <p className="min-w-0 leading-5">
-              priority 越小越优先，相同 priority 视为同一层；系统会先选第一个有可用账号的层，再在层内按额度与健康度自动排序。
+            <p
+              className="min-w-0 truncate leading-5"
+              title="priority 越小越优先；系统先选最高可用层，层内按额度、状态与健康度自动择优，当前层不可用时再降级。"
+            >
+              priority 越小越优先；系统先选最高可用层，层内自动择优，当前层不可用时再降级。
             </p>
           </div>
         </div>
