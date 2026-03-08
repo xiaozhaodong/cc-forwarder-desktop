@@ -63,6 +63,13 @@ type StreamProcessor struct {
 	captureAllDebugLines bool
 	// 去重日志签名：仅在Token统计变化时输出实时更新日志
 	lastTokenLogSignature string
+
+	// 下游断开后的短时尾部drain能力（仅按需启用）
+	enableDownstreamTailDrain  bool
+	downstreamTailDrainTimeout time.Duration
+	cancelUpstreamRead         context.CancelFunc
+	downstreamTailDrainTimer   *time.Timer
+	downstreamDisconnected     bool
 }
 
 // NewStreamProcessor 创建新的流式处理器实例
@@ -88,11 +95,65 @@ func NewStreamProcessor(tokenParser *TokenParser, usageTracker *tracking.UsageTr
 	return sp
 }
 
+// EnableDownstreamTailDrain 启用下游断开后的短时尾部读取。
+// 仅在调用方明确开启时生效，用于在下游提前断开时继续尝试收齐 response.completed / usage。
+func (sp *StreamProcessor) EnableDownstreamTailDrain(timeout time.Duration, cancelUpstream context.CancelFunc) {
+	if timeout <= 0 {
+		timeout = time.Second
+	}
+	sp.enableDownstreamTailDrain = true
+	sp.downstreamTailDrainTimeout = timeout
+	sp.cancelUpstreamRead = cancelUpstream
+}
+
+func (sp *StreamProcessor) beginDownstreamTailDrain(trigger string) {
+	if sp.downstreamDisconnected {
+		return
+	}
+
+	sp.downstreamDisconnected = true
+	slog.Warn(fmt.Sprintf("⚠️ [下游断开Drain] [%s] 检测到下游断开，继续读取上游尾部，超时: %s, 触发: %s",
+		sp.requestID, sp.downstreamTailDrainTimeout, trigger))
+
+	if sp.cancelUpstreamRead != nil {
+		sp.downstreamTailDrainTimer = time.AfterFunc(sp.downstreamTailDrainTimeout, func() {
+			slog.Warn(fmt.Sprintf("⏰ [下游断开Drain超时] [%s] 未在 %s 内收齐上游尾部，停止继续读取",
+				sp.requestID, sp.downstreamTailDrainTimeout))
+			sp.cancelUpstreamRead()
+		})
+	}
+}
+
+func (sp *StreamProcessor) stopDownstreamTailDrain() {
+	if sp.downstreamTailDrainTimer != nil {
+		sp.downstreamTailDrainTimer.Stop()
+		sp.downstreamTailDrainTimer = nil
+	}
+}
+
+func (sp *StreamProcessor) finalizeCompletedAfterDisconnect(trigger error) (*tracking.TokenUsage, error) {
+	sp.waitForBackgroundParsing()
+	tokenUsage, err := sp.collectAvailableInfoV2(context.Canceled, "cancelled_with_data")
+	if err != nil {
+		return tokenUsage, err
+	}
+
+	modelName := sp.tokenParser.GetModelName()
+	if modelName == "" {
+		modelName = "unknown"
+	}
+
+	slog.Info(fmt.Sprintf("✅ [完成后断连] [%s] 已确认 response.completed，按完成处理，模型: %s, 触发错误: %v",
+		sp.requestID, modelName, trigger))
+	return tokenUsage, nil
+}
+
 // ProcessStream 实现边接收边转发的8KB缓冲区流式处理
 // 这是核心方法，实现真正的流式处理机制
 func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Response) (*tracking.TokenUsage, error) {
 	defer resp.Body.Close()
 	defer sp.waitForBackgroundParsing() // 确保所有后台解析完成
+	defer sp.stopDownstreamTailDrain()
 
 	// 🔧 [解压缩修复] 创建响应处理器并获取解压缩的流式读取器
 	processor := response.NewProcessor()
@@ -118,12 +179,21 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 	// 主流式处理循环
 	for {
 		// 检查context取消 - 优先级最高
-		select {
-		case <-ctx.Done():
-			// 客户端取消，进入优雅取消处理
-			return sp.handleCancellationV2(ctx, ctx.Err())
-		default:
-			// 继续正常处理
+		if !sp.downstreamDisconnected {
+			select {
+			case <-ctx.Done():
+				if sp.enableDownstreamTailDrain {
+					sp.beginDownstreamTailDrain(ctx.Err().Error())
+					if sp.tokenParser.GetStreamCompleteness().IsComplete {
+						return sp.finalizeCompletedAfterDisconnect(ctx.Err())
+					}
+				} else {
+					// 客户端取消，进入优雅取消处理
+					return sp.handleCancellationV2(ctx, ctx.Err())
+				}
+			default:
+				// 继续正常处理
+			}
 		}
 
 		// 1. 从响应中读取数据到8KB缓冲区
@@ -136,12 +206,18 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 			sp.savePartialData(chunk)
 
 			// 2. 立即转发到客户端 - 这是关键！不等待完整响应
-			if writeErr := sp.forwardToClient(chunk); writeErr != nil {
-				// 使用错误恢复管理器处理转发错误
-				errorCtx := sp.errorRecovery.ClassifyError(writeErr, sp.requestID, sp.endpoint, "", 0)
-				sp.errorRecovery.HandleFinalFailure(errorCtx)
-				slog.Error(fmt.Sprintf("❌ [流式错误] [%s] 转发到客户端失败: %v", sp.requestID, writeErr))
-				return nil, fmt.Errorf("failed to forward to client: %w", writeErr)
+			if !sp.downstreamDisconnected {
+				if writeErr := sp.forwardToClient(chunk); writeErr != nil {
+					if sp.enableDownstreamTailDrain {
+						sp.beginDownstreamTailDrain(writeErr.Error())
+					} else {
+						// 使用错误恢复管理器处理转发错误
+						errorCtx := sp.errorRecovery.ClassifyError(writeErr, sp.requestID, sp.endpoint, "", 0)
+						sp.errorRecovery.HandleFinalFailure(errorCtx)
+						slog.Error(fmt.Sprintf("❌ [流式错误] [%s] 转发到客户端失败: %v", sp.requestID, writeErr))
+						return nil, fmt.Errorf("failed to forward to client: %w", writeErr)
+					}
+				}
 			}
 
 			// 3. 并行解析Token信息 - 不影响转发性能
@@ -149,6 +225,10 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 
 			// 4. 更新处理状态
 			sp.bytesProcessed += int64(n)
+
+			if sp.downstreamDisconnected && sp.tokenParser.GetStreamCompleteness().IsComplete {
+				return sp.finalizeCompletedAfterDisconnect(context.Canceled)
+			}
 		}
 
 		// 处理读取结束和错误
@@ -165,6 +245,9 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 		}
 
 		if err != nil {
+			if sp.downstreamDisconnected && sp.tokenParser.GetStreamCompleteness().IsComplete {
+				return sp.finalizeCompletedAfterDisconnect(err)
+			}
 			// 网络中断或其他错误，尝试部分数据处理
 			return sp.handlePartialStreamV2(err)
 		}
@@ -742,29 +825,39 @@ func (sp *StreamProcessor) collectAvailableInfoV2(cancelErr error, status string
 	// 获取已解析的信息
 	modelName := sp.tokenParser.GetModelName()
 	finalUsage := sp.tokenParser.GetFinalUsage()
-
-	// ✅ 使用智能状态分类
-	statusClassified := sp.classifyStreamError(cancelErr, finalUsage)
+	completeness := sp.tokenParser.GetStreamCompleteness()
 
 	var tokenUsage *tracking.TokenUsage
 
 	if finalUsage != nil {
 		tokenUsage = finalUsage
-		slog.Info(fmt.Sprintf("💾 [取消保存] [%s] 状态: %s, 模型: %s, 输入: %d, 输出: %d",
-			sp.requestID, statusClassified, modelName, finalUsage.InputTokens, finalUsage.OutputTokens))
 	} else {
 		tokenUsage = &tracking.TokenUsage{
 			InputTokens: 0, OutputTokens: 0,
 			CacheCreationTokens: 0, CacheReadTokens: 0,
 		}
-		slog.Info(fmt.Sprintf("💾 [取消保存] [%s] 状态: %s, 模型: %s, 无token信息",
-			sp.requestID, statusClassified, modelName))
 	}
 
-	completeness := sp.tokenParser.GetStreamCompleteness()
 	if completeness.IsComplete {
+		if finalUsage != nil {
+			slog.Info(fmt.Sprintf("💾 [完成保存] [%s] 模型: %s, 输入: %d, 输出: %d",
+				sp.requestID, modelName, finalUsage.InputTokens, finalUsage.OutputTokens))
+		} else {
+			slog.Info(fmt.Sprintf("💾 [完成保存] [%s] 模型: %s, 无token信息",
+				sp.requestID, modelName))
+		}
 		slog.Info(fmt.Sprintf("✅ [取消转完成] [%s] 流已完整，忽略后续 context canceled", sp.requestID))
 		return tokenUsage, nil
+	}
+
+	// ✅ 使用智能状态分类
+	statusClassified := sp.classifyStreamError(cancelErr, finalUsage)
+	if finalUsage != nil {
+		slog.Info(fmt.Sprintf("💾 [取消保存] [%s] 状态: %s, 模型: %s, 输入: %d, 输出: %d",
+			sp.requestID, statusClassified, modelName, finalUsage.InputTokens, finalUsage.OutputTokens))
+	} else {
+		slog.Info(fmt.Sprintf("💾 [取消保存] [%s] 状态: %s, 模型: %s, 无token信息",
+			sp.requestID, statusClassified, modelName))
 	}
 
 	// ✅ 返回包含完整信息的错误

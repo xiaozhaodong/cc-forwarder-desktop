@@ -24,6 +24,8 @@ import (
 const (
 	defaultAccountConnectionFailureCooldown = 90 * time.Second
 	defaultAccountProcessingFailureCooldown = 60 * time.Second
+	defaultAccountSuccessWriteTimeout       = 2 * time.Second
+	defaultAccountStreamTailDrainTimeout    = 1 * time.Second
 	accountSoftFailureCategoryRateLimit     = "rate_limit"
 	accountSoftFailureCategoryServerError   = "server_error"
 	localNoAvailableProvidersMarker         = "no_available_providers::ccf_local"
@@ -77,8 +79,15 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		lifecycleManager.SetEndpoint(accountName, "", "account-pool")
 		lifecycleManager.UpdateStatus("forwarding", idx, 0)
 
-		resp, forwardErr := h.forwardRequestToAccount(ctx, r, bodyBytes, acc, isSSE)
+		resp, upstreamCancel, forwardErr := h.forwardRequestToAccount(ctx, r, bodyBytes, acc, isSSE)
+		releaseUpstream := func() {
+			if upstreamCancel != nil {
+				upstreamCancel()
+				upstreamCancel = nil
+			}
+		}
 		if forwardErr != nil {
+			releaseUpstream()
 			lastErr = forwardErr
 			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, forwardErr.Error(), h.accountConnectionFailureCooldown())
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, forwardErr.Error())
@@ -87,6 +96,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 
 		if resp == nil {
 			lastErr = fmt.Errorf("empty response from account %d", acc.ID)
+			releaseUpstream()
 			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, lastErr.Error(), h.accountConnectionFailureCooldown())
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, lastErr.Error())
 			continue
@@ -94,6 +104,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			detail := readAndCloseResponseBody(resp, 1024)
+			releaseUpstream()
 			if detail == "" {
 				detail = fmt.Sprintf("upstream returned %d", resp.StatusCode)
 			}
@@ -109,10 +120,12 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				detail = h.accountLocalNoAvailableProvidersMarker()
 			}
 			if writeErr := h.writeRawResponse(w, resp); writeErr != nil {
+				releaseUpstream()
 				lifecycleManager.FailRequest("account_pipeline_response_write_error", writeErr.Error(), resp.StatusCode)
 				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, writeErr.Error())
 				return
 			}
+			releaseUpstream()
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomePassthroughNoAvailableProvider, detail)
 			lifecycleManager.FailRequest("upstream_no_available_providers", detail, resp.StatusCode)
 			return
@@ -121,6 +134,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		if resp.StatusCode == http.StatusTooManyRequests {
 			retryAfter := h.accountRateLimitRetryAfter(resp)
 			detail := readAndCloseResponseBody(resp, 1024)
+			releaseUpstream()
 			if detail == "" {
 				detail = fmt.Sprintf("upstream returned %d", resp.StatusCode)
 			}
@@ -132,6 +146,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 
 		if resp.StatusCode >= 500 {
 			detail := readAndCloseResponseBody(resp, 1024)
+			releaseUpstream()
 			if detail == "" {
 				detail = fmt.Sprintf("upstream returned %d", resp.StatusCode)
 			}
@@ -145,11 +160,13 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		if resp.StatusCode >= 400 {
 			detail := fmt.Sprintf("upstream returned %d", resp.StatusCode)
 			if writeErr := h.writeRawResponse(w, resp); writeErr != nil {
+				releaseUpstream()
 				lifecycleManager.FailRequest("account_pipeline_response_write_error", writeErr.Error(), resp.StatusCode)
 				_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, writeErr.Error(), h.accountProcessingFailureCooldown())
 				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, writeErr.Error())
 				return
 			}
+			releaseUpstream()
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomePassthroughOther4xx, detail)
 			lifecycleManager.FailRequest("upstream_client_error", detail, resp.StatusCode)
 			return
@@ -158,10 +175,11 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		lifecycleManager.UpdateStatus("processing", idx, resp.StatusCode)
 		var processErr error
 		if isSSE {
-			processErr = h.processAccountStreamingResponse(ctx, w, resp, lifecycleManager, accountName)
+			processErr = h.processAccountStreamingResponse(ctx, w, resp, lifecycleManager, accountName, upstreamCancel)
 		} else {
 			processErr = h.processAccountRegularResponse(w, resp, lifecycleManager, accountName, r)
 		}
+		releaseUpstream()
 		if processErr != nil {
 			if isCancelledAccountStreamError(processErr) {
 				return
@@ -176,11 +194,13 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			continue
 		}
 
-		_ = h.accountPoolService.MarkAccountSuccess(ctx, acc.ID)
+		finalizeCtx, finalizeCancel := h.newAccountSuccessContext()
+		_ = h.accountPoolService.MarkAccountSuccess(finalizeCtx, acc.ID)
 		if accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
 			h.accountPoolService.TryEnqueueQuotaRefresh(acc.ID)
 		}
-		_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeSuccess, "")
+		_ = h.completeAccountScheduleSnapshot(finalizeCtx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeSuccess, "")
+		finalizeCancel()
 		return
 	}
 
@@ -209,37 +229,74 @@ func newFallbackAccountScheduleRequestID() string {
 	return fmt.Sprintf("account-schedule-%d-%s", time.Now().UnixNano(), hex.EncodeToString(suffix[:]))
 }
 
-func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, bodyBytes []byte, acc *store.UpstreamAccountRecord, isSSE bool) (*http.Response, error) {
+func (h *Handler) newAccountStreamForwardContext() (context.Context, context.CancelFunc) {
+	timeout := 300 * time.Second
+	if h != nil && h.config != nil && h.config.GlobalTimeout > 0 {
+		timeout = h.config.GlobalTimeout
+	}
+	return context.WithTimeout(context.Background(), timeout)
+}
+
+func (h *Handler) newAccountSuccessContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), defaultAccountSuccessWriteTimeout)
+}
+
+func (h *Handler) accountStreamTailDrainTimeout() time.Duration {
+	return defaultAccountStreamTailDrainTimeout
+}
+
+func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, bodyBytes []byte, acc *store.UpstreamAccountRecord, isSSE bool) (*http.Response, context.CancelFunc, error) {
 	targetURL, err := resolveAccountTargetURL(acc, r.URL.Path, r.URL.RawQuery)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, r.Method, targetURL, bytes.NewReader(bodyBytes))
+	requestCtx := ctx
+	var release context.CancelFunc
+	if isSSE {
+		requestCtx, release = h.newAccountStreamForwardContext()
+	}
+
+	req, err := http.NewRequestWithContext(requestCtx, r.Method, targetURL, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		if release != nil {
+			release()
+		}
+		return nil, nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	copyRequestHeadersForAccount(r, req)
 	if err := accountauth.ApplyAccountAuth(ctx, req, acc.ProviderType, acc.CredentialRaw, h.refreshTokenManager); err != nil {
-		return nil, fmt.Errorf("failed to apply account auth: %w", err)
+		if release != nil {
+			release()
+		}
+		return nil, nil, fmt.Errorf("failed to apply account auth: %w", err)
 	}
 	if accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
 		if accountauth.ExtractChatGPTAccountID(acc.CredentialRaw) == "" {
-			return nil, fmt.Errorf("chatgpt_account_id is missing from credential")
+			if release != nil {
+				release()
+			}
+			return nil, nil, fmt.Errorf("chatgpt_account_id is missing from credential")
 		}
 		applyOpenAIChatGPTOAuthHeaders(req, acc.CredentialRaw)
 	}
 
 	client, err := h.getAccountHTTPClient(isSSE)
 	if err != nil {
-		return nil, err
+		if release != nil {
+			release()
+		}
+		return nil, nil, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		if release != nil {
+			release()
+		}
+		return nil, nil, fmt.Errorf("request failed: %w", err)
 	}
-	return resp, nil
+	return resp, release, nil
 }
 
 func (h *Handler) isLocalNoAvailableProviders503Response(resp *http.Response) bool {
@@ -422,7 +479,7 @@ func (h *Handler) processAccountRegularResponse(w http.ResponseWriter, resp *htt
 	return nil
 }
 
-func (h *Handler) processAccountStreamingResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, lifecycleManager *RequestLifecycleManager, endpointName string) error {
+func (h *Handler) processAccountStreamingResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, lifecycleManager *RequestLifecycleManager, endpointName string, upstreamCancel context.CancelFunc) error {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		resp.Body.Close()
@@ -443,6 +500,9 @@ func (h *Handler) processAccountStreamingResponse(ctx context.Context, w http.Re
 
 	tokenParser := NewTokenParserWithUsageTracker(lifecycleManager.GetRequestID(), h.usageTracker)
 	processor := NewStreamProcessor(tokenParser, h.usageTracker, w, flusher, lifecycleManager.GetRequestID(), endpointName)
+	if upstreamCancel != nil {
+		processor.EnableDownstreamTailDrain(h.accountStreamTailDrainTimeout(), upstreamCancel)
+	}
 
 	tokenUsage, modelName, err := processor.ProcessStreamWithRetry(ctx, resp)
 	if modelName != "" && modelName != "unknown" {

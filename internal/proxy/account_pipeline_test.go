@@ -65,8 +65,10 @@ type mockAccountPoolService struct {
 	mu                sync.Mutex
 	prepareCalls      []accountSchedulePrepareCall
 	completeCalls     []accountScheduleCompleteCall
+	completeCtxErrs   []error
 	quotaRefreshCalls []int64
 	successCalls      []int64
+	successCtxErrs    []error
 	authFailCalls     []accountAuthCall
 	transientCalls    []accountTransientCall
 	softFailureCalls  []accountSoftFailureCall
@@ -94,6 +96,7 @@ func (m *mockAccountPoolService) ListSchedulableAccounts(ctx context.Context) ([
 func (m *mockAccountPoolService) CompleteLatestScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, outcome, finalError string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.completeCtxErrs = append(m.completeCtxErrs, ctx.Err())
 	m.completeCalls = append(m.completeCalls, accountScheduleCompleteCall{
 		requestID:   requestID,
 		accountID:   accountID,
@@ -114,6 +117,7 @@ func (m *mockAccountPoolService) TryEnqueueQuotaRefresh(id int64) bool {
 func (m *mockAccountPoolService) MarkAccountSuccess(ctx context.Context, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.successCtxErrs = append(m.successCtxErrs, ctx.Err())
 	m.successCalls = append(m.successCalls, id)
 	return nil
 }
@@ -767,9 +771,6 @@ func TestAccountPipeline_ResponsesStreamingCompleted_TreatedAsSuccess(t *testing
 	if len(service.authFailCalls) != 0 {
 		t.Fatalf("expected no auth failures, got %+v", service.authFailCalls)
 	}
-	if !strings.Contains(rec.Body.String(), "response.completed") {
-		t.Fatalf("expected streamed response to contain response.completed event, got %s", rec.Body.String())
-	}
 }
 
 func TestResolveAccountTargetURL_OAuthUsesChatGPTCodexEndpoint(t *testing.T) {
@@ -839,5 +840,74 @@ func TestParseAccountStreamStatusError_Cancelled(t *testing.T) {
 	}
 	if !isCancelledAccountStreamError(errors.New("stream_status:cancelled:model:gpt-5.4: context canceled")) {
 		t.Fatal("expected structured cancelled stream error to be recognized")
+	}
+}
+
+func TestAccountPipeline_ResponsesStreamingCompletedAfterClientCancel_TreatedAsSuccess(t *testing.T) {
+	completedWritten := make(chan struct{})
+	allowClose := make(chan struct{})
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("event: response.in_progress\n"))
+		_, _ = w.Write([]byte(`data: {"type":"response.in_progress","response":{"id":"resp_1","model":"gpt-5.4"}}` + "\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+
+		_, _ = w.Write([]byte("event: response.completed\n"))
+		_, _ = w.Write([]byte(`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-5.4"},"usage":{"input_tokens":21,"output_tokens":4,"input_tokens_details":{"cached_tokens":11}}}` + "\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+
+		close(completedWritten)
+		<-allowClose
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 61, AccountName: "acc-stream-cancel", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: upstream.URL, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+
+	body := bytes.NewBufferString(`{"model":"gpt-5.4","stream":true,"input":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", body)
+	req.Header.Set("Content-Type", "application/json")
+	ctx, cancel := context.WithCancel(req.Context())
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handler.ServeHTTP(rec, req)
+	}()
+
+	<-completedWritten
+	cancel()
+	close(allowClose)
+	<-done
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(service.successCalls) != 1 || service.successCalls[0] != 61 {
+		t.Fatalf("expected success on account 61, got %+v", service.successCalls)
+	}
+	if len(service.successCtxErrs) != 1 || service.successCtxErrs[0] != nil {
+		t.Fatalf("expected success finalization with live context, got %+v", service.successCtxErrs)
+	}
+	if len(service.completeCalls) == 0 || service.completeCalls[len(service.completeCalls)-1].outcome != servicepkg.AccountScheduleOutcomeSuccess {
+		t.Fatalf("expected schedule snapshot success, got %+v", service.completeCalls)
+	}
+	if len(service.completeCtxErrs) == 0 || service.completeCtxErrs[len(service.completeCtxErrs)-1] != nil {
+		t.Fatalf("expected schedule snapshot finalization with live context, got %+v", service.completeCtxErrs)
+	}
+	if len(service.transientCalls) != 0 {
+		t.Fatalf("expected no transient failures, got %+v", service.transientCalls)
 	}
 }

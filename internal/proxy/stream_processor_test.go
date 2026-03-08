@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"cc-forwarder/internal/tracking"
 )
@@ -310,5 +311,47 @@ func TestStreamProcessor_CollectAvailableInfoV2_CompleteResponsesTreatsCancelAsS
 	}
 	if tokenUsage.InputTokens != 100 || tokenUsage.OutputTokens != 20 || tokenUsage.CacheReadTokens != 80 {
 		t.Fatalf("unexpected token usage: %+v", tokenUsage)
+	}
+}
+
+func TestStreamProcessor_ProcessStreamWithRetry_DrainsAfterDownstreamCancelUntilResponsesComplete(t *testing.T) {
+	reader, writerPipe := io.Pipe()
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     make(http.Header),
+		Body:       reader,
+	}
+
+	downstreamCtx, cancelDownstream := context.WithCancel(context.Background())
+	defer cancelDownstream()
+
+	tokenParser := NewTokenParserWithRequestID("test-drain-after-cancel")
+	writer := &mockResponseWriter{}
+	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-drain-after-cancel", "endpoint")
+	processor.EnableDownstreamTailDrain(300*time.Millisecond, nil)
+
+	go func() {
+		defer writerPipe.Close()
+		_, _ = io.WriteString(writerPipe, "event: response.in_progress\n")
+		_, _ = io.WriteString(writerPipe, "data: {\"type\":\"response.in_progress\",\"response\":{\"model\":\"gpt-5.4\"}}\n\n")
+		time.Sleep(20 * time.Millisecond)
+		cancelDownstream()
+		time.Sleep(20 * time.Millisecond)
+		_, _ = io.WriteString(writerPipe, "event: response.completed\n")
+		_, _ = io.WriteString(writerPipe, "data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.4\"},\"usage\":{\"input_tokens\":18,\"output_tokens\":5,\"input_tokens_details\":{\"cached_tokens\":9}}}\n\n")
+	}()
+
+	tokenUsage, modelName, err := processor.ProcessStreamWithRetry(downstreamCtx, resp)
+	if err != nil {
+		t.Fatalf("expected nil error after draining completed tail, got %v", err)
+	}
+	if tokenUsage == nil {
+		t.Fatal("expected token usage after draining completed tail")
+	}
+	if tokenUsage.InputTokens != 18 || tokenUsage.OutputTokens != 5 || tokenUsage.CacheReadTokens != 9 {
+		t.Fatalf("unexpected token usage after drain: %+v", tokenUsage)
+	}
+	if modelName != "gpt-5.4" {
+		t.Fatalf("expected modelName=gpt-5.4, got %s", modelName)
 	}
 }
