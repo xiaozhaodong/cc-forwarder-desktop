@@ -14,6 +14,10 @@
 
 - 多端点智能路由、健康检查、故障转移与自愈
 - 请求生命周期追踪、Token/成本统计、SQLite 持久化
+- Claude `/v1/messages` 与 Codex `/v1/responses` 流式尾部断连保护：
+  - 独立 upstream context
+  - tail drain 补齐 terminal event / usage
+  - 已完成后的 `context canceled` 按 `completed` 处理
 - Wails 前端页面：概览、端点管理、请求追踪、配置、日志、账号池
 - ChatGPT OAuth 授权链接生成、回调兑换、RT / id_token 存储
 - Codex 账号池：单账号测试、调度、冷却、鉴权失效处理
@@ -21,6 +25,14 @@
   - `plan_type`
   - `chatgpt_account_id / chatgpt_user_id / organization_id`
   - `quota_5h_* / quota_weekly_* / quota_status / quota_refreshed_at`
+- Codex 账号池 `api_key` 账号成本倍率：
+  - `cost_multiplier`
+  - `input_cost_multiplier`
+  - `output_cost_multiplier`
+  - `cache_creation_cost_multiplier`
+  - `cache_creation_cost_multiplier_1h`
+  - `cache_read_cost_multiplier`
+- Responses 计费口径修正：`/v1/responses` 的 `input_tokens` 已含缓存读，实际输入计费需按 `input_tokens - cache_read_tokens`
 
 ## 关键文件
 
@@ -36,6 +48,11 @@
 - `internal/service/account_pool_profile.go`：账号画像与 quota 刷新
 - `internal/store/account_pool.go`：`upstream_accounts` 存储层
 - `internal/proxy/account_pipeline.go`：账号池转发链路
+- `internal/proxy/handlers/streaming.go`：非账号池 streaming 重试与 tail drain 入口
+- `internal/proxy/handlers/forwarder.go`：streaming upstream request 构造
+- `internal/proxy/stream_processor.go`：流式 terminal / cancellation / tail drain 核心
+- `internal/tracking/tracker.go`：统一成本计算、倍率缓存、热池详情口径
+- `internal/tracking/archive_manager.go`：归档时成本计算口径
 - `internal/tracking/schema.sql`：SQLite schema
 - `internal/tracking/sqlite_adapter.go`：SQLite 迁移逻辑
 
@@ -72,12 +89,22 @@
 4. `429` 或普通 `5xx` 标记瞬时失败并冷却
 5. `503 no_available_providers` 直接短路透传，不做整池 failover
 
-## 当前 quota 语义
+### 流式完成语义
+
+- Claude `/v1/messages` 以 `message_stop` / 完整性判定为完成信号
+- Codex `/v1/responses` 以 `response.completed` / 完整性判定为完成信号
+- 下游客户端尾部断开时，允许短时继续 drain 上游尾部
+- 若 terminal event 已确认到达，则后续 `context canceled` 不再落为 `cancelled`
+
+## 当前账号池与计费语义
 
 - `free`：只有周额度，前端展示为 `d7`
 - 非 `free`：展示 `5h` 与 `d7`
 - `api_key`：前端默认显示 `5h / d7 = 无限额`
+- `api_key`：允许配置 6 个成本倍率字段
+- 非 `api_key`：成本倍率固定 `1.0`，前端只读展示或隐藏编辑
 - 账号页进度条和数字统一展示“剩余”
+- `/v1/responses`：输入计费口径为 `billable_input = input_tokens - cache_read_tokens`
 
 ## 常用命令
 
@@ -99,9 +126,11 @@ cd frontend && npm run build
 
 ```bash
 # 账号池 / OAuth / quota
+go test ./internal/store
 go test ./internal/accountauth
 go test ./internal/service
 go test ./internal/proxy
+go test ./internal/proxy/handlers
 
 # 请求追踪 / SQLite
 go test ./internal/tracking
@@ -115,8 +144,10 @@ cd frontend && npm run build
 
 - `internal/service/account_pool*.go`：`go test ./internal/service`
 - `internal/proxy/account_pipeline.go`：`go test ./internal/proxy`
+- `internal/proxy/handlers/streaming.go` / `forwarder.go`：`go test ./internal/proxy ./internal/proxy/handlers`
 - `internal/accountauth/*`：`go test ./internal/accountauth`
-- `internal/tracking/schema.sql` / `sqlite_adapter.go`：`go test ./internal/tracking`
+- `internal/tracking/schema.sql` / `sqlite_adapter.go` / `tracker.go`：`go test ./internal/tracking`
+- `internal/store/account_pool.go`：`go test ./internal/store`
 
 ## 调试提示
 
@@ -126,6 +157,7 @@ cd frontend && npm run build
   - `quota_status`
   - `quota_refreshed_at`
   - `state`
+  - `cost_multiplier / input_cost_multiplier / output_cost_multiplier`
 - OAuth 画像问题优先看：
   - `credential_raw` 中的 `id_token`
   - `plan_type / chatgpt_account_id / chatgpt_user_id / organization_id`
