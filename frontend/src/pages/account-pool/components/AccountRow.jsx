@@ -76,6 +76,13 @@ const AccountRow = ({
   const normalizedPlanType = normalizePlanType(planType);
   const normalizedProviderType = String(account.provider_type || account.providerType || '').trim().toLowerCase();
   const isAPIKeyAccount = normalizedProviderType === 'api_key';
+  const formatMultiplier = (value) => {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed.toFixed(1) : '1.0';
+  };
+  const multiplierSummary = isAPIKeyAccount
+    ? `倍率 总×${formatMultiplier(account.cost_multiplier ?? account.costMultiplier)} / 入×${formatMultiplier(account.input_cost_multiplier ?? account.inputCostMultiplier)} / 出×${formatMultiplier(account.output_cost_multiplier ?? account.outputCostMultiplier)}`
+    : '倍率固定 ×1.0';
   const planTypeLabel = toPlanTypeLabel(planType);
   const priority = normalizePriorityValue(account.priority ?? account.Priority);
   const tierMeta = Number.isFinite(priority) ? priorityTierMetaMap.get(priority) : null;
@@ -276,6 +283,7 @@ const AccountRow = ({
         <div className="hidden flex-1 lg:block" />
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 lg:shrink-0">
+          <span>{multiplierSummary}</span>
           <span>刷新 {toDisplayTime(refreshedAt)}</span>
           {(account.last_success_at || account.lastSuccessAt) && (
             <span className="text-emerald-500">

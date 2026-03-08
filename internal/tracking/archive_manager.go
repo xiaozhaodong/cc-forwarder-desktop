@@ -42,6 +42,7 @@ type ArchiveManager struct {
 	cacheMu             sync.RWMutex
 	pricing             map[string]ModelPricing       // 模型定价缓存
 	endpointMultipliers map[string]EndpointMultiplier // 端点倍率缓存
+	accountMultipliers  map[int64]EndpointMultiplier  // 账号倍率缓存
 	location            *time.Location
 
 	// 热池引用（用于归档成功后清理）
@@ -119,6 +120,13 @@ func (am *ArchiveManager) UpdateEndpointMultipliers(multipliers map[string]Endpo
 	am.cacheMu.Lock()
 	defer am.cacheMu.Unlock()
 	am.endpointMultipliers = cloneEndpointMultiplierMap(multipliers)
+}
+
+// UpdateAccountMultipliers 更新账号成本倍率
+func (am *ArchiveManager) UpdateAccountMultipliers(multipliers map[int64]EndpointMultiplier) {
+	am.cacheMu.Lock()
+	defer am.cacheMu.Unlock()
+	am.accountMultipliers = cloneAccountMultiplierMap(multipliers)
 }
 
 // UpdatePricing 更新模型定价（运行时动态更新）
@@ -406,9 +414,15 @@ func (am *ArchiveManager) calculateCostV2(req *ActiveRequest) CostBreakdown {
 		}
 	}
 
-	// 获取端点倍率
+	// 获取端点/账号倍率
 	var multiplier *EndpointMultiplier
-	if am.endpointMultipliers != nil {
+	if req.UpstreamType == "account" {
+		if am.accountMultipliers != nil {
+			if m, ok := am.accountMultipliers[req.UpstreamID]; ok {
+				multiplier = &m
+			}
+		}
+	} else if am.endpointMultipliers != nil {
 		if m, ok := am.endpointMultipliers[req.EndpointName]; ok {
 			multiplier = &m
 		}
@@ -425,7 +439,7 @@ func (am *ArchiveManager) calculateCostV2(req *ActiveRequest) CostBreakdown {
 	}
 
 	// 调用公共成本计算函数（v5.0.1+）
-	return CalculateCostV2(usage, &pricing, multiplier)
+	return CalculateCostV2(usage, &pricing, multiplier, req.Path)
 }
 
 func cloneModelPricingMap(src map[string]ModelPricing) map[string]ModelPricing {
@@ -444,6 +458,17 @@ func cloneEndpointMultiplierMap(src map[string]EndpointMultiplier) map[string]En
 		return nil
 	}
 	cloned := make(map[string]EndpointMultiplier, len(src))
+	for key, value := range src {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func cloneAccountMultiplierMap(src map[int64]EndpointMultiplier) map[int64]EndpointMultiplier {
+	if len(src) == 0 {
+		return nil
+	}
+	cloned := make(map[int64]EndpointMultiplier, len(src))
 	for key, value := range src {
 		cloned[key] = value
 	}

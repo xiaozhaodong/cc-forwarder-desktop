@@ -23,6 +23,8 @@ const toAccountAuthLabel = (providerType = '') => {
   return providerType || '-';
 };
 
+const isAPIKeyProviderType = (providerType = '') => String(providerType).trim().toLowerCase() === 'api_key';
+
 const buildOAuthCredentialRaw = (result = {}) => {
   if (result?.credential_raw) {
     return result.credential_raw;
@@ -223,6 +225,7 @@ const maskSessionId = (sessionId = '') => {
 export {
   authMethodToProviderType,
   buildOAuthCredentialRaw,
+  isAPIKeyProviderType,
   maskSessionId,
   normalizeEntityId,
   normalizePlanType,

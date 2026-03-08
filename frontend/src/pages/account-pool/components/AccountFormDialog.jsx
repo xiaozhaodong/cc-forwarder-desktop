@@ -6,7 +6,7 @@
 import { Button } from '@components/ui';
 import OAuthHelperPanel from './OAuthHelperPanel.jsx';
 import { FormField } from './shared.jsx';
-import { AUTH_METHOD_OPTIONS, DEFAULT_BASE_URL, authMethodToProviderType } from '../utils.js';
+import { AUTH_METHOD_OPTIONS, DEFAULT_BASE_URL, authMethodToProviderType, isAPIKeyProviderType } from '../utils.js';
 
 const AccountFormDialog = ({
   open,
@@ -29,6 +29,27 @@ const AccountFormDialog = ({
   openExternalURL
 }) => {
   if (!open) return null;
+
+  const isAPIKeyAccount = isAPIKeyProviderType(accountForm.provider_type || accountForm.auth_method);
+  const renderMultiplierInput = (label, key, help = '') => (
+    <FormField label={label}>
+      <div className="space-y-1.5">
+        <input
+          type="number"
+          step="0.1"
+          min="0"
+          disabled={!isAPIKeyAccount}
+          value={accountForm[key]}
+          onChange={(event) => setAccountForm(prev => ({ ...prev, [key]: event.target.value }))}
+          className={`w-full rounded-lg border px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 ${
+            isAPIKeyAccount ? 'border-slate-200' : 'border-slate-100 bg-slate-50 text-slate-400'
+          }`}
+          placeholder="1.0"
+        />
+        {help ? <div className="text-[11px] text-slate-400">{help}</div> : null}
+      </div>
+    </FormField>
+  );
 
   return (
     <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[15vh]">
@@ -81,7 +102,15 @@ const AccountFormDialog = ({
                           setAccountForm(prev => ({
                             ...prev,
                             auth_method: option.value,
-                            provider_type: authMethodToProviderType(option.value)
+                            provider_type: authMethodToProviderType(option.value),
+                            ...(option.value === 'api_key' ? {} : {
+                              costMultiplier: '1.0',
+                              inputCostMultiplier: '1.0',
+                              outputCostMultiplier: '1.0',
+                              cacheCreationCostMultiplier: '1.0',
+                              cacheCreationCostMultiplier1h: '1.0',
+                              cacheReadCostMultiplier: '1.0'
+                            })
                           }));
                           if (option.value !== 'chatgpt_refresh_token') {
                             setOauthSectionExpanded(false);
@@ -177,6 +206,23 @@ const AccountFormDialog = ({
                   openExternalURL={openExternalURL}
                 />
               )}
+            </section>
+
+            <section className="space-y-4">
+              <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">成本倍率配置</h4>
+              <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+                {isAPIKeyAccount
+                  ? '仅 API Key 账号支持自定义成本倍率，默认为 1.0。'
+                  : '当前账号类型固定使用默认倍率 1.0，不支持自定义。'}
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {renderMultiplierInput('总成本倍率', 'costMultiplier')}
+                {renderMultiplierInput('输入成本倍率', 'inputCostMultiplier')}
+                {renderMultiplierInput('输出成本倍率', 'outputCostMultiplier')}
+                {renderMultiplierInput('缓存读取成本倍率', 'cacheReadCostMultiplier')}
+                {renderMultiplierInput('5分钟缓存创建倍率', 'cacheCreationCostMultiplier', 'Claude / Codex 默认短缓存口径')}
+                {renderMultiplierInput('1小时缓存创建倍率', 'cacheCreationCostMultiplier1h')}
+              </div>
             </section>
           </div>
         </div>

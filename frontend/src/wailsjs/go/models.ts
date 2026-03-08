@@ -290,6 +290,12 @@ export namespace main {
 	    account_name: string;
 	    credential_raw: string;
 	    base_url: string;
+	    cost_multiplier: number;
+	    input_cost_multiplier: number;
+	    output_cost_multiplier: number;
+	    cache_creation_cost_multiplier: number;
+	    cache_creation_cost_multiplier_1h: number;
+	    cache_read_cost_multiplier: number;
 	    priority: number;
 	    enabled: boolean;
 	
@@ -303,6 +309,12 @@ export namespace main {
 	        this.account_name = source["account_name"];
 	        this.credential_raw = source["credential_raw"];
 	        this.base_url = source["base_url"];
+	        this.cost_multiplier = source["cost_multiplier"];
+	        this.input_cost_multiplier = source["input_cost_multiplier"];
+	        this.output_cost_multiplier = source["output_cost_multiplier"];
+	        this.cache_creation_cost_multiplier = source["cache_creation_cost_multiplier"];
+	        this.cache_creation_cost_multiplier_1h = source["cache_creation_cost_multiplier_1h"];
+	        this.cache_read_cost_multiplier = source["cache_read_cost_multiplier"];
 	        this.priority = source["priority"];
 	        this.enabled = source["enabled"];
 	    }
@@ -1048,6 +1060,12 @@ export namespace main {
 	    account_name: string;
 	    credential_raw: string;
 	    base_url: string;
+	    cost_multiplier: number;
+	    input_cost_multiplier: number;
+	    output_cost_multiplier: number;
+	    cache_creation_cost_multiplier: number;
+	    cache_creation_cost_multiplier_1h: number;
+	    cache_read_cost_multiplier: number;
 	    priority: number;
 	    enabled: boolean;
 	    state: string;
@@ -1080,6 +1098,12 @@ export namespace main {
 	        this.account_name = source["account_name"];
 	        this.credential_raw = source["credential_raw"];
 	        this.base_url = source["base_url"];
+	        this.cost_multiplier = source["cost_multiplier"];
+	        this.input_cost_multiplier = source["input_cost_multiplier"];
+	        this.output_cost_multiplier = source["output_cost_multiplier"];
+	        this.cache_creation_cost_multiplier = source["cache_creation_cost_multiplier"];
+	        this.cache_creation_cost_multiplier_1h = source["cache_creation_cost_multiplier_1h"];
+	        this.cache_read_cost_multiplier = source["cache_read_cost_multiplier"];
 	        this.priority = source["priority"];
 	        this.enabled = source["enabled"];
 	        this.state = source["state"];

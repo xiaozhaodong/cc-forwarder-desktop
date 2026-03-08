@@ -15,6 +15,7 @@ import {
   EMPTY_ACCOUNT_FORM,
   authMethodToProviderType,
   buildOAuthCredentialRaw,
+  isAPIKeyProviderType,
   maskSessionId,
   providerTypeToAuthMethod,
   resolveAccountId,
@@ -151,11 +152,18 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
 
   const openEditAccount = useCallback((account) => {
     const providerType = account.provider_type || account.providerType || 'chatgpt_refresh_token';
+    const isAPIKeyAccount = isAPIKeyProviderType(providerType);
     setEditingAccount(account);
     setAccountForm({
       account_name: account.account_name || account.accountName || '',
       auth_method: providerTypeToAuthMethod(providerType),
       provider_type: providerType,
+      costMultiplier: String(account.cost_multiplier ?? account.costMultiplier ?? (isAPIKeyAccount ? 1.0 : 1.0)),
+      inputCostMultiplier: String(account.input_cost_multiplier ?? account.inputCostMultiplier ?? 1.0),
+      outputCostMultiplier: String(account.output_cost_multiplier ?? account.outputCostMultiplier ?? 1.0),
+      cacheCreationCostMultiplier: String(account.cache_creation_cost_multiplier ?? account.cacheCreationCostMultiplier ?? 1.0),
+      cacheCreationCostMultiplier1h: String(account.cache_creation_cost_multiplier_1h ?? account.cacheCreationCostMultiplier1h ?? 1.0),
+      cacheReadCostMultiplier: String(account.cache_read_cost_multiplier ?? account.cacheReadCostMultiplier ?? 1.0),
       priority: String(account.priority || 1),
       enabled: account.enabled !== false,
       credential_raw: account.credential_raw || account.credentialRaw || '',
@@ -188,11 +196,18 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
 
     setAccountSubmitting(true);
     try {
+      const isAPIKeyAccount = isAPIKeyProviderType(providerType);
       const payload = {
         ...accountForm,
         auth_method: authMethod,
         account_name: accountName,
         provider_type: providerType,
+        costMultiplier: isAPIKeyAccount ? accountForm.costMultiplier : '1.0',
+        inputCostMultiplier: isAPIKeyAccount ? accountForm.inputCostMultiplier : '1.0',
+        outputCostMultiplier: isAPIKeyAccount ? accountForm.outputCostMultiplier : '1.0',
+        cacheCreationCostMultiplier: isAPIKeyAccount ? accountForm.cacheCreationCostMultiplier : '1.0',
+        cacheCreationCostMultiplier1h: isAPIKeyAccount ? accountForm.cacheCreationCostMultiplier1h : '1.0',
+        cacheReadCostMultiplier: isAPIKeyAccount ? accountForm.cacheReadCostMultiplier : '1.0',
         priority: Number.isNaN(priorityValue) ? 1 : priorityValue,
         enabled: accountForm.enabled !== false,
         credential_raw: credentialRaw,

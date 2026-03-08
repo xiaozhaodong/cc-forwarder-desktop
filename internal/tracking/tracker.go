@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -88,6 +89,7 @@ type RequestUpdateData struct {
 // RequestCompleteData 请求完成事件数据
 type RequestCompleteData struct {
 	ModelName             string        `json:"model_name"`
+	Path                  string        `json:"path,omitempty"`
 	InputTokens           int64         `json:"input_tokens"`
 	OutputTokens          int64         `json:"output_tokens"`
 	CacheCreationTokens   int64         `json:"cache_creation_tokens"`
@@ -158,9 +160,15 @@ type CostBreakdown struct {
 //   - usage: Token 使用量（包含分开的 5m/1h 缓存 tokens）
 //   - pricing: 模型定价，nil 时返回零成本
 //   - multiplier: 端点倍率，nil 时使用默认倍率 1.0
-func CalculateCostV2(usage *TokenUsage, pricing *ModelPricing, multiplier *EndpointMultiplier) CostBreakdown {
+//   - requestPath: 可选，请求路径。对于 /v1/responses，input_tokens 已包含 cached_tokens，需要先扣除 cache_read_tokens 再按输入价格计费。
+func CalculateCostV2(usage *TokenUsage, pricing *ModelPricing, multiplier *EndpointMultiplier, requestPath ...string) CostBreakdown {
 	if pricing == nil || usage == nil {
 		return CostBreakdown{}
+	}
+
+	path := ""
+	if len(requestPath) > 0 {
+		path = requestPath[0]
 	}
 
 	// 使用默认倍率
@@ -186,7 +194,14 @@ func CalculateCostV2(usage *TokenUsage, pricing *ModelPricing, multiplier *Endpo
 	}
 
 	// 基础成本计算（每百万 token）
-	inputCost := float64(usage.InputTokens) * pricing.Input / 1_000_000
+	billableInputTokens := usage.InputTokens
+	if shouldExcludeCacheReadFromInput(path) {
+		billableInputTokens -= usage.CacheReadTokens
+		if billableInputTokens < 0 {
+			billableInputTokens = 0
+		}
+	}
+	inputCost := float64(billableInputTokens) * pricing.Input / 1_000_000
 	outputCost := float64(usage.OutputTokens) * pricing.Output / 1_000_000
 	cacheReadCost := float64(usage.CacheReadTokens) * pricing.CacheRead / 1_000_000
 
@@ -232,6 +247,17 @@ func CalculateCostV2(usage *TokenUsage, pricing *ModelPricing, multiplier *Endpo
 		CacheReadCost:       cacheReadCost,
 		TotalCost:           inputCost + outputCost + cacheCreationCost + cacheReadCost,
 	}
+}
+
+func shouldExcludeCacheReadFromInput(path string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(path))
+	if normalized == "" {
+		return false
+	}
+	return normalized == "/v1/responses" ||
+		strings.HasSuffix(normalized, "/v1/responses") ||
+		strings.HasSuffix(normalized, "/responses") ||
+		strings.HasSuffix(normalized, "/responses/compact")
 }
 
 // CalculateCost 统一的成本计算函数（向后兼容）
@@ -329,6 +355,7 @@ type UsageTracker struct {
 	config       *Config
 	pricing      map[string]ModelPricing       // 模型定价缓存
 	endpointMu   map[string]EndpointMultiplier // 端点倍率缓存
+	accountMu    map[int64]EndpointMultiplier  // 账号倍率缓存
 	ctx          context.Context
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
@@ -969,12 +996,23 @@ func (ut *UsageTracker) RecordRequestSuccessWithQuality(requestID, modelName str
 // recordRequestSuccessLegacy 传统模式记录请求成功
 // 🔧 [方案A实现] 2025-12-20: 增加 failureReason 参数支持
 func (ut *UsageTracker) recordRequestSuccessLegacy(requestID, modelName string, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64, duration time.Duration, failureReason string) {
+	path := ""
+	if ut.hotPoolEnabled && ut.hotPool != nil {
+		if req, ok := ut.hotPool.Get(requestID); ok && req != nil {
+			path = req.Path
+		}
+	}
+	if path == "" {
+		path = ut.lookupRequestPath(requestID)
+	}
+
 	event := RequestEvent{
 		Type:      "success",
 		RequestID: requestID,
 		Timestamp: ut.now(),
 		Data: RequestCompleteData{
 			ModelName:           modelName,
+			Path:                path,
 			InputTokens:         inputTokens,
 			OutputTokens:        outputTokens,
 			CacheCreationTokens: cacheCreationTokens,
@@ -1145,6 +1183,7 @@ func (ut *UsageTracker) RecordFailedRequestTokens(requestID, modelName string, t
 		Timestamp: ut.now(),
 		Data: RequestCompleteData{
 			ModelName:             modelName,
+			Path:                  ut.lookupRequestPath(requestID),
 			InputTokens:           tokens.InputTokens,
 			OutputTokens:          tokens.OutputTokens,
 			CacheCreationTokens:   tokens.CacheCreationTokens,
@@ -1204,6 +1243,7 @@ func (ut *UsageTracker) RecoverRequestTokens(requestID, modelName string, tokens
 		Timestamp: ut.now(),
 		Data: RequestCompleteData{
 			ModelName:             modelName,
+			Path:                  ut.lookupRequestPath(requestID),
 			InputTokens:           tokens.InputTokens,
 			OutputTokens:          tokens.OutputTokens,
 			CacheCreationTokens:   tokens.CacheCreationTokens,
@@ -1245,7 +1285,7 @@ func (ut *UsageTracker) UpdateEndpointMultipliers(multipliers map[string]Endpoin
 	ut.mu.Lock()
 	defer ut.mu.Unlock()
 
-	ut.endpointMu = multipliers
+	ut.endpointMu = cloneEndpointMultiplierMap(multipliers)
 
 	// 同步到 ArchiveManager
 	if ut.archiveManager != nil {
@@ -1253,6 +1293,20 @@ func (ut *UsageTracker) UpdateEndpointMultipliers(multipliers map[string]Endpoin
 	}
 
 	slog.Info("Endpoint multipliers updated", "endpoint_count", len(multipliers))
+}
+
+// UpdateAccountMultipliers 更新账号成本倍率
+func (ut *UsageTracker) UpdateAccountMultipliers(multipliers map[int64]EndpointMultiplier) {
+	ut.mu.Lock()
+	defer ut.mu.Unlock()
+
+	ut.accountMu = cloneAccountMultiplierMap(multipliers)
+
+	if ut.archiveManager != nil {
+		ut.archiveManager.UpdateAccountMultipliers(multipliers)
+	}
+
+	slog.Info("Account multipliers updated", "account_count", len(multipliers))
 }
 
 // GetEndpointMultiplier 获取端点倍率（用于成本计算）
@@ -1284,6 +1338,22 @@ func (ut *UsageTracker) GetEndpointMultiplier(endpointName string) EndpointMulti
 		CacheCreationCostMultiplier1h: 1.0,
 		CacheReadCostMultiplier:       1.0,
 	}
+}
+
+// GetAccountMultiplier 获取账号倍率（用于成本计算）
+func (ut *UsageTracker) GetAccountMultiplier(upstreamID int64) EndpointMultiplier {
+	ut.mu.RLock()
+	defer ut.mu.RUnlock()
+
+	if ut.accountMu == nil {
+		return DefaultEndpointMultiplier()
+	}
+
+	if m, exists := ut.accountMu[upstreamID]; exists {
+		return m
+	}
+
+	return DefaultEndpointMultiplier()
 }
 
 // GetDatabaseStats 获取数据库统计信息（包装方法）
@@ -1862,20 +1932,29 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 			pricing, exists = ut.pricing["_default"]
 		}
 		if exists {
-			// 获取端点倍率
+			// 获取端点/账号倍率
 			var multiplier *EndpointMultiplier
-			if ut.endpointMu != nil {
+			if req.UpstreamType == "account" {
+				if ut.accountMu != nil {
+					if m, ok := ut.accountMu[req.UpstreamID]; ok {
+						multiplier = &m
+					}
+				}
+			} else if ut.endpointMu != nil {
 				if m, ok := ut.endpointMu[req.EndpointName]; ok {
 					multiplier = &m
 				}
 			}
 
-			// 调用公共成本计算函数
-			// TODO: 需要从请求中识别缓存类型（5分钟 vs 1小时），暂时默认使用 5 分钟倍率
-			cost = CalculateCost(
-				req.InputTokens, req.OutputTokens, req.CacheCreationTokens, req.CacheReadTokens,
-				&pricing, multiplier, false,
-			)
+			usage := &TokenUsage{
+				InputTokens:           req.InputTokens,
+				OutputTokens:          req.OutputTokens,
+				CacheCreationTokens:   req.CacheCreationTokens,
+				CacheCreation5mTokens: req.CacheCreation5mTokens,
+				CacheCreation1hTokens: req.CacheCreation1hTokens,
+				CacheReadTokens:       req.CacheReadTokens,
+			}
+			cost = CalculateCostV2(usage, &pricing, multiplier, req.Path)
 		}
 	}
 

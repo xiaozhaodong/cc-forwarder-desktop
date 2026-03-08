@@ -125,6 +125,12 @@ const buildAccountUpdatePayload = (account, priority) => ({
   account_name: String(account?.account_name ?? account?.accountName ?? '').trim(),
   credential_raw: String(account?.credential_raw ?? account?.credentialRaw ?? '').trim(),
   base_url: String(account?.base_url ?? account?.baseURL ?? DEFAULT_BASE_URL).trim() || DEFAULT_BASE_URL,
+  costMultiplier: String(account?.cost_multiplier ?? account?.costMultiplier ?? 1.0),
+  inputCostMultiplier: String(account?.input_cost_multiplier ?? account?.inputCostMultiplier ?? 1.0),
+  outputCostMultiplier: String(account?.output_cost_multiplier ?? account?.outputCostMultiplier ?? 1.0),
+  cacheCreationCostMultiplier: String(account?.cache_creation_cost_multiplier ?? account?.cacheCreationCostMultiplier ?? 1.0),
+  cacheCreationCostMultiplier1h: String(account?.cache_creation_cost_multiplier_1h ?? account?.cacheCreationCostMultiplier1h ?? 1.0),
+  cacheReadCostMultiplier: String(account?.cache_read_cost_multiplier ?? account?.cacheReadCostMultiplier ?? 1.0),
   priority,
   enabled: account?.enabled !== false
 });

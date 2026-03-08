@@ -212,7 +212,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			CacheReadTokens:     data.CacheReadTokens,
 		}
 
-		inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
+		inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens, data.Path)
 
 		query := fmt.Sprintf(`UPDATE request_logs SET
 			end_time = ?,
@@ -266,7 +266,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 		}
 
 		pricing := ut.GetPricing(data.ModelName)
-		costBreakdown := CalculateCostV2(tokens, &pricing, nil)
+		costBreakdown := CalculateCostV2(tokens, &pricing, nil, data.Path)
 
 		// 只更新Token相关字段和成本，不更新状态
 		query := fmt.Sprintf(`UPDATE request_logs SET
@@ -326,7 +326,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 		}
 
 		pricing := ut.GetPricing(data.ModelName)
-		costBreakdown := CalculateCostV2(tokens, &pricing, nil)
+		costBreakdown := CalculateCostV2(tokens, &pricing, nil, data.Path)
 
 		// 🔧 专用于恢复场景：更新任何状态的请求的Token字段，因为这是恢复不完整的数据
 		query := fmt.Sprintf(`UPDATE request_logs SET
@@ -555,7 +555,7 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 		CacheReadTokens:     data.CacheReadTokens,
 	}
 
-	inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
+	inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens, data.Path)
 
 	// 🔧 [方案A补充] 支持 failure_reason 写入（用于数据质量标记，如 stream_truncated）
 	query := fmt.Sprintf(`UPDATE request_logs SET
@@ -727,7 +727,7 @@ func (ut *UsageTracker) buildCompleteQueryWithTx(ctx context.Context, tx *sql.Tx
 		CacheReadTokens:     data.CacheReadTokens,
 	}
 
-	inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
+	inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens, data.Path)
 
 	// 使用计算出的准确持续时间
 	query := fmt.Sprintf(`UPDATE request_logs SET
@@ -930,7 +930,7 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 		CacheReadTokens:     data.CacheReadTokens,
 	}
 
-	inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
+	inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens, data.Path)
 
 	query := fmt.Sprintf(`UPDATE request_logs SET
 		end_time = ?,
@@ -1005,16 +1005,33 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 }
 
 // calculateCost 计算请求成本
-func (ut *UsageTracker) calculateCost(modelName string, tokens *TokenUsage) (inputCost, outputCost, cacheCost, readCost, totalCost float64) {
+func (ut *UsageTracker) calculateCost(modelName string, tokens *TokenUsage, requestPath ...string) (inputCost, outputCost, cacheCost, readCost, totalCost float64) {
 	pricing := ut.GetPricing(modelName)
+	result := CalculateCostV2(tokens, &pricing, nil, requestPath...)
+	return result.InputCost, result.OutputCost, result.CacheCreationCost, result.CacheReadCost, result.TotalCost
+}
 
-	inputCost = float64(tokens.InputTokens) * pricing.Input / 1000000
-	outputCost = float64(tokens.OutputTokens) * pricing.Output / 1000000
-	cacheCost = float64(tokens.CacheCreationTokens) * pricing.CacheCreation / 1000000
-	readCost = float64(tokens.CacheReadTokens) * pricing.CacheRead / 1000000
-	totalCost = inputCost + outputCost + cacheCost + readCost
+func (ut *UsageTracker) lookupRequestPath(requestID string) string {
+	if strings.TrimSpace(requestID) == "" {
+		return ""
+	}
 
-	return
+	db := ut.readDB
+	if db == nil {
+		db = ut.db
+	}
+	if db == nil {
+		return ""
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	var path string
+	if err := db.QueryRowContext(ctx, `SELECT path FROM request_logs WHERE request_id = ?`, requestID).Scan(&path); err != nil {
+		return ""
+	}
+	return path
 }
 
 // periodicCleanup 定期清理历史数据

@@ -431,6 +431,18 @@ export const normalizeUpstreamAccount = (account = {}) => ({
   credentialRaw: account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
   base_url: account.base_url || account.baseURL || account.BaseURL || '',
   baseURL: account.base_url || account.baseURL || account.BaseURL || '',
+  cost_multiplier: Number.parseFloat(account.cost_multiplier ?? account.costMultiplier ?? account.CostMultiplier) || 1.0,
+  costMultiplier: Number.parseFloat(account.cost_multiplier ?? account.costMultiplier ?? account.CostMultiplier) || 1.0,
+  input_cost_multiplier: Number.parseFloat(account.input_cost_multiplier ?? account.inputCostMultiplier ?? account.InputCostMultiplier) || 1.0,
+  inputCostMultiplier: Number.parseFloat(account.input_cost_multiplier ?? account.inputCostMultiplier ?? account.InputCostMultiplier) || 1.0,
+  output_cost_multiplier: Number.parseFloat(account.output_cost_multiplier ?? account.outputCostMultiplier ?? account.OutputCostMultiplier) || 1.0,
+  outputCostMultiplier: Number.parseFloat(account.output_cost_multiplier ?? account.outputCostMultiplier ?? account.OutputCostMultiplier) || 1.0,
+  cache_creation_cost_multiplier: Number.parseFloat(account.cache_creation_cost_multiplier ?? account.cacheCreationCostMultiplier ?? account.CacheCreationCostMultiplier) || 1.0,
+  cacheCreationCostMultiplier: Number.parseFloat(account.cache_creation_cost_multiplier ?? account.cacheCreationCostMultiplier ?? account.CacheCreationCostMultiplier) || 1.0,
+  cache_creation_cost_multiplier_1h: Number.parseFloat(account.cache_creation_cost_multiplier_1h ?? account.cacheCreationCostMultiplier1h ?? account.CacheCreationCostMultiplier1h) || 1.0,
+  cacheCreationCostMultiplier1h: Number.parseFloat(account.cache_creation_cost_multiplier_1h ?? account.cacheCreationCostMultiplier1h ?? account.CacheCreationCostMultiplier1h) || 1.0,
+  cache_read_cost_multiplier: Number.parseFloat(account.cache_read_cost_multiplier ?? account.cacheReadCostMultiplier ?? account.CacheReadCostMultiplier) || 1.0,
+  cacheReadCostMultiplier: Number.parseFloat(account.cache_read_cost_multiplier ?? account.cacheReadCostMultiplier ?? account.CacheReadCostMultiplier) || 1.0,
   priority: Number.parseInt(account.priority ?? account.Priority, 10) || 1,
   enabled: (account.enabled ?? account.Enabled) !== false,
   state: account.state || account.State || 'active',
@@ -470,12 +482,25 @@ export const normalizeUpstreamAccount = (account = {}) => ({
 });
 
 export const buildUpstreamAccountPayload = (input = {}) => {
+  const providerType = String(input.provider_type || input.providerType || '').trim().toLowerCase();
+  const isAPIKeyAccount = providerType === 'api_key';
+  const normalizeMultiplier = (value) => {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 1.0;
+  };
+
   return {
     ...input,
     account_name: input.account_name || input.accountName || '',
     provider_type: input.provider_type || input.providerType || '',
     credential_raw: input.credential_raw || input.credentialRaw || '',
     base_url: input.base_url || input.baseURL || '',
+    cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.cost_multiplier ?? input.costMultiplier) : 1.0,
+    input_cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.input_cost_multiplier ?? input.inputCostMultiplier) : 1.0,
+    output_cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.output_cost_multiplier ?? input.outputCostMultiplier) : 1.0,
+    cache_creation_cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.cache_creation_cost_multiplier ?? input.cacheCreationCostMultiplier) : 1.0,
+    cache_creation_cost_multiplier_1h: isAPIKeyAccount ? normalizeMultiplier(input.cache_creation_cost_multiplier_1h ?? input.cacheCreationCostMultiplier1h) : 1.0,
+    cache_read_cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.cache_read_cost_multiplier ?? input.cacheReadCostMultiplier) : 1.0,
     priority: Number.parseInt(input.priority, 10) || 1,
     enabled: input.enabled !== false
   };

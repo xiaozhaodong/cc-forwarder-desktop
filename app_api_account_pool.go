@@ -12,41 +12,53 @@ import (
 
 // UpstreamAccountInfo 上游账号信息
 type UpstreamAccountInfo struct {
-	ID                     int64    `json:"id"`
-	ProviderType           string   `json:"provider_type"`
-	AccountName            string   `json:"account_name"`
-	CredentialRaw          string   `json:"credential_raw"`
-	BaseURL                string   `json:"base_url"`
-	Priority               int      `json:"priority"`
-	Enabled                bool     `json:"enabled"`
-	State                  string   `json:"state"`
-	CooldownUntil          string   `json:"cooldown_until"`
-	FailCount              int      `json:"fail_count"`
-	LastSuccessAt          string   `json:"last_success_at"`
-	LastError              string   `json:"last_error"`
-	PlanType               string   `json:"plan_type"`
-	ChatGPTAccountID       string   `json:"chatgpt_account_id"`
-	ChatGPTUserID          string   `json:"chatgpt_user_id"`
-	OrganizationID         string   `json:"organization_id"`
-	Quota5HUsedPercent     *float64 `json:"quota_5h_used_percent,omitempty"`
-	Quota5HResetAt         string   `json:"quota_5h_reset_at"`
-	QuotaWeeklyUsedPercent *float64 `json:"quota_weekly_used_percent,omitempty"`
-	QuotaWeeklyResetAt     string   `json:"quota_weekly_reset_at"`
-	QuotaStatus            string   `json:"quota_status"`
-	QuotaRefreshedAt       string   `json:"quota_refreshed_at"`
-	Fingerprint            string   `json:"fingerprint"`
-	CreatedAt              string   `json:"created_at"`
-	UpdatedAt              string   `json:"updated_at"`
+	ID                            int64    `json:"id"`
+	ProviderType                  string   `json:"provider_type"`
+	AccountName                   string   `json:"account_name"`
+	CredentialRaw                 string   `json:"credential_raw"`
+	BaseURL                       string   `json:"base_url"`
+	CostMultiplier                float64  `json:"cost_multiplier"`
+	InputCostMultiplier           float64  `json:"input_cost_multiplier"`
+	OutputCostMultiplier          float64  `json:"output_cost_multiplier"`
+	CacheCreationCostMultiplier   float64  `json:"cache_creation_cost_multiplier"`
+	CacheCreationCostMultiplier1h float64  `json:"cache_creation_cost_multiplier_1h"`
+	CacheReadCostMultiplier       float64  `json:"cache_read_cost_multiplier"`
+	Priority                      int      `json:"priority"`
+	Enabled                       bool     `json:"enabled"`
+	State                         string   `json:"state"`
+	CooldownUntil                 string   `json:"cooldown_until"`
+	FailCount                     int      `json:"fail_count"`
+	LastSuccessAt                 string   `json:"last_success_at"`
+	LastError                     string   `json:"last_error"`
+	PlanType                      string   `json:"plan_type"`
+	ChatGPTAccountID              string   `json:"chatgpt_account_id"`
+	ChatGPTUserID                 string   `json:"chatgpt_user_id"`
+	OrganizationID                string   `json:"organization_id"`
+	Quota5HUsedPercent            *float64 `json:"quota_5h_used_percent,omitempty"`
+	Quota5HResetAt                string   `json:"quota_5h_reset_at"`
+	QuotaWeeklyUsedPercent        *float64 `json:"quota_weekly_used_percent,omitempty"`
+	QuotaWeeklyResetAt            string   `json:"quota_weekly_reset_at"`
+	QuotaStatus                   string   `json:"quota_status"`
+	QuotaRefreshedAt              string   `json:"quota_refreshed_at"`
+	Fingerprint                   string   `json:"fingerprint"`
+	CreatedAt                     string   `json:"created_at"`
+	UpdatedAt                     string   `json:"updated_at"`
 }
 
 // CreateUpstreamAccountInput 创建/更新账号输入
 type CreateUpstreamAccountInput struct {
-	ProviderType  string `json:"provider_type"`
-	AccountName   string `json:"account_name"`
-	CredentialRaw string `json:"credential_raw"`
-	BaseURL       string `json:"base_url"`
-	Priority      int    `json:"priority"`
-	Enabled       bool   `json:"enabled"`
+	ProviderType                  string  `json:"provider_type"`
+	AccountName                   string  `json:"account_name"`
+	CredentialRaw                 string  `json:"credential_raw"`
+	BaseURL                       string  `json:"base_url"`
+	CostMultiplier                float64 `json:"cost_multiplier"`
+	InputCostMultiplier           float64 `json:"input_cost_multiplier"`
+	OutputCostMultiplier          float64 `json:"output_cost_multiplier"`
+	CacheCreationCostMultiplier   float64 `json:"cache_creation_cost_multiplier"`
+	CacheCreationCostMultiplier1h float64 `json:"cache_creation_cost_multiplier_1h"`
+	CacheReadCostMultiplier       float64 `json:"cache_read_cost_multiplier"`
+	Priority                      int     `json:"priority"`
+	Enabled                       bool    `json:"enabled"`
 }
 
 // TestUpstreamAccountResult 测试连通性结果
@@ -83,21 +95,21 @@ type AccountScheduleCandidateDecisionInfo struct {
 
 // LatestAccountScheduleSnapshotInfo 最近一次调度快照信息
 type LatestAccountScheduleSnapshotInfo struct {
-	HasSnapshot              bool                               `json:"has_snapshot"`
-	RequestID                string                             `json:"request_id,omitempty"`
-	CapturedAt               string                             `json:"captured_at"`
-	UpdatedAt                string                             `json:"updated_at"`
-	RequestPath              string                             `json:"request_path"`
-	SelectedPriority         int                                `json:"selected_priority"`
-	SelectedTierIndex        int                                `json:"selected_tier_index"`
-	SelectedTierLabel        string                             `json:"selected_tier_label"`
-	DegradedToLowerPriority  bool                               `json:"degraded_to_lower_priority"`
-	SelectedAccountID        int64                              `json:"selected_account_id"`
-	SelectedAccountName      string                             `json:"selected_account_name"`
-	FinalOutcome             string                             `json:"final_outcome"`
-	FinalError               string                             `json:"final_error"`
-	Summary                  string                             `json:"summary"`
-	Candidates               []AccountScheduleCandidateDecisionInfo `json:"candidates"`
+	HasSnapshot             bool                                   `json:"has_snapshot"`
+	RequestID               string                                 `json:"request_id,omitempty"`
+	CapturedAt              string                                 `json:"captured_at"`
+	UpdatedAt               string                                 `json:"updated_at"`
+	RequestPath             string                                 `json:"request_path"`
+	SelectedPriority        int                                    `json:"selected_priority"`
+	SelectedTierIndex       int                                    `json:"selected_tier_index"`
+	SelectedTierLabel       string                                 `json:"selected_tier_label"`
+	DegradedToLowerPriority bool                                   `json:"degraded_to_lower_priority"`
+	SelectedAccountID       int64                                  `json:"selected_account_id"`
+	SelectedAccountName     string                                 `json:"selected_account_name"`
+	FinalOutcome            string                                 `json:"final_outcome"`
+	FinalError              string                                 `json:"final_error"`
+	Summary                 string                                 `json:"summary"`
+	Candidates              []AccountScheduleCandidateDecisionInfo `json:"candidates"`
 }
 
 // GetUpstreamAccounts 获取账号列表
@@ -120,31 +132,37 @@ func (a *App) GetUpstreamAccounts() ([]UpstreamAccountInfo, error) {
 	out := make([]UpstreamAccountInfo, 0, len(records))
 	for _, rec := range records {
 		out = append(out, UpstreamAccountInfo{
-			ID:                     rec.ID,
-			ProviderType:           rec.ProviderType,
-			AccountName:            rec.AccountName,
-			CredentialRaw:          rec.CredentialRaw,
-			BaseURL:                rec.BaseURL,
-			Priority:               rec.Priority,
-			Enabled:                rec.Enabled,
-			State:                  rec.State,
-			CooldownUntil:          formatOptionalTime(rec.CooldownUntil),
-			FailCount:              rec.FailCount,
-			LastSuccessAt:          formatOptionalTime(rec.LastSuccessAt),
-			LastError:              rec.LastError,
-			PlanType:               rec.PlanType,
-			ChatGPTAccountID:       rec.ChatGPTAccountID,
-			ChatGPTUserID:          rec.ChatGPTUserID,
-			OrganizationID:         rec.OrganizationID,
-			Quota5HUsedPercent:     rec.Quota5HUsedPercent,
-			Quota5HResetAt:         formatOptionalTime(rec.Quota5HResetAt),
-			QuotaWeeklyUsedPercent: rec.QuotaWeeklyUsedPercent,
-			QuotaWeeklyResetAt:     formatOptionalTime(rec.QuotaWeeklyResetAt),
-			QuotaStatus:            rec.QuotaStatus,
-			QuotaRefreshedAt:       formatOptionalTime(rec.QuotaRefreshedAt),
-			Fingerprint:            rec.Fingerprint,
-			CreatedAt:              formatTime(rec.CreatedAt),
-			UpdatedAt:              formatTime(rec.UpdatedAt),
+			ID:                            rec.ID,
+			ProviderType:                  rec.ProviderType,
+			AccountName:                   rec.AccountName,
+			CredentialRaw:                 rec.CredentialRaw,
+			BaseURL:                       rec.BaseURL,
+			CostMultiplier:                rec.CostMultiplier,
+			InputCostMultiplier:           rec.InputCostMultiplier,
+			OutputCostMultiplier:          rec.OutputCostMultiplier,
+			CacheCreationCostMultiplier:   rec.CacheCreationCostMultiplier,
+			CacheCreationCostMultiplier1h: rec.CacheCreationCostMultiplier1h,
+			CacheReadCostMultiplier:       rec.CacheReadCostMultiplier,
+			Priority:                      rec.Priority,
+			Enabled:                       rec.Enabled,
+			State:                         rec.State,
+			CooldownUntil:                 formatOptionalTime(rec.CooldownUntil),
+			FailCount:                     rec.FailCount,
+			LastSuccessAt:                 formatOptionalTime(rec.LastSuccessAt),
+			LastError:                     rec.LastError,
+			PlanType:                      rec.PlanType,
+			ChatGPTAccountID:              rec.ChatGPTAccountID,
+			ChatGPTUserID:                 rec.ChatGPTUserID,
+			OrganizationID:                rec.OrganizationID,
+			Quota5HUsedPercent:            rec.Quota5HUsedPercent,
+			Quota5HResetAt:                formatOptionalTime(rec.Quota5HResetAt),
+			QuotaWeeklyUsedPercent:        rec.QuotaWeeklyUsedPercent,
+			QuotaWeeklyResetAt:            formatOptionalTime(rec.QuotaWeeklyResetAt),
+			QuotaStatus:                   rec.QuotaStatus,
+			QuotaRefreshedAt:              formatOptionalTime(rec.QuotaRefreshedAt),
+			Fingerprint:                   rec.Fingerprint,
+			CreatedAt:                     formatTime(rec.CreatedAt),
+			UpdatedAt:                     formatTime(rec.UpdatedAt),
 		})
 	}
 	return out, nil
@@ -245,17 +263,24 @@ func (a *App) CreateUpstreamAccount(input CreateUpstreamAccountInput) error {
 	defer cancel()
 
 	_, err := a.accountPoolService.CreateAccount(ctx, &store.UpstreamAccountRecord{
-		ProviderType:  strings.TrimSpace(input.ProviderType),
-		AccountName:   strings.TrimSpace(input.AccountName),
-		CredentialRaw: strings.TrimSpace(input.CredentialRaw),
-		BaseURL:       strings.TrimSpace(input.BaseURL),
-		Priority:      input.Priority,
-		Enabled:       input.Enabled,
-		State:         "active",
+		ProviderType:                  strings.TrimSpace(input.ProviderType),
+		AccountName:                   strings.TrimSpace(input.AccountName),
+		CredentialRaw:                 strings.TrimSpace(input.CredentialRaw),
+		BaseURL:                       strings.TrimSpace(input.BaseURL),
+		CostMultiplier:                input.CostMultiplier,
+		InputCostMultiplier:           input.InputCostMultiplier,
+		OutputCostMultiplier:          input.OutputCostMultiplier,
+		CacheCreationCostMultiplier:   input.CacheCreationCostMultiplier,
+		CacheCreationCostMultiplier1h: input.CacheCreationCostMultiplier1h,
+		CacheReadCostMultiplier:       input.CacheReadCostMultiplier,
+		Priority:                      input.Priority,
+		Enabled:                       input.Enabled,
+		State:                         "active",
 	})
 	if err != nil {
 		return fmt.Errorf("创建账号失败: %w", err)
 	}
+	a.syncAccountMultipliersToTrackerAsync()
 	return nil
 }
 
@@ -283,6 +308,12 @@ func (a *App) UpdateUpstreamAccount(id int64, input CreateUpstreamAccountInput) 
 	existing.AccountName = strings.TrimSpace(input.AccountName)
 	existing.CredentialRaw = strings.TrimSpace(input.CredentialRaw)
 	existing.BaseURL = strings.TrimSpace(input.BaseURL)
+	existing.CostMultiplier = input.CostMultiplier
+	existing.InputCostMultiplier = input.InputCostMultiplier
+	existing.OutputCostMultiplier = input.OutputCostMultiplier
+	existing.CacheCreationCostMultiplier = input.CacheCreationCostMultiplier
+	existing.CacheCreationCostMultiplier1h = input.CacheCreationCostMultiplier1h
+	existing.CacheReadCostMultiplier = input.CacheReadCostMultiplier
 	existing.Priority = input.Priority
 	existing.Enabled = input.Enabled
 	if existing.Enabled && existing.State == "disabled_auth" {
@@ -291,6 +322,7 @@ func (a *App) UpdateUpstreamAccount(id int64, input CreateUpstreamAccountInput) 
 	if err := a.accountPoolService.UpdateAccount(ctx, existing); err != nil {
 		return fmt.Errorf("更新账号失败: %w", err)
 	}
+	a.syncAccountMultipliersToTrackerAsync()
 	return nil
 }
 
@@ -305,7 +337,11 @@ func (a *App) DeleteUpstreamAccount(id int64) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return a.accountPoolService.DeleteAccount(ctx, id)
+	if err := a.accountPoolService.DeleteAccount(ctx, id); err != nil {
+		return err
+	}
+	a.syncAccountMultipliersToTrackerAsync()
+	return nil
 }
 
 // ToggleUpstreamAccount 启停账号

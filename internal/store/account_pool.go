@@ -20,31 +20,37 @@ const (
 
 // UpstreamAccountRecord 上游账号记录
 type UpstreamAccountRecord struct {
-	ID                     int64      `json:"id"`
-	ProviderType           string     `json:"provider_type"`
-	AccountName            string     `json:"account_name"`
-	CredentialRaw          string     `json:"credential_raw"`
-	BaseURL                string     `json:"base_url"`
-	Priority               int        `json:"priority"`
-	Enabled                bool       `json:"enabled"`
-	State                  string     `json:"state"`
-	CooldownUntil          *time.Time `json:"cooldown_until,omitempty"`
-	FailCount              int        `json:"fail_count"`
-	LastSuccessAt          *time.Time `json:"last_success_at,omitempty"`
-	LastError              string     `json:"last_error"`
-	PlanType               string     `json:"plan_type"`
-	ChatGPTAccountID       string     `json:"chatgpt_account_id"`
-	ChatGPTUserID          string     `json:"chatgpt_user_id"`
-	OrganizationID         string     `json:"organization_id"`
-	Quota5HUsedPercent     *float64   `json:"quota_5h_used_percent,omitempty"`
-	Quota5HResetAt         *time.Time `json:"quota_5h_reset_at,omitempty"`
-	QuotaWeeklyUsedPercent *float64   `json:"quota_weekly_used_percent,omitempty"`
-	QuotaWeeklyResetAt     *time.Time `json:"quota_weekly_reset_at,omitempty"`
-	QuotaStatus            string     `json:"quota_status"`
-	QuotaRefreshedAt       *time.Time `json:"quota_refreshed_at,omitempty"`
-	Fingerprint            string     `json:"fingerprint"`
-	CreatedAt              time.Time  `json:"created_at"`
-	UpdatedAt              time.Time  `json:"updated_at"`
+	ID                            int64      `json:"id"`
+	ProviderType                  string     `json:"provider_type"`
+	AccountName                   string     `json:"account_name"`
+	CredentialRaw                 string     `json:"credential_raw"`
+	BaseURL                       string     `json:"base_url"`
+	CostMultiplier                float64    `json:"cost_multiplier"`
+	InputCostMultiplier           float64    `json:"input_cost_multiplier"`
+	OutputCostMultiplier          float64    `json:"output_cost_multiplier"`
+	CacheCreationCostMultiplier   float64    `json:"cache_creation_cost_multiplier"`
+	CacheCreationCostMultiplier1h float64    `json:"cache_creation_cost_multiplier_1h"`
+	CacheReadCostMultiplier       float64    `json:"cache_read_cost_multiplier"`
+	Priority                      int        `json:"priority"`
+	Enabled                       bool       `json:"enabled"`
+	State                         string     `json:"state"`
+	CooldownUntil                 *time.Time `json:"cooldown_until,omitempty"`
+	FailCount                     int        `json:"fail_count"`
+	LastSuccessAt                 *time.Time `json:"last_success_at,omitempty"`
+	LastError                     string     `json:"last_error"`
+	PlanType                      string     `json:"plan_type"`
+	ChatGPTAccountID              string     `json:"chatgpt_account_id"`
+	ChatGPTUserID                 string     `json:"chatgpt_user_id"`
+	OrganizationID                string     `json:"organization_id"`
+	Quota5HUsedPercent            *float64   `json:"quota_5h_used_percent,omitempty"`
+	Quota5HResetAt                *time.Time `json:"quota_5h_reset_at,omitempty"`
+	QuotaWeeklyUsedPercent        *float64   `json:"quota_weekly_used_percent,omitempty"`
+	QuotaWeeklyResetAt            *time.Time `json:"quota_weekly_reset_at,omitempty"`
+	QuotaStatus                   string     `json:"quota_status"`
+	QuotaRefreshedAt              *time.Time `json:"quota_refreshed_at,omitempty"`
+	Fingerprint                   string     `json:"fingerprint"`
+	CreatedAt                     time.Time  `json:"created_at"`
+	UpdatedAt                     time.Time  `json:"updated_at"`
 }
 
 // AccountPoolStore 账号池存储接口
@@ -95,14 +101,18 @@ func (s *SQLiteAccountPoolStore) CreateAccount(ctx context.Context, record *Upst
 	query := `
 		INSERT INTO upstream_accounts (
 			provider_type, account_name, credential_raw, base_url,
+			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
+			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
 			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
 			quota_status, quota_refreshed_at, fingerprint
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	res, err := s.getQuerier().ExecContext(ctx, query,
 		record.ProviderType, record.AccountName, record.CredentialRaw, record.BaseURL,
+		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
+		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
 		record.Priority, boolToInt(record.Enabled), record.State, nullableTime(record.CooldownUntil), record.FailCount,
 		nullableTime(record.LastSuccessAt), record.LastError,
 		record.PlanType, record.ChatGPTAccountID, record.ChatGPTUserID, record.OrganizationID,
@@ -131,6 +141,8 @@ func (s *SQLiteAccountPoolStore) UpdateAccount(ctx context.Context, record *Upst
 	query := `
 		UPDATE upstream_accounts
 		SET provider_type = ?, account_name = ?, credential_raw = ?, base_url = ?,
+			cost_multiplier = ?, input_cost_multiplier = ?, output_cost_multiplier = ?,
+			cache_creation_cost_multiplier = ?, cache_creation_cost_multiplier_1h = ?, cache_read_cost_multiplier = ?,
 			priority = ?, enabled = ?, state = ?, cooldown_until = ?, fail_count = ?, last_success_at = ?, last_error = ?,
 			plan_type = ?, chatgpt_account_id = ?, chatgpt_user_id = ?, organization_id = ?,
 			quota_5h_used_percent = ?, quota_5h_reset_at = ?, quota_weekly_used_percent = ?, quota_weekly_reset_at = ?,
@@ -139,6 +151,8 @@ func (s *SQLiteAccountPoolStore) UpdateAccount(ctx context.Context, record *Upst
 	`
 	res, err := s.getQuerier().ExecContext(ctx, query,
 		record.ProviderType, record.AccountName, record.CredentialRaw, record.BaseURL,
+		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
+		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
 		record.Priority, boolToInt(record.Enabled), record.State, nullableTime(record.CooldownUntil), record.FailCount,
 		nullableTime(record.LastSuccessAt), record.LastError,
 		record.PlanType, record.ChatGPTAccountID, record.ChatGPTUserID, record.OrganizationID,
@@ -188,6 +202,8 @@ func (s *SQLiteAccountPoolStore) GetAccount(ctx context.Context, id int64) (*Ups
 func (s *SQLiteAccountPoolStore) getAccountByID(ctx context.Context, id int64) (*UpstreamAccountRecord, error) {
 	query := `
 		SELECT id, provider_type, account_name, credential_raw, base_url,
+			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
+			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
 			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
@@ -205,6 +221,8 @@ func (s *SQLiteAccountPoolStore) ListAccounts(ctx context.Context, includeDisabl
 
 	query := `
 		SELECT id, provider_type, account_name, credential_raw, base_url,
+			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
+			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
 			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
@@ -243,6 +261,8 @@ func (s *SQLiteAccountPoolStore) ListSchedulableAccounts(ctx context.Context, no
 
 	query := `
 		SELECT id, provider_type, account_name, credential_raw, base_url,
+			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
+			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
 			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
@@ -430,6 +450,7 @@ func normalizeAccountRecord(record *UpstreamAccountRecord) {
 		record.BaseURL = defaultAccountBaseURL
 	}
 	record.BaseURL = normalizeBaseURL(record.BaseURL)
+	applyAccountCostMultiplierPolicy(record)
 	if record.Priority == 0 {
 		record.Priority = defaultAccountPrio
 	}
@@ -439,6 +460,36 @@ func normalizeAccountRecord(record *UpstreamAccountRecord) {
 	if record.Fingerprint == "" {
 		record.Fingerprint = GenerateAccountFingerprint(record.ProviderType, record.CredentialRaw, record.BaseURL)
 	}
+}
+
+func normalizeMultiplierValue(value float64) float64 {
+	if value <= 0 {
+		return 1.0
+	}
+	return value
+}
+
+func applyAccountCostMultiplierPolicy(record *UpstreamAccountRecord) {
+	if record == nil {
+		return
+	}
+
+	if strings.TrimSpace(strings.ToLower(record.ProviderType)) != "api_key" {
+		record.CostMultiplier = 1.0
+		record.InputCostMultiplier = 1.0
+		record.OutputCostMultiplier = 1.0
+		record.CacheCreationCostMultiplier = 1.0
+		record.CacheCreationCostMultiplier1h = 1.0
+		record.CacheReadCostMultiplier = 1.0
+		return
+	}
+
+	record.CostMultiplier = normalizeMultiplierValue(record.CostMultiplier)
+	record.InputCostMultiplier = normalizeMultiplierValue(record.InputCostMultiplier)
+	record.OutputCostMultiplier = normalizeMultiplierValue(record.OutputCostMultiplier)
+	record.CacheCreationCostMultiplier = normalizeMultiplierValue(record.CacheCreationCostMultiplier)
+	record.CacheCreationCostMultiplier1h = normalizeMultiplierValue(record.CacheCreationCostMultiplier1h)
+	record.CacheReadCostMultiplier = normalizeMultiplierValue(record.CacheReadCostMultiplier)
 }
 
 func normalizeBaseURL(baseURL string) string {
@@ -474,20 +525,28 @@ type rowScanner interface {
 
 func scanAccountRow(scanner rowScanner) (*UpstreamAccountRecord, error) {
 	var (
-		rec                    UpstreamAccountRecord
-		enabled                int
-		cooldownUntilStr       sql.NullString
-		lastSuccessAtStr       sql.NullString
-		quota5HUsedPercent     sql.NullFloat64
-		quota5HResetAtStr      sql.NullString
-		quotaWeeklyUsedPercent sql.NullFloat64
-		quotaWeeklyResetAtStr  sql.NullString
-		quotaRefreshedAtStr    sql.NullString
-		createdAtStr           string
-		updatedAtStr           string
+		rec                       UpstreamAccountRecord
+		enabled                   int
+		cooldownUntilStr          sql.NullString
+		lastSuccessAtStr          sql.NullString
+		quota5HUsedPercent        sql.NullFloat64
+		quota5HResetAtStr         sql.NullString
+		quotaWeeklyUsedPercent    sql.NullFloat64
+		quotaWeeklyResetAtStr     sql.NullString
+		quotaRefreshedAtStr       sql.NullString
+		costMultiplier            sql.NullFloat64
+		inputCostMultiplier       sql.NullFloat64
+		outputCostMultiplier      sql.NullFloat64
+		cacheCreationMultiplier   sql.NullFloat64
+		cacheCreationMultiplier1h sql.NullFloat64
+		cacheReadMultiplier       sql.NullFloat64
+		createdAtStr              string
+		updatedAtStr              string
 	)
 	if err := scanner.Scan(
 		&rec.ID, &rec.ProviderType, &rec.AccountName, &rec.CredentialRaw, &rec.BaseURL,
+		&costMultiplier, &inputCostMultiplier, &outputCostMultiplier,
+		&cacheCreationMultiplier, &cacheCreationMultiplier1h, &cacheReadMultiplier,
 		&rec.Priority, &enabled, &rec.State, &cooldownUntilStr, &rec.FailCount, &lastSuccessAtStr, &rec.LastError,
 		&rec.PlanType, &rec.ChatGPTAccountID, &rec.ChatGPTUserID, &rec.OrganizationID,
 		&quota5HUsedPercent, &quota5HResetAtStr, &quotaWeeklyUsedPercent, &quotaWeeklyResetAtStr,
@@ -497,6 +556,12 @@ func scanAccountRow(scanner rowScanner) (*UpstreamAccountRecord, error) {
 	}
 	rec.Enabled = enabled == 1
 	rec.CooldownUntil = parseNullableTime(cooldownUntilStr)
+	rec.CostMultiplier = parseMultiplierFloat(costMultiplier)
+	rec.InputCostMultiplier = parseMultiplierFloat(inputCostMultiplier)
+	rec.OutputCostMultiplier = parseMultiplierFloat(outputCostMultiplier)
+	rec.CacheCreationCostMultiplier = parseMultiplierFloat(cacheCreationMultiplier)
+	rec.CacheCreationCostMultiplier1h = parseMultiplierFloat(cacheCreationMultiplier1h)
+	rec.CacheReadCostMultiplier = parseMultiplierFloat(cacheReadMultiplier)
 	rec.LastSuccessAt = parseNullableTime(lastSuccessAtStr)
 	rec.Quota5HUsedPercent = parseNullableFloat(quota5HUsedPercent)
 	rec.Quota5HResetAt = parseNullableTime(quota5HResetAtStr)
@@ -506,6 +571,13 @@ func scanAccountRow(scanner rowScanner) (*UpstreamAccountRecord, error) {
 	rec.CreatedAt = parseDBTime(createdAtStr)
 	rec.UpdatedAt = parseDBTime(updatedAtStr)
 	return &rec, nil
+}
+
+func parseMultiplierFloat(v sql.NullFloat64) float64 {
+	if !v.Valid || v.Float64 <= 0 {
+		return 1.0
+	}
+	return v.Float64
 }
 
 func parseNullableTime(v sql.NullString) *time.Time {

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -160,6 +161,7 @@ func (a *App) startup(ctx context.Context) {
 
 	// 7.6 同步端点倍率到 UsageTracker（用于成本计算）
 	a.syncEndpointMultipliersToTracker(ctx)
+	a.syncAccountMultipliersToTracker(ctx)
 
 	// 8. 启动端点管理器（此时端点已从数据库加载完成）
 	a.endpointManager.Start()
@@ -592,6 +594,54 @@ func (a *App) syncEndpointMultipliersToTracker(ctx context.Context) {
 	// 更新 UsageTracker 的端点倍率缓存
 	a.usageTracker.UpdateEndpointMultipliers(multipliers)
 	a.logger.Debug("已同步端点倍率到 UsageTracker", "count", len(multipliers))
+}
+
+// syncAccountMultipliersToTracker 同步账号倍率到 UsageTracker
+// 成本计算公式：模型基础定价 * 账号倍率
+func (a *App) syncAccountMultipliersToTracker(ctx context.Context) {
+	if a.usageTracker == nil || a.accountPoolStore == nil {
+		return
+	}
+
+	accounts, err := a.accountPoolStore.ListAccounts(ctx, true)
+	if err != nil {
+		a.logger.Warn("⚠️ 获取账号池列表失败", "error", err)
+		return
+	}
+
+	multipliers := make(map[int64]tracking.EndpointMultiplier)
+	for _, acc := range accounts {
+		if acc == nil || acc.ID <= 0 {
+			continue
+		}
+		if strings.TrimSpace(strings.ToLower(acc.ProviderType)) != "api_key" {
+			continue
+		}
+		multipliers[acc.ID] = tracking.EndpointMultiplier{
+			CostMultiplier:                acc.CostMultiplier,
+			InputCostMultiplier:           acc.InputCostMultiplier,
+			OutputCostMultiplier:          acc.OutputCostMultiplier,
+			CacheCreationCostMultiplier:   acc.CacheCreationCostMultiplier,
+			CacheCreationCostMultiplier1h: acc.CacheCreationCostMultiplier1h,
+			CacheReadCostMultiplier:       acc.CacheReadCostMultiplier,
+		}
+	}
+
+	a.usageTracker.UpdateAccountMultipliers(multipliers)
+	a.logger.Debug("已同步账号倍率到 UsageTracker", "count", len(multipliers))
+}
+
+func (a *App) syncAccountMultipliersToTrackerAsync() {
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				if a != nil && a.logger != nil {
+					a.logger.Error("❌ 同步账号倍率到 UsageTracker 发生 panic", "panic", recovered)
+				}
+			}
+		}()
+		a.syncAccountMultipliersToTracker(context.Background())
+	}()
 }
 
 // setupUsageTracker 设置使用追踪

@@ -274,6 +274,14 @@ CREATE TABLE IF NOT EXISTS upstream_accounts (
     credential_raw TEXT NOT NULL,                   -- 凭据（首版明文）
     base_url TEXT NOT NULL DEFAULT 'https://api.openai.com', -- 上游基础URL
 
+    -- ========== 成本倍率 ==========
+    cost_multiplier REAL DEFAULT 1.0,               -- 总成本倍率
+    input_cost_multiplier REAL DEFAULT 1.0,         -- 输入成本倍率
+    output_cost_multiplier REAL DEFAULT 1.0,        -- 输出成本倍率
+    cache_creation_cost_multiplier REAL DEFAULT 1.0,-- 5分钟缓存创建成本倍率
+    cache_creation_cost_multiplier_1h REAL DEFAULT 1.0, -- 1小时缓存创建成本倍率
+    cache_read_cost_multiplier REAL DEFAULT 1.0,    -- 缓存读取成本倍率
+
     -- ========== 调度 ==========
     priority INTEGER DEFAULT 100,                   -- 优先级（数字越小越高）
     enabled INTEGER DEFAULT 1,                      -- 是否可参与调度

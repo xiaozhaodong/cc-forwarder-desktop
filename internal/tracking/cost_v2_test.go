@@ -8,11 +8,11 @@ import (
 // TestCalculateCostV2_Basic 测试基础成本计算
 func TestCalculateCostV2_Basic(t *testing.T) {
 	pricing := &ModelPricing{
-		Input:           3.0,   // $3/1M tokens
-		Output:          15.0,  // $15/1M tokens
-		CacheCreation:   3.75,  // $3.75/1M tokens (5m cache = 1.25x input)
-		CacheCreation1h: 6.0,   // $6/1M tokens (1h cache = 2x input)
-		CacheRead:       0.30,  // $0.30/1M tokens
+		Input:           3.0,  // $3/1M tokens
+		Output:          15.0, // $15/1M tokens
+		CacheCreation:   3.75, // $3.75/1M tokens (5m cache = 1.25x input)
+		CacheCreation1h: 6.0,  // $6/1M tokens (1h cache = 2x input)
+		CacheRead:       0.30, // $0.30/1M tokens
 	}
 
 	usage := &TokenUsage{
@@ -147,9 +147,9 @@ func TestCalculateCostV2_Mixed5mAnd1hCache(t *testing.T) {
 	usage := &TokenUsage{
 		InputTokens:           100000,
 		OutputTokens:          50000,
-		CacheCreation5mTokens: 5000,  // 5000 个 5 分钟缓存
-		CacheCreation1hTokens: 3000,  // 3000 个 1 小时缓存
-		CacheCreationTokens:   8000,  // 总数
+		CacheCreation5mTokens: 5000, // 5000 个 5 分钟缓存
+		CacheCreation1hTokens: 3000, // 3000 个 1 小时缓存
+		CacheCreationTokens:   8000, // 总数
 		CacheReadTokens:       20000,
 	}
 
@@ -194,12 +194,12 @@ func TestCalculateCostV2_WithEndpointMultiplier(t *testing.T) {
 
 	// 分项倍率模式
 	multiplier := &EndpointMultiplier{
-		CostMultiplier:                0,    // 不使用总体倍率
-		InputCostMultiplier:           1.5,  // 输入 1.5x
-		OutputCostMultiplier:          1.2,  // 输出 1.2x
-		CacheCreationCostMultiplier:   1.0,  // 5m 缓存 1.0x
-		CacheCreationCostMultiplier1h: 2.0,  // 1h 缓存 2.0x
-		CacheReadCostMultiplier:       1.0,  // 读取 1.0x
+		CostMultiplier:                0,   // 不使用总体倍率
+		InputCostMultiplier:           1.5, // 输入 1.5x
+		OutputCostMultiplier:          1.2, // 输出 1.2x
+		CacheCreationCostMultiplier:   1.0, // 5m 缓存 1.0x
+		CacheCreationCostMultiplier1h: 2.0, // 1h 缓存 2.0x
+		CacheReadCostMultiplier:       1.0, // 读取 1.0x
 	}
 
 	result := CalculateCostV2(usage, pricing, multiplier)
@@ -389,5 +389,41 @@ func TestCalculateCost_BackwardCompatible(t *testing.T) {
 	}
 	if math.Abs(result1h.CacheCreation5mCost-0) > 0.0001 {
 		t.Errorf("CalculateCost(use1hCache=true): Expected CacheCreation5mCost $0, got $%f", result1h.CacheCreation5mCost)
+	}
+}
+
+func TestCalculateCostV2_ResponsesInputIncludesCachedTokens(t *testing.T) {
+	pricing := &ModelPricing{
+		Input:         2.5,
+		Output:        15.0,
+		CacheCreation: 3.125,
+		CacheRead:     0.25,
+	}
+
+	usage := &TokenUsage{
+		InputTokens:     21135,
+		OutputTokens:    62,
+		CacheReadTokens: 5760,
+	}
+	multiplier := &EndpointMultiplier{CostMultiplier: 0.6}
+
+	result := CalculateCostV2(usage, pricing, multiplier, "/v1/responses")
+
+	expectedInput := float64(21135-5760) * 2.5 / 1_000_000 * 0.6
+	expectedOutput := float64(62) * 15.0 / 1_000_000 * 0.6
+	expectedCacheRead := float64(5760) * 0.25 / 1_000_000 * 0.6
+	expectedTotal := expectedInput + expectedOutput + expectedCacheRead
+
+	if math.Abs(result.InputCost-expectedInput) > 0.0000001 {
+		t.Fatalf("expected InputCost %f, got %f", expectedInput, result.InputCost)
+	}
+	if math.Abs(result.OutputCost-expectedOutput) > 0.0000001 {
+		t.Fatalf("expected OutputCost %f, got %f", expectedOutput, result.OutputCost)
+	}
+	if math.Abs(result.CacheReadCost-expectedCacheRead) > 0.0000001 {
+		t.Fatalf("expected CacheReadCost %f, got %f", expectedCacheRead, result.CacheReadCost)
+	}
+	if math.Abs(result.TotalCost-expectedTotal) > 0.0000001 {
+		t.Fatalf("expected TotalCost %f, got %f", expectedTotal, result.TotalCost)
 	}
 }
