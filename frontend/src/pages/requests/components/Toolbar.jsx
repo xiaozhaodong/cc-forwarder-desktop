@@ -8,6 +8,7 @@ import { TIME_RANGE_OPTIONS } from '../utils/constants.js';
 import ViewConfigPanel from './ViewConfigPanel.jsx';
 import AutoRefreshControl from './AutoRefreshControl.jsx';
 import ActiveGroupSwitcher from './ActiveGroupSwitcher.jsx';
+import AccountPoolSwitcher from './AccountPoolSwitcher.jsx';
 
 /**
  * Toolbar - 请求追踪页面工具栏
@@ -27,6 +28,11 @@ import ActiveGroupSwitcher from './ActiveGroupSwitcher.jsx';
  * @param {Array} props.groups - 所有端点列表（v4.0: 一个端点=一个组）
  * @param {string} props.activeGroup - 当前活跃端点名称
  * @param {Function} props.onGroupSwitch - 端点切换回调 (endpointName) => void
+ * @param {Array} props.accounts - 账号池账号列表
+ * @param {Object|null} props.activeAccount - 当前主组账号
+ * @param {string|number|null} props.recentSelectedAccountId - 最近一次调度命中的账号 ID
+ * @param {Function} props.onAccountSwitch - 账号池切换回调 (account) => void
+ * @param {boolean} props.accountSwitching - 是否正在切换账号
  */
 const Toolbar = ({
   activeTimeRange = 'today',
@@ -43,15 +49,28 @@ const Toolbar = ({
   autoRefresh = null,
   groups = [],
   activeGroup = '',
-  onGroupSwitch
+  onGroupSwitch,
+  accounts = [],
+  activeAccount = null,
+  recentSelectedAccountId = null,
+  onAccountSwitch,
+  accountSwitching = false
 }) => {
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex items-center gap-3 min-w-0">
       {/* 端点快捷切换器 */}
       <ActiveGroupSwitcher
         groups={groups}
         activeGroup={activeGroup}
         onSwitch={onGroupSwitch}
+      />
+
+      <AccountPoolSwitcher
+        accounts={accounts}
+        activeAccount={activeAccount}
+        recentSelectedAccountId={recentSelectedAccountId}
+        onSwitch={onAccountSwitch}
+        loading={accountSwitching}
       />
 
       <div className="h-6 w-px bg-gray-300 mx-1 hidden sm:block"></div>

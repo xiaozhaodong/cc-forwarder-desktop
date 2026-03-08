@@ -153,16 +153,22 @@ const normalizeEntityId = (value) => {
   return null;
 };
 
-const resolveAccountId = (account = {}) => normalizeEntityId(
-  account.id
-  ?? account.ID
-  ?? account.Id
-  ?? account.account_id
-  ?? account.accountId
-  ?? account.accountID
-  ?? account.AccountID
-  ?? null
-);
+const resolveAccountId = (account = {}) => {
+  if (!account || typeof account !== 'object') {
+    return null;
+  }
+
+  return normalizeEntityId(
+    account.id
+    ?? account.ID
+    ?? account.Id
+    ?? account.account_id
+    ?? account.accountId
+    ?? account.accountID
+    ?? account.AccountID
+    ?? null
+  );
+};
 
 const summarizeCallbackURL = (raw = '') => {
   const text = String(raw || '').trim();

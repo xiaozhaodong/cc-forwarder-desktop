@@ -139,5 +139,6 @@ export {
   buildAccountUpdatePayload,
   buildManualFailoverPriorityPlan,
   buildManualFailoverTierSummary,
+  compareAccountsByManualPriority,
   normalizePriorityValue
 };

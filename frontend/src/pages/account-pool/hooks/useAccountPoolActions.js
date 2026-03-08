@@ -8,13 +8,11 @@ import {
   deleteUpstreamAccount,
   refreshUpstreamAccountProfile,
   testUpstreamAccount,
-  toggleUpstreamAccount,
-  updateUpstreamAccount
+  toggleUpstreamAccount
 } from '@utils/api.js';
 import {
-  buildAccountUpdatePayload,
-  buildManualFailoverPriorityPlan,
-  resolveAccountId
+  resolveAccountId,
+  switchUpstreamAccountToTier
 } from '../utils.js';
 
 const useAccountPoolActions = ({ accounts, loadData, loadLatestScheduleSnapshot, showNotice }) => {
@@ -111,25 +109,18 @@ const useAccountPoolActions = ({ accounts, loadData, loadLatestScheduleSnapshot,
     }
 
     const targetTierIndex = targetTier === 'backup' ? 1 : 0;
-    const changes = buildManualFailoverPriorityPlan({
-      accounts,
-      targetAccountId: accountId,
-      targetTierIndex
-    });
-
-    if (changes.length === 0) {
-      showNotice('info', targetTier === 'backup' ? '该账号已在备组位置' : '该账号已在主组位置');
-      return;
-    }
 
     setBusyKey(`account-switch-${accountId}`);
     try {
-      for (const change of changes) {
-        const changeId = resolveAccountId(change.account);
-        if (changeId === undefined || changeId === null || changeId === '') {
-          throw new Error('存在缺少 ID 的账号，无法更新顺序');
-        }
-        await updateUpstreamAccount(changeId, buildAccountUpdatePayload(change.account, change.priority));
+      const result = await switchUpstreamAccountToTier({
+        accounts,
+        targetAccountId: accountId,
+        targetTierIndex
+      });
+
+      if (!result.changed) {
+        showNotice('info', targetTier === 'backup' ? '该账号已在备组位置' : '该账号已在主组位置');
+        return;
       }
 
       const accountName = account.account_name || account.accountName || `账号 ${accountId}`;

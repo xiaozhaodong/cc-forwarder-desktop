@@ -15,3 +15,4 @@ export { default as ViewConfigPanel } from './ViewConfigPanel.jsx';
 export { default as Toolbar } from './Toolbar.jsx';
 export { default as AutoRefreshControl } from './AutoRefreshControl.jsx';
 export { default as ActiveGroupSwitcher } from './ActiveGroupSwitcher.jsx';
+export { default as AccountPoolSwitcher } from './AccountPoolSwitcher.jsx';

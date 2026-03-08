@@ -6,7 +6,23 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { BarChart3 } from 'lucide-react';
 import { ErrorMessage } from '@components/ui';
-import { fetchRequests, fetchModels, fetchUsageStats, fetchEndpoints, fetchGroups, activateGroup } from '@utils/api.js';
+import { NoticeToast } from '@pages/account-pool/components';
+import { useNotice } from '@pages/account-pool/hooks';
+import {
+  compareAccountsByManualPriority,
+  resolveAccountId,
+  switchUpstreamAccountToTier
+} from '@pages/account-pool/utils.js';
+import {
+  fetchRequests,
+  fetchModels,
+  fetchUsageStats,
+  fetchEndpoints,
+  fetchGroups,
+  activateGroup,
+  fetchUpstreamAccounts,
+  fetchLatestAccountScheduleSnapshot
+} from '@utils/api.js';
 import { useFilters } from './hooks/useFilters.js';
 import { useColumnConfig } from './hooks/useColumnConfig.js';
 import { useTimeRange } from './hooks/useTimeRange.js';
@@ -20,6 +36,7 @@ import { PAGINATION_CONFIG } from './utils/constants.js';
 
 const RequestsPage = () => {
   // ==================== 状态管理 ====================
+  const { notice, showNotice, closeNotice } = useNotice();
 
   // 数据状态
   const [requests, setRequests] = useState([]);
@@ -28,6 +45,9 @@ const RequestsPage = () => {
   const [endpoints, setEndpoints] = useState([]);
   const [groups, setGroups] = useState([]); // v4.0: 端点列表（一个端点=一个组）
   const [activeGroup, setActiveGroup] = useState('');
+  const [accounts, setAccounts] = useState([]);
+  const [latestScheduleSnapshot, setLatestScheduleSnapshot] = useState({ hasSnapshot: false, has_snapshot: false, candidates: [] });
+  const [accountSwitching, setAccountSwitching] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const loadRequestIdRef = useRef(0);
@@ -82,6 +102,26 @@ const RequestsPage = () => {
     return Array.from(channelSet).sort();
   }, [endpoints]);
 
+  const sortedAccounts = useMemo(() => {
+    return [...accounts].sort(compareAccountsByManualPriority);
+  }, [accounts]);
+
+  const activeAccount = useMemo(() => {
+    const enabledAccounts = sortedAccounts.filter(account => account.enabled !== false);
+    return enabledAccounts[0] || sortedAccounts[0] || null;
+  }, [sortedAccounts]);
+
+  const recentSelectedAccountId = useMemo(() => {
+    const hasSnapshot = latestScheduleSnapshot?.hasSnapshot === true || latestScheduleSnapshot?.has_snapshot === true;
+    if (!hasSnapshot) {
+      return null;
+    }
+
+    return latestScheduleSnapshot?.selectedAccountId
+      ?? latestScheduleSnapshot?.selected_account_id
+      ?? null;
+  }, [latestScheduleSnapshot]);
+
   // ==================== 数据加载 ====================
 
   const loadData = useCallback(async (silent = false) => {
@@ -106,7 +146,7 @@ const RequestsPage = () => {
       };
 
       // v4.0: 简化数据获取，移除 keysData
-      const [requestsData, statsData, modelsData, endpointsData, groupsData] = await Promise.all([
+      const [requestsData, statsData, modelsData, endpointsData, groupsData, accountsData, latestSnapshotData] = await Promise.all([
         fetchRequests({
           ...requestsQueryParams,
           page: pagination.page,
@@ -115,7 +155,20 @@ const RequestsPage = () => {
         fetchUsageStats(statsParams),
         fetchModels(),
         fetchEndpoints(),
-        fetchGroups()
+        fetchGroups(),
+        fetchUpstreamAccounts().catch((err) => {
+          console.error('❌ 加载账号池账号失败:', err);
+          return [];
+        }),
+        fetchLatestAccountScheduleSnapshot().catch((err) => {
+          console.error('❌ 加载最近一次账号调度结果失败:', err);
+          return {
+            unsupported: true,
+            hasSnapshot: false,
+            has_snapshot: false,
+            candidates: []
+          };
+        })
       ]);
 
       if (loadRequestIdRef.current !== requestId) {
@@ -141,6 +194,11 @@ const RequestsPage = () => {
       // v4.0: 端点列表（一个端点=一个组）
       const groupsList = groupsData?.groups || [];
       setGroups(Array.isArray(groupsList) ? groupsList : []);
+
+      setAccounts(Array.isArray(accountsData) ? accountsData : []);
+      setLatestScheduleSnapshot(latestSnapshotData && typeof latestSnapshotData === 'object'
+        ? latestSnapshotData
+        : { hasSnapshot: false, has_snapshot: false, candidates: [] });
 
       // 从组数据中找到活跃端点
       const activeGroupObj = groupsList.find(g => g.is_active);
@@ -204,7 +262,7 @@ const RequestsPage = () => {
   };
 
   // 快捷时间选择（筛选面板内）
-  const handleQuickTimeSelect = (range) => {
+  const handleQuickTimeSelect = (_range) => {
     // 这里可以实现快捷时间选择的逻辑
     // 简化实现：直接更新到"今天"
     const todayRange = {
@@ -244,6 +302,45 @@ const RequestsPage = () => {
     }
   };
 
+  const handleAccountSwitch = useCallback(async (account) => {
+    const accountId = resolveAccountId(account);
+    const currentActiveAccountId = resolveAccountId(activeAccount);
+    const accountName = account?.account_name || account?.accountName || '目标账号';
+
+    if (accountId === undefined || accountId === null || accountId === '') {
+      const err = new Error('账号缺少 ID，无法切换');
+      showNotice('error', err.message);
+      return;
+    }
+
+    if (String(accountId) === String(currentActiveAccountId ?? '')) {
+      showNotice('info', `「${accountName}」已经是主组账号`);
+      return;
+    }
+
+    setAccountSwitching(true);
+    try {
+      const result = await switchUpstreamAccountToTier({
+        accounts,
+        targetAccountId: accountId,
+        targetTierIndex: 0
+      });
+
+      if (!result.changed) {
+        showNotice('info', `「${accountName}」已经是主组账号`);
+        return;
+      }
+
+      showNotice('success', `已将「${accountName}」切为主组，后续 /v1/responses 将优先使用该账号`);
+      await loadData(true);
+    } catch (err) {
+      showNotice('error', err.message || '切换账号失败');
+      return;
+    } finally {
+      setAccountSwitching(false);
+    }
+  }, [accounts, activeAccount, loadData, showNotice]);
+
   // ==================== 生命周期 ====================
 
   useEffect(() => {
@@ -264,37 +361,43 @@ const RequestsPage = () => {
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500 relative">
-      {/* 页面标题 & 工具栏 */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-30">
+      <NoticeToast notice={notice} onClose={closeNotice} />
+
+      {/* 页面标题 & 工具栏（单行） */}
+      <div className="flex items-center gap-3 relative z-30">
         {/* 页面标题 */}
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-indigo-600 rounded-lg text-white shadow-lg shadow-indigo-200/50">
-            <BarChart3 className="w-6 h-6" />
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="p-1.5 bg-indigo-600 rounded-lg text-white shadow-lg shadow-indigo-200/50">
+            <BarChart3 className="w-5 h-5" />
           </div>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">请求追踪</h1>
-            <p className="text-sm text-gray-500">实时监控所有转发请求的状态与详情</p>
-          </div>
+          <h1 className="text-xl font-bold text-gray-900 tracking-tight">请求追踪</h1>
         </div>
 
         {/* 工具栏 */}
-        <Toolbar
-          activeTimeRange={activeRange}
-          onTimeRangeChange={selectRange}
-          isFilterOpen={isFilterOpen}
-          onFilterToggle={handleFilterToggle}
-          isViewConfigOpen={isViewConfigOpen}
-          onViewConfigToggle={handleViewConfigToggle}
-          onRefresh={loadData}
-          columns={columnConfigs}
-          visibleColumns={visibleColumns}
-          onToggleColumn={toggleColumn}
-          onResetColumns={resetColumns}
-          autoRefresh={autoRefresh}
-          groups={groups}
-          activeGroup={activeGroup}
-          onGroupSwitch={handleGroupSwitch}
-        />
+        <div className="flex-1 min-w-0 flex justify-end">
+          <Toolbar
+            activeTimeRange={activeRange}
+            onTimeRangeChange={selectRange}
+            isFilterOpen={isFilterOpen}
+            onFilterToggle={handleFilterToggle}
+            isViewConfigOpen={isViewConfigOpen}
+            onViewConfigToggle={handleViewConfigToggle}
+            onRefresh={loadData}
+            columns={columnConfigs}
+            visibleColumns={visibleColumns}
+            onToggleColumn={toggleColumn}
+            onResetColumns={resetColumns}
+            autoRefresh={autoRefresh}
+            groups={groups}
+            activeGroup={activeGroup}
+            onGroupSwitch={handleGroupSwitch}
+            accounts={accounts}
+            activeAccount={activeAccount}
+            recentSelectedAccountId={recentSelectedAccountId}
+            onAccountSwitch={handleAccountSwitch}
+            accountSwitching={accountSwitching}
+          />
+        </div>
 
         {/* 筛选面板（弹出式） */}
         <div className="absolute top-full left-0 right-0 z-10">
