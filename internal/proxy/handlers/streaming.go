@@ -32,6 +32,8 @@ type StreamingHandler struct {
 	sharedSuspensionManager SuspensionManager
 }
 
+const defaultClaudeStreamingTailDrainTimeout = time.Second
+
 // NewStreamingHandler 创建新的StreamingHandler实例
 func NewStreamingHandler(
 	cfg *config.Config,
@@ -172,6 +174,14 @@ func (sh *StreamingHandler) handleStreamingV2(ctx context.Context, w http.Respon
 	sh.executeStreamingWithRetry(ctx, w, r, bodyBytes, lifecycleManager, flusher)
 }
 
+func (sh *StreamingHandler) shouldEnableTailDrain(r *http.Request) bool {
+	return r != nil && r.URL != nil && r.URL.Path == "/v1/messages"
+}
+
+func (sh *StreamingHandler) tailDrainTimeout() time.Duration {
+	return defaultClaudeStreamingTailDrainTimeout
+}
+
 // setStreamingHeaders 设置流式响应头
 func (sh *StreamingHandler) setStreamingHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -298,10 +308,25 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 			}
 
 			// 尝试连接端点
-			resp, err := sh.forwarder.ForwardRequestToEndpoint(ctx, r, bodyBytes, ep)
+			tailDrainEnabled := sh.shouldEnableTailDrain(r)
+			var upstreamCancel context.CancelFunc
+			var resp *http.Response
+			var err error
+			if tailDrainEnabled {
+				resp, upstreamCancel, err = sh.forwarder.ForwardStreamingRequestToEndpoint(r, bodyBytes, ep)
+			} else {
+				resp, err = sh.forwarder.ForwardRequestToEndpoint(ctx, r, bodyBytes, ep)
+			}
+			releaseUpstream := func() {
+				if upstreamCancel != nil {
+					upstreamCancel()
+					upstreamCancel = nil
+				}
+			}
 			// 🔧 [修复] 保存最后的响应，用于获取真实HTTP状态码
 			lastResp = resp
 			if err == nil && IsSuccessStatus(resp.StatusCode) {
+				defer releaseUpstream()
 				// 🔢 [成功计数] 成功的尝试记录到生命周期管理器
 				lifecycleManager.IncrementAttempt()
 				currentAttemptCount := lifecycleManager.GetAttemptCount()
@@ -326,6 +351,9 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 				// 创建Token解析器和流式处理器
 				tokenParser := sh.tokenParserFactory.NewTokenParserWithUsageTracker(connID, sh.usageTracker)
 				processor := sh.streamProcessorFactory.NewStreamProcessor(tokenParser, sh.usageTracker, w, flusher, connID, ep.Config.Name)
+				if tailDrainEnabled {
+					processor.EnableDownstreamTailDrain(sh.tailDrainTimeout(), upstreamCancel)
+				}
 
 				slog.Info(fmt.Sprintf("🚀 [开始流式处理] [%s] 端点: %s", connID, ep.Config.Name))
 
@@ -472,6 +500,8 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 				}
 				return
 			}
+
+			releaseUpstream()
 
 			// ❌ 出现错误，记录尝试次数
 			globalAttemptCount := lifecycleManager.IncrementAttempt()

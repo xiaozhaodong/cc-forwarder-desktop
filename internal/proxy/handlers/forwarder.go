@@ -46,30 +46,11 @@ func (f *Forwarder) ForwardRequestToEndpoint(ctx context.Context, r *http.Reques
 	f.CopyHeaders(r, req, ep)
 
 	// 创建HTTP传输
-	httpTransport, err := transport.CreateTransport(f.config)
+	httpTransport, err := f.buildStreamingTransport()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transport: %w", err)
 	}
-	
-	// 优化传输设置用于流式处理
-	httpTransport.DisableKeepAlives = false
-	httpTransport.MaxIdleConns = 10
-	httpTransport.MaxIdleConnsPerHost = 2
-	httpTransport.IdleConnTimeout = 0 // 无空闲超时
-	httpTransport.TLSHandshakeTimeout = 10 * time.Second
-	httpTransport.ExpectContinueTimeout = 1 * time.Second
 
-	// 从配置中读取响应头超时时间，默认60秒
-	responseHeaderTimeout := f.config.Streaming.ResponseHeaderTimeout
-	if responseHeaderTimeout == 0 {
-		responseHeaderTimeout = 60 * time.Second
-	}
-	httpTransport.ResponseHeaderTimeout = responseHeaderTimeout
-
-	httpTransport.DisableCompression = true // 禁用压缩以防缓冲延迟
-	httpTransport.WriteBufferSize = 4096    // 较小的写缓冲区
-	httpTransport.ReadBufferSize = 4096     // 较小的读缓冲区
-	
 	client := &http.Client{
 		Timeout:   0, // 流式请求无超时
 		Transport: httpTransport,
@@ -90,6 +71,80 @@ func (f *Forwarder) ForwardRequestToEndpoint(ctx context.Context, r *http.Reques
 	return resp, nil
 }
 
+// ForwardStreamingRequestToEndpoint 为流式请求创建独立的 upstream context。
+// 这样下游客户端断开后，调用方仍可短时继续 drain 上游尾部，以补齐终止事件和 usage。
+func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes []byte, ep *endpoint.Endpoint) (*http.Response, context.CancelFunc, error) {
+	upstreamCtx, release := context.WithCancel(context.Background())
+
+	// 创建目标URL
+	targetURL := ep.Config.URL + r.URL.Path
+	if r.URL.RawQuery != "" {
+		targetURL += "?" + r.URL.RawQuery
+	}
+
+	req, err := http.NewRequestWithContext(upstreamCtx, r.Method, targetURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		release()
+		return nil, nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// 复制和修改头部
+	f.CopyHeaders(r, req, ep)
+
+	httpTransport, err := f.buildStreamingTransport()
+	if err != nil {
+		release()
+		return nil, nil, fmt.Errorf("failed to create transport: %w", err)
+	}
+
+	client := &http.Client{
+		Timeout:   0,
+		Transport: httpTransport,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		release()
+		return nil, nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		resp.Body.Close()
+		release()
+		return nil, nil, fmt.Errorf("endpoint returned error: %d", resp.StatusCode)
+	}
+
+	return resp, release, nil
+}
+
+func (f *Forwarder) buildStreamingTransport() (*http.Transport, error) {
+	httpTransport, err := transport.CreateTransport(f.config)
+	if err != nil {
+		return nil, err
+	}
+
+	// 优化传输设置用于流式处理
+	httpTransport.DisableKeepAlives = false
+	httpTransport.MaxIdleConns = 10
+	httpTransport.MaxIdleConnsPerHost = 2
+	httpTransport.IdleConnTimeout = 0 // 无空闲超时
+	httpTransport.TLSHandshakeTimeout = 10 * time.Second
+	httpTransport.ExpectContinueTimeout = 1 * time.Second
+
+	// 从配置中读取响应头超时时间，默认60秒
+	responseHeaderTimeout := f.config.Streaming.ResponseHeaderTimeout
+	if responseHeaderTimeout == 0 {
+		responseHeaderTimeout = 60 * time.Second
+	}
+	httpTransport.ResponseHeaderTimeout = responseHeaderTimeout
+
+	httpTransport.DisableCompression = true // 禁用压缩以防缓冲延迟
+	httpTransport.WriteBufferSize = 4096    // 较小的写缓冲区
+	httpTransport.ReadBufferSize = 4096     // 较小的读缓冲区
+
+	return httpTransport, nil
+}
+
 // CopyHeaders 复制头部逻辑
 func (f *Forwarder) CopyHeaders(src *http.Request, dst *http.Request, ep *endpoint.Endpoint) {
 	// List of headers to skip/remove
@@ -98,13 +153,13 @@ func (f *Forwarder) CopyHeaders(src *http.Request, dst *http.Request, ep *endpoi
 		"authorization": true, // We'll add our own if configured
 		"x-api-key":     true, // Remove sensitive client API keys
 	}
-	
+
 	// Copy all headers except those we want to skip
 	for key, values := range src.Header {
 		if skipHeaders[strings.ToLower(key)] {
 			continue
 		}
-		
+
 		for _, value := range values {
 			dst.Header.Add(key, value)
 		}
@@ -137,7 +192,7 @@ func (f *Forwarder) CopyHeaders(src *http.Request, dst *http.Request, ep *endpoi
 	// Remove hop-by-hop headers
 	hopByHopHeaders := []string{
 		"Connection",
-		"Keep-Alive", 
+		"Keep-Alive",
 		"Proxy-Authenticate",
 		"Proxy-Authorization",
 		"Te",

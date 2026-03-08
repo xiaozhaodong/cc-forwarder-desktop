@@ -19,13 +19,13 @@ func TestForwarder_ForwardRequestToEndpoint(t *testing.T) {
 		if r.Header.Get("Authorization") == "" {
 			t.Errorf("Expected Authorization header to be set")
 		}
-		
+
 		// 验证Host头
 		expectedHost := r.Host
 		if expectedHost == "" {
 			t.Errorf("Expected Host header to be set")
 		}
-		
+
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("test response"))
 	}))
@@ -82,16 +82,77 @@ func TestForwarder_ForwardRequestToEndpoint(t *testing.T) {
 	}
 }
 
+func TestForwarder_ForwardStreamingRequestToEndpoint_UsesIndependentContext(t *testing.T) {
+	requestCancelled := make(chan struct{}, 1)
+	releaseServer := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher, _ := w.(http.Flusher)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("event: message_start\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"message_start\"}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+
+		select {
+		case <-r.Context().Done():
+			requestCancelled <- struct{}{}
+		case <-releaseServer:
+		}
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{}
+	endpointManager := endpoint.NewManager(cfg)
+	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "test-endpoint", URL: server.URL, Timeout: 30 * time.Second, Priority: 1}}
+	forwarder := NewForwarder(cfg, endpointManager)
+
+	bodyBytes := []byte(`{"message": "test"}`)
+	parentCtx, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
+	req := httptest.NewRequest("POST", "/v1/messages", bytes.NewReader(bodyBytes)).WithContext(parentCtx)
+
+	resp, upstreamCancel, err := forwarder.ForwardStreamingRequestToEndpoint(req, bodyBytes, ep)
+	if err != nil {
+		t.Fatalf("ForwardStreamingRequestToEndpoint failed: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+	if upstreamCancel == nil {
+		t.Fatal("expected upstream cancel func, got nil")
+	}
+
+	cancelParent()
+	select {
+	case <-requestCancelled:
+		t.Fatal("expected upstream request context to outlive parent request cancellation")
+	case <-time.After(120 * time.Millisecond):
+	}
+
+	upstreamCancel()
+	select {
+	case <-requestCancelled:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected upstream cancel func to cancel request context")
+	}
+
+	close(releaseServer)
+	_ = resp.Body.Close()
+}
+
 func TestForwarder_CopyHeaders(t *testing.T) {
 	// 创建配置
 	cfg := &config.Config{}
 
 	// 创建端点配置
 	endpointConfig := config.EndpointConfig{
-		Name:    "test-endpoint",
-		URL:     "https://api.example.com",
-		Token:   "test-token",
-		ApiKey:  "test-api-key",
+		Name:   "test-endpoint",
+		URL:    "https://api.example.com",
+		Token:  "test-token",
+		ApiKey: "test-api-key",
 		Headers: map[string]string{
 			"X-Custom-Header": "custom-value",
 		},
@@ -109,7 +170,7 @@ func TestForwarder_CopyHeaders(t *testing.T) {
 	srcReq.Header.Set("Content-Type", "application/json")
 	srcReq.Header.Set("User-Agent", "Test-Client")
 	srcReq.Header.Set("Authorization", "Bearer client-token") // 应该被覆盖
-	srcReq.Header.Set("X-API-Key", "client-api-key")         // 应该被移除
+	srcReq.Header.Set("X-API-Key", "client-api-key")          // 应该被移除
 
 	// 创建目标请求
 	dstReq := httptest.NewRequest("POST", "https://api.example.com/test", nil)

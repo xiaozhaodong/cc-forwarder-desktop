@@ -89,6 +89,10 @@ func (spa *StreamProcessorAdapter) ProcessStreamWithRetry(ctx context.Context, r
 	return spa.innerProcessor.ProcessStreamWithRetry(ctx, resp)
 }
 
+func (spa *StreamProcessorAdapter) EnableDownstreamTailDrain(timeout time.Duration, cancelUpstream context.CancelFunc) {
+	spa.innerProcessor.EnableDownstreamTailDrain(timeout, cancelUpstream)
+}
+
 // ErrorRecoveryManagerAdapter 适配*ErrorRecoveryManager到handlers.ErrorRecoveryManager
 type ErrorRecoveryManagerAdapter struct {
 	innerManager *ErrorRecoveryManager

@@ -80,6 +80,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		lifecycleManager.UpdateStatus("forwarding", idx, 0)
 
 		resp, upstreamCancel, forwardErr := h.forwardRequestToAccount(ctx, r, bodyBytes, acc, isSSE)
+		// upstreamCancel 同时可能被 releaseUpstream 和 tail-drain 超时回调持有；context.CancelFunc 幂等，重复调用是安全的。
 		releaseUpstream := func() {
 			if upstreamCancel != nil {
 				upstreamCancel()

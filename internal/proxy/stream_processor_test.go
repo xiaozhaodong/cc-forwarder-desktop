@@ -355,3 +355,47 @@ func TestStreamProcessor_ProcessStreamWithRetry_DrainsAfterDownstreamCancelUntil
 		t.Fatalf("expected modelName=gpt-5.4, got %s", modelName)
 	}
 }
+
+func TestStreamProcessor_ProcessStreamWithRetry_DrainsAfterDownstreamCancelUntilMessageStop(t *testing.T) {
+	reader, writerPipe := io.Pipe()
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     make(http.Header),
+		Body:       reader,
+	}
+
+	downstreamCtx, cancelDownstream := context.WithCancel(context.Background())
+	defer cancelDownstream()
+
+	tokenParser := NewTokenParserWithRequestID("test-drain-after-message-stop")
+	writer := &mockResponseWriter{}
+	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-drain-after-message-stop", "endpoint")
+	processor.EnableDownstreamTailDrain(300*time.Millisecond, nil)
+
+	go func() {
+		defer writerPipe.Close()
+		_, _ = io.WriteString(writerPipe, "event: message_start\n")
+		_, _ = io.WriteString(writerPipe, "data: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-4-20250514\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n")
+		_, _ = io.WriteString(writerPipe, "event: message_delta\n")
+		_, _ = io.WriteString(writerPipe, "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n\n")
+		time.Sleep(20 * time.Millisecond)
+		cancelDownstream()
+		time.Sleep(20 * time.Millisecond)
+		_, _ = io.WriteString(writerPipe, "event: message_stop\n")
+		_, _ = io.WriteString(writerPipe, "data: {\"type\":\"message_stop\"}\n\n")
+	}()
+
+	tokenUsage, modelName, err := processor.ProcessStreamWithRetry(downstreamCtx, resp)
+	if err != nil {
+		t.Fatalf("expected nil error after draining until message_stop, got %v", err)
+	}
+	if tokenUsage == nil {
+		t.Fatal("expected token usage after draining until message_stop")
+	}
+	if tokenUsage.InputTokens != 12 || tokenUsage.OutputTokens != 7 {
+		t.Fatalf("unexpected token usage after Claude drain: %+v", tokenUsage)
+	}
+	if modelName != "claude-sonnet-4-20250514" {
+		t.Fatalf("expected modelName=claude-sonnet-4-20250514, got %s", modelName)
+	}
+}

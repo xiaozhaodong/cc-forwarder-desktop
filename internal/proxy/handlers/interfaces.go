@@ -40,9 +40,9 @@ func (sr SuspensionResult) String() string {
 type RequestLifecycleManager interface {
 	GetRequestID() string
 	SetEndpoint(name, group, channel string)
-	SetModel(modelName string)                               // 简单设置模型
-	SetModelWithComparison(modelName, source string)        // 带对比的设置模型
-	HasModel() bool                                          // 检查是否已有模型
+	SetModel(modelName string)                       // 简单设置模型
+	SetModelWithComparison(modelName, source string) // 带对比的设置模型
+	HasModel() bool                                  // 检查是否已有模型
 	UpdateStatus(status string, endpointIndex, statusCode int)
 	HandleError(err error)
 	PrepareErrorContext(errorCtx *ErrorContext)
@@ -54,11 +54,11 @@ type RequestLifecycleManager interface {
 	// 失败请求Token记录方法：只记录Token统计，不改变请求状态
 	RecordTokensForFailedRequest(tokens *tracking.TokenUsage, failureReason string)
 	// 🔢 [语义修复] 新增尝试计数管理方法
-	IncrementAttempt() int      // 线程安全地增加尝试计数，返回当前计数
-	GetAttemptCount() int       // 线程安全地获取当前尝试次数
+	IncrementAttempt() int // 线程安全地增加尝试计数，返回当前计数
+	GetAttemptCount() int  // 线程安全地获取当前尝试次数
 	// 🚀 [状态机重构] Phase 4: 新增状态管理方法
-	MapErrorTypeToFailureReason(errorType ErrorType) string // 映射ErrorType到failure_reason
-	FailRequest(failureReason, errorDetail string, httpStatus int) // 标记请求为最终失败
+	MapErrorTypeToFailureReason(errorType ErrorType) string         // 映射ErrorType到failure_reason
+	FailRequest(failureReason, errorDetail string, httpStatus int)  // 标记请求为最终失败
 	CancelRequest(cancelReason string, tokens *tracking.TokenUsage) // 标记请求被取消
 }
 
@@ -72,7 +72,7 @@ type ErrorRecoveryManager interface {
 // ErrorContext 错误上下文信息
 type ErrorContext struct {
 	RequestID      string
-	EndpointName   string 
+	EndpointName   string
 	GroupName      string
 	AttemptCount   int
 	ErrorType      ErrorType
@@ -86,20 +86,20 @@ type ErrorContext struct {
 type ErrorType int
 
 const (
-	ErrorTypeUnknown           ErrorType = iota // 0: 未知错误
-	ErrorTypeNetwork                            // 1: 网络错误（连接失败等，可重试）
-	ErrorTypeEOF                                // 2: EOF 错误（连接中断，不可重试，避免重复计费）
-	ErrorTypeConnectionTimeout                  // 3: 连接超时（可重试，未开始处理）
-	ErrorTypeResponseTimeout                    // 4: 响应超时（不可重试，可能已计费）
-	ErrorTypeTimeout                            // 5: 超时错误（兼容旧代码）
-	ErrorTypeHTTP                               // 6: HTTP错误
-	ErrorTypeServerError                        // 7: 服务器错误（5xx）
-	ErrorTypeStream                             // 8: 流式处理错误
-	ErrorTypeAuth                               // 9: 认证错误
-	ErrorTypeRateLimit                          // 10: 限流错误
-	ErrorTypeParsing                            // 11: 解析错误
-	ErrorTypeClientCancel                       // 12: 客户端取消错误
-	ErrorTypeNoHealthyEndpoints                 // 13: 没有健康端点可用
+	ErrorTypeUnknown            ErrorType = iota // 0: 未知错误
+	ErrorTypeNetwork                             // 1: 网络错误（连接失败等，可重试）
+	ErrorTypeEOF                                 // 2: EOF 错误（连接中断，不可重试，避免重复计费）
+	ErrorTypeConnectionTimeout                   // 3: 连接超时（可重试，未开始处理）
+	ErrorTypeResponseTimeout                     // 4: 响应超时（不可重试，可能已计费）
+	ErrorTypeTimeout                             // 5: 超时错误（兼容旧代码）
+	ErrorTypeHTTP                                // 6: HTTP错误
+	ErrorTypeServerError                         // 7: 服务器错误（5xx）
+	ErrorTypeStream                              // 8: 流式处理错误
+	ErrorTypeAuth                                // 9: 认证错误
+	ErrorTypeRateLimit                           // 10: 限流错误
+	ErrorTypeParsing                             // 11: 解析错误
+	ErrorTypeClientCancel                        // 12: 客户端取消错误
+	ErrorTypeNoHealthyEndpoints                  // 13: 没有健康端点可用
 )
 
 // StreamIncompleteErrorInterface 流不完整错误接口
@@ -122,9 +122,10 @@ type TokenParser interface {
 // 修改版本：返回Token使用信息和模型名称而非直接记录到usageTracker
 type StreamProcessor interface {
 	ProcessStreamWithRetry(ctx context.Context, resp *http.Response) (*tracking.TokenUsage, string, error)
+	EnableDownstreamTailDrain(timeout time.Duration, cancelUpstream context.CancelFunc)
 }
 
-// RetryHandler 重试处理器接口  
+// RetryHandler 重试处理器接口
 type RetryHandler interface {
 	ExecuteWithContext(ctx context.Context, operation func(*endpoint.Endpoint, string) (*http.Response, error), connID string) (*http.Response, error)
 	ShouldSuspendRequest(ctx context.Context) bool
@@ -140,7 +141,7 @@ type TokenParserFactory interface {
 
 // StreamProcessorFactory 流式处理器工厂接口
 type StreamProcessorFactory interface {
-	NewStreamProcessor(tokenParser TokenParser, usageTracker *tracking.UsageTracker, 
+	NewStreamProcessor(tokenParser TokenParser, usageTracker *tracking.UsageTracker,
 		w http.ResponseWriter, flusher http.Flusher, requestID, endpoint string) StreamProcessor
 }
 
@@ -196,14 +197,14 @@ type SuspensionManagerFactory interface {
 // - 通过 FailureTracker 滑动窗口记录端点失败
 // - 在下一个请求时智能跳过故障端点
 type RetryDecision struct {
-	RetrySameEndpoint  bool          // 是否继续在当前端点重试（passthrough架构下通常为false）
-	SwitchEndpoint     bool          // 是否切换到下一端点（passthrough架构下通常为false）
-	SuspendRequest     bool          // 是否尝试挂起请求
-	Delay              time.Duration // 重试延迟时间（仅在请求内重试时使用）
-	FinalStatus        string        // 若终止，应记录的最终状态
-	Reason             string        // 决策原因（用于日志）
-	ShouldRecord       bool          // 是否应记录到 FailureTracker（用于后续请求的端点选择）
-	RetryAfterSeconds  int           // 建议客户端重试的延迟秒数（通过 Retry-After 响应头返回）
+	RetrySameEndpoint bool          // 是否继续在当前端点重试（passthrough架构下通常为false）
+	SwitchEndpoint    bool          // 是否切换到下一端点（passthrough架构下通常为false）
+	SuspendRequest    bool          // 是否尝试挂起请求
+	Delay             time.Duration // 重试延迟时间（仅在请求内重试时使用）
+	FinalStatus       string        // 若终止，应记录的最终状态
+	Reason            string        // 决策原因（用于日志）
+	ShouldRecord      bool          // 是否应记录到 FailureTracker（用于后续请求的端点选择）
+	RetryAfterSeconds int           // 建议客户端重试的延迟秒数（通过 Retry-After 响应头返回）
 }
 
 // RetryManager 重试管理器接口
