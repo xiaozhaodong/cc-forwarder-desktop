@@ -57,7 +57,7 @@ const Toolbar = ({
   accountSwitching = false
 }) => {
   return (
-    <div className="flex items-center gap-3 min-w-0">
+    <div className="flex flex-nowrap items-center justify-end gap-2 xl:gap-3 min-w-0">
       {/* 端点快捷切换器 */}
       <ActiveGroupSwitcher
         groups={groups}
@@ -73,15 +73,15 @@ const Toolbar = ({
         loading={accountSwitching}
       />
 
-      <div className="h-6 w-px bg-gray-300 mx-1 hidden sm:block"></div>
+      <div className="h-6 w-px bg-gray-300 mx-1 hidden xl:block"></div>
 
       {/* 快捷时间范围选择 */}
-      <div className="hidden sm:flex items-center bg-white border border-gray-200 rounded-lg p-1 shadow-sm">
+      <div className="hidden sm:flex shrink-0 items-center bg-white border border-gray-200 rounded-lg p-1 shadow-sm">
         {TIME_RANGE_OPTIONS.map((range) => (
           <button
             key={range.value}
             onClick={() => onTimeRangeChange?.(range.value)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+            className={`px-2 xl:px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
               activeTimeRange === range.value
                 ? 'bg-indigo-50 text-indigo-700 shadow-sm'
                 : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
@@ -92,7 +92,7 @@ const Toolbar = ({
         ))}
       </div>
 
-      <div className="h-6 w-px bg-gray-300 mx-1 hidden sm:block"></div>
+      <div className="h-6 w-px bg-gray-300 mx-1 hidden xl:block"></div>
 
       {/* 筛选按钮 */}
       <button
@@ -103,13 +103,13 @@ const Toolbar = ({
             : 'bg-white text-gray-700 border-gray-200 hover:border-indigo-300 hover:text-indigo-600'
         }`}
       >
-        <Filter className="w-4 h-4" /> 筛选
+        <Filter className="w-4 h-4" /> <span className="hidden xl:inline">筛选</span><span className="xl:hidden">筛</span>
         <ChevronDown
           className={`w-3.5 h-3.5 transition-transform ${isFilterOpen ? 'rotate-180' : ''}`}
         />
       </button>
 
-      <div className="h-6 w-px bg-gray-300 mx-1 hidden sm:block"></div>
+      <div className="h-6 w-px bg-gray-300 mx-1 hidden xl:block"></div>
 
       {/* 列配置按钮 */}
       <div className="relative">
@@ -123,7 +123,7 @@ const Toolbar = ({
           title="自定义显示列"
         >
           <Settings2 className="w-4 h-4" />
-          <span className="hidden sm:inline font-medium">显示</span>
+          <span className="hidden xl:inline font-medium">显示</span><span className="xl:hidden font-medium">列</span>
         </button>
 
         {/* 列配置面板 */}

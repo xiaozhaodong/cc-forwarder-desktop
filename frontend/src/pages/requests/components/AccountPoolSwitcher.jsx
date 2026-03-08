@@ -144,7 +144,7 @@ const AccountPoolSwitcher = ({
           setIsOpen(true);
         }}
         disabled={loading}
-        className={`group flex items-center justify-between gap-2 w-[220px] px-3 py-1.5 bg-white border rounded-lg text-sm font-medium transition-all shadow-sm ${
+        className={`group flex items-center justify-between gap-2 w-[170px] lg:w-[190px] xl:w-[220px] px-3 py-1.5 bg-white border rounded-lg text-sm font-medium transition-all shadow-sm ${
           isOpen
             ? 'border-indigo-300 ring-2 ring-indigo-100 text-indigo-700'
             : 'border-gray-200 text-gray-700 hover:border-indigo-300 hover:text-indigo-600'
@@ -158,10 +158,10 @@ const AccountPoolSwitcher = ({
 
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <UserRound className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-          <span className="font-semibold text-xs text-gray-500 shrink-0">Codex:</span>
+          <span className="hidden xl:inline font-semibold text-xs text-gray-500 shrink-0">Codex:</span>
           <span className="font-bold truncate">{getAccountName(currentAccount)}</span>
           {activeTierMeta?.label && (
-            <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 shrink-0">
+            <span className="hidden xl:inline text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 shrink-0">
               {activeTierMeta.label}
             </span>
           )}

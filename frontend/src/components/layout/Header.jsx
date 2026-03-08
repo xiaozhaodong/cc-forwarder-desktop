@@ -10,7 +10,7 @@ import { isWailsEnvironment } from '@utils/wailsApi.js';
 const NavItem = ({ label, active, onClick }) => (
   <button
     onClick={onClick}
-    className={`px-4 py-2 text-sm font-medium rounded-full transition-all duration-200 ${
+    className={`shrink-0 whitespace-nowrap px-3 xl:px-4 py-2 text-sm font-medium rounded-full transition-all duration-200 ${
       active
         ? 'bg-slate-900 text-white shadow-md'
         : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
@@ -73,10 +73,10 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
   return (
     <nav className={`sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-slate-200/60 supports-[backdrop-filter]:bg-white/60 ${titlebarPadding}`}
          style={isWails ? { WebkitAppRegion: 'drag' } : {}}>
-      <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between"
+      <div className="max-w-7xl mx-auto px-4 xl:px-6 h-16 flex items-center justify-between gap-4 xl:gap-6"
            style={isWails ? { WebkitAppRegion: 'no-drag' } : {}}>
         {/* 左侧：Logo + 导航 */}
-        <div className="flex items-center space-x-8">
+        <div className="flex min-w-0 flex-1 items-center gap-4 xl:gap-8 overflow-hidden">
           {/* Logo */}
           <div
             className="flex items-center space-x-2.5 group cursor-pointer"
@@ -85,13 +85,13 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
             <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center text-white shadow-lg">
               <Command size={16} strokeWidth={3} />
             </div>
-            <span className="font-bold text-lg tracking-tight text-slate-900">
+            <span className="font-bold text-base xl:text-lg tracking-tight text-slate-900 whitespace-nowrap">
               Claude Request Forwarder
             </span>
           </div>
 
           {/* 导航标签 */}
-          <div className="hidden md:flex items-center bg-slate-100/50 p-1 rounded-full border border-slate-200/60">
+          <div className="hidden md:flex min-w-0 flex-1 xl:flex-none xl:w-auto items-center overflow-x-auto xl:overflow-visible bg-slate-100/50 p-1 rounded-full border border-slate-200/60 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {tabs.map(tab => (
               <NavItem
                 key={tab.name}
@@ -104,7 +104,7 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
         </div>
 
         {/* 右侧：状态指示器 + 头像 */}
-        <div className="flex items-center space-x-4">
+        <div className="shrink-0 flex items-center space-x-3 lg:space-x-4">
           {/* 连接状态 */}
           <div className="hidden sm:flex items-center px-3 py-1.5 bg-white border border-slate-200 rounded-md shadow-sm text-xs text-slate-500">
             <span className="relative flex h-2 w-2 mr-2">

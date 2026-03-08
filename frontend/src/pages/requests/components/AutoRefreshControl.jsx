@@ -3,7 +3,7 @@
 // 2025-12-01 12:56:37
 // ============================================
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { Timer, ChevronDown, Check, RotateCcw } from 'lucide-react';
 
 /**
@@ -22,7 +22,7 @@ import { Timer, ChevronDown, Check, RotateCcw } from 'lucide-react';
  * @param {Function} props.onManualRefresh - 手动刷新回调
  */
 const AutoRefreshControl = ({
-  isEnabled = false,
+  _isEnabled = false,
   interval = 5,
   onIntervalChange,
   onManualRefresh
@@ -40,11 +40,11 @@ const AutoRefreshControl = ({
   ];
 
   return (
-    <div className="relative flex items-center" ref={dropdownRef}>
+    <div className="relative flex shrink-0 items-center" ref={dropdownRef}>
       {/* 主切换/显示按钮 */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center gap-2 px-3 h-9 rounded-l-lg text-sm font-medium border transition-all relative ${
+        className={`flex items-center gap-1.5 xl:gap-2 px-2.5 xl:px-3 h-9 rounded-l-lg text-sm font-medium border transition-all relative ${
           interval > 0
             ? 'bg-indigo-50 border-indigo-200 text-indigo-700 z-10'
             : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50 z-0'
@@ -60,12 +60,15 @@ const AutoRefreshControl = ({
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
             </div>
-            <span>Auto {interval < 60 ? `${interval}s` : '1m'}</span>
+            <span>
+              <span className="hidden xl:inline">Auto </span>
+              {interval < 60 ? `${interval}s` : '1m'}
+            </span>
           </>
         ) : (
           <>
             <Timer className="w-4 h-4" />
-            <span className="hidden sm:inline">Auto Off</span>
+            <span className="hidden xl:inline">Auto Off</span><span className="xl:hidden">Off</span>
           </>
         )}
         <ChevronDown className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />

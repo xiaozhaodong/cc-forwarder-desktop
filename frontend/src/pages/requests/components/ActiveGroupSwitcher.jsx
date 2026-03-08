@@ -115,7 +115,7 @@ const ActiveGroupSwitcher = ({
       <button
         onClick={() => setIsOpen(!isOpen)}
         disabled={switching || loading}
-        className={`group flex items-center justify-between gap-2 w-[220px] px-3 py-1.5 bg-white border rounded-lg text-sm font-medium transition-all shadow-sm ${
+        className={`group flex items-center justify-between gap-2 w-[170px] lg:w-[190px] xl:w-[220px] px-3 py-1.5 bg-white border rounded-lg text-sm font-medium transition-all shadow-sm ${
           isOpen
             ? 'border-indigo-300 ring-2 ring-indigo-100 text-indigo-700'
             : 'border-gray-200 text-gray-700 hover:border-indigo-300 hover:text-indigo-600'
@@ -129,7 +129,7 @@ const ActiveGroupSwitcher = ({
 
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <Server className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-          <span className="font-semibold text-xs text-gray-500 shrink-0">端点:</span>
+          <span className="hidden xl:inline font-semibold text-xs text-gray-500 shrink-0">端点:</span>
           <span className="font-bold truncate">{activeGroup || '未选择'}</span>
         </div>
 
