@@ -302,8 +302,8 @@ func TestMaskKey(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"short", "****"},          // 长度 <= 8
-		{"12345678", "****"},       // 长度 == 8
+		{"short", "****"},             // 长度 <= 8
+		{"12345678", "****"},          // 长度 == 8
 		{"123456789", "1234****6789"}, // 长度 > 8
 		{"sk-ant-api03-xxx", "sk-a****-xxx"},
 		{"sk-very-long-api-key-value", "sk-v****alue"},

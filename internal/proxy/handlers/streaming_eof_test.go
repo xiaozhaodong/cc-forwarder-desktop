@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -108,5 +109,62 @@ func TestEscapeJSONString(t *testing.T) {
 		if result != tt.expected {
 			t.Errorf("escapeJSONString(%q) = %q, want %q", tt.input, result, tt.expected)
 		}
+	}
+}
+
+type headerTrackingWriter struct {
+	header      http.Header
+	statusCodes []int
+	body        strings.Builder
+}
+
+func (w *headerTrackingWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *headerTrackingWriter) WriteHeader(statusCode int) {
+	w.statusCodes = append(w.statusCodes, statusCode)
+}
+
+func (w *headerTrackingWriter) Write(data []byte) (int, error) {
+	return w.body.Write(data)
+}
+
+func TestWriteStreamingTerminalError_WritesHTTPStatusBeforeCommit(t *testing.T) {
+	baseWriter := &headerTrackingWriter{}
+	trackedWriter := newTrackedStreamingResponseWriter(baseWriter)
+
+	writeStreamingTerminalError(trackedWriter, trackedWriter, http.StatusBadGateway, "upstream failed")
+
+	if len(baseWriter.statusCodes) != 1 || baseWriter.statusCodes[0] != http.StatusBadGateway {
+		t.Fatalf("expected a single %d WriteHeader call, got %+v", http.StatusBadGateway, baseWriter.statusCodes)
+	}
+	if !strings.Contains(baseWriter.body.String(), "data: error: upstream failed") {
+		t.Fatalf("expected SSE error body, got %q", baseWriter.body.String())
+	}
+}
+
+func TestWriteStreamingTerminalError_SkipsHTTPStatusAfterCommit(t *testing.T) {
+	baseWriter := &headerTrackingWriter{}
+	trackedWriter := newTrackedStreamingResponseWriter(baseWriter)
+
+	if _, err := trackedWriter.Write([]byte("data: retry: switching endpoint\n\n")); err != nil {
+		t.Fatalf("initial write failed: %v", err)
+	}
+
+	writeStreamingTerminalError(trackedWriter, trackedWriter, http.StatusBadGateway, "upstream failed")
+
+	if len(baseWriter.statusCodes) != 0 {
+		t.Fatalf("expected no additional WriteHeader calls after commit, got %+v", baseWriter.statusCodes)
+	}
+	body := baseWriter.body.String()
+	if !strings.Contains(body, "data: retry: switching endpoint") {
+		t.Fatalf("expected original SSE payload to remain, got %q", body)
+	}
+	if !strings.Contains(body, "data: error: upstream failed") {
+		t.Fatalf("expected SSE error payload to be appended, got %q", body)
 	}
 }

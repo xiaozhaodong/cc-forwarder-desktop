@@ -67,12 +67,12 @@ type eventBus struct {
 
 // 统计信息
 type BusStats struct {
-	TotalEvents      int64                    `json:"total_events"`
-	ProcessedEvents  int64                    `json:"processed_events"`
-	DroppedEvents    int64                    `json:"dropped_events"`
-	EventsByType     map[EventType]int64      `json:"events_by_type"`
-	EventsByPriority map[EventPriority]int64  `json:"events_by_priority"`
-	StartTime        time.Time                `json:"start_time"`
+	TotalEvents      int64                   `json:"total_events"`
+	ProcessedEvents  int64                   `json:"processed_events"`
+	DroppedEvents    int64                   `json:"dropped_events"`
+	EventsByType     map[EventType]int64     `json:"events_by_type"`
+	EventsByPriority map[EventPriority]int64 `json:"events_by_priority"`
+	StartTime        time.Time               `json:"start_time"`
 }
 
 // 频率限制器

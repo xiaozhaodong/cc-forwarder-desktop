@@ -22,9 +22,9 @@ type EndpointRecord struct {
 	URL     string `json:"url"`     // 端点 URL
 
 	// 认证配置
-	Token   string            `json:"token,omitempty"`    // Bearer Token
-	ApiKey  string            `json:"api_key,omitempty"`  // API Key
-	Headers map[string]string `json:"headers,omitempty"`  // 自定义请求头
+	Token   string            `json:"token,omitempty"`   // Bearer Token
+	ApiKey  string            `json:"api_key,omitempty"` // API Key
+	Headers map[string]string `json:"headers,omitempty"` // 自定义请求头
 
 	// 路由配置
 	Priority        int  `json:"priority"`         // 优先级（数字越小越高）
@@ -39,8 +39,8 @@ type EndpointRecord struct {
 	CostMultiplier                float64 `json:"cost_multiplier"`
 	InputCostMultiplier           float64 `json:"input_cost_multiplier"`
 	OutputCostMultiplier          float64 `json:"output_cost_multiplier"`
-	CacheCreationCostMultiplier   float64 `json:"cache_creation_cost_multiplier"`      // 5分钟缓存创建倍率（默认）
-	CacheCreationCostMultiplier1h float64 `json:"cache_creation_cost_multiplier_1h"`   // 1小时缓存创建倍率
+	CacheCreationCostMultiplier   float64 `json:"cache_creation_cost_multiplier"`    // 5分钟缓存创建倍率（默认）
+	CacheCreationCostMultiplier1h float64 `json:"cache_creation_cost_multiplier_1h"` // 1小时缓存创建倍率
 	CacheReadCostMultiplier       float64 `json:"cache_read_cost_multiplier"`
 
 	// 状态

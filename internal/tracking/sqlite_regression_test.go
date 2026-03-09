@@ -78,6 +78,7 @@ func TestSQLiteSchemaInit_OldRequestLogsWithoutUpstreamColumns(t *testing.T) {
 
 	// 校验迁移后列存在
 	requiredColumns := []string{
+		"first_token_ms",
 		"upstream_type",
 		"upstream_source_name",
 		"upstream_name",

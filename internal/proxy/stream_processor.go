@@ -57,6 +57,8 @@ type StreamProcessor struct {
 
 	// 完成状态跟踪
 	completionRecorded bool // 是否已经记录完成状态，防止重复记录
+	firstTokenRecorded bool // 是否已记录首个流式业务事件到达耗时
+	firstTokenRecorder func()
 
 	// 🔍 [调试缓冲区] 轻量级调试数据收集（仅在token解析失败时使用）
 	debugLines []string // SSE行数据收集，默认最多保存DebugLineLimit行
@@ -105,6 +107,12 @@ func (sp *StreamProcessor) EnableDownstreamTailDrain(timeout time.Duration, canc
 	sp.enableDownstreamTailDrain = true
 	sp.downstreamTailDrainTimeout = timeout
 	sp.cancelUpstreamRead = cancelUpstream
+}
+
+// SetFirstTokenRecorder 设置首字耗时记录回调。
+// 回调由生命周期管理器提供，确保耗时基于请求开始时间而不是流处理器创建时间。
+func (sp *StreamProcessor) SetFirstTokenRecorder(recorder func()) {
+	sp.firstTokenRecorder = recorder
 }
 
 func (sp *StreamProcessor) beginDownstreamTailDrain(trigger string) {
@@ -298,6 +306,10 @@ func (sp *StreamProcessor) processSSELine(line string) {
 	result := sp.tokenParser.ParseSSELineV2(line)
 
 	if result != nil {
+		if result.HasStreamOutput || result.HasVisibleText || result.HasFallbackOutput {
+			sp.recordFirstVisibleText()
+		}
+
 		// ✅ 检查是否有错误信息
 		if result.ErrorInfo != nil {
 			// V2架构：处理API错误信息
@@ -340,6 +352,17 @@ func (sp *StreamProcessor) processSSELine(line string) {
 			// ✅ 移除或注释掉这个字段，因为不再需要
 			// sp.completionRecorded = true
 		}
+	}
+}
+
+func (sp *StreamProcessor) recordFirstVisibleText() {
+	if sp.firstTokenRecorded {
+		return
+	}
+
+	sp.firstTokenRecorded = true
+	if sp.firstTokenRecorder != nil {
+		sp.firstTokenRecorder()
 	}
 }
 
@@ -627,6 +650,7 @@ func (sp *StreamProcessor) Reset() {
 	sp.partialData = sp.partialData[:0] // 重置部分数据缓冲区
 	sp.parseErrors = sp.parseErrors[:0]
 	sp.lastTokenLogSignature = ""
+	sp.firstTokenRecorded = false
 
 	// 重置TokenParser状态
 	if sp.tokenParser != nil {

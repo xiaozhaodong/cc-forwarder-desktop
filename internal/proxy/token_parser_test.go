@@ -179,6 +179,84 @@ func TestTokenParserV2_MessageDeltaWithoutUsage(t *testing.T) {
 	}
 }
 
+func TestTokenParserV2_ResponsesOutputTextDeltaMarksVisibleText(t *testing.T) {
+	parser := NewTokenParserWithRequestID("test-responses-visible-text")
+
+	lines := []string{
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","delta":"Hello world","output_index":0,"sequence_number":1}`,
+		"",
+	}
+
+	var result *ParseResult
+	for _, line := range lines {
+		if parseResult := parser.ParseSSELineV2(line); parseResult != nil {
+			result = parseResult
+		}
+	}
+
+	if result == nil {
+		t.Fatal("Expected ParseResult for responses output_text delta, got nil")
+	}
+	if !result.HasVisibleText {
+		t.Fatal("Expected HasVisibleText=true for responses output_text delta")
+	}
+	if result.TokenUsage != nil {
+		t.Fatal("Expected no TokenUsage for plain visible text delta")
+	}
+}
+
+func TestTokenParserV2_ResponsesInProgressMarksStreamOutput(t *testing.T) {
+	parser := NewTokenParserWithRequestID("test-responses-fallback")
+
+	lines := []string{
+		"event: response.in_progress",
+		`data: {"type":"response.in_progress","response":{"model":"gpt-5.4"}}`,
+		"",
+	}
+
+	var result *ParseResult
+	for _, line := range lines {
+		if parseResult := parser.ParseSSELineV2(line); parseResult != nil {
+			result = parseResult
+		}
+	}
+
+	if result == nil {
+		t.Fatal("Expected ParseResult for response.in_progress, got nil")
+	}
+	if !result.HasStreamOutput {
+		t.Fatal("Expected HasStreamOutput=true for response.in_progress")
+	}
+	if result.HasVisibleText {
+		t.Fatal("Expected HasVisibleText=false for response.in_progress")
+	}
+}
+
+func TestTokenParserV2_ResponsesOutputItemAddedMarksVisibleText(t *testing.T) {
+	parser := NewTokenParserWithRequestID("test-responses-output-item")
+
+	lines := []string{
+		"event: response.output_item.added",
+		`data: {"type":"response.output_item.added","item":{"type":"message","content":[{"type":"output_text","text":"Hello from item"}]}}`,
+		"",
+	}
+
+	var result *ParseResult
+	for _, line := range lines {
+		if parseResult := parser.ParseSSELineV2(line); parseResult != nil {
+			result = parseResult
+		}
+	}
+
+	if result == nil {
+		t.Fatal("Expected ParseResult for response.output_item.added, got nil")
+	}
+	if !result.HasVisibleText {
+		t.Fatal("Expected HasVisibleText=true for response.output_item.added")
+	}
+}
+
 func TestTokenParserV2_MessageDeltaWithoutUsage_ReportedOnce(t *testing.T) {
 	parser := NewTokenParserWithRequestID("test-req-456-repeat")
 
@@ -215,15 +293,18 @@ func TestTokenParserV2_MessageDeltaWithoutUsage_AfterMessageStartIgnored(t *test
 		"",
 	}
 
-	resultCount := 0
+	var results []*ParseResult
 	for _, line := range lines {
 		if parseResult := parser.ParseSSELineV2(line); parseResult != nil {
-			resultCount++
+			results = append(results, parseResult)
 		}
 	}
 
-	if resultCount != 0 {
-		t.Errorf("Expected no ParseResult for non-usage delta after message_start usage, got %d", resultCount)
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 ParseResult entry (message_start stream output), got %d", len(results))
+	}
+	if !results[0].HasStreamOutput {
+		t.Fatal("Expected message_start to provide stream output signal")
 	}
 
 	finalUsage := parser.GetFinalUsage()

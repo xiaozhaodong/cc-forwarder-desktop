@@ -13,10 +13,10 @@ func FormatResponseTime(duration time.Duration) string {
 	if duration == 0 {
 		return "0ms"
 	}
-	
+
 	// 转换为毫秒
 	ms := float64(duration.Nanoseconds()) / 1e6
-	
+
 	if ms < 1 {
 		// 小于1毫秒，显示微秒
 		us := float64(duration.Nanoseconds()) / 1e3

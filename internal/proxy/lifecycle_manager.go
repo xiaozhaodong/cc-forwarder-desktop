@@ -65,6 +65,7 @@ type RequestLifecycleManager struct {
 	finalStatusCode       int                            // 最终状态码
 	modelUpdatedInDB      bool                           // 标记是否已在数据库中更新过模型
 	modelUpdateMu         sync.Mutex                     // 保护模型更新标记
+	firstTokenOnce        sync.Once                      // 确保首响耗时仅记录一次
 	attemptCounter        int                            // 内部尝试计数器（语义修复：统一重试计数）
 	attemptMu             sync.Mutex                     // 保护尝试计数器的互斥锁
 	pendingErrorContext   *ErrorContext                  // 预先计算的错误上下文，仅对下一个HandleError有效
@@ -665,6 +666,24 @@ func (rlm *RequestLifecycleManager) GetChannel() string {
 // GetDuration 获取请求持续时间
 func (rlm *RequestLifecycleManager) GetDuration() time.Duration {
 	return time.Since(rlm.startTime)
+}
+
+// RecordFirstToken 记录首个流式业务事件到达耗时（首响）。
+// 该方法只会生效一次，用于流式请求展示“首响 / 耗时”。
+func (rlm *RequestLifecycleManager) RecordFirstToken() {
+	rlm.firstTokenOnce.Do(func() {
+		if rlm.usageTracker == nil || rlm.requestID == "" {
+			return
+		}
+
+		firstTokenMs := time.Since(rlm.startTime).Milliseconds()
+		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
+			FirstTokenMs: &firstTokenMs,
+		})
+
+		slog.Info(fmt.Sprintf("📝 [首响耗时] [%s] 记录首个流式业务事件耗时: %dms",
+			rlm.requestID, firstTokenMs))
+	})
 }
 
 // GetLastStatus 获取最后状态

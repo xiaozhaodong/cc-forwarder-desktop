@@ -39,7 +39,7 @@ func NewFastTester(cfg *config.Config) *FastTester {
 		// Fall back to default transport
 		httpTransport = &http.Transport{}
 	}
-	
+
 	return &FastTester{
 		config: cfg,
 		client: &http.Client{
@@ -140,7 +140,7 @@ func (ft *FastTester) testSingleEndpoint(ctx context.Context, endpoint *Endpoint
 		// Fallback to endpoint's own token if manager is not available
 		token = endpoint.Config.Token
 	}
-	
+
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -273,7 +273,7 @@ func SortByResponseTime(results []*FastTestResult) []*FastTestResult {
 // UpdateConfig updates the fast tester configuration and recreates client if needed
 func (ft *FastTester) UpdateConfig(cfg *config.Config) {
 	ft.config = cfg
-	
+
 	// Recreate client with new timeout and transport settings
 	if transport, err := transport.CreateTransport(cfg); err == nil {
 		ft.client = &http.Client{
@@ -281,7 +281,7 @@ func (ft *FastTester) UpdateConfig(cfg *config.Config) {
 			Transport: transport,
 		}
 	}
-	
+
 	// Clear cache when configuration changes
 	ft.cacheMutex.Lock()
 	ft.resultCache = make(map[string]*FastTestResult)

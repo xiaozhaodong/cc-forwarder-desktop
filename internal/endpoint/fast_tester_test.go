@@ -1,8 +1,8 @@
 package endpoint
 
 import (
-	"context"
 	"cc-forwarder/config"
+	"context"
 	"testing"
 	"time"
 )
@@ -38,7 +38,7 @@ func TestFastTester(t *testing.T) {
 		},
 		{
 			Config: config.EndpointConfig{
-				Name: "test2", 
+				Name: "test2",
 				URL:  "https://example.com",
 			},
 			Status: EndpointStatus{

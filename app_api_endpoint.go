@@ -111,11 +111,11 @@ func (a *App) TriggerHealthCheck(name string) error {
 
 // BatchHealthCheckResult 批量健康检查结果
 type BatchHealthCheckResult struct {
-	Success      bool   `json:"success"`
-	Message      string `json:"message"`
-	Total        int    `json:"total"`
-	HealthyCount int    `json:"healthy_count"`
-	UnhealthyCount int  `json:"unhealthy_count"`
+	Success        bool   `json:"success"`
+	Message        string `json:"message"`
+	Total          int    `json:"total"`
+	HealthyCount   int    `json:"healthy_count"`
+	UnhealthyCount int    `json:"unhealthy_count"`
 }
 
 // BatchHealthCheckAll 批量检查所有端点的健康状态

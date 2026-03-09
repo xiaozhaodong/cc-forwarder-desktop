@@ -148,9 +148,9 @@ data: {"type":"message_delta","delta":{"type":"text","text":"Hello"},"usage":{"i
 		}
 
 		if finalTokenUsage.InputTokens == 100 &&
-		   finalTokenUsage.OutputTokens == 50 &&
-		   finalTokenUsage.CacheCreationTokens == 20 &&
-		   finalTokenUsage.CacheReadTokens == 10 {
+			finalTokenUsage.OutputTokens == 50 &&
+			finalTokenUsage.CacheCreationTokens == 20 &&
+			finalTokenUsage.CacheReadTokens == 10 {
 			t.Log("🎯 所有 Token 数值完全匹配！flush 修复方案成功")
 		}
 	}

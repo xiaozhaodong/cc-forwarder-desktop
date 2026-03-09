@@ -91,3 +91,95 @@ func TestQueryAggregatedRequestStatsWithHotPool(t *testing.T) {
 		t.Fatal("expected duration count to be greater than zero")
 	}
 }
+
+func TestQueryAggregatedRequestStatsWithHotPool_DeduplicatesOverlap(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "usage.db")
+
+	config := &Config{
+		Enabled:         true,
+		DatabasePath:    dbPath,
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
+	}
+
+	tracker, err := NewUsageTracker(config)
+	if err != nil {
+		t.Fatalf("Failed to create usage tracker: %v", err)
+	}
+	defer tracker.Close()
+
+	now := time.Now()
+	db := tracker.GetWriteDB()
+	if db == nil {
+		t.Fatal("expected write db")
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO request_logs (
+			request_id, start_time, status, upstream_type,
+			model_name, input_tokens, output_tokens, total_cost_usd, duration_ms
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"req-overlap",
+		now.Add(-2*time.Minute).Format("2006-01-02 15:04:05"),
+		"completed",
+		"endpoint",
+		"test-model",
+		100,
+		50,
+		2.5,
+		200,
+	)
+	if err != nil {
+		t.Fatalf("failed to seed db request: %v", err)
+	}
+
+	tracker.RecordRequestStart("req-overlap", "127.0.0.1", "stats-agent", "POST", "/v1/messages", false)
+	status := "processing"
+	modelName := "test-model"
+	tracker.RecordRequestUpdate("req-overlap", UpdateOptions{
+		Status:    &status,
+		ModelName: &modelName,
+	})
+	if err := tracker.hotPool.Update("req-overlap", func(req *ActiveRequest) {
+		req.InputTokens = 25
+		req.OutputTokens = 5
+		req.TotalCostUSD = 1.25
+		d := int64(150)
+		req.DurationMs = d
+	}); err != nil {
+		t.Fatalf("UpdateActiveRequest failed: %v", err)
+	}
+
+	stats, err := tracker.QueryAggregatedRequestStatsWithHotPool(context.Background(), &QueryOptions{
+		StartDate: func() *time.Time {
+			t := now.Add(-1 * time.Hour)
+			return &t
+		}(),
+		EndDate: func() *time.Time {
+			t := now.Add(1 * time.Hour)
+			return &t
+		}(),
+	})
+	if err != nil {
+		t.Fatalf("QueryAggregatedRequestStatsWithHotPool failed: %v", err)
+	}
+
+	if stats.TotalRequests != 1 {
+		t.Fatalf("expected overlapping request to be counted once, got %d", stats.TotalRequests)
+	}
+	if stats.SuccessRequests != 1 {
+		t.Fatalf("expected hot-pool status to win and count as success, got %d", stats.SuccessRequests)
+	}
+	if stats.TotalTokens != 30 {
+		t.Fatalf("expected hot-pool tokens to replace db tokens, got %d", stats.TotalTokens)
+	}
+	if stats.DurationCount != 1 || stats.TotalDurationMs != 150 {
+		t.Fatalf("expected hot-pool duration to replace db duration, got count=%d total=%d", stats.DurationCount, stats.TotalDurationMs)
+	}
+	_ = tracker.hotPool.Remove("req-overlap")
+}

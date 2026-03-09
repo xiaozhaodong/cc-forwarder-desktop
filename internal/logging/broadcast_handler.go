@@ -20,10 +20,10 @@ type LogEntry struct {
 // 2. 写入环形缓冲区（供查询历史）
 // 3. 广播给订阅者（实时推送）
 type BroadcastHandler struct {
-	fileHandler slog.Handler    // 原有的文件Handler
-	buffer      *RingBuffer     // 环形缓冲区（最近N条日志）
-	Emitter     *EventEmitter   // 事件发射器（Wails Events）- 导出用于设置
-	minLevel    slog.Level      // 最低日志级别
+	fileHandler slog.Handler  // 原有的文件Handler
+	buffer      *RingBuffer   // 环形缓冲区（最近N条日志）
+	Emitter     *EventEmitter // 事件发射器（Wails Events）- 导出用于设置
+	minLevel    slog.Level    // 最低日志级别
 	mu          sync.RWMutex
 }
 

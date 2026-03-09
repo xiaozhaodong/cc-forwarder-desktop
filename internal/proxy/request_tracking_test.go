@@ -8,35 +8,35 @@ import (
 	"cc-forwarder/internal/tracking"
 )
 
-// TestRequestIDLogging 测试完整的requestId日志追踪链路  
+// TestRequestIDLogging 测试完整的requestId日志追踪链路
 func TestRequestIDLogging(t *testing.T) {
 	// 模拟requestId
 	requestID := "req-12345678"
-	
+
 	// 创建生命周期管理器（不传入usageTracker，重点测试日志格式）
 	lifecycleManager := NewRequestLifecycleManager(nil, nil, requestID, nil)
-	
+
 	t.Logf("🔍 测试完整的requestId日志追踪链路")
-	
+
 	// 1. 请求开始
 	t.Logf("1️⃣ 测试请求开始日志")
 	lifecycleManager.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/messages", false)
-	
+
 	// 2. 设置端点信息
 	lifecycleManager.SetEndpoint("test-endpoint", "test-group", "")
-	
+
 	// 3. 测试各种状态更新
 	t.Logf("2️⃣ 测试状态更新日志")
-	
+
 	// 转发状态
 	lifecycleManager.UpdateStatus("forwarding", 0, 0)
-	
+
 	// 重试状态
 	lifecycleManager.UpdateStatus("retry", 1, 0)
-	
+
 	// 处理状态
 	lifecycleManager.UpdateStatus("processing", 1, 200)
-	
+
 	// 4. 测试完成
 	t.Logf("3️⃣ 测试请求完成日志")
 	mockTokens := &tracking.TokenUsage{
@@ -44,19 +44,19 @@ func TestRequestIDLogging(t *testing.T) {
 		OutputTokens: 97,
 	}
 	lifecycleManager.CompleteRequest(mockTokens)
-	
+
 	// 5. 测试错误处理
 	t.Logf("4️⃣ 测试错误处理日志")
 	testErr := fmt.Errorf("test error")
 	lifecycleManager.HandleError(testErr)
-	
+
 	// 验证requestId格式正确
 	if lifecycleManager.GetRequestID() != requestID {
 		t.Errorf("❌ RequestID不匹配: 期望 %s, 实际 %s", requestID, lifecycleManager.GetRequestID())
 	}
-	
+
 	t.Logf("🎉 完整的requestId追踪链路测试完成")
-	
+
 	// 测试日志格式验证
 	testCases := []struct {
 		name     string
@@ -71,7 +71,7 @@ func TestRequestIDLogging(t *testing.T) {
 			contains: fmt.Sprintf("[%s]", requestID),
 		},
 		{
-			name: "重试日志格式", 
+			name: "重试日志格式",
 			action: func() {
 				lifecycleManager.UpdateStatus("retry", 2, 0)
 			},
@@ -85,7 +85,7 @@ func TestRequestIDLogging(t *testing.T) {
 			contains: fmt.Sprintf("[%s]", requestID),
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.action()
@@ -113,8 +113,8 @@ func (m *mockUsageTracker) RecordRequestComplete(requestID, modelName string, to
 }
 
 func (m *mockUsageTracker) IsRunning() bool { return true }
-func (m *mockUsageTracker) Start() {}
-func (m *mockUsageTracker) Stop() {}
+func (m *mockUsageTracker) Start()          {}
+func (m *mockUsageTracker) Stop()           {}
 func (m *mockUsageTracker) GetStats(ctx context.Context, startTime, endTime string, modelName, endpointName, groupName string) (map[string]interface{}, error) {
 	return nil, nil
 }

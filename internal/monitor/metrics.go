@@ -10,10 +10,10 @@ import (
 
 // TokenUsage represents token usage statistics
 type TokenUsage struct {
-	InputTokens            int64
-	OutputTokens           int64
-	CacheCreationTokens    int64
-	CacheReadTokens        int64
+	InputTokens         int64
+	OutputTokens        int64
+	CacheCreationTokens int64
+	CacheReadTokens     int64
 }
 
 // Metrics contains all monitoring metrics
@@ -21,91 +21,91 @@ type Metrics struct {
 	mu sync.RWMutex
 
 	// Request metrics
-	TotalRequests     int64
+	TotalRequests      int64
 	SuccessfulRequests int64
-	FailedRequests    int64
+	FailedRequests     int64
 
 	// Suspended request metrics
-	SuspendedRequests          int64  // Current number of suspended requests
-	TotalSuspendedRequests     int64  // Total historical suspended requests
-	SuccessfulSuspendedRequests int64  // Successfully resumed suspended requests
-	TimeoutSuspendedRequests   int64  // Timed out suspended requests
-	TotalSuspendedTime         time.Duration // Total time spent in suspension
-	MinSuspendedTime           time.Duration // Minimum suspension time
-	MaxSuspendedTime           time.Duration // Maximum suspension time
+	SuspendedRequests           int64         // Current number of suspended requests
+	TotalSuspendedRequests      int64         // Total historical suspended requests
+	SuccessfulSuspendedRequests int64         // Successfully resumed suspended requests
+	TimeoutSuspendedRequests    int64         // Timed out suspended requests
+	TotalSuspendedTime          time.Duration // Total time spent in suspension
+	MinSuspendedTime            time.Duration // Minimum suspension time
+	MaxSuspendedTime            time.Duration // Maximum suspension time
 
 	// Token usage metrics
-	TotalTokenUsage   TokenUsage
+	TotalTokenUsage TokenUsage
 
 	// Failed request token statistics
-	FailedRequestTokens     int64                 // Total token count for failed requests
-	FailedTokensByReason    map[string]int64      // Token statistics by failure reason
-	FailedTokensByEndpoint  map[string]int64      // Failed token statistics by endpoint
-	
+	FailedRequestTokens    int64            // Total token count for failed requests
+	FailedTokensByReason   map[string]int64 // Token statistics by failure reason
+	FailedTokensByEndpoint map[string]int64 // Failed token statistics by endpoint
+
 	// Response time metrics
 	ResponseTimes     []time.Duration
 	TotalResponseTime time.Duration
 	MinResponseTime   time.Duration
 	MaxResponseTime   time.Duration
-	
+
 	// Endpoint metrics
 	EndpointStats map[string]*EndpointMetrics
-	
-	// Connection metrics  
+
+	// Connection metrics
 	ActiveConnections map[string]*ConnectionInfo
 	ConnectionHistory []*ConnectionInfo
-	
+
 	// System metrics
 	StartTime time.Time
-	
+
 	// Historical data (circular buffer)
-	RequestHistory              []RequestDataPoint
-	ResponseHistory             []ResponseTimePoint
-	TokenHistory                []TokenHistoryPoint
-	SuspendedRequestHistory     []SuspendedRequestHistoryPoint
-	MaxHistoryPoints            int
+	RequestHistory          []RequestDataPoint
+	ResponseHistory         []ResponseTimePoint
+	TokenHistory            []TokenHistoryPoint
+	SuspendedRequestHistory []SuspendedRequestHistoryPoint
+	MaxHistoryPoints        int
 }
 
 // EndpointMetrics tracks metrics for a specific endpoint
 type EndpointMetrics struct {
-	Name             string
-	URL              string
-	TotalRequests    int64
+	Name               string
+	URL                string
+	TotalRequests      int64
 	SuccessfulRequests int64
-	FailedRequests   int64
-	TotalResponseTime time.Duration
-	MinResponseTime  time.Duration
-	MaxResponseTime  time.Duration
-	LastUsed         time.Time
-	RetryCount       int64
-	Priority         int
-	Healthy          bool
-	TokenUsage       TokenUsage
+	FailedRequests     int64
+	TotalResponseTime  time.Duration
+	MinResponseTime    time.Duration
+	MaxResponseTime    time.Duration
+	LastUsed           time.Time
+	RetryCount         int64
+	Priority           int
+	Healthy            bool
+	TokenUsage         TokenUsage
 }
 
 // ConnectionInfo represents an active connection
 type ConnectionInfo struct {
-	ID             string
-	ClientIP       string
-	UserAgent      string
-	StartTime      time.Time
-	LastActivity   time.Time
-	Method         string
-	Path           string
-	Endpoint       string
-	Port           string
-	RetryCount     int
-	Status         string // "active", "completed", "failed", "timeout", "suspended", "resumed"
-	BytesReceived  int64
-	BytesSent      int64
-	IsStreaming    bool
-	TokenUsage     TokenUsage  // Token usage for this connection
-	
+	ID            string
+	ClientIP      string
+	UserAgent     string
+	StartTime     time.Time
+	LastActivity  time.Time
+	Method        string
+	Path          string
+	Endpoint      string
+	Port          string
+	RetryCount    int
+	Status        string // "active", "completed", "failed", "timeout", "suspended", "resumed"
+	BytesReceived int64
+	BytesSent     int64
+	IsStreaming   bool
+	TokenUsage    TokenUsage // Token usage for this connection
+
 	// Suspended request related fields
-	IsSuspended    bool      // Whether the connection is currently suspended
-	SuspendedAt    time.Time // When the request was suspended
-	ResumedAt      time.Time // When the request was resumed
-	SuspendedTime  time.Duration // Total time spent suspended
+	IsSuspended   bool          // Whether the connection is currently suspended
+	SuspendedAt   time.Time     // When the request was suspended
+	ResumedAt     time.Time     // When the request was resumed
+	SuspendedTime time.Duration // Total time spent suspended
 }
 
 // RequestDataPoint represents a point in time for request metrics
@@ -118,10 +118,10 @@ type RequestDataPoint struct {
 
 // ResponseTimePoint represents response time at a point in time
 type ResponseTimePoint struct {
-	Timestamp    time.Time
-	AverageTime  time.Duration
-	MinTime      time.Duration
-	MaxTime      time.Duration
+	Timestamp   time.Time
+	AverageTime time.Duration
+	MinTime     time.Duration
+	MaxTime     time.Duration
 }
 
 // TokenHistoryPoint represents token usage at a point in time
@@ -137,31 +137,31 @@ type TokenHistoryPoint struct {
 // SuspendedRequestHistoryPoint represents suspended request metrics at a point in time
 type SuspendedRequestHistoryPoint struct {
 	Timestamp                   time.Time
-	SuspendedRequests          int64  // Current suspended requests at this point
-	TotalSuspendedRequests     int64  // Total historical suspended requests
-	SuccessfulSuspendedRequests int64  // Successfully resumed
-	TimeoutSuspendedRequests   int64  // Timed out
-	AverageSuspendedTime       time.Duration // Average suspension time
+	SuspendedRequests           int64         // Current suspended requests at this point
+	TotalSuspendedRequests      int64         // Total historical suspended requests
+	SuccessfulSuspendedRequests int64         // Successfully resumed
+	TimeoutSuspendedRequests    int64         // Timed out
+	AverageSuspendedTime        time.Duration // Average suspension time
 }
 
 // NewMetrics creates a new metrics instance
 func NewMetrics() *Metrics {
 	return &Metrics{
-		EndpointStats:               make(map[string]*EndpointMetrics),
-		ActiveConnections:           make(map[string]*ConnectionInfo),
-		ConnectionHistory:           make([]*ConnectionInfo, 0),
-		StartTime:                   time.Now(),
-		RequestHistory:              make([]RequestDataPoint, 0),
-		ResponseHistory:             make([]ResponseTimePoint, 0),
-		TokenHistory:                make([]TokenHistoryPoint, 0),
-		SuspendedRequestHistory:     make([]SuspendedRequestHistoryPoint, 0),
-		MaxHistoryPoints:            300, // 5 minutes of data at 1-second intervals
-		MinResponseTime:             time.Duration(0),
-		MaxResponseTime:             time.Duration(0),
-		MinSuspendedTime:            time.Duration(0),
-		MaxSuspendedTime:            time.Duration(0),
-		FailedTokensByReason:        make(map[string]int64),
-		FailedTokensByEndpoint:      make(map[string]int64),
+		EndpointStats:           make(map[string]*EndpointMetrics),
+		ActiveConnections:       make(map[string]*ConnectionInfo),
+		ConnectionHistory:       make([]*ConnectionInfo, 0),
+		StartTime:               time.Now(),
+		RequestHistory:          make([]RequestDataPoint, 0),
+		ResponseHistory:         make([]ResponseTimePoint, 0),
+		TokenHistory:            make([]TokenHistoryPoint, 0),
+		SuspendedRequestHistory: make([]SuspendedRequestHistoryPoint, 0),
+		MaxHistoryPoints:        300, // 5 minutes of data at 1-second intervals
+		MinResponseTime:         time.Duration(0),
+		MaxResponseTime:         time.Duration(0),
+		MinSuspendedTime:        time.Duration(0),
+		MaxSuspendedTime:        time.Duration(0),
+		FailedTokensByReason:    make(map[string]int64),
+		FailedTokensByEndpoint:  make(map[string]int64),
 	}
 }
 
@@ -171,7 +171,7 @@ func (m *Metrics) RecordRequest(endpoint, clientIP, userAgent, method, path stri
 	defer m.mu.Unlock()
 
 	m.TotalRequests++
-	
+
 	// Update endpoint stats
 	if m.EndpointStats[endpoint] == nil {
 		m.EndpointStats[endpoint] = &EndpointMetrics{
@@ -185,25 +185,25 @@ func (m *Metrics) RecordRequest(endpoint, clientIP, userAgent, method, path stri
 
 	// Generate connection ID
 	connID := generateConnectionID()
-	
+
 	// Create connection info
 	conn := &ConnectionInfo{
-		ID:           connID,
-		ClientIP:     clientIP,
-		UserAgent:    userAgent,
-		StartTime:    time.Now(),
-		LastActivity: time.Now(),
-		Method:       method,
-		Path:         path,
-		Endpoint:     endpoint,
-		Status:       "active",
-		RetryCount:   0,
+		ID:            connID,
+		ClientIP:      clientIP,
+		UserAgent:     userAgent,
+		StartTime:     time.Now(),
+		LastActivity:  time.Now(),
+		Method:        method,
+		Path:          path,
+		Endpoint:      endpoint,
+		Status:        "active",
+		RetryCount:    0,
 		BytesReceived: 0,
-		BytesSent:    0,
+		BytesSent:     0,
 	}
-	
+
 	m.ActiveConnections[connID] = conn
-	
+
 	return connID
 }
 
@@ -215,7 +215,7 @@ func (m *Metrics) RecordResponse(connID string, statusCode int, responseTime tim
 	// Update overall metrics
 	m.TotalResponseTime += responseTime
 	m.ResponseTimes = append(m.ResponseTimes, responseTime)
-	
+
 	// Update min/max response times
 	if m.MinResponseTime == 0 || responseTime < m.MinResponseTime {
 		m.MinResponseTime = responseTime
@@ -272,7 +272,7 @@ func (m *Metrics) RecordResponse(connID string, statusCode int, responseTime tim
 	if conn, exists := m.ActiveConnections[connID]; exists {
 		conn.LastActivity = time.Now()
 		conn.BytesSent = bytesSent
-		
+
 		if statusCode >= 200 && statusCode < 400 {
 			conn.Status = "completed"
 		} else {
@@ -282,7 +282,7 @@ func (m *Metrics) RecordResponse(connID string, statusCode int, responseTime tim
 		// Move to history and remove from active
 		m.ConnectionHistory = append(m.ConnectionHistory, conn)
 		delete(m.ActiveConnections, connID)
-		
+
 		// Limit history size
 		if len(m.ConnectionHistory) > 1000 {
 			m.ConnectionHistory = m.ConnectionHistory[len(m.ConnectionHistory)-1000:]
@@ -328,7 +328,7 @@ func (m *Metrics) UpdateEndpointHealth(endpoint, url string, healthy bool, prior
 			MaxResponseTime: time.Duration(0),
 		}
 	}
-	
+
 	m.EndpointStats[endpoint].Healthy = healthy
 	m.EndpointStats[endpoint].URL = url
 	m.EndpointStats[endpoint].Priority = priority
@@ -363,27 +363,27 @@ func (m *Metrics) GetMetrics() *Metrics {
 
 	// Create a copy of metrics
 	snapshot := &Metrics{
-		TotalRequests:                  m.TotalRequests,
-		SuccessfulRequests:             m.SuccessfulRequests,
-		FailedRequests:                 m.FailedRequests,
-		SuspendedRequests:              m.SuspendedRequests,
-		TotalSuspendedRequests:         m.TotalSuspendedRequests,
-		SuccessfulSuspendedRequests:    m.SuccessfulSuspendedRequests,
-		TimeoutSuspendedRequests:       m.TimeoutSuspendedRequests,
-		TotalSuspendedTime:             m.TotalSuspendedTime,
-		MinSuspendedTime:               m.MinSuspendedTime,
-		MaxSuspendedTime:               m.MaxSuspendedTime,
-		TotalTokenUsage:                m.TotalTokenUsage,
-		FailedRequestTokens:            m.FailedRequestTokens,
-		FailedTokensByReason:           make(map[string]int64),
-		FailedTokensByEndpoint:         make(map[string]int64),
-		TotalResponseTime:              m.TotalResponseTime,
-		MinResponseTime:                m.MinResponseTime,
-		MaxResponseTime:                m.MaxResponseTime,
-		StartTime:                      m.StartTime,
-		EndpointStats:                  make(map[string]*EndpointMetrics),
-		ActiveConnections:              make(map[string]*ConnectionInfo),
-		ConnectionHistory:              make([]*ConnectionInfo, len(m.ConnectionHistory)),
+		TotalRequests:               m.TotalRequests,
+		SuccessfulRequests:          m.SuccessfulRequests,
+		FailedRequests:              m.FailedRequests,
+		SuspendedRequests:           m.SuspendedRequests,
+		TotalSuspendedRequests:      m.TotalSuspendedRequests,
+		SuccessfulSuspendedRequests: m.SuccessfulSuspendedRequests,
+		TimeoutSuspendedRequests:    m.TimeoutSuspendedRequests,
+		TotalSuspendedTime:          m.TotalSuspendedTime,
+		MinSuspendedTime:            m.MinSuspendedTime,
+		MaxSuspendedTime:            m.MaxSuspendedTime,
+		TotalTokenUsage:             m.TotalTokenUsage,
+		FailedRequestTokens:         m.FailedRequestTokens,
+		FailedTokensByReason:        make(map[string]int64),
+		FailedTokensByEndpoint:      make(map[string]int64),
+		TotalResponseTime:           m.TotalResponseTime,
+		MinResponseTime:             m.MinResponseTime,
+		MaxResponseTime:             m.MaxResponseTime,
+		StartTime:                   m.StartTime,
+		EndpointStats:               make(map[string]*EndpointMetrics),
+		ActiveConnections:           make(map[string]*ConnectionInfo),
+		ConnectionHistory:           make([]*ConnectionInfo, len(m.ConnectionHistory)),
 	}
 
 	// Copy endpoint stats
@@ -512,7 +512,7 @@ func (m *Metrics) GetP95ResponseTime() time.Duration {
 	if index >= len(m.ResponseTimes) {
 		index = len(m.ResponseTimes) - 1
 	}
-	
+
 	// For a proper implementation, we'd sort the slice
 	// For now, return max as approximation
 	return m.MaxResponseTime
@@ -551,7 +551,7 @@ func (m *Metrics) RecordTokenUsage(connID string, endpoint string, tokens *Token
 		conn.TokenUsage.CacheReadTokens += tokens.CacheReadTokens
 		conn.LastActivity = time.Now()
 	}
-	
+
 	// Note: Token history points are now added by AddHistoryDataPoints() method
 	// This avoids duplicate history entries and provides better data sampling
 }
@@ -646,9 +646,9 @@ func (m *Metrics) AddHistoryDataPoints() {
 		CacheReadTokens:     m.TotalTokenUsage.CacheReadTokens,
 		TotalTokens:         m.TotalTokenUsage.InputTokens + m.TotalTokenUsage.OutputTokens + m.TotalTokenUsage.CacheCreationTokens + m.TotalTokenUsage.CacheReadTokens,
 	}
-	
+
 	// 只有当Token数据有变化时才添加新点，避免重复数据
-	if len(m.TokenHistory) == 0 || 
+	if len(m.TokenHistory) == 0 ||
 		m.TokenHistory[len(m.TokenHistory)-1].InputTokens != tokenPoint.InputTokens ||
 		m.TokenHistory[len(m.TokenHistory)-1].OutputTokens != tokenPoint.OutputTokens ||
 		m.TokenHistory[len(m.TokenHistory)-1].CacheCreationTokens != tokenPoint.CacheCreationTokens ||
@@ -659,13 +659,13 @@ func (m *Metrics) AddHistoryDataPoints() {
 	// 添加挂起请求历史数据点
 	suspendedPoint := SuspendedRequestHistoryPoint{
 		Timestamp:                   now,
-		SuspendedRequests:          m.SuspendedRequests,
-		TotalSuspendedRequests:     m.TotalSuspendedRequests,
+		SuspendedRequests:           m.SuspendedRequests,
+		TotalSuspendedRequests:      m.TotalSuspendedRequests,
 		SuccessfulSuspendedRequests: m.SuccessfulSuspendedRequests,
-		TimeoutSuspendedRequests:   m.TimeoutSuspendedRequests,
-		AverageSuspendedTime:       m.GetAverageSuspendedTimeUnlocked(),
+		TimeoutSuspendedRequests:    m.TimeoutSuspendedRequests,
+		AverageSuspendedTime:        m.GetAverageSuspendedTimeUnlocked(),
 	}
-	
+
 	// 只有当挂起请求数据有变化时才添加新点
 	if len(m.SuspendedRequestHistory) == 0 ||
 		m.SuspendedRequestHistory[len(m.SuspendedRequestHistory)-1].SuspendedRequests != suspendedPoint.SuspendedRequests ||
@@ -768,20 +768,20 @@ func (m *Metrics) GetEndpointPerformanceData() []map[string]interface{} {
 		}
 
 		result = append(result, map[string]interface{}{
-			"name":                 endpoint.Name,
-			"url":                  endpoint.URL,
-			"healthy":              endpoint.Healthy,
-			"total_requests":       endpoint.TotalRequests,
+			"name":                endpoint.Name,
+			"url":                 endpoint.URL,
+			"healthy":             endpoint.Healthy,
+			"total_requests":      endpoint.TotalRequests,
 			"successful_requests": endpoint.SuccessfulRequests,
 			"failed_requests":     endpoint.FailedRequests,
-			"success_rate":         m.calculateEndpointSuccessRate(endpoint),
-			"avg_response_time":    avgResponseTime.Milliseconds(),
-			"min_response_time":    endpoint.MinResponseTime.Milliseconds(),
-			"max_response_time":    endpoint.MaxResponseTime.Milliseconds(),
-			"priority":             endpoint.Priority,
-			"retry_count":          endpoint.RetryCount,
-			"last_used":            endpoint.LastUsed,
-			"token_usage":          endpoint.TokenUsage,
+			"success_rate":        m.calculateEndpointSuccessRate(endpoint),
+			"avg_response_time":   avgResponseTime.Milliseconds(),
+			"min_response_time":   endpoint.MinResponseTime.Milliseconds(),
+			"max_response_time":   endpoint.MaxResponseTime.Milliseconds(),
+			"priority":            endpoint.Priority,
+			"retry_count":         endpoint.RetryCount,
+			"last_used":           endpoint.LastUsed,
+			"token_usage":         endpoint.TokenUsage,
 		})
 	}
 

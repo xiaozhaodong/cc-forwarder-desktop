@@ -13,9 +13,9 @@ import (
 
 // LoggingMiddleware provides request/response logging
 type LoggingMiddleware struct {
-	logger            *slog.Logger
+	logger               *slog.Logger
 	monitoringMiddleware *MonitoringMiddleware
-	usageTracker      *tracking.UsageTracker
+	usageTracker         *tracking.UsageTracker
 }
 
 // NewLoggingMiddleware creates a new logging middleware
@@ -78,16 +78,16 @@ func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 		start := time.Now()
 		clientIP := getClientIP(r)
 		userAgent := truncateString(r.UserAgent(), 50)
-		
+
 		// Record request start in metrics - we'll update the endpoint later
 		var connID string
 		if lm.monitoringMiddleware != nil {
 			connID = lm.monitoringMiddleware.RecordRequest("unknown", clientIP, userAgent, r.Method, r.URL.Path)
 		}
-		
+
 		// Store connection ID in request context for use by proxy handler
 		r = r.WithContext(context.WithValue(r.Context(), "conn_id", connID))
-		
+
 		// Wrap response writer
 		rw := &responseWriter{
 			ResponseWriter: w,
@@ -96,7 +96,7 @@ func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 		}
 
 		// Store request info (request start logging handled by lifecycle manager)
-		lm.logger.Debug(fmt.Sprintf("📝 [请求接收] [%s] %s %s", connID, r.Method, r.URL.Path), 
+		lm.logger.Debug(fmt.Sprintf("📝 [请求接收] [%s] %s %s", connID, r.Method, r.URL.Path),
 			"method", r.Method,
 			"path", r.URL.Path,
 			"client_ip", clientIP,

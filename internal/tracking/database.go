@@ -206,13 +206,16 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 
 		// 计算成本
 		tokens := &TokenUsage{
-			InputTokens:         data.InputTokens,
-			OutputTokens:        data.OutputTokens,
-			CacheCreationTokens: data.CacheCreationTokens,
-			CacheReadTokens:     data.CacheReadTokens,
+			InputTokens:           data.InputTokens,
+			OutputTokens:          data.OutputTokens,
+			CacheCreationTokens:   data.CacheCreationTokens,
+			CacheCreation5mTokens: data.CacheCreation5mTokens,
+			CacheCreation1hTokens: data.CacheCreation1hTokens,
+			CacheReadTokens:       data.CacheReadTokens,
 		}
 
-		inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens, data.Path)
+		pricing := ut.GetPricing(data.ModelName)
+		costBreakdown := CalculateCostV2(tokens, &pricing, nil, data.Path)
 
 		query := fmt.Sprintf(`UPDATE request_logs SET
 			end_time = ?,
@@ -221,10 +224,14 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			input_tokens = ?,
 			output_tokens = ?,
 			cache_creation_tokens = ?,
+			cache_creation_5m_tokens = ?,
+			cache_creation_1h_tokens = ?,
 			cache_read_tokens = ?,
 			input_cost_usd = ?,
 			output_cost_usd = ?,
 			cache_creation_cost_usd = ?,
+			cache_creation_5m_cost_usd = ?,
+			cache_creation_1h_cost_usd = ?,
 			cache_read_cost_usd = ?,
 			total_cost_usd = ?,
 			status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
@@ -238,12 +245,16 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			data.InputTokens,
 			data.OutputTokens,
 			data.CacheCreationTokens,
+			data.CacheCreation5mTokens,
+			data.CacheCreation1hTokens,
 			data.CacheReadTokens,
-			inputCost,
-			outputCost,
-			cacheCost,
-			readCost,
-			totalCost,
+			costBreakdown.InputCost,
+			costBreakdown.OutputCost,
+			costBreakdown.CacheCreationCost,
+			costBreakdown.CacheCreation5mCost,
+			costBreakdown.CacheCreation1hCost,
+			costBreakdown.CacheReadCost,
+			costBreakdown.TotalCost,
 			event.RequestID,
 		}
 
@@ -515,6 +526,10 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 		setParts = append(setParts, "duration_ms = ?")
 		args = append(args, opts.Duration.Milliseconds())
 	}
+	if opts.FirstTokenMs != nil {
+		setParts = append(setParts, "first_token_ms = COALESCE(first_token_ms, ?)")
+		args = append(args, *opts.FirstTokenMs)
+	}
 	if opts.FailureReason != nil {
 		setParts = append(setParts, "failure_reason = ?")
 		args = append(args, *opts.FailureReason)
@@ -549,13 +564,16 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 
 	// 计算成本
 	tokens := &TokenUsage{
-		InputTokens:         data.InputTokens,
-		OutputTokens:        data.OutputTokens,
-		CacheCreationTokens: data.CacheCreationTokens,
-		CacheReadTokens:     data.CacheReadTokens,
+		InputTokens:           data.InputTokens,
+		OutputTokens:          data.OutputTokens,
+		CacheCreationTokens:   data.CacheCreationTokens,
+		CacheCreation5mTokens: data.CacheCreation5mTokens,
+		CacheCreation1hTokens: data.CacheCreation1hTokens,
+		CacheReadTokens:       data.CacheReadTokens,
 	}
 
-	inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens, data.Path)
+	pricing := ut.GetPricing(data.ModelName)
+	costBreakdown := CalculateCostV2(tokens, &pricing, nil, data.Path)
 
 	// 🔧 [方案A补充] 支持 failure_reason 写入（用于数据质量标记，如 stream_truncated）
 	query := fmt.Sprintf(`UPDATE request_logs SET
@@ -565,10 +583,14 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 		input_tokens = ?,
 		output_tokens = ?,
 		cache_creation_tokens = ?,
+		cache_creation_5m_tokens = ?,
+		cache_creation_1h_tokens = ?,
 		cache_read_tokens = ?,
 		input_cost_usd = ?,
 		output_cost_usd = ?,
 		cache_creation_cost_usd = ?,
+		cache_creation_5m_cost_usd = ?,
+		cache_creation_1h_cost_usd = ?,
 		cache_read_cost_usd = ?,
 		total_cost_usd = ?,
 		failure_reason = ?,
@@ -584,12 +606,16 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 		data.InputTokens,
 		data.OutputTokens,
 		data.CacheCreationTokens,
+		data.CacheCreation5mTokens,
+		data.CacheCreation1hTokens,
 		data.CacheReadTokens,
-		inputCost,
-		outputCost,
-		cacheCost,
-		readCost,
-		totalCost,
+		costBreakdown.InputCost,
+		costBreakdown.OutputCost,
+		costBreakdown.CacheCreationCost,
+		costBreakdown.CacheCreation5mCost,
+		costBreakdown.CacheCreation1hCost,
+		costBreakdown.CacheReadCost,
+		costBreakdown.TotalCost,
 		data.FailureReason, // 🔧 [方案A补充] 写入 failure_reason（可为空）
 		event.RequestID,
 	}
@@ -924,13 +950,16 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 
 	// 计算成本
 	tokens := &TokenUsage{
-		InputTokens:         data.InputTokens,
-		OutputTokens:        data.OutputTokens,
-		CacheCreationTokens: data.CacheCreationTokens,
-		CacheReadTokens:     data.CacheReadTokens,
+		InputTokens:           data.InputTokens,
+		OutputTokens:          data.OutputTokens,
+		CacheCreationTokens:   data.CacheCreationTokens,
+		CacheCreation5mTokens: data.CacheCreation5mTokens,
+		CacheCreation1hTokens: data.CacheCreation1hTokens,
+		CacheReadTokens:       data.CacheReadTokens,
 	}
 
-	inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens, data.Path)
+	pricing := ut.GetPricing(data.ModelName)
+	costBreakdown := CalculateCostV2(tokens, &pricing, nil, data.Path)
 
 	query := fmt.Sprintf(`UPDATE request_logs SET
 		end_time = ?,
@@ -939,10 +968,14 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 		input_tokens = ?,
 		output_tokens = ?,
 		cache_creation_tokens = ?,
+		cache_creation_5m_tokens = ?,
+		cache_creation_1h_tokens = ?,
 		cache_read_tokens = ?,
 		input_cost_usd = ?,
 		output_cost_usd = ?,
 		cache_creation_cost_usd = ?,
+		cache_creation_5m_cost_usd = ?,
+		cache_creation_1h_cost_usd = ?,
 		cache_read_cost_usd = ?,
 		total_cost_usd = ?,
 		status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
@@ -956,12 +989,16 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 		data.InputTokens,
 		data.OutputTokens,
 		data.CacheCreationTokens,
+		data.CacheCreation5mTokens,
+		data.CacheCreation1hTokens,
 		data.CacheReadTokens,
-		inputCost,
-		outputCost,
-		cacheCost,
-		readCost,
-		totalCost,
+		costBreakdown.InputCost,
+		costBreakdown.OutputCost,
+		costBreakdown.CacheCreationCost,
+		costBreakdown.CacheCreation5mCost,
+		costBreakdown.CacheCreation1hCost,
+		costBreakdown.CacheReadCost,
+		costBreakdown.TotalCost,
 		event.RequestID)
 
 	if err != nil {
@@ -978,10 +1015,10 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 		// 记录不存在，创建完整记录
 		insertQuery := `INSERT INTO request_logs (
 			request_id, start_time, end_time, duration_ms, model_name,
-			input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-			input_cost_usd, output_cost_usd, cache_creation_cost_usd, 
+			input_tokens, output_tokens, cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, cache_read_tokens,
+			input_cost_usd, output_cost_usd, cache_creation_cost_usd, cache_creation_5m_cost_usd, cache_creation_1h_cost_usd,
 			cache_read_cost_usd, total_cost_usd, status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')`
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')`
 
 		// 使用已计算的 startTime 和 durationMs
 		_, err = tx.ExecContext(ctx, insertQuery,
@@ -993,12 +1030,16 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 			data.InputTokens,
 			data.OutputTokens,
 			data.CacheCreationTokens,
+			data.CacheCreation5mTokens,
+			data.CacheCreation1hTokens,
 			data.CacheReadTokens,
-			inputCost,
-			outputCost,
-			cacheCost,
-			readCost,
-			totalCost)
+			costBreakdown.InputCost,
+			costBreakdown.OutputCost,
+			costBreakdown.CacheCreationCost,
+			costBreakdown.CacheCreation5mCost,
+			costBreakdown.CacheCreation1hCost,
+			costBreakdown.CacheReadCost,
+			costBreakdown.TotalCost)
 	}
 
 	return err

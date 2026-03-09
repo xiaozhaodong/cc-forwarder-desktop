@@ -19,7 +19,7 @@ import (
 // handleSSERequest handles Server-Sent Events streaming requests
 func (h *Handler) handleSSERequest(w http.ResponseWriter, r *http.Request, bodyBytes []byte) {
 	slog.InfoContext(r.Context(), "🚀 [SSE Handler] 开始处理SSE流式请求", "method", r.Method, "path", r.URL.Path, "bodySize", len(bodyBytes))
-	
+
 	// Set SSE headers immediately
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -48,27 +48,27 @@ func (h *Handler) handleSSERequest(w http.ResponseWriter, r *http.Request, bodyB
 	} else {
 		endpoints = h.endpointManager.GetHealthyEndpoints()
 	}
-	
+
 	if len(endpoints) == 0 {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		h.writeSSEError(w, "No healthy endpoints available", flusher)
 		return
 	}
 
-	slog.InfoContext(ctx, fmt.Sprintf("🌊 [SSE 流式传输] 开始建立连接 - 客户端: %s, 路径: %s", 
+	slog.InfoContext(ctx, fmt.Sprintf("🌊 [SSE 流式传输] 开始建立连接 - 客户端: %s, 路径: %s",
 		r.RemoteAddr, r.URL.Path))
-	slog.InfoContext(ctx, fmt.Sprintf("🎯 [SSE 流式传输] 选择端点: %s (共%d个可用)", 
+	slog.InfoContext(ctx, fmt.Sprintf("🎯 [SSE 流式传输] 选择端点: %s (共%d个可用)",
 		endpoints[0].Config.Name, len(endpoints)))
 
 	// Try endpoints in order until one succeeds
 	for i, ep := range endpoints {
 		// Update connection endpoint in monitoring
-		if mm, ok := h.retryHandler.monitoringMiddleware.(interface{
+		if mm, ok := h.retryHandler.monitoringMiddleware.(interface {
 			UpdateConnectionEndpoint(connID, endpoint string)
 		}); ok && connID != "" {
 			mm.UpdateConnectionEndpoint(connID, ep.Config.Name)
 		}
-		
+
 		err := h.streamFromEndpoint(ctx, w, r, ep, bodyBytes, flusher, connID)
 		if err == nil {
 			// Success
@@ -112,7 +112,7 @@ func (h *Handler) streamFromEndpoint(ctx context.Context, w http.ResponseWriter,
 	if err != nil {
 		return fmt.Errorf("failed to create transport: %w", err)
 	}
-	
+
 	// Optimize transport for streaming
 	httpTransport.DisableKeepAlives = false
 	httpTransport.MaxIdleConns = 10
@@ -133,7 +133,7 @@ func (h *Handler) streamFromEndpoint(ctx context.Context, w http.ResponseWriter,
 	// Set smaller buffer sizes for lower latency
 	httpTransport.WriteBufferSize = 4096 // Smaller write buffer
 	httpTransport.ReadBufferSize = 4096  // Smaller read buffer
-	
+
 	client := &http.Client{
 		Timeout:   0, // No timeout for streaming
 		Transport: httpTransport,
@@ -193,7 +193,7 @@ func (h *Handler) streamResponse(ctx context.Context, w http.ResponseWriter, res
 
 	lastActivity := time.Now()
 	lineCount := 0
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -237,7 +237,7 @@ func (h *Handler) streamResponse(ctx context.Context, w http.ResponseWriter, res
 			line := scanner.Text()
 			lastActivity = time.Now()
 			lineCount++
-			
+
 			// Write the line to the client immediately
 			_, err := fmt.Fprintf(w, "%s\n", line)
 			if err != nil {
@@ -265,13 +265,13 @@ func (h *Handler) writeSSEEvent(w http.ResponseWriter, eventType, data string, f
 	if eventType != "" {
 		fmt.Fprintf(w, "event: %s\n", eventType)
 	}
-	
+
 	// Handle multiline data
 	lines := strings.Split(data, "\n")
 	for _, line := range lines {
 		fmt.Fprintf(w, "data: %s\n", line)
 	}
-	
+
 	fmt.Fprintf(w, "\n")
 	flusher.Flush()
 }
@@ -283,7 +283,7 @@ func (h *Handler) writeSSEError(w http.ResponseWriter, message string, flusher h
 
 // streamResponseByBytes streams the HTTP response byte-by-byte for maximum real-time performance
 func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWriter, resp *http.Response, flusher http.Flusher, connID, endpointName string) error {
-	slog.InfoContext(ctx, fmt.Sprintf("🚀 [实时流传输] 开始字节级转发 - 状态码: %d, 内容类型: %s", 
+	slog.InfoContext(ctx, fmt.Sprintf("🚀 [实时流传输] 开始字节级转发 - 状态码: %d, 内容类型: %s",
 		resp.StatusCode, resp.Header.Get("Content-Type")))
 
 	// Copy response headers first, preserving original content type
@@ -308,7 +308,7 @@ func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWrit
 	} else {
 		slog.DebugContext(ctx, "✅ [流转发] 保持后端原始content-type", "contentType", originalContentType)
 	}
-	
+
 	// Ensure other SSE headers are set
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -328,7 +328,7 @@ func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWrit
 	// Initialize token parser for extracting usage statistics
 	tokenParser := NewTokenParserWithUsageTracker(connID, h.usageTracker)
 	slog.InfoContext(ctx, "🔧 [Token Parser] 初始化完成，准备解析Claude API的令牌使用统计", "endpoint", endpointName, "connID", connID)
-	
+
 	// Initialize debug accumulator for SSE events
 	var accumulatedEvents strings.Builder
 	eventCounter := 0
@@ -339,10 +339,10 @@ func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWrit
 	for {
 		select {
 		case <-ctx.Done():
-			slog.InfoContext(ctx, fmt.Sprintf("🚫 [实时流传输] 客户端断开连接 - 已传输: %d字节, 耗时: %v", 
+			slog.InfoContext(ctx, fmt.Sprintf("🚫 [实时流传输] 客户端断开连接 - 已传输: %d字节, 耗时: %v",
 				bytesTransferred, time.Since(lastActivity)))
 			return ctx.Err()
-			
+
 		case <-heartbeatTicker.C:
 			// Send heartbeat if no activity for configured max idle time
 			if time.Since(lastActivity) >= h.config.Streaming.MaxIdleTime {
@@ -370,14 +370,14 @@ func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWrit
 					if b == '\n' || len(lineBuffer) >= 512 {
 						// Parse the line for token usage before writing to client
 						line := string(lineBuffer)
-						
+
 						// Accumulate SSE events for debug logging
 						eventCounter++
 						accumulatedEvents.WriteString(line)
 						if len(line) > 0 && line[len(line)-1] != '\n' {
 							accumulatedEvents.WriteString("\n")
 						}
-						
+
 						// Debug logging: log accumulated SSE events every 10 events or when reaching 500 chars
 						accumulatedContent := accumulatedEvents.String()
 						if eventCounter%10 == 0 || len(accumulatedContent) > 500 {
@@ -385,20 +385,20 @@ func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWrit
 							if len(debugContent) > 500 {
 								debugContent = debugContent[:500]
 							}
-							slog.InfoContext(ctx, fmt.Sprintf("🐛 [调试SSE] 端点: %s, 事件数: %d, 总长度: %d字节, 累积SSE事件前500字符: %s", 
+							slog.InfoContext(ctx, fmt.Sprintf("🐛 [调试SSE] 端点: %s, 事件数: %d, 总长度: %d字节, 累积SSE事件前500字符: %s",
 								endpointName, eventCounter, len(accumulatedContent), debugContent))
-							
+
 							// Reset accumulator if it gets too large
 							if len(accumulatedContent) > 1000 {
 								accumulatedEvents.Reset()
 							}
 						}
-						
+
 						// Always try to parse each line, with detailed logging
 						slog.Debug(fmt.Sprintf("🔍 [Stream Parser] Processing line - line: %s, lineLength: %d", line, len(line)))
 						if tokenUsage := tokenParser.ParseSSELine(line); tokenUsage != nil {
 							// Record token usage if we have monitoring middleware
-							if mm, ok := h.retryHandler.monitoringMiddleware.(interface{
+							if mm, ok := h.retryHandler.monitoringMiddleware.(interface {
 								RecordTokenUsage(connID string, endpoint string, tokens *monitor.TokenUsage)
 							}); ok && connID != "" {
 								mm.RecordTokenUsage(connID, endpointName, tokenUsage)
@@ -408,17 +408,17 @@ func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWrit
 								slog.Debug(fmt.Sprintf("⚠️ [Token Parser] Monitoring middleware not available or no connID - connID: %s, hasMiddleware: %t", connID, h.retryHandler.monitoringMiddleware != nil))
 							}
 						}
-						
+
 						_, writeErr := w.Write(lineBuffer)
 						if writeErr != nil {
-						slog.ErrorContext(ctx, fmt.Sprintf("❌ [实时流传输] 写入客户端失败 - 错误: %s, 已传输: %d字节", 
-							writeErr.Error(), bytesTransferred))
+							slog.ErrorContext(ctx, fmt.Sprintf("❌ [实时流传输] 写入客户端失败 - 错误: %s, 已传输: %d字节",
+								writeErr.Error(), bytesTransferred))
 							return fmt.Errorf("error writing to client: %w", writeErr)
 						}
-						
+
 						// CRITICAL: Flush after every line for real-time streaming
 						flusher.Flush()
-						
+
 						// Reset the line buffer
 						lineBuffer = lineBuffer[:0]
 					}
@@ -426,7 +426,7 @@ func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWrit
 
 				// Log progress periodically
 				if bytesTransferred%10240 == 0 { // Every 10KB
-					slog.DebugContext(ctx, fmt.Sprintf("📈 [流传输进度] 已传输: %d字节, 缓冲区: %d字节", 
+					slog.DebugContext(ctx, fmt.Sprintf("📈 [流传输进度] 已传输: %d字节, 缓冲区: %d字节",
 						bytesTransferred, len(lineBuffer)))
 				}
 			}
@@ -437,7 +437,7 @@ func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWrit
 					// Timeout is expected due to our short deadline, continue
 					continue
 				}
-				
+
 				// Check for EOF (end of stream)
 				if err.Error() == "EOF" {
 					// Flush any remaining data in the line buffer and parse it
@@ -445,7 +445,7 @@ func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWrit
 						// Try to parse the final line for tokens
 						line := string(lineBuffer)
 						slog.Debug(fmt.Sprintf("🔍 [Stream Parser] Processing final line - line: %s, lineLength: %d", line, len(line)))
-						
+
 						// Add final line to accumulated events and log final summary
 						eventCounter++
 						accumulatedEvents.WriteString(line)
@@ -455,13 +455,13 @@ func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWrit
 							if len(debugContent) > 200 {
 								debugContent = debugContent[:200]
 							}
-							slog.InfoContext(ctx, fmt.Sprintf("🐛 [调试SSE最终] 端点: %s, 总事件数: %d, 总长度: %d字节, 最终累积SSE事件前200字符: %s", 
+							slog.InfoContext(ctx, fmt.Sprintf("🐛 [调试SSE最终] 端点: %s, 总事件数: %d, 总长度: %d字节, 最终累积SSE事件前200字符: %s",
 								endpointName, eventCounter, len(finalAccumulatedContent), debugContent))
 						}
-						
+
 						if tokenUsage := tokenParser.ParseSSELine(line); tokenUsage != nil {
 							// Record token usage if we have monitoring middleware
-							if mm, ok := h.retryHandler.monitoringMiddleware.(interface{
+							if mm, ok := h.retryHandler.monitoringMiddleware.(interface {
 								RecordTokenUsage(connID string, endpoint string, tokens *monitor.TokenUsage)
 							}); ok && connID != "" {
 								mm.RecordTokenUsage(connID, endpointName, tokenUsage)
@@ -469,17 +469,17 @@ func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWrit
 									endpointName, tokenUsage.InputTokens, tokenUsage.OutputTokens))
 							}
 						}
-						
+
 						w.Write(lineBuffer)
 						flusher.Flush()
 					}
-					
-					slog.InfoContext(ctx, fmt.Sprintf("✅ [实时流传输] 传输完成 - 总计: %d字节, 耗时: %v", 
+
+					slog.InfoContext(ctx, fmt.Sprintf("✅ [实时流传输] 传输完成 - 总计: %d字节, 耗时: %v",
 						bytesTransferred, time.Since(lastActivity)))
 					return nil
 				}
-				
-				slog.ErrorContext(ctx, fmt.Sprintf("❌ [实时流传输] 读取错误 - 错误: %s, 已传输: %d字节", 
+
+				slog.ErrorContext(ctx, fmt.Sprintf("❌ [实时流传输] 读取错误 - 错误: %s, 已传输: %d字节",
 					err.Error(), bytesTransferred))
 				return fmt.Errorf("error reading response: %w", err)
 			}
@@ -509,11 +509,11 @@ func (h *Handler) streamResponseSimple(ctx context.Context, w http.ResponseWrite
 	// Initialize token parser for background parsing
 	tokenParser := NewTokenParserWithUsageTracker(connID, h.usageTracker)
 	lineBuffer := make([]byte, 0, 4096)
-	
+
 	// Simple copy with line-by-line token parsing
 	buffer := make([]byte, 4096)
 	bytesTransferred := int64(0)
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -523,7 +523,7 @@ func (h *Handler) streamResponseSimple(ctx context.Context, w http.ResponseWrite
 			n, err := resp.Body.Read(buffer)
 			if n > 0 {
 				bytesTransferred += int64(n)
-				
+
 				// Write directly to client first (priority: fast forwarding)
 				_, writeErr := w.Write(buffer[:n])
 				if writeErr != nil {
@@ -531,7 +531,7 @@ func (h *Handler) streamResponseSimple(ctx context.Context, w http.ResponseWrite
 					return writeErr
 				}
 				flusher.Flush()
-				
+
 				// Background token parsing (non-blocking)
 				go func(data []byte) {
 					for _, b := range data {
@@ -539,7 +539,7 @@ func (h *Handler) streamResponseSimple(ctx context.Context, w http.ResponseWrite
 						if b == '\n' {
 							line := string(lineBuffer)
 							if tokenUsage := tokenParser.ParseSSELine(line); tokenUsage != nil {
-								if mm, ok := h.retryHandler.monitoringMiddleware.(interface{
+								if mm, ok := h.retryHandler.monitoringMiddleware.(interface {
 									RecordTokenUsage(connID string, endpoint string, tokens *monitor.TokenUsage)
 								}); ok && connID != "" {
 									mm.RecordTokenUsage(connID, endpointName, tokenUsage)
@@ -551,7 +551,7 @@ func (h *Handler) streamResponseSimple(ctx context.Context, w http.ResponseWrite
 					}
 				}(buffer[:n])
 			}
-			
+
 			if err != nil {
 				if err.Error() == "EOF" {
 					slog.InfoContext(ctx, "✅ [简单流转发] 转发完成", "bytesTransferred", bytesTransferred)
@@ -586,12 +586,12 @@ func (h *Handler) streamResponseUltraSimple(ctx context.Context, w http.Response
 	// Pure io.Copy
 	slog.InfoContext(ctx, "📡 [超简单流转发] 开始io.Copy")
 	_, err := io.Copy(w, resp.Body)
-	
+
 	if err != nil {
 		slog.ErrorContext(ctx, "❌ [超简单流转发] 复制失败", "error", err)
 		return err
 	}
-	
+
 	slog.InfoContext(ctx, "✅ [超简单流转发] 复制完成")
 	return nil
 }

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -85,6 +86,78 @@ func TestRequestLifecycleManager_Duration(t *testing.T) {
 
 	if duration > 100*time.Millisecond {
 		t.Error("Duration should not be more than 100ms")
+	}
+}
+
+func TestRequestLifecycleManager_RecordFirstToken_OnlyRecordsOnce(t *testing.T) {
+	tracker, err := tracking.NewUsageTracker(&tracking.Config{
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      10,
+		BatchSize:       5,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
+		HotPool: &tracking.HotPoolSettings{
+			Enabled:          true,
+			MaxAge:           30 * time.Minute,
+			MaxSize:          1000,
+			CleanupInterval:  time.Minute,
+			ArchiveOnCleanup: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create usage tracker: %v", err)
+	}
+	defer tracker.Close()
+
+	rlm := NewRequestLifecycleManager(tracker, nil, "req-first-response-once", nil)
+	rlm.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/responses", true)
+
+	time.Sleep(5 * time.Millisecond)
+	rlm.RecordFirstToken()
+	firstDuration := rlm.GetDuration().Milliseconds()
+	time.Sleep(5 * time.Millisecond)
+	rlm.RecordFirstToken()
+
+	details, _, err := tracker.QueryRequestDetailsWithHotPool(context.Background(), &tracking.QueryOptions{
+		StartDate: func() *time.Time {
+			tm := time.Now().Add(-time.Minute)
+			return &tm
+		}(),
+		EndDate: func() *time.Time {
+			tm := time.Now().Add(time.Minute)
+			return &tm
+		}(),
+		Limit:  10,
+		Offset: 0,
+	})
+	if err != nil {
+		t.Fatalf("failed to query request details: %v", err)
+	}
+	if len(details) == 0 {
+		t.Fatal("expected request details from hot pool")
+	}
+
+	var detail *tracking.RequestDetail
+	for i := range details {
+		if details[i].RequestID == "req-first-response-once" {
+			detail = &details[i]
+			break
+		}
+	}
+	if detail == nil {
+		t.Fatal("expected target request detail in hot pool results")
+	}
+	if detail.FirstTokenMs == nil {
+		t.Fatal("expected first token ms to be recorded")
+	}
+	if *detail.FirstTokenMs < 0 {
+		t.Fatalf("expected non-negative first token ms, got %d", *detail.FirstTokenMs)
+	}
+	if *detail.FirstTokenMs > firstDuration+2 {
+		t.Fatalf("expected first token ms to keep the first recorded value, got %d > %d", *detail.FirstTokenMs, firstDuration+2)
 	}
 }
 

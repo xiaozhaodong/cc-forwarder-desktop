@@ -15,13 +15,13 @@ import (
 
 // FileRotator manages log file rotation and archival
 type FileRotator struct {
-	filename        string // Base filename for the log
-	maxSize         int64  // Maximum size in bytes before rotation
-	maxFiles        int    // Maximum number of rotated files to keep
-	compress        bool   // Whether to compress rotated files
-	currentFile     *os.File
-	currentSize     int64
-	mutex           sync.Mutex
+	filename    string // Base filename for the log
+	maxSize     int64  // Maximum size in bytes before rotation
+	maxFiles    int    // Maximum number of rotated files to keep
+	compress    bool   // Whether to compress rotated files
+	currentFile *os.File
+	currentSize int64
+	mutex       sync.Mutex
 }
 
 // NewFileRotator creates a new file rotator
@@ -120,7 +120,7 @@ func (fr *FileRotator) rotate() error {
 
 	// Generate timestamp for rotated file
 	timestamp := time.Now().Format("2006-01-02-15-04-05")
-	
+
 	// Move current file to rotated name
 	rotatedName := fr.filename + "." + timestamp
 	if err := os.Rename(fr.filename, rotatedName); err != nil {
@@ -206,10 +206,10 @@ func (fr *FileRotator) cleanupOldFiles() {
 // ParseSize parses size string like "100MB", "1GB" into bytes
 func ParseSize(sizeStr string) (int64, error) {
 	sizeStr = strings.TrimSpace(strings.ToUpper(sizeStr))
-	
+
 	var multiplier int64 = 1
 	var numStr string
-	
+
 	if strings.HasSuffix(sizeStr, "KB") {
 		multiplier = 1024
 		numStr = strings.TrimSuffix(sizeStr, "KB")
@@ -226,11 +226,11 @@ func ParseSize(sizeStr string) (int64, error) {
 		// No suffix, assume bytes
 		numStr = sizeStr
 	}
-	
+
 	num, err := strconv.ParseInt(numStr, 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("invalid size format: %s", sizeStr)
 	}
-	
+
 	return num * multiplier, nil
 }

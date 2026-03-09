@@ -80,23 +80,23 @@ func main() {
 		}
 
 		record := &store.EndpointRecord{
-			Channel:             channel,
-			Name:                ep.Name,
-			URL:                 ep.URL,
-			Token:               token,
-			ApiKey:              apiKey,
-			Headers:             ep.Headers,
-			Priority:            priority,
-			FailoverEnabled:     failoverEnabled,
-			CooldownSeconds:     cooldownSeconds,
-			TimeoutSeconds:      timeoutSeconds,
-			SupportsCountTokens: ep.SupportsCountTokens,
-			CostMultiplier:      1.0,
-			InputCostMultiplier: 1.0,
-			OutputCostMultiplier: 1.0,
+			Channel:                     channel,
+			Name:                        ep.Name,
+			URL:                         ep.URL,
+			Token:                       token,
+			ApiKey:                      apiKey,
+			Headers:                     ep.Headers,
+			Priority:                    priority,
+			FailoverEnabled:             failoverEnabled,
+			CooldownSeconds:             cooldownSeconds,
+			TimeoutSeconds:              timeoutSeconds,
+			SupportsCountTokens:         ep.SupportsCountTokens,
+			CostMultiplier:              1.0,
+			InputCostMultiplier:         1.0,
+			OutputCostMultiplier:        1.0,
 			CacheCreationCostMultiplier: 1.0,
-			CacheReadCostMultiplier: 1.0,
-			Enabled:             false, // 默认不激活
+			CacheReadCostMultiplier:     1.0,
+			Enabled:                     false, // 默认不激活
 		}
 
 		records = append(records, record)

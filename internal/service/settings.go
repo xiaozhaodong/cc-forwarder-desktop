@@ -500,4 +500,3 @@ func (s *SettingsService) getDefaultValue(category, key string) string {
 	}
 	return ""
 }
-

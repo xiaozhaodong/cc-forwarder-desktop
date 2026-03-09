@@ -297,6 +297,7 @@ export const fetchRequests = async (params = {}) => {
     endpoint: request.endpoint_name || request.endpoint || request.upstream_name || request.upstreamName || 'unknown',
     group: request.group_name || request.group || request.upstream_source_name || request.upstreamSourceName || 'default',
     duration: request.duration_ms || request.duration || 0,
+    firstTokenMs: request.first_token_ms ?? request.firstTokenMs ?? null,
     inputTokens: request.input_tokens || request.inputTokens || 0,
     outputTokens: request.output_tokens || request.outputTokens || 0,
     cacheCreationTokens: request.cache_creation_tokens || request.cacheCreationTokens || 0,

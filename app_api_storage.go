@@ -44,7 +44,7 @@ type EndpointRecordInfo struct {
 	UpdatedAt                   string            `json:"updated_at"`
 	// 运行时健康状态
 	Healthy        bool    `json:"healthy"`
-	LastCheck      string  `json:"last_check"`       // 最后健康检查时间
+	LastCheck      string  `json:"last_check"` // 最后健康检查时间
 	ResponseTimeMs float64 `json:"response_time_ms"`
 	// 冷却状态（请求级故障转移）
 	InCooldown     bool   `json:"in_cooldown"`     // 是否处于冷却中

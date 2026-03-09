@@ -62,11 +62,11 @@ func TestConsecutiveFailureCounter(t *testing.T) {
 	// Multiple failures should increment counter
 	for i := 1; i <= 5; i++ {
 		manager.updateEndpointStatus(endpoint, false, 100*time.Millisecond)
-		
+
 		if endpoint.IsHealthy() {
 			t.Errorf("Endpoint should be unhealthy after failure %d", i)
 		}
-		
+
 		if endpoint.Status.ConsecutiveFails != i {
 			t.Errorf("Expected ConsecutiveFails to be %d, got %d", i, endpoint.Status.ConsecutiveFails)
 		}

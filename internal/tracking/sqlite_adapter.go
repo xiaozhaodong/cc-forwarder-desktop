@@ -189,6 +189,12 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 	}{
 		{
 			table:       "request_logs",
+			checkColumn: "first_token_ms",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN first_token_ms INTEGER",
+			description: "首个可见文本输出耗时字段",
+		},
+		{
+			table:       "request_logs",
 			checkColumn: "cache_creation_5m_tokens",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN cache_creation_5m_tokens INTEGER DEFAULT 0",
 			description: "5分钟缓存创建tokens字段",

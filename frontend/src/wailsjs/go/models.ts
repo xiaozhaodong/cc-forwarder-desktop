@@ -830,6 +830,7 @@ export namespace main {
 	    cache_creation_1h_tokens: number;
 	    cache_read_tokens: number;
 	    response_time: number;
+	    first_token_ms?: number;
 	    is_streaming: boolean;
 	    cost: number;
 	
@@ -862,6 +863,7 @@ export namespace main {
 	        this.cache_creation_1h_tokens = source["cache_creation_1h_tokens"];
 	        this.cache_read_tokens = source["cache_read_tokens"];
 	        this.response_time = source["response_time"];
+	        this.first_token_ms = source["first_token_ms"];
 	        this.is_streaming = source["is_streaming"];
 	        this.cost = source["cost"];
 	    }

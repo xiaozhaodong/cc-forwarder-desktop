@@ -288,7 +288,7 @@ func TestMetrics_SuspendedRequestHistory(t *testing.T) {
 		connID := m.RecordRequest(fmt.Sprintf("endpoint-%d", i), "192.168.1.1", "agent", "POST", "/api")
 		m.RecordRequestSuspended(connID)
 	}
-	
+
 	// Resume some and timeout others
 	for i := 0; i < 3; i++ {
 		connID := m.RecordRequest(fmt.Sprintf("endpoint-resume-%d", i), "192.168.1.1", "agent", "POST", "/api")
@@ -296,11 +296,11 @@ func TestMetrics_SuspendedRequestHistory(t *testing.T) {
 		time.Sleep(1 * time.Millisecond) // Small delay for suspended time
 		m.RecordRequestResumed(connID)
 	}
-	
+
 	for i := 0; i < 2; i++ {
 		connID := m.RecordRequest(fmt.Sprintf("endpoint-timeout-%d", i), "192.168.1.1", "agent", "POST", "/api")
 		m.RecordRequestSuspended(connID)
-		time.Sleep(1 * time.Millisecond) // Small delay for suspended time  
+		time.Sleep(1 * time.Millisecond) // Small delay for suspended time
 		m.RecordRequestSuspendTimeout(connID)
 	}
 
@@ -322,7 +322,7 @@ func TestMetrics_SuspendedRequestHistory(t *testing.T) {
 		t.Error("Expected SuccessfulSuspendedRequests to be greater than 0")
 	}
 	if latestPoint.TimeoutSuspendedRequests == 0 {
-		t.Error("Expected TimeoutSuspendedRequests to be greater than 0") 
+		t.Error("Expected TimeoutSuspendedRequests to be greater than 0")
 	}
 }
 

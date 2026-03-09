@@ -120,9 +120,9 @@ func (s *ModelPricingService) GetDefaultPricing(ctx context.Context) *store.Mode
 			ModelName:            "_default",
 			InputPrice:           3.0,
 			OutputPrice:          15.0,
-			CacheCreationPrice5m: 3.75,  // input * 1.25
-			CacheCreationPrice1h: 6.0,   // input * 2.0
-			CacheReadPrice:       0.30,  // input * 0.1
+			CacheCreationPrice5m: 3.75, // input * 1.25
+			CacheCreationPrice1h: 6.0,  // input * 2.0
+			CacheReadPrice:       0.30, // input * 0.1
 			IsDefault:            true,
 		}
 	}
@@ -232,8 +232,8 @@ func (s *ModelPricingService) ImportFromYAML(ctx context.Context, modelPricing m
 			ModelName:            modelName,
 			InputPrice:           pricing.Input,
 			OutputPrice:          pricing.Output,
-			CacheCreationPrice5m: pricing.CacheCreation,        // YAML 中的 CacheCreation 默认为 5m
-			CacheCreationPrice1h: pricing.Input * 2.0,          // 1h 价格自动计算
+			CacheCreationPrice5m: pricing.CacheCreation, // YAML 中的 CacheCreation 默认为 5m
+			CacheCreationPrice1h: pricing.Input * 2.0,   // 1h 价格自动计算
 			CacheReadPrice:       pricing.CacheRead,
 			IsDefault:            false,
 		}

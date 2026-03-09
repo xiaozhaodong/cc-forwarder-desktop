@@ -65,11 +65,54 @@ func NewStreamingHandler(
 	}
 }
 
-// noOpFlusher 是一个不执行实际flush操作的flusher实现
-type noOpFlusher struct{}
+type trackedStreamingResponseWriter struct {
+	http.ResponseWriter
+	committed bool
+}
 
-func (f *noOpFlusher) Flush() {
-	// 不执行任何操作，避免panic但保持流式处理逻辑
+func newTrackedStreamingResponseWriter(w http.ResponseWriter) *trackedStreamingResponseWriter {
+	return &trackedStreamingResponseWriter{ResponseWriter: w}
+}
+
+func (w *trackedStreamingResponseWriter) WriteHeader(statusCode int) {
+	w.committed = true
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *trackedStreamingResponseWriter) Write(data []byte) (int, error) {
+	if len(data) > 0 {
+		w.committed = true
+	}
+	return w.ResponseWriter.Write(data)
+}
+
+func (w *trackedStreamingResponseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *trackedStreamingResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *trackedStreamingResponseWriter) HasCommitted() bool {
+	return w != nil && w.committed
+}
+
+func setStreamingHeaderIfPossible(w http.ResponseWriter, key, value string) {
+	if tracked, ok := w.(*trackedStreamingResponseWriter); ok && tracked.HasCommitted() {
+		return
+	}
+	w.Header().Set(key, value)
+}
+
+func writeStreamingTerminalError(w http.ResponseWriter, flusher http.Flusher, statusCode int, message string) {
+	if tracked, ok := w.(*trackedStreamingResponseWriter); !ok || !tracked.HasCommitted() {
+		w.WriteHeader(statusCode)
+	}
+	fmt.Fprintf(w, "data: error: %s\n\n", message)
+	flusher.Flush()
 }
 
 // sendAnthropicRetryableError 发送 Anthropic API 标准格式的可重试错误事件
@@ -159,20 +202,19 @@ func (sh *StreamingHandler) HandleStreamingRequest(ctx context.Context, w http.R
 // handleStreamingV2 流式处理（带错误恢复）
 func (sh *StreamingHandler) handleStreamingV2(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, lifecycleManager RequestLifecycleManager) {
 	connID := lifecycleManager.GetRequestID()
+	trackedWriter := newTrackedStreamingResponseWriter(w)
 
 	// 设置流式响应头
-	sh.setStreamingHeaders(w)
+	sh.setStreamingHeaders(trackedWriter)
 
-	// 获取Flusher - 如果不支持，使用无flush模式继续流式处理
-	flusher, ok := w.(http.Flusher)
-	if !ok {
+	// 包装后的 writer 会在底层不支持时自动退化为 no-op flush。
+	if _, ok := w.(http.Flusher); !ok {
 		slog.Warn(fmt.Sprintf("🌊 [Flusher不支持] [%s] 将使用无flush模式的流式处理", connID))
-		// 创建一个mock flusher，不执行实际flush操作
-		flusher = &noOpFlusher{}
 	}
+	flusher := http.Flusher(trackedWriter)
 
 	// 继续执行流式请求处理
-	sh.executeStreamingWithRetry(ctx, w, r, bodyBytes, lifecycleManager, flusher)
+	sh.executeStreamingWithRetry(ctx, trackedWriter, r, bodyBytes, lifecycleManager, flusher)
 }
 
 func (sh *StreamingHandler) shouldEnableTailDrain(r *http.Request) bool {
@@ -354,6 +396,7 @@ restartLoop:
 					// 创建Token解析器和流式处理器
 					tokenParser := sh.tokenParserFactory.NewTokenParserWithUsageTracker(connID, sh.usageTracker)
 					processor := sh.streamProcessorFactory.NewStreamProcessor(tokenParser, sh.usageTracker, w, flusher, connID, ep.Config.Name)
+					processor.SetFirstTokenRecorder(lifecycleManager.RecordFirstToken)
 					if tailDrainEnabled {
 						processor.EnableDownstreamTailDrain(sh.tailDrainTimeout(), upstreamCancel)
 					}
@@ -644,7 +687,7 @@ restartLoop:
 
 						// 添加 Retry-After 头
 						if retryAfter > 0 {
-							w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+							setStreamingHeaderIfPossible(w, "Retry-After", strconv.Itoa(retryAfter))
 						}
 
 						// 标记请求失败（使用真实状态码）
@@ -656,9 +699,7 @@ restartLoop:
 							connID, ep.Config.Name, decision.FinalStatus, clientStatusCode, decision.Reason))
 
 						// 🔧 [SSE 格式修复] 使用 SSE 格式返回错误，而不是 http.Error（会覆盖 Content-Type）
-						w.WriteHeader(clientStatusCode)
-						fmt.Fprintf(w, "data: error: %s\n\n", decision.Reason)
-						flusher.Flush()
+						writeStreamingTerminalError(w, flusher, clientStatusCode, decision.Reason)
 						return
 					}
 				}
@@ -738,8 +779,7 @@ restartLoop:
 							}
 						}
 						lifecycleManager.FailRequest(failureReason, lastDecision.Reason, statusCode)
-						fmt.Fprintf(w, "data: error: %s\n\n", lastDecision.Reason)
-						flusher.Flush()
+						writeStreamingTerminalError(w, flusher, statusCode, lastDecision.Reason)
 						return
 					}
 				}
@@ -863,14 +903,12 @@ restartLoop:
 		*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", statusCode))
 
 		lifecycleManager.FailRequest("endpoint_exhausted", "All endpoints failed, last error: "+fmt.Sprintf("%v", lastErr), statusCode)
-		fmt.Fprintf(w, "data: error: All endpoints failed, last error: %v\n\n", lastErr)
-		flusher.Flush()
+		writeStreamingTerminalError(w, flusher, statusCode, fmt.Sprintf("All endpoints failed, last error: %v", lastErr))
 		return
 	}
 
 	connID := lifecycleManager.GetRequestID()
 	slog.Error(fmt.Sprintf("❌ [流式重启超限] [%s] 连续重启超过上限 %d 次，终止处理", connID, maxStreamingExecutionRestarts))
 	lifecycleManager.FailRequest("streaming_restart_limit_exceeded", "streaming retry restart limit exceeded", http.StatusServiceUnavailable)
-	fmt.Fprintf(w, "data: error: streaming retry restart limit exceeded\n\n")
-	flusher.Flush()
+	writeStreamingTerminalError(w, flusher, http.StatusServiceUnavailable, "streaming retry restart limit exceeded")
 }

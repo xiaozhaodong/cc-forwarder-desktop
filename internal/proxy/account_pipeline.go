@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	crand "crypto/rand"
@@ -115,8 +116,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			continue
 		}
 
-		if h.isLocalNoAvailableProviders503Response(resp) {
-			detail := readAndRestoreResponseBody(resp, 1024)
+		if matched, detail := h.isLocalNoAvailableProviders503Response(resp); matched {
 			if detail == "" {
 				detail = h.accountLocalNoAvailableProvidersMarker()
 			}
@@ -300,16 +300,16 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	return resp, release, nil
 }
 
-func (h *Handler) isLocalNoAvailableProviders503Response(resp *http.Response) bool {
+func (h *Handler) isLocalNoAvailableProviders503Response(resp *http.Response) (bool, string) {
 	if resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
-		return false
+		return false, ""
 	}
 	bodyText := readAndRestoreResponseBody(resp, 1024)
 	lower := strings.ToLower(strings.TrimSpace(bodyText))
 	if lower == "" {
-		return false
+		return false, bodyText
 	}
-	return strings.Contains(lower, strings.ToLower(h.accountLocalNoAvailableProvidersMarker()))
+	return strings.Contains(lower, strings.ToLower(h.accountLocalNoAvailableProvidersMarker())), bodyText
 }
 
 func (h *Handler) accountLocalNoAvailableProvidersMarker() string {
@@ -371,14 +371,30 @@ func readAndRestoreResponseBody(resp *http.Response, limit int64) string {
 	if resp == nil || resp.Body == nil {
 		return ""
 	}
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	resp.Body = io.NopCloser(bytes.NewReader(body))
-	visibleBody := body
-	if limit > 0 && int64(len(visibleBody)) > limit {
-		visibleBody = visibleBody[:limit]
+
+	peekSize := int(limit)
+	if peekSize <= 0 {
+		peekSize = 1024
 	}
+	readerSize := peekSize
+	if readerSize < 256 {
+		readerSize = 256
+	}
+
+	originalBody := resp.Body
+	bufferedReader := bufio.NewReaderSize(originalBody, readerSize)
+	visibleBody, _ := bufferedReader.Peek(peekSize)
+	resp.Body = &bufferedBodyReadCloser{
+		Reader: bufferedReader,
+		Closer: originalBody,
+	}
+
 	return strings.TrimSpace(string(visibleBody))
+}
+
+type bufferedBodyReadCloser struct {
+	io.Reader
+	io.Closer
 }
 
 func (h *Handler) getAccountHTTPClient(isSSE bool) (*http.Client, error) {
@@ -505,6 +521,7 @@ func (h *Handler) processAccountStreamingResponse(ctx context.Context, w http.Re
 
 	tokenParser := NewTokenParserWithUsageTracker(lifecycleManager.GetRequestID(), h.usageTracker)
 	processor := NewStreamProcessor(tokenParser, h.usageTracker, w, flusher, lifecycleManager.GetRequestID(), endpointName)
+	processor.SetFirstTokenRecorder(lifecycleManager.RecordFirstToken)
 	if upstreamCancel != nil {
 		processor.EnableDownstreamTailDrain(h.accountStreamTailDrainTimeout(), upstreamCancel)
 	}

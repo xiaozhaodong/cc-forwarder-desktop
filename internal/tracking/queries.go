@@ -21,7 +21,7 @@ const (
 const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(client_ip, '') as client_ip,
 	COALESCE(user_agent, '') as user_agent,
-	method, path, start_time, end_time, duration_ms,
+	method, path, start_time, end_time, duration_ms, first_token_ms,
 	COALESCE(channel, '') as channel,
 	COALESCE(endpoint_name, '') as endpoint_name,
 	COALESCE(group_name, '') as group_name,
@@ -168,7 +168,7 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 		err := rows.Scan(
 			&detail.ID, &detail.RequestID,
 			&detail.ClientIP, &detail.UserAgent, &detail.Method, &detail.Path,
-			&detail.StartTime, &detail.EndTime, &detail.DurationMs,
+			&detail.StartTime, &detail.EndTime, &detail.DurationMs, &detail.FirstTokenMs,
 			&detail.Channel, &detail.EndpointName, &detail.GroupName,
 			&detail.UpstreamType, &detail.UpstreamSourceName, &detail.UpstreamName, &detail.UpstreamID,
 			&detail.ModelName, &detail.IsStreaming,
@@ -308,9 +308,10 @@ type RequestDetail struct {
 	Method    string `json:"method"`
 	Path      string `json:"path"`
 
-	StartTime  time.Time  `json:"start_time"`
-	EndTime    *time.Time `json:"end_time"`
-	DurationMs *int64     `json:"duration_ms"`
+	StartTime    time.Time  `json:"start_time"`
+	EndTime      *time.Time `json:"end_time"`
+	DurationMs   *int64     `json:"duration_ms"`
+	FirstTokenMs *int64     `json:"first_token_ms"`
 
 	Channel            string `json:"channel"` // 渠道标签
 	EndpointName       string `json:"endpoint_name"`
@@ -392,6 +393,58 @@ func (stats *AggregatedRequestStats) add(other AggregatedRequestStats) {
 	stats.DurationCount += other.DurationCount
 }
 
+func (stats *AggregatedRequestStats) subtract(other AggregatedRequestStats) {
+	stats.TotalRequests -= other.TotalRequests
+	stats.SuccessRequests -= other.SuccessRequests
+	stats.FailedRequests -= other.FailedRequests
+	stats.TotalTokens -= other.TotalTokens
+	stats.TotalCostUSD -= other.TotalCostUSD
+	stats.TotalDurationMs -= other.TotalDurationMs
+	stats.DurationCount -= other.DurationCount
+
+	if stats.TotalRequests < 0 {
+		stats.TotalRequests = 0
+	}
+	if stats.SuccessRequests < 0 {
+		stats.SuccessRequests = 0
+	}
+	if stats.FailedRequests < 0 {
+		stats.FailedRequests = 0
+	}
+	if stats.TotalTokens < 0 {
+		stats.TotalTokens = 0
+	}
+	if stats.TotalCostUSD < 0 {
+		stats.TotalCostUSD = 0
+	}
+	if stats.TotalDurationMs < 0 {
+		stats.TotalDurationMs = 0
+	}
+	if stats.DurationCount < 0 {
+		stats.DurationCount = 0
+	}
+}
+
+func aggregatedStatsFromRequestDetails(details []RequestDetail) AggregatedRequestStats {
+	var stats AggregatedRequestStats
+	for _, req := range details {
+		stats.TotalRequests++
+		switch req.Status {
+		case "completed", "processing":
+			stats.SuccessRequests++
+		case "failed", "error", "auth_error", "rate_limited", "server_error", "network_error", "stream_error", "timeout":
+			stats.FailedRequests++
+		}
+		stats.TotalTokens += req.InputTokens + req.OutputTokens + req.CacheCreationTokens + req.CacheReadTokens
+		stats.TotalCostUSD += req.TotalCostUSD
+		if req.DurationMs != nil && *req.DurationMs > 0 {
+			stats.TotalDurationMs += *req.DurationMs
+			stats.DurationCount++
+		}
+	}
+	return stats
+}
+
 func (ut *UsageTracker) queryAggregatedRequestStatsBySource(ctx context.Context, opts *QueryOptions, source requestQuerySource) (*AggregatedRequestStats, error) {
 	query := aggregatedRequestStatsBaseQueryForSource(source)
 	args := make([]interface{}, 0, 16)
@@ -409,6 +462,32 @@ func (ut *UsageTracker) queryAggregatedRequestStatsBySource(ctx context.Context,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query aggregated request stats: %w", err)
+	}
+	return &stats, nil
+}
+
+func (ut *UsageTracker) queryAggregatedRequestStatsBySourceAndRequestIDs(ctx context.Context, opts *QueryOptions, source requestQuerySource, requestIDs []string) (*AggregatedRequestStats, error) {
+	if len(requestIDs) == 0 {
+		return &AggregatedRequestStats{}, nil
+	}
+
+	query := aggregatedRequestStatsBaseQueryForSource(source)
+	args := make([]interface{}, 0, 16+len(requestIDs))
+	query, args = appendRequestQueryFilters(query, args, opts, source)
+	query, args = appendRequestIDInFilter(query, args, requestIDs)
+
+	var stats AggregatedRequestStats
+	err := ut.readDB.QueryRowContext(ctx, query, args...).Scan(
+		&stats.TotalRequests,
+		&stats.SuccessRequests,
+		&stats.FailedRequests,
+		&stats.TotalTokens,
+		&stats.TotalCostUSD,
+		&stats.TotalDurationMs,
+		&stats.DurationCount,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query aggregated request stats by request IDs: %w", err)
 	}
 	return &stats, nil
 }
@@ -440,21 +519,40 @@ func (ut *UsageTracker) QueryAggregatedRequestStatsWithHotPool(ctx context.Conte
 		stats.add(*sourceStats)
 	}
 
-	for _, req := range ut.getFilteredHotPoolRequests(opts) {
-		stats.TotalRequests++
-		switch req.Status {
-		case "completed", "processing":
-			stats.SuccessRequests++
-		case "failed", "error", "auth_error", "rate_limited", "server_error", "network_error", "stream_error", "timeout":
-			stats.FailedRequests++
-		}
-		stats.TotalTokens += req.InputTokens + req.OutputTokens + req.CacheCreationTokens + req.CacheReadTokens
-		stats.TotalCostUSD += req.TotalCostUSD
-		if req.DurationMs != nil && *req.DurationMs > 0 {
-			stats.TotalDurationMs += *req.DurationMs
-			stats.DurationCount++
-		}
+	hotPoolRequests := ut.getFilteredHotPoolRequests(opts)
+	if len(hotPoolRequests) == 0 {
+		return &stats, nil
 	}
+
+	hotPoolIDs := make(map[string]struct{}, len(hotPoolRequests))
+	uniqueHotPoolRequests := make([]RequestDetail, 0, len(hotPoolRequests))
+	hotPoolRequestIDs := make([]string, 0, len(hotPoolRequests))
+	for _, req := range hotPoolRequests {
+		if _, exists := hotPoolIDs[req.RequestID]; exists {
+			continue
+		}
+		hotPoolIDs[req.RequestID] = struct{}{}
+		uniqueHotPoolRequests = append(uniqueHotPoolRequests, req)
+		hotPoolRequestIDs = append(hotPoolRequestIDs, req.RequestID)
+	}
+
+	switch source {
+	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
+		overlapStats, err := ut.queryAggregatedRequestStatsBySourceAndRequestIDs(ctx, opts, source, hotPoolRequestIDs)
+		if err != nil {
+			return nil, err
+		}
+		stats.subtract(*overlapStats)
+	default:
+		overlapStats, err := ut.queryAggregatedRequestStatsBySourceAndRequestIDs(ctx, opts, requestQuerySourceRaw, hotPoolRequestIDs)
+		if err != nil {
+			return nil, err
+		}
+		stats.subtract(*overlapStats)
+	}
+
+	hotPoolStats := aggregatedStatsFromRequestDetails(uniqueHotPoolRequests)
+	stats.add(hotPoolStats)
 
 	return &stats, nil
 }
@@ -498,6 +596,9 @@ func (ut *UsageTracker) GetWriteDB() *sql.DB {
 func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOptions) ([]UsageSummary, error) {
 	if ut.readDB == nil {
 		return nil, fmt.Errorf("read database not initialized")
+	}
+	if opts == nil {
+		opts = &QueryOptions{}
 	}
 
 	query := `SELECT date, model_name, endpoint_name, 

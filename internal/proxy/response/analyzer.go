@@ -121,16 +121,16 @@ func (a *TokenAnalyzer) AnalyzeResponseForTokens(ctx context.Context, responseBo
 func (a *TokenAnalyzer) ParseSSETokens(ctx context.Context, responseBody, endpointName, connID string) {
 	tokenParser := a.tokenParserProvider.NewTokenParserWithUsageTracker(connID, a.usageTracker)
 	lines := strings.Split(responseBody, "\n")
-	
+
 	foundTokenUsage := false
 	hasErrorEvent := false
-	
+
 	// Check if response contains error events first
 	if strings.Contains(responseBody, "event:error") || strings.Contains(responseBody, "event: error") {
 		hasErrorEvent = true
 		slog.InfoContext(ctx, fmt.Sprintf("❌ [SSE错误检测] [%s] 端点: %s - 检测到error事件", connID, endpointName))
 	}
-	
+
 	for _, line := range lines {
 		if tokenUsage := tokenParser.ParseSSELine(line); tokenUsage != nil {
 			foundTokenUsage = true
@@ -139,32 +139,32 @@ func (a *TokenAnalyzer) ParseSSETokens(ctx context.Context, responseBody, endpoi
 			if tp, ok := tokenParser.(interface{ GetModelName() string }); ok {
 				modelName = tp.GetModelName()
 			}
-			
+
 			// 详细显示token使用信息
-			slog.InfoContext(ctx, fmt.Sprintf("✅ [SSE解析成功] [%s] 端点: %s - 模型: %s, 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d", 
-				connID, endpointName, modelName, 
-				tokenUsage.InputTokens, tokenUsage.OutputTokens, 
+			slog.InfoContext(ctx, fmt.Sprintf("✅ [SSE解析成功] [%s] 端点: %s - 模型: %s, 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d",
+				connID, endpointName, modelName,
+				tokenUsage.InputTokens, tokenUsage.OutputTokens,
 				tokenUsage.CacheCreationTokens, tokenUsage.CacheReadTokens))
-			
+
 			// Record token usage in monitoring middleware if available
-			if mm, ok := a.monitoringMiddleware.(interface{
+			if mm, ok := a.monitoringMiddleware.(interface {
 				RecordTokenUsage(connID string, endpoint string, tokens *monitor.TokenUsage)
 			}); ok && connID != "" {
 				mm.RecordTokenUsage(connID, endpointName, tokenUsage)
 			}
-			
+
 			// ⚠️ 重要：TokenParser现在只负责解析，不直接记录到数据库
 			// 数据库记录由上层AnalyzeResponseForTokensWithLifecycle统一处理
 			return
 		}
 	}
-	
+
 	// If we found an error event, the parseErrorEvent method would have already handled it
 	if hasErrorEvent {
 		slog.InfoContext(ctx, fmt.Sprintf("❌ [SSE错误处理] [%s] 端点: %s - 错误事件已处理", connID, endpointName))
 		return
 	}
-	
+
 	if !foundTokenUsage {
 		slog.InfoContext(ctx, fmt.Sprintf("🚫 [SSE解析] [%s] 端点: %s - 未找到token usage信息", connID, endpointName))
 
@@ -177,9 +177,9 @@ func (a *TokenAnalyzer) ParseSSETokens(ctx context.Context, responseBody, endpoi
 func (a *TokenAnalyzer) ParseJSONTokens(ctx context.Context, responseBody, endpointName, connID string) {
 	// Simulate SSE parsing for a single JSON response
 	tokenParser := a.tokenParserProvider.NewTokenParserWithUsageTracker(connID, a.usageTracker)
-	
+
 	slog.InfoContext(ctx, fmt.Sprintf("🔍 [JSON解析] [%s] 尝试解析JSON响应", connID))
-	
+
 	// 🆕 First extract model information directly from JSON
 	var jsonResp map[string]interface{}
 	if err := json.Unmarshal([]byte(responseBody), &jsonResp); err == nil {
@@ -188,19 +188,19 @@ func (a *TokenAnalyzer) ParseJSONTokens(ctx context.Context, responseBody, endpo
 			slog.InfoContext(ctx, "📋 [JSON解析] 提取到模型信息", "model", model)
 		}
 	}
-	
+
 	// Wrap JSON as SSE message_delta event
 	tokenParser.ParseSSELine("event: message_delta")
 	tokenParser.ParseSSELine("data: " + responseBody)
 	if tokenUsage := tokenParser.ParseSSELine(""); tokenUsage != nil {
 		// Record token usage
-		if mm, ok := a.monitoringMiddleware.(interface{
+		if mm, ok := a.monitoringMiddleware.(interface {
 			RecordTokenUsage(connID string, endpoint string, tokens *monitor.TokenUsage)
 		}); ok && connID != "" {
 			mm.RecordTokenUsage(connID, endpointName, tokenUsage)
-			slog.InfoContext(ctx, "✅ [JSON解析] 成功记录token使用", 
-				"endpoint", endpointName, 
-				"inputTokens", tokenUsage.InputTokens, 
+			slog.InfoContext(ctx, "✅ [JSON解析] 成功记录token使用",
+				"endpoint", endpointName,
+				"inputTokens", tokenUsage.InputTokens,
 				"outputTokens", tokenUsage.OutputTokens,
 				"cacheCreation", tokenUsage.CacheCreationTokens,
 				"cacheRead", tokenUsage.CacheReadTokens)
@@ -238,7 +238,7 @@ func (a *TokenAnalyzer) AnalyzeResponseForTokensWithLifecycle(ctx context.Contex
 		tokenUsage, modelName := a.parseJSONForTokens(responseBody, connID, endpointName)
 		if tokenUsage != nil {
 			// Record token usage to monitoring middleware
-			if mm, ok := a.monitoringMiddleware.(interface{
+			if mm, ok := a.monitoringMiddleware.(interface {
 				RecordTokenUsage(connID string, endpoint string, tokens *monitor.TokenUsage)
 			}); ok && connID != "" {
 				// 转换为monitor.TokenUsage格式

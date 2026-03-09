@@ -941,6 +941,7 @@ export const getRequests = async (params = {}) => {
     cache_read_tokens: r.cache_read_tokens,
     duration_ms: r.response_time,
     duration: r.response_time,
+    first_token_ms: r.first_token_ms ?? null,
     is_streaming: r.is_streaming,
     total_cost_usd: r.cost,
     cost: r.cost,

@@ -250,6 +250,92 @@ func TestStreamProcessor_ProcessStreamWithRetry_ParsesLargeResponsesCompletedEve
 	}
 }
 
+func TestStreamProcessor_ProcessStreamWithRetry_RecordsFirstTokenOnce(t *testing.T) {
+	streamBody := strings.Join([]string{
+		"event: message_start\n",
+		`data: {"type":"message_start","message":{"model":"claude-sonnet-4-20250514","usage":{"input_tokens":12,"output_tokens":0}}}` + "\n",
+		"\n",
+		"event: content_block_delta\n",
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"   "}}` + "\n",
+		"\n",
+		"event: content_block_delta\n",
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}` + "\n",
+		"\n",
+		"event: content_block_delta\n",
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}` + "\n",
+		"\n",
+		"event: message_delta\n",
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":12,"output_tokens":7}}` + "\n",
+		"\n",
+		"event: message_stop\n",
+		`data: {"type":"message_stop"}` + "\n",
+		"\n",
+	}, "")
+
+	resp := mockResponse(streamBody, http.StatusOK)
+	tokenParser := NewTokenParserWithRequestID("test-first-token-once")
+	writer := &mockResponseWriter{}
+	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-first-token-once", "endpoint")
+
+	callCount := 0
+	processor.SetFirstTokenRecorder(func() {
+		callCount++
+	})
+
+	tokenUsage, modelName, err := processor.ProcessStreamWithRetry(context.Background(), resp)
+	if err != nil {
+		t.Fatalf("expected stream to complete successfully, got %v", err)
+	}
+	if tokenUsage == nil {
+		t.Fatal("expected token usage after successful stream")
+	}
+	if modelName != "claude-sonnet-4-20250514" {
+		t.Fatalf("expected modelName=claude-sonnet-4-20250514, got %s", modelName)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected first token recorder to be called once, got %d", callCount)
+	}
+}
+
+func TestStreamProcessor_ProcessStreamWithRetry_RecordsFirstResponseEventOnce(t *testing.T) {
+	streamBody := strings.Join([]string{
+		"event: response.created\n",
+		`data: {"type":"response.created","response":{"model":"gpt-5.4"}}` + "\n",
+		"\n",
+		"event: response.in_progress\n",
+		`data: {"type":"response.in_progress","response":{"model":"gpt-5.4"}}` + "\n",
+		"\n",
+		"event: response.output_item.added\n",
+		`data: {"type":"response.output_item.added","item":{"type":"message","content":[{"type":"output_text","text":"hello"}]}}` + "\n",
+		"\n",
+		"event: response.completed\n",
+		`data: {"type":"response.completed","response":{"model":"gpt-5.4"},"usage":{"input_tokens":18,"output_tokens":5,"input_tokens_details":{"cached_tokens":9}}}` + "\n",
+		"\n",
+	}, "")
+
+	resp := mockResponse(streamBody, http.StatusOK)
+	tokenParser := NewTokenParserWithRequestID("test-fallback-before-visible")
+	writer := &mockResponseWriter{}
+	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-fallback-before-visible", "endpoint")
+
+	callCount := 0
+	processor.SetFirstTokenRecorder(func() { callCount++ })
+
+	tokenUsage, modelName, err := processor.ProcessStreamWithRetry(context.Background(), resp)
+	if err != nil {
+		t.Fatalf("expected stream to complete successfully, got %v", err)
+	}
+	if tokenUsage == nil {
+		t.Fatal("expected token usage after successful stream")
+	}
+	if modelName != "gpt-5.4" {
+		t.Fatalf("expected modelName=gpt-5.4, got %s", modelName)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected first-response recorder to be called once, got %d", callCount)
+	}
+}
+
 func TestStreamProcessor_IsNetworkError(t *testing.T) {
 	processor := &StreamProcessor{}
 	// 创建错误恢复管理器用于测试

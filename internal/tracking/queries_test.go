@@ -271,6 +271,19 @@ func TestQueryOperations(t *testing.T) {
 	})
 }
 
+func TestQueryUsageSummary_NilOptions(t *testing.T) {
+	tracker := newSourceRoutingTracker(t)
+	ctx := context.Background()
+
+	summaries, err := tracker.QueryUsageSummary(ctx, nil)
+	if err != nil {
+		t.Fatalf("QueryUsageSummary(nil) returned error: %v", err)
+	}
+	if len(summaries) != 0 {
+		t.Fatalf("expected empty summaries for fresh tracker, got %d", len(summaries))
+	}
+}
+
 func TestExportOperations(t *testing.T) {
 	config := &Config{
 		Enabled:         true,

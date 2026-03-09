@@ -31,25 +31,25 @@ func TestDatabaseOperations(t *testing.T) {
 			CacheRead:     0.20,
 		},
 	}
-	
+
 	tracker, err := NewUsageTracker(config)
 	if err != nil {
 		t.Fatalf("Failed to create usage tracker: %v", err)
 	}
 	defer tracker.Close()
-	
+
 	ctx := context.Background()
-	
+
 	// Test database initialization
 	stats, err := tracker.GetDatabaseStats(ctx)
 	if err != nil {
 		t.Fatalf("Failed to get database stats: %v", err)
 	}
-	
+
 	if stats.TotalRequests != 0 {
 		t.Errorf("Expected 0 requests initially, got %d", stats.TotalRequests)
 	}
-	
+
 	// Test inserting a request start event
 	events := []RequestEvent{
 		{
@@ -64,12 +64,12 @@ func TestDatabaseOperations(t *testing.T) {
 			},
 		},
 	}
-	
+
 	err = tracker.processBatch(events)
 	if err != nil {
 		t.Fatalf("Failed to process start event: %v", err)
 	}
-	
+
 	// Test updating request status
 	updateEvents := []RequestEvent{
 		{
@@ -85,12 +85,12 @@ func TestDatabaseOperations(t *testing.T) {
 			},
 		},
 	}
-	
+
 	err = tracker.processBatch(updateEvents)
 	if err != nil {
 		t.Fatalf("Failed to process update event: %v", err)
 	}
-	
+
 	// Test completing request with token usage
 	completeEvents := []RequestEvent{
 		{
@@ -107,24 +107,141 @@ func TestDatabaseOperations(t *testing.T) {
 			},
 		},
 	}
-	
+
 	err = tracker.processBatch(completeEvents)
 	if err != nil {
 		t.Fatalf("Failed to process complete event: %v", err)
 	}
-	
+
 	// Verify the request was stored correctly
 	stats, err = tracker.GetDatabaseStats(ctx)
 	if err != nil {
 		t.Fatalf("Failed to get database stats after insertion: %v", err)
 	}
-	
+
 	if stats.TotalRequests != 1 {
 		t.Errorf("Expected 1 request after insertion, got %d", stats.TotalRequests)
 	}
-	
+
 	if stats.TotalCostUSD <= 0 {
 		t.Errorf("Expected positive total cost, got %f", stats.TotalCostUSD)
+	}
+}
+
+func TestSuccessEventPreservesSplitCacheCreationPricing(t *testing.T) {
+	config := &Config{
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      100,
+		BatchSize:       10,
+		FlushInterval:   time.Second,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
+		ModelPricing: map[string]ModelPricing{
+			"gpt-5.4": {
+				Input:           1.0,
+				Output:          5.0,
+				CacheCreation:   1.25,
+				CacheCreation1h: 2.0,
+				CacheRead:       0.1,
+			},
+		},
+		DefaultPricing: ModelPricing{
+			Input:           1.0,
+			Output:          5.0,
+			CacheCreation:   1.25,
+			CacheCreation1h: 2.0,
+			CacheRead:       0.1,
+		},
+	}
+
+	tracker, err := NewUsageTracker(config)
+	if err != nil {
+		t.Fatalf("Failed to create usage tracker: %v", err)
+	}
+	defer tracker.Close()
+
+	startTime := time.Now().Add(-2 * time.Second)
+	err = tracker.processBatch([]RequestEvent{
+		{
+			Type:      "start",
+			RequestID: "req-success-split-cache",
+			Timestamp: startTime,
+			Data: RequestStartData{
+				ClientIP:    "127.0.0.1",
+				UserAgent:   "test-agent",
+				Method:      "POST",
+				Path:        "/v1/responses",
+				IsStreaming: true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to process start event: %v", err)
+	}
+
+	err = tracker.processBatch([]RequestEvent{
+		{
+			Type:      "success",
+			RequestID: "req-success-split-cache",
+			Timestamp: time.Now(),
+			Data: RequestCompleteData{
+				ModelName:             "gpt-5.4",
+				Path:                  "/v1/responses",
+				InputTokens:           0,
+				OutputTokens:          0,
+				CacheCreationTokens:   1000,
+				CacheCreation5mTokens: 0,
+				CacheCreation1hTokens: 1000,
+				CacheReadTokens:       0,
+				Duration:              2 * time.Second,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to process success event: %v", err)
+	}
+
+	var cacheCreation5mTokens, cacheCreation1hTokens int64
+	var cacheCreationCostUSD, cacheCreation5mCostUSD, cacheCreation1hCostUSD float64
+	db := tracker.GetReadDB()
+	err = db.QueryRow(`
+		SELECT
+			cache_creation_5m_tokens,
+			cache_creation_1h_tokens,
+			cache_creation_cost_usd,
+			cache_creation_5m_cost_usd,
+			cache_creation_1h_cost_usd
+		FROM request_logs
+		WHERE request_id = ?
+	`, "req-success-split-cache").Scan(
+		&cacheCreation5mTokens,
+		&cacheCreation1hTokens,
+		&cacheCreationCostUSD,
+		&cacheCreation5mCostUSD,
+		&cacheCreation1hCostUSD,
+	)
+	if err != nil {
+		t.Fatalf("Failed to query request log: %v", err)
+	}
+
+	if cacheCreation5mTokens != 0 {
+		t.Fatalf("Expected cache_creation_5m_tokens=0, got %d", cacheCreation5mTokens)
+	}
+	if cacheCreation1hTokens != 1000 {
+		t.Fatalf("Expected cache_creation_1h_tokens=1000, got %d", cacheCreation1hTokens)
+	}
+
+	expected1hCost := 1000 * 2.0 / 1_000_000
+	if abs(cacheCreation1hCostUSD-expected1hCost) > 0.0000001 {
+		t.Fatalf("Expected cache_creation_1h_cost_usd=%f, got %f", expected1hCost, cacheCreation1hCostUSD)
+	}
+	if abs(cacheCreation5mCostUSD-0) > 0.0000001 {
+		t.Fatalf("Expected cache_creation_5m_cost_usd=0, got %f", cacheCreation5mCostUSD)
+	}
+	if abs(cacheCreationCostUSD-expected1hCost) > 0.0000001 {
+		t.Fatalf("Expected cache_creation_cost_usd=%f, got %f", expected1hCost, cacheCreationCostUSD)
 	}
 }
 
@@ -136,10 +253,10 @@ func TestCostCalculation(t *testing.T) {
 		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
 			"claude-3-5-haiku-20241022": {
-				Input:         1.00,   // $1 per 1M tokens
-				Output:        5.00,   // $5 per 1M tokens
-				CacheCreation: 1.25,   // $1.25 per 1M tokens
-				CacheRead:     0.10,   // $0.10 per 1M tokens
+				Input:         1.00, // $1 per 1M tokens
+				Output:        5.00, // $5 per 1M tokens
+				CacheCreation: 1.25, // $1.25 per 1M tokens
+				CacheRead:     0.10, // $0.10 per 1M tokens
 			},
 		},
 		DefaultPricing: ModelPricing{
@@ -149,53 +266,53 @@ func TestCostCalculation(t *testing.T) {
 			CacheRead:     0.20,
 		},
 	}
-	
+
 	tracker, err := NewUsageTracker(config)
 	if err != nil {
 		t.Fatalf("Failed to create usage tracker: %v", err)
 	}
 	defer tracker.Close()
-	
+
 	tokens := &TokenUsage{
-		InputTokens:         100000,  // 0.1M tokens
-		OutputTokens:        50000,   // 0.05M tokens
-		CacheCreationTokens: 10000,   // 0.01M tokens
-		CacheReadTokens:     5000,    // 0.005M tokens
+		InputTokens:         100000, // 0.1M tokens
+		OutputTokens:        50000,  // 0.05M tokens
+		CacheCreationTokens: 10000,  // 0.01M tokens
+		CacheReadTokens:     5000,   // 0.005M tokens
 	}
-	
+
 	inputCost, outputCost, cacheCost, readCost, totalCost := tracker.calculateCost("claude-3-5-haiku-20241022", tokens)
-	
+
 	// Expected costs:
 	// Input: 0.1M * $1 = $0.10
 	// Output: 0.05M * $5 = $0.25
 	// Cache Creation: 0.01M * $1.25 = $0.0125
 	// Cache Read: 0.005M * $0.10 = $0.0005
 	// Total: $0.363
-	
+
 	expectedInputCost := 0.10
 	expectedOutputCost := 0.25
 	expectedCacheCost := 0.0125
 	expectedReadCost := 0.0005
 	expectedTotalCost := 0.363
-	
+
 	tolerance := 0.0001
-	
+
 	if abs(inputCost-expectedInputCost) > tolerance {
 		t.Errorf("Expected input cost %f, got %f", expectedInputCost, inputCost)
 	}
-	
+
 	if abs(outputCost-expectedOutputCost) > tolerance {
 		t.Errorf("Expected output cost %f, got %f", expectedOutputCost, outputCost)
 	}
-	
+
 	if abs(cacheCost-expectedCacheCost) > tolerance {
 		t.Errorf("Expected cache cost %f, got %f", expectedCacheCost, cacheCost)
 	}
-	
+
 	if abs(readCost-expectedReadCost) > tolerance {
 		t.Errorf("Expected read cost %f, got %f", expectedReadCost, readCost)
 	}
-	
+
 	if abs(totalCost-expectedTotalCost) > tolerance {
 		t.Errorf("Expected total cost %f, got %f", expectedTotalCost, totalCost)
 	}
@@ -214,39 +331,39 @@ func TestDefaultPricing(t *testing.T) {
 			CacheRead:     0.20,
 		},
 	}
-	
+
 	tracker, err := NewUsageTracker(config)
 	if err != nil {
 		t.Fatalf("Failed to create usage tracker: %v", err)
 	}
 	defer tracker.Close()
-	
+
 	tokens := &TokenUsage{
-		InputTokens:  100000,  // 0.1M tokens
-		OutputTokens: 50000,   // 0.05M tokens
+		InputTokens:  100000, // 0.1M tokens
+		OutputTokens: 50000,  // 0.05M tokens
 	}
-	
+
 	inputCost, outputCost, _, _, totalCost := tracker.calculateCost("unknown-model", tokens)
-	
+
 	// Expected costs with default pricing:
 	// Input: 0.1M * $2 = $0.20
 	// Output: 0.05M * $10 = $0.50
 	// Total: $0.70
-	
+
 	expectedInputCost := 0.20
 	expectedOutputCost := 0.50
 	expectedTotalCost := 0.70
-	
+
 	tolerance := 0.0001
-	
+
 	if abs(inputCost-expectedInputCost) > tolerance {
 		t.Errorf("Expected default input cost %f, got %f", expectedInputCost, inputCost)
 	}
-	
+
 	if abs(outputCost-expectedOutputCost) > tolerance {
 		t.Errorf("Expected default output cost %f, got %f", expectedOutputCost, outputCost)
 	}
-	
+
 	if abs(totalCost-expectedTotalCost) > tolerance {
 		t.Errorf("Expected default total cost %f, got %f", expectedTotalCost, totalCost)
 	}
@@ -260,15 +377,15 @@ func TestHealthCheck(t *testing.T) {
 		CleanupInterval: 24 * time.Hour,
 		RetentionDays:   30,
 	}
-	
+
 	tracker, err := NewUsageTracker(config)
 	if err != nil {
 		t.Fatalf("Failed to create usage tracker: %v", err)
 	}
 	defer tracker.Close()
-	
+
 	ctx := context.Background()
-	
+
 	// Test healthy state
 	err = tracker.HealthCheck(ctx)
 	if err != nil {
@@ -282,15 +399,15 @@ func TestHealthCheckDisabled(t *testing.T) {
 		CleanupInterval: 24 * time.Hour,
 		RetentionDays:   30,
 	}
-	
+
 	tracker, err := NewUsageTracker(config)
 	if err != nil {
 		t.Fatalf("Failed to create disabled usage tracker: %v", err)
 	}
 	defer tracker.Close()
-	
+
 	ctx := context.Background()
-	
+
 	// Test that disabled tracker is considered healthy
 	err = tracker.HealthCheck(ctx)
 	if err != nil {

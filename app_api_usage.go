@@ -168,6 +168,25 @@ func sourceViewToUpstreamType(sourceView string) string {
 	}
 }
 
+func shouldFallbackToRuntimeUsageStats(params UsageStatsQueryParams, normalizedSourceView string, startTime, endTime time.Time) bool {
+	if normalizeSourceView(normalizedSourceView) != "all" {
+		return false
+	}
+	if strings.TrimSpace(params.Status) != "" ||
+		strings.TrimSpace(params.Model) != "" ||
+		strings.TrimSpace(params.Channel) != "" ||
+		strings.TrimSpace(params.Endpoint) != "" ||
+		strings.TrimSpace(params.Group) != "" {
+		return false
+	}
+	if startTime.IsZero() || endTime.IsZero() || endTime.Before(startTime) {
+		return false
+	}
+
+	now := time.Now()
+	return (startTime.Before(now) || startTime.Equal(now)) && (endTime.After(now) || endTime.Equal(now))
+}
+
 func (a *App) queryStatsFromSingleTable(ctx context.Context, db *sql.DB, tableName string, startTime, endTime time.Time, upstreamType string) (cost float64, tokens int64, requests int64, err error) {
 	query := "SELECT COALESCE(SUM(total_cost_usd), 0), COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0), COUNT(*) FROM " + tableName
 
@@ -259,6 +278,7 @@ type RequestRecord struct {
 	CacheCreation1hTokens int64   `json:"cache_creation_1h_tokens"` // v5.0.1: 1小时缓存
 	CacheReadTokens       int64   `json:"cache_read_tokens"`
 	ResponseTime          int64   `json:"response_time"`
+	FirstTokenMs          *int64  `json:"first_token_ms"`
 	IsStreaming           bool    `json:"is_streaming"`
 	Cost                  float64 `json:"cost"`
 }
@@ -402,6 +422,7 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 		if r.DurationMs != nil {
 			record.ResponseTime = *r.DurationMs
 		}
+		record.FirstTokenMs = r.FirstTokenMs
 
 		result.Requests = append(result.Requests, record)
 	}
@@ -526,6 +547,12 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 					result.AvgDurationMs = float64(stats.TotalDurationMs) / float64(stats.DurationCount)
 				}
 				return result, nil
+			}
+			if shouldFallbackToRuntimeUsageStats(params, normalizedSourceView, startTime, endTime) {
+				runtimeResult := a.getUsageStatsFromRuntime(period)
+				if runtimeResult.TotalRequests > 0 {
+					return runtimeResult, nil
+				}
 			}
 			return result, nil
 		}

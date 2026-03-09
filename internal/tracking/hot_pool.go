@@ -45,6 +45,7 @@ type ActiveRequest struct {
 	// 完成信息（只在结束时填充）
 	EndTime      *time.Time `json:"end_time,omitempty"`
 	DurationMs   int64      `json:"duration_ms"`
+	FirstTokenMs *int64     `json:"first_token_ms,omitempty"`
 	TotalCostUSD float64    `json:"total_cost_usd"`
 
 	// 内部字段

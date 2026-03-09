@@ -112,13 +112,13 @@ func (fm *FilterManager) setupDefaultFilters() {
 				"total_requests", "active_connections", "successful_requests",
 				"failed_requests", "average_response_time", "suspended_success_rate",
 			}
-			
+
 			for _, key := range keyMetrics {
 				if value, exists := event.Data[key]; exists {
 					data[key] = value
 				}
 			}
-			
+
 			data["change_type"] = event.Data["change_type"]
 			return data
 		},
@@ -178,7 +178,7 @@ func (fm *FilterManager) setupDefaultFilters() {
 func (fm *FilterManager) GetFilter(eventType EventType) (EventFilter, bool) {
 	fm.mu.RLock()
 	defer fm.mu.RUnlock()
-	
+
 	filter, exists := fm.filters[eventType]
 	return filter, exists
 }
@@ -187,7 +187,7 @@ func (fm *FilterManager) GetFilter(eventType EventType) (EventFilter, bool) {
 func (fm *FilterManager) GetRateLimiter(eventType EventType) (*rateLimiter, bool) {
 	fm.mu.RLock()
 	defer fm.mu.RUnlock()
-	
+
 	limiter, exists := fm.rateLimiters[eventType]
 	return limiter, exists
 }
@@ -196,9 +196,9 @@ func (fm *FilterManager) GetRateLimiter(eventType EventType) (*rateLimiter, bool
 func (fm *FilterManager) SetCustomFilter(eventType EventType, filter EventFilter) {
 	fm.mu.Lock()
 	defer fm.mu.Unlock()
-	
+
 	fm.filters[eventType] = filter
-	
+
 	// 更新频率限制器
 	if filter.RateLimit > 0 {
 		fm.rateLimiters[eventType] = &rateLimiter{
@@ -208,7 +208,7 @@ func (fm *FilterManager) SetCustomFilter(eventType EventType, filter EventFilter
 		// 移除频率限制器
 		delete(fm.rateLimiters, eventType)
 	}
-	
+
 	fm.logger.Info("Custom filter set", "event_type", eventType)
 }
 
@@ -216,10 +216,10 @@ func (fm *FilterManager) SetCustomFilter(eventType EventType, filter EventFilter
 func (fm *FilterManager) RemoveFilter(eventType EventType) {
 	fm.mu.Lock()
 	defer fm.mu.Unlock()
-	
+
 	delete(fm.filters, eventType)
 	delete(fm.rateLimiters, eventType)
-	
+
 	fm.logger.Info("Filter removed", "event_type", eventType)
 }
 
@@ -227,7 +227,7 @@ func (fm *FilterManager) RemoveFilter(eventType EventType) {
 func (fm *FilterManager) GetFilterStats() map[EventType]FilterStats {
 	fm.mu.RLock()
 	defer fm.mu.RUnlock()
-	
+
 	stats := make(map[EventType]FilterStats)
 	for eventType, limiter := range fm.rateLimiters {
 		limiter.mu.Lock()
@@ -239,7 +239,7 @@ func (fm *FilterManager) GetFilterStats() map[EventType]FilterStats {
 		}
 		limiter.mu.Unlock()
 	}
-	
+
 	return stats
 }
 

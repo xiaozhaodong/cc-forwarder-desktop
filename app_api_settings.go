@@ -44,10 +44,10 @@ type CategoryInfo struct {
 
 // SettingsStorageStatus 设置存储状态
 type SettingsStorageStatus struct {
-	Enabled        bool `json:"enabled"`
-	TotalCount     int  `json:"total_count"`
-	CategoryCount  int  `json:"category_count"`
-	IsInitialized  bool `json:"is_initialized"`
+	Enabled       bool `json:"enabled"`
+	TotalCount    int  `json:"total_count"`
+	CategoryCount int  `json:"category_count"`
+	IsInitialized bool `json:"is_initialized"`
 }
 
 // UpdateSettingInput 更新单个设置的输入

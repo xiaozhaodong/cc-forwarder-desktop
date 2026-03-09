@@ -21,7 +21,7 @@ endpoints:
   - name: test
     url: http://example.com
 `
-	
+
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "test_config.yaml")
 	err := os.WriteFile(configPath, []byte(yamlContent), 0644)
@@ -51,10 +51,10 @@ endpoints:
 // TestRequestSuspendConfig_Validation tests validation logic for RequestSuspendConfig
 func TestRequestSuspendConfig_Validation(t *testing.T) {
 	tests := []struct {
-		name      string
+		name        string
 		yamlContent string
-		expectErr bool
-		errMsg    string
+		expectErr   bool
+		errMsg      string
 	}{
 		{
 			name: "Valid disabled config",
@@ -207,7 +207,7 @@ endpoints:
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			configPath := filepath.Join(tmpDir, "test_config.yaml")
-			
+
 			err := os.WriteFile(configPath, []byte(tt.yamlContent), 0644)
 			if err != nil {
 				t.Fatalf("Failed to create test config file: %v", err)
@@ -254,8 +254,8 @@ endpoints:
     url: http://example.com
 `,
 			expectedConfig: config.RequestSuspendConfig{
-				Enabled:            true,
-				Timeout:            600 * time.Second,
+				Enabled:              true,
+				Timeout:              600 * time.Second,
 				MaxSuspendedRequests: 200,
 			},
 			expectErr: false,
@@ -275,9 +275,9 @@ endpoints:
     url: http://example.com
 `,
 			expectedConfig: config.RequestSuspendConfig{
-				Enabled:            true,
-				Timeout:            300 * time.Second, // default
-				MaxSuspendedRequests: 100,             // default
+				Enabled:              true,
+				Timeout:              300 * time.Second, // default
+				MaxSuspendedRequests: 100,               // default
 			},
 			expectErr: false,
 		},
@@ -293,9 +293,9 @@ endpoints:
     url: http://example.com
 `,
 			expectedConfig: config.RequestSuspendConfig{
-				Enabled:            false,            // default
-				Timeout:            300 * time.Second, // default
-				MaxSuspendedRequests: 100,             // default
+				Enabled:              false,             // default
+				Timeout:              300 * time.Second, // default
+				MaxSuspendedRequests: 100,               // default
 			},
 			expectErr: false,
 		},
@@ -316,8 +316,8 @@ endpoints:
     url: http://example.com
 `,
 			expectedConfig: config.RequestSuspendConfig{
-				Enabled:            false,
-				Timeout:            120 * time.Second,
+				Enabled:              false,
+				Timeout:              120 * time.Second,
 				MaxSuspendedRequests: 50,
 			},
 			expectErr: false,

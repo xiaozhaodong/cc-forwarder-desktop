@@ -93,6 +93,10 @@ func (spa *StreamProcessorAdapter) EnableDownstreamTailDrain(timeout time.Durati
 	spa.innerProcessor.EnableDownstreamTailDrain(timeout, cancelUpstream)
 }
 
+func (spa *StreamProcessorAdapter) SetFirstTokenRecorder(recorder func()) {
+	spa.innerProcessor.SetFirstTokenRecorder(recorder)
+}
+
 // ErrorRecoveryManagerAdapter 适配*ErrorRecoveryManager到handlers.ErrorRecoveryManager
 type ErrorRecoveryManagerAdapter struct {
 	innerManager *ErrorRecoveryManager

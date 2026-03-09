@@ -7,10 +7,45 @@
 import React from 'react';
 import { Waves, RefreshCw } from 'lucide-react';
 import { LoadingSpinner } from '@components/ui';
-import { formatCost, formatDuration, formatTimestamp } from '@utils/api.js';
+import { formatCost, formatTimestamp } from '@utils/api.js';
 import RequestStatusBadge from './RequestStatusBadge.jsx';
 import ModelTag from './ModelTag.jsx';
 import Pagination from './Pagination.jsx';
+import { copyTextToClipboard } from './clipboard.js';
+
+const formatTimingBadge = (ms) => {
+  const value = Number.isFinite(ms) ? Math.max(ms, 0) : 0;
+  return `${(value / 1000).toFixed(1)}s`;
+};
+
+const getTimingPillClassName = (type, ms) => {
+  if (type === 'first') {
+    if (ms > 20000) return 'bg-rose-50 text-rose-600 border-rose-100';
+    if (ms > 10000) return 'bg-amber-50 text-amber-600 border-amber-100';
+    return 'bg-emerald-50 text-emerald-600 border-emerald-100';
+  }
+
+  if (ms > 40000) return 'bg-rose-50 text-rose-600 border-rose-100';
+  if (ms > 20000) return 'bg-orange-50 text-orange-600 border-orange-100';
+  return 'bg-emerald-50 text-emerald-600 border-emerald-100';
+};
+
+const RequestTimingCell = ({ request }) => {
+  const hasFirstToken = request.isStreaming && Number.isFinite(request.firstTokenMs);
+
+  return (
+    <div className="flex items-center gap-1.5">
+      {hasFirstToken && (
+        <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('first', request.firstTokenMs)}`}>
+          {formatTimingBadge(request.firstTokenMs)}
+        </span>
+      )}
+      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('duration', request.duration)}`}>
+        {formatTimingBadge(request.duration)}
+      </span>
+    </div>
+  );
+};
 
 /**
  * 渲染单元格内容
@@ -38,7 +73,7 @@ const renderCell = (columnId, request) => {
     case 'endpoint':
       return <span className="text-gray-600 text-xs">{request.endpoint}</span>;
     case 'duration':
-      return <span className="text-gray-700 font-mono text-xs">{formatDuration(request.duration)}</span>;
+      return <RequestTimingCell request={request} />;
     case 'inputTokens':
       return <span className="text-gray-700 text-right font-mono text-xs">{request.inputTokens}</span>;
     case 'outputTokens':
@@ -58,32 +93,37 @@ const renderCell = (columnId, request) => {
  * RequestRow - 单行请求数据（支持单击复制、双击查看详情）
  */
 const RequestRow = ({ request, visibleColumns, onCopyId, onDoubleClick }) => {
-  const [clickCount, setClickCount] = React.useState(0);
-  const [clickTimer, setClickTimer] = React.useState(null);
+  const clickCountRef = React.useRef(0);
+  const clickTimerRef = React.useRef(null);
+
+  React.useEffect(() => () => {
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+  }, []);
 
   const handleRowClick = () => {
-    // 增加点击计数
-    const newCount = clickCount + 1;
-    setClickCount(newCount);
+    const nextCount = clickCountRef.current + 1;
+    clickCountRef.current = nextCount;
 
-    // 清除之前的定时器
-    if (clickTimer) {
-      clearTimeout(clickTimer);
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
     }
 
-    if (newCount === 1) {
-      // 第一次点击，启动定时器等待第二次点击
-      const timer = setTimeout(() => {
-        // 单击：复制 ID
+    if (nextCount === 1) {
+      clickTimerRef.current = window.setTimeout(() => {
         onCopyId?.(request.requestId);
-        setClickCount(0);
+        clickCountRef.current = 0;
+        clickTimerRef.current = null;
       }, 250);
-      setClickTimer(timer);
-    } else if (newCount === 2) {
-      // 双击：打开详情
+      return;
+    }
+
+    if (nextCount === 2) {
       onDoubleClick?.(request);
-      setClickCount(0);
-      setClickTimer(null);
+      clickCountRef.current = 0;
     }
   };
 
@@ -127,8 +167,8 @@ const RequestsTable = ({
   onRowDoubleClick
 }) => {
   // 复制请求 ID
-  const handleCopyId = (id) => {
-    navigator.clipboard.writeText(id);
+  const handleCopyId = async (id) => {
+    await copyTextToClipboard(id, '请求 ID');
   };
 
   // 获取可见的列配置

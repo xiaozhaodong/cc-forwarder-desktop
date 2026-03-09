@@ -13,18 +13,18 @@ import (
 type EventEmitter struct {
 	ctx       context.Context
 	enabled   bool
-	batchSize int           // 批量发送大小
-	buffer    []LogEntry    // 缓冲区
-	ticker    *time.Ticker  // 定时器
+	batchSize int          // 批量发送大小
+	buffer    []LogEntry   // 缓冲区
+	ticker    *time.Ticker // 定时器
 	mu        sync.Mutex
 	stopChan  chan struct{}
-	stopped   bool          // 防止重复关闭
+	stopped   bool // 防止重复关闭
 }
 
 // NewEventEmitter 创建事件发射器
 func NewEventEmitter() *EventEmitter {
 	return &EventEmitter{
-		batchSize: 10,               // 每批最多10条
+		batchSize: 10, // 每批最多10条
 		buffer:    make([]LogEntry, 0, 10),
 		stopChan:  make(chan struct{}),
 	}
@@ -41,8 +41,8 @@ func (e *EventEmitter) Start(ctx context.Context) {
 
 	e.ctx = ctx
 	e.enabled = true
-	e.stopped = false // 重置停止标志
-	e.stopChan = make(chan struct{}) // 重新创建 channel
+	e.stopped = false                                 // 重置停止标志
+	e.stopChan = make(chan struct{})                  // 重新创建 channel
 	e.ticker = time.NewTicker(100 * time.Millisecond) // 100ms刷新一次
 
 	// 启动批量发送goroutine

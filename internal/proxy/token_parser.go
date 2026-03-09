@@ -25,11 +25,14 @@ var (
 // ParseResult 解析结果结构体
 // 用于将Token解析与状态记录分离，支持职责纯化
 type ParseResult struct {
-	TokenUsage  *tracking.TokenUsage
-	ModelName   string
-	ErrorInfo   *ErrorInfo
-	IsCompleted bool
-	Status      string
+	TokenUsage        *tracking.TokenUsage
+	ModelName         string
+	ErrorInfo         *ErrorInfo
+	IsCompleted       bool
+	Status            string
+	HasStreamOutput   bool
+	HasVisibleText    bool
+	HasFallbackOutput bool
 }
 
 // ErrorInfo 错误信息结构体
@@ -240,9 +243,9 @@ func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
 	if line == "" && tp.collectingData && tp.eventBuffer.Len() > 0 {
 		switch tp.currentEvent {
 		case "message_start":
-			// 仅解析message_start以获取模型信息（不需要ParseResult）
+			// message_start 代表已收到首个流式业务事件，可用于记录首响。
 			tp.parseMessageStart()
-			return nil
+			return &ParseResult{HasStreamOutput: true}
 		case "message_delta", "content_block_delta":
 			// 使用新的V2方法解析message_delta/content_block_delta
 			return tp.parseMessageDeltaV2()
@@ -404,7 +407,7 @@ func (tp *TokenParser) parseResponsesEventV2(eventType string) *ParseResult {
 			if modelName := extractResponsesModelFromRawJSON(jsonData); modelName != "" {
 				tp.modelName = modelName
 			}
-			return nil
+			return &ParseResult{HasStreamOutput: true}
 		case "response.failed":
 			errorType := "response_failed"
 			errorMessage := "responses stream failed (payload parse failed)"
@@ -429,10 +432,12 @@ func (tp *TokenParser) parseResponsesEventV2(eventType string) *ParseResult {
 				tp.hasResponseCompletedUsage = true
 				tp.finalUsage = usage
 				return &ParseResult{
-					TokenUsage:  tp.finalUsage,
-					ModelName:   tp.getModelNameOrDefault(),
-					IsCompleted: true,
-					Status:      "completed",
+					TokenUsage:        tp.finalUsage,
+					ModelName:         tp.getModelNameOrDefault(),
+					IsCompleted:       true,
+					Status:            "completed",
+					HasStreamOutput:   true,
+					HasFallbackOutput: true,
 				}
 			}
 			return &ParseResult{
@@ -442,20 +447,26 @@ func (tp *TokenParser) parseResponsesEventV2(eventType string) *ParseResult {
 					CacheCreationTokens: 0,
 					CacheReadTokens:     0,
 				},
-				ModelName:   tp.getModelNameOrDefault(),
-				IsCompleted: true,
-				Status:      "non_token_response",
+				ModelName:         tp.getModelNameOrDefault(),
+				IsCompleted:       true,
+				Status:            "non_token_response",
+				HasStreamOutput:   true,
+				HasFallbackOutput: true,
 			}
 		default:
-			return nil
+			return &ParseResult{HasStreamOutput: true}
 		}
 	}
 
 	tp.captureResponsesModel(payload, eventType)
 
+	if visibleText := extractVisibleTextFromResponsesPayload(eventType, payload); visibleText != "" {
+		return &ParseResult{HasStreamOutput: true, HasVisibleText: true, HasFallbackOutput: true}
+	}
+
 	switch eventType {
 	case "response.in_progress":
-		return nil
+		return &ParseResult{HasStreamOutput: true}
 	case "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
 		tp.hasResponseCompleted = true
 		tp.responseTerminalEvent = eventType
@@ -473,10 +484,11 @@ func (tp *TokenParser) parseResponsesEventV2(eventType string) *ParseResult {
 				CacheCreationTokens: 0,
 				CacheReadTokens:     0,
 			},
-			ModelName:   fmt.Sprintf("error:%s", errorType),
-			ErrorInfo:   &ErrorInfo{Type: errorType, Message: errorMessage},
-			IsCompleted: true,
-			Status:      StatusErrorAPI,
+			ModelName:       fmt.Sprintf("error:%s", errorType),
+			ErrorInfo:       &ErrorInfo{Type: errorType, Message: errorMessage},
+			IsCompleted:     true,
+			Status:          StatusErrorAPI,
+			HasStreamOutput: true,
 		}
 	case "response.completed", "response.done":
 		tp.hasResponseCompleted = true
@@ -512,13 +524,15 @@ func (tp *TokenParser) parseResponsesEventV2(eventType string) *ParseResult {
 		}
 
 		return &ParseResult{
-			TokenUsage:  tp.finalUsage,
-			ModelName:   tp.getModelNameOrDefault(),
-			IsCompleted: true,
-			Status:      "completed",
+			TokenUsage:        tp.finalUsage,
+			ModelName:         tp.getModelNameOrDefault(),
+			IsCompleted:       true,
+			Status:            "completed",
+			HasStreamOutput:   true,
+			HasFallbackOutput: true,
 		}
 	default:
-		return nil
+		return &ParseResult{HasStreamOutput: true}
 	}
 }
 
@@ -656,6 +670,84 @@ func extractResponsesErrorInfo(payload map[string]interface{}) (string, string) 
 		}
 	}
 	return "", ""
+}
+
+func extractVisibleTextFromResponsesPayload(eventType string, payload map[string]interface{}) string {
+	switch strings.TrimSpace(eventType) {
+	case "response.output_text.delta":
+		if delta, ok := payload["delta"].(string); ok && strings.TrimSpace(delta) != "" {
+			return delta
+		}
+	case "response.output_text.done":
+		if text, ok := payload["text"].(string); ok && strings.TrimSpace(text) != "" {
+			return text
+		}
+	case "response.content_part.added":
+		if part, ok := payload["part"].(map[string]interface{}); ok {
+			if partType, _ := part["type"].(string); partType == "output_text" {
+				if text, ok := part["text"].(string); ok && strings.TrimSpace(text) != "" {
+					return text
+				}
+			}
+		}
+	case "response.output_item.added":
+		if item, ok := payload["item"].(map[string]interface{}); ok {
+			if text := extractVisibleTextFromResponseItem(item); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func extractVisibleTextFromResponseItem(item map[string]interface{}) string {
+	if item == nil {
+		return ""
+	}
+
+	if text, ok := item["text"].(string); ok && strings.TrimSpace(text) != "" {
+		return text
+	}
+
+	content, ok := item["content"].([]interface{})
+	if !ok {
+		return ""
+	}
+
+	for _, rawPart := range content {
+		part, ok := rawPart.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		partType, _ := part["type"].(string)
+		if partType != "output_text" {
+			continue
+		}
+		if text, ok := part["text"].(string); ok && strings.TrimSpace(text) != "" {
+			return text
+		}
+	}
+
+	return ""
+}
+
+func extractVisibleTextFromMessageDelta(delta interface{}) string {
+	deltaMap, ok := delta.(map[string]interface{})
+	if !ok || deltaMap == nil {
+		return ""
+	}
+
+	deltaType, _ := deltaMap["type"].(string)
+	if deltaType != "text_delta" {
+		return ""
+	}
+
+	text, _ := deltaMap["text"].(string)
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+
+	return text
 }
 
 func extractLastInt64ByRegexp(raw string, re *regexp.Regexp) (int64, bool) {
@@ -881,10 +973,15 @@ func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
 		return nil
 	}
 
+	hasVisibleText := extractVisibleTextFromMessageDelta(messageDelta.Delta) != ""
+
 	// 检查此message_delta是否包含使用信息
 	if messageDelta.Usage == nil {
 		// message_start 已有 usage 时，message_delta 无 usage 属于正常中间态，不记录“无Token响应”
 		if tp.partialUsage != nil {
+			if hasVisibleText {
+				return &ParseResult{HasVisibleText: true}
+			}
 			return nil
 		}
 
@@ -914,10 +1011,16 @@ func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
 					CacheCreationTokens: 0,
 					CacheReadTokens:     0,
 				},
-				ModelName:   modelName,
-				IsCompleted: true,
-				Status:      "non_token_response",
+				ModelName:         modelName,
+				IsCompleted:       true,
+				Status:            "non_token_response",
+				HasStreamOutput:   true,
+				HasVisibleText:    hasVisibleText,
+				HasFallbackOutput: true,
 			}
+		}
+		if hasVisibleText {
+			return &ParseResult{HasStreamOutput: true, HasVisibleText: true, HasFallbackOutput: true}
 		}
 		return nil
 	}
@@ -1000,10 +1103,13 @@ func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
 
 	// 返回解析结果而不是直接记录
 	return &ParseResult{
-		TokenUsage:  tp.finalUsage,
-		ModelName:   tp.modelName,
-		IsCompleted: true,
-		Status:      "completed",
+		TokenUsage:        tp.finalUsage,
+		ModelName:         tp.modelName,
+		IsCompleted:       true,
+		Status:            "completed",
+		HasStreamOutput:   true,
+		HasVisibleText:    hasVisibleText,
+		HasFallbackOutput: true,
 	}
 }
 

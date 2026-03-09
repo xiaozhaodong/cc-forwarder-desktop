@@ -39,9 +39,9 @@ func (mm *MonitoringMiddleware) SetEventBus(eventBus events.EventBus) {
 
 // HealthResponse represents the health check response
 type HealthResponse struct {
-	Status    string              `json:"status"`
-	Timestamp string              `json:"timestamp"`
-	Endpoints []EndpointHealth    `json:"endpoints"`
+	Status    string           `json:"status"`
+	Timestamp string           `json:"timestamp"`
+	Endpoints []EndpointHealth `json:"endpoints"`
 }
 
 // EndpointHealth represents the health status of an endpoint
@@ -71,7 +71,7 @@ func (mm *MonitoringMiddleware) handleHealth(w http.ResponseWriter, r *http.Requ
 
 	endpoints := mm.endpointManager.GetAllEndpoints()
 	healthyCount := 0
-	
+
 	for _, ep := range endpoints {
 		if ep.IsHealthy() {
 			healthyCount++
@@ -80,7 +80,7 @@ func (mm *MonitoringMiddleware) handleHealth(w http.ResponseWriter, r *http.Requ
 
 	status := "healthy"
 	statusCode := http.StatusOK
-	
+
 	if healthyCount == 0 {
 		status = "unhealthy"
 		statusCode = http.StatusServiceUnavailable
@@ -90,11 +90,11 @@ func (mm *MonitoringMiddleware) handleHealth(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	
+
 	response := map[string]interface{}{
-		"status": status,
+		"status":            status,
 		"healthy_endpoints": healthyCount,
-		"total_endpoints": len(endpoints),
+		"total_endpoints":   len(endpoints),
 	}
 
 	json.NewEncoder(w).Encode(response)
@@ -110,13 +110,13 @@ func (mm *MonitoringMiddleware) handleDetailedHealth(w http.ResponseWriter, r *h
 	endpoints := mm.endpointManager.GetAllEndpoints()
 	healthyCount := 0
 	endpointHealths := make([]EndpointHealth, 0, len(endpoints))
-	
+
 	for _, ep := range endpoints {
 		status := ep.GetStatus()
 		if status.Healthy {
 			healthyCount++
 		}
-		
+
 		endpointHealths = append(endpointHealths, EndpointHealth{
 			Name:             ep.Config.Name,
 			URL:              ep.Config.URL,
@@ -130,7 +130,7 @@ func (mm *MonitoringMiddleware) handleDetailedHealth(w http.ResponseWriter, r *h
 
 	overallStatus := "healthy"
 	statusCode := http.StatusOK
-	
+
 	if healthyCount == 0 {
 		overallStatus = "unhealthy"
 		statusCode = http.StatusServiceUnavailable
@@ -140,7 +140,7 @@ func (mm *MonitoringMiddleware) handleDetailedHealth(w http.ResponseWriter, r *h
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	
+
 	response := HealthResponse{
 		Status:    overallStatus,
 		Timestamp: time.Now().Format("2006-01-02T15:04:05Z"),
@@ -158,40 +158,40 @@ func (mm *MonitoringMiddleware) handleMetrics(w http.ResponseWriter, r *http.Req
 	}
 
 	endpoints := mm.endpointManager.GetAllEndpoints()
-	
+
 	w.Header().Set("Content-Type", "text/plain")
-	
+
 	// Basic Prometheus-style metrics
 	fmt.Fprintf(w, "# HELP endpoint_forwarder_endpoints_total Total number of configured endpoints\n")
 	fmt.Fprintf(w, "# TYPE endpoint_forwarder_endpoints_total gauge\n")
 	fmt.Fprintf(w, "endpoint_forwarder_endpoints_total %d\n", len(endpoints))
-	
+
 	fmt.Fprintf(w, "# HELP endpoint_forwarder_endpoints_healthy Number of healthy endpoints\n")
 	fmt.Fprintf(w, "# TYPE endpoint_forwarder_endpoints_healthy gauge\n")
-	
+
 	healthyCount := 0
 	for _, ep := range endpoints {
 		if ep.IsHealthy() {
 			healthyCount++
 		}
-		
+
 		// Individual endpoint metrics
 		healthy := 0
 		if ep.IsHealthy() {
 			healthy = 1
 		}
-		
+
 		fmt.Fprintf(w, "endpoint_forwarder_endpoint_healthy{name=\"%s\",url=\"%s\",priority=\"%d\"} %d\n",
 			ep.Config.Name, ep.Config.URL, ep.Config.Priority, healthy)
-		
+
 		fmt.Fprintf(w, "endpoint_forwarder_endpoint_response_time_ms{name=\"%s\",url=\"%s\"} %d\n",
 			ep.Config.Name, ep.Config.URL, ep.GetResponseTime().Milliseconds())
-		
+
 		status := ep.GetStatus()
 		fmt.Fprintf(w, "endpoint_forwarder_endpoint_consecutive_fails{name=\"%s\",url=\"%s\"} %d\n",
 			ep.Config.Name, ep.Config.URL, status.ConsecutiveFails)
 	}
-	
+
 	fmt.Fprintf(w, "endpoint_forwarder_endpoints_healthy %d\n", healthyCount)
 }
 
@@ -232,20 +232,20 @@ func (mm *MonitoringMiddleware) broadcastRealConnectionStats(triggerConnID, trig
 
 	// 计算总Token使用量
 	totalTokens := stats.TotalTokenUsage.InputTokens + stats.TotalTokenUsage.OutputTokens +
-					stats.TotalTokenUsage.CacheCreationTokens + stats.TotalTokenUsage.CacheReadTokens
+		stats.TotalTokenUsage.CacheCreationTokens + stats.TotalTokenUsage.CacheReadTokens
 
 	// 构建真实的连接统计数据
 	connectionData := map[string]interface{}{
-		"total_requests":       stats.TotalRequests,
-		"active_connections":   activeConnections,
-		"successful_requests":  stats.SuccessfulRequests,
-		"failed_requests":      stats.FailedRequests,
+		"total_requests":        stats.TotalRequests,
+		"active_connections":    activeConnections,
+		"successful_requests":   stats.SuccessfulRequests,
+		"failed_requests":       stats.FailedRequests,
 		"average_response_time": mm.formatResponseTime(stats.GetAverageResponseTime()),
-		"total_tokens":         totalTokens,
-		"change_type":          "connection_stats_updated",
-		"timestamp":            time.Now().Unix(),
-		"trigger_endpoint":     triggerEndpoint,
-		"trigger_conn_id":      triggerConnID,
+		"total_tokens":          totalTokens,
+		"change_type":           "connection_stats_updated",
+		"timestamp":             time.Now().Unix(),
+		"trigger_endpoint":      triggerEndpoint,
+		"trigger_conn_id":       triggerConnID,
 	}
 
 	// 添加暂停请求统计
@@ -373,11 +373,11 @@ func (mm *MonitoringMiddleware) broadcastSystemStats() {
 		Source:   "monitoring",
 		Priority: events.PriorityLow,
 		Data: map[string]interface{}{
-			"uptime":           uptime.Seconds(),
-			"memory_usage":     memStats.Alloc,
-			"goroutine_count":  goroutineCount,
-			"change_type":      "system_stats_updated",
-			"timestamp":        time.Now().Unix(),
+			"uptime":          uptime.Seconds(),
+			"memory_usage":    memStats.Alloc,
+			"goroutine_count": goroutineCount,
+			"change_type":     "system_stats_updated",
+			"timestamp":       time.Now().Unix(),
 		},
 	})
 

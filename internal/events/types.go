@@ -34,16 +34,16 @@ const (
 type EventPriority int
 
 const (
-	PriorityLow EventPriority = iota // 批量处理，如统计数据
-	PriorityNormal                   // 延迟处理，如请求完成
-	PriorityHigh                     // 立即处理，如健康状态变化
-	PriorityCritical                 // 紧急处理，如系统错误
+	PriorityLow      EventPriority = iota // 批量处理，如统计数据
+	PriorityNormal                        // 延迟处理，如请求完成
+	PriorityHigh                          // 立即处理，如健康状态变化
+	PriorityCritical                      // 紧急处理，如系统错误
 )
 
 // 事件结构
 type Event struct {
 	Type      EventType              `json:"type"`
-	Source    string                 `json:"source"`   // 事件来源组件
+	Source    string                 `json:"source"` // 事件来源组件
 	Timestamp time.Time              `json:"timestamp"`
 	Data      map[string]interface{} `json:"data"`
 	Priority  EventPriority          `json:"priority"`

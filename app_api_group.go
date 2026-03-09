@@ -17,7 +17,7 @@ import (
 // GroupInfo 组信息
 type GroupInfo struct {
 	Name             string `json:"name"`
-	Channel          string `json:"channel"`           // v5.0: 渠道名称（从端点配置获取）
+	Channel          string `json:"channel"` // v5.0: 渠道名称（从端点配置获取）
 	Active           bool   `json:"active"`
 	Paused           bool   `json:"paused"`
 	Priority         int    `json:"priority"`

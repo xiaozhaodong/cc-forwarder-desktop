@@ -12,8 +12,8 @@ import (
 func TestRetryHandler_GetSuspendedRequestsCount(t *testing.T) {
 	cfg := &config.Config{
 		RequestSuspend: config.RequestSuspendConfig{
-			Enabled:            true,
-			Timeout:            300 * time.Second,
+			Enabled:              true,
+			Timeout:              300 * time.Second,
 			MaxSuspendedRequests: 100,
 		},
 	}
@@ -34,8 +34,8 @@ func TestRetryHandler_GetSuspendedRequestsCount(t *testing.T) {
 func TestRetryHandler_UpdateConfig(t *testing.T) {
 	initialConfig := &config.Config{
 		RequestSuspend: config.RequestSuspendConfig{
-			Enabled:            false,
-			Timeout:            300 * time.Second,
+			Enabled:              false,
+			Timeout:              300 * time.Second,
 			MaxSuspendedRequests: 100,
 		},
 	}
@@ -45,8 +45,8 @@ func TestRetryHandler_UpdateConfig(t *testing.T) {
 	// Update config
 	newConfig := &config.Config{
 		RequestSuspend: config.RequestSuspendConfig{
-			Enabled:            true,
-			Timeout:            600 * time.Second,
+			Enabled:              true,
+			Timeout:              600 * time.Second,
 			MaxSuspendedRequests: 200,
 		},
 	}
@@ -55,7 +55,7 @@ func TestRetryHandler_UpdateConfig(t *testing.T) {
 	rh.UpdateConfig(newConfig)
 
 	// Note: We cannot verify the internal config was updated since the config field
-	// is not exposed. In a real scenario, the behavior would be tested through 
+	// is not exposed. In a real scenario, the behavior would be tested through
 	// actual request processing.
 }
 
@@ -72,8 +72,8 @@ func TestRetryHandler_EdgeCases(t *testing.T) {
 	t.Run("Zero timeout config", func(t *testing.T) {
 		cfg := &config.Config{
 			RequestSuspend: config.RequestSuspendConfig{
-				Enabled:            true,
-				Timeout:            0,
+				Enabled:              true,
+				Timeout:              0,
 				MaxSuspendedRequests: 100,
 			},
 		}
@@ -87,8 +87,8 @@ func TestRetryHandler_EdgeCases(t *testing.T) {
 	t.Run("Update with nil config", func(t *testing.T) {
 		cfg := &config.Config{
 			RequestSuspend: config.RequestSuspendConfig{
-				Enabled:            true,
-				Timeout:            300 * time.Second,
+				Enabled:              true,
+				Timeout:              300 * time.Second,
 				MaxSuspendedRequests: 100,
 			},
 		}
@@ -104,8 +104,8 @@ func TestRetryHandler_EdgeCases(t *testing.T) {
 func TestRetryHandler_IsRetryableError(t *testing.T) {
 	cfg := &config.Config{
 		RequestSuspend: config.RequestSuspendConfig{
-			Enabled:            true,
-			Timeout:            300 * time.Second,
+			Enabled:              true,
+			Timeout:              300 * time.Second,
 			MaxSuspendedRequests: 100,
 		},
 	}
@@ -126,8 +126,8 @@ func TestRetryHandler_IsRetryableError(t *testing.T) {
 func BenchmarkRetryHandler_GetSuspendedRequestsCount(b *testing.B) {
 	cfg := &config.Config{
 		RequestSuspend: config.RequestSuspendConfig{
-			Enabled:            true,
-			Timeout:            300 * time.Second,
+			Enabled:              true,
+			Timeout:              300 * time.Second,
 			MaxSuspendedRequests: 100,
 		},
 	}
@@ -143,8 +143,8 @@ func BenchmarkRetryHandler_GetSuspendedRequestsCount(b *testing.B) {
 func BenchmarkRetryHandler_UpdateConfig(b *testing.B) {
 	cfg := &config.Config{
 		RequestSuspend: config.RequestSuspendConfig{
-			Enabled:            false,
-			Timeout:            300 * time.Second,
+			Enabled:              false,
+			Timeout:              300 * time.Second,
 			MaxSuspendedRequests: 100,
 		},
 	}
@@ -153,8 +153,8 @@ func BenchmarkRetryHandler_UpdateConfig(b *testing.B) {
 
 	newConfig := &config.Config{
 		RequestSuspend: config.RequestSuspendConfig{
-			Enabled:            true,
-			Timeout:            600 * time.Second,
+			Enabled:              true,
+			Timeout:              600 * time.Second,
 			MaxSuspendedRequests: 200,
 		},
 	}

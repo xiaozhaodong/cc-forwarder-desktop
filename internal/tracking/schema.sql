@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     start_time DATETIME NOT NULL,           -- 请求开始时间
     end_time DATETIME,                      -- 请求完成时间
     duration_ms INTEGER,                    -- 总耗时(毫秒)
+    first_token_ms INTEGER,                 -- 首个可见文本输出耗时(毫秒，仅流式请求)
     
     -- 转发信息
     channel TEXT DEFAULT '',                -- 渠道标签（来自端点配置）

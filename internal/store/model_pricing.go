@@ -18,11 +18,11 @@ type ModelPricingRecord struct {
 	ModelName string `json:"model_name"` // 模型名称（如 claude-sonnet-4-20250514）
 
 	// 定价信息 (USD per 1M tokens)
-	InputPrice            float64 `json:"input_price"`              // 输入价格
-	OutputPrice           float64 `json:"output_price"`             // 输出价格
-	CacheCreationPrice5m  float64 `json:"cache_creation_price_5m"`  // 5分钟缓存创建价格 (input * 1.25)
-	CacheCreationPrice1h  float64 `json:"cache_creation_price_1h"`  // 1小时缓存创建价格 (input * 2.0)
-	CacheReadPrice        float64 `json:"cache_read_price"`         // 缓存读取价格 (input * 0.1)
+	InputPrice           float64 `json:"input_price"`             // 输入价格
+	OutputPrice          float64 `json:"output_price"`            // 输出价格
+	CacheCreationPrice5m float64 `json:"cache_creation_price_5m"` // 5分钟缓存创建价格 (input * 1.25)
+	CacheCreationPrice1h float64 `json:"cache_creation_price_1h"` // 1小时缓存创建价格 (input * 2.0)
+	CacheReadPrice       float64 `json:"cache_read_price"`        // 缓存读取价格 (input * 0.1)
 
 	// 模型元信息
 	DisplayName string `json:"display_name,omitempty"` // 显示名称

@@ -50,6 +50,7 @@ type RequestLifecycleManager interface {
 	CompleteRequest(tokens *tracking.TokenUsage)
 	// 🆕 [流完整性追踪] 2025-12-11: 带数据质量标记的请求完成
 	CompleteRequestWithQuality(tokens *tracking.TokenUsage, failureReason string)
+	RecordFirstToken()
 	HandleNonTokenResponse(responseContent string)
 	// 失败请求Token记录方法：只记录Token统计，不改变请求状态
 	RecordTokensForFailedRequest(tokens *tracking.TokenUsage, failureReason string)
@@ -123,6 +124,7 @@ type TokenParser interface {
 type StreamProcessor interface {
 	ProcessStreamWithRetry(ctx context.Context, resp *http.Response) (*tracking.TokenUsage, string, error)
 	EnableDownstreamTailDrain(timeout time.Duration, cancelUpstream context.CancelFunc)
+	SetFirstTokenRecorder(recorder func())
 }
 
 // RetryHandler 重试处理器接口

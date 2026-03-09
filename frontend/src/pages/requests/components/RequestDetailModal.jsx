@@ -4,7 +4,7 @@
 // 2025-12-01
 // ============================================
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   X,
   Copy,
@@ -26,19 +26,39 @@ import {
 } from 'lucide-react';
 import RequestStatusBadge from './RequestStatusBadge.jsx';
 import ModelTag from './ModelTag.jsx';
-import { formatCost, formatDuration, formatTimestamp } from '@utils/api.js';
+import { formatCost, formatTimestamp } from '@utils/api.js';
+import { copyTextToClipboard } from './clipboard.js';
 
 /**
  * 信息行组件
  */
 const InfoRow = ({ icon: Icon, label, value, copyable = false }) => {
   const [copied, setCopied] = useState(false);
+  const resetTimerRef = useRef(null);
 
-  const handleCopy = () => {
-    if (copyable && value) {
-      navigator.clipboard.writeText(value);
+  useEffect(() => () => {
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+      resetTimerRef.current = null;
+    }
+  }, []);
+
+  const handleCopy = async () => {
+    if (copyable && typeof value === 'string' && value) {
+      const didCopy = await copyTextToClipboard(value, label);
+      if (!didCopy) {
+        setCopied(false);
+        return;
+      }
+
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current);
+      }
+      resetTimerRef.current = window.setTimeout(() => {
+        setCopied(false);
+        resetTimerRef.current = null;
+      }, 2000);
     }
   };
 
@@ -84,6 +104,40 @@ const TokenCard = ({ icon: Icon, label, value, colorClass }) => (
     <div className="text-xs text-slate-500 mt-1">{label}</div>
   </div>
 );
+
+const formatTimingBadge = (ms) => {
+  const value = Number.isFinite(ms) ? Math.max(ms, 0) : 0;
+  return `${(value / 1000).toFixed(1)}s`;
+};
+
+const getTimingPillClassName = (type, ms) => {
+  if (type === 'first') {
+    if (ms > 20000) return 'bg-rose-50 text-rose-600 border-rose-100';
+    if (ms > 10000) return 'bg-amber-50 text-amber-600 border-amber-100';
+    return 'bg-emerald-50 text-emerald-600 border-emerald-100';
+  }
+
+  if (ms > 40000) return 'bg-rose-50 text-rose-600 border-rose-100';
+  if (ms > 20000) return 'bg-orange-50 text-orange-600 border-orange-100';
+  return 'bg-emerald-50 text-emerald-600 border-emerald-100';
+};
+
+const RequestTimingValue = ({ request }) => {
+  const hasFirstToken = request.isStreaming && Number.isFinite(request.firstTokenMs);
+
+  return (
+    <span className="inline-flex items-center justify-end gap-2">
+      {hasFirstToken && (
+        <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('first', request.firstTokenMs)}`}>
+          首响 {formatTimingBadge(request.firstTokenMs)}
+        </span>
+      )}
+      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('duration', request.duration)}`}>
+        耗时 {formatTimingBadge(request.duration)}
+      </span>
+    </span>
+  );
+};
 
 /**
  * 请求详情模态框主组件
@@ -215,7 +269,7 @@ const RequestDetailModal = ({ isOpen, onClose, request }) => {
                 <div className="p-4">
                   <InfoRow icon={FileText} label="请求 ID" value={request.requestId} copyable />
                   <InfoRow icon={Calendar} label="时间戳" value={formatTimestamp(request.timestamp)} />
-                  <InfoRow icon={Clock} label="持续时间" value={formatDuration(request.duration)} />
+                  <InfoRow icon={Clock} label={request.isStreaming ? '首响 / 持续时间' : '持续时间'} value={<RequestTimingValue request={request} />} />
                   <InfoRow icon={Server} label="端点" value={request.endpoint} />
                   <InfoRow icon={Layers} label="渠道" value={request.channel || request.group} />
                 </div>
@@ -365,7 +419,7 @@ const RequestDetailModal = ({ isOpen, onClose, request }) => {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => navigator.clipboard.writeText(request.requestId)}
+              onClick={() => copyTextToClipboard(request.requestId, '请求 ID')}
               className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors flex items-center gap-1.5"
             >
               <Copy className="w-3.5 h-3.5" /> 复制 ID

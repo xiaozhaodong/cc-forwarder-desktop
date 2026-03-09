@@ -344,6 +344,7 @@ type UpdateOptions struct {
 	ModelName          *string        // 模型名称
 	EndTime            *time.Time     // 结束时间
 	Duration           *time.Duration // 持续时间
+	FirstTokenMs       *int64         // 首个流式业务事件到达耗时(毫秒)
 	FailureReason      *string        // 失败原因（用于中间过程记录）
 }
 
@@ -888,6 +889,10 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 			if opts.ModelName != nil {
 				req.ModelName = *opts.ModelName
 			}
+			if opts.FirstTokenMs != nil && *opts.FirstTokenMs >= 0 && req.FirstTokenMs == nil {
+				firstTokenMs := *opts.FirstTokenMs
+				req.FirstTokenMs = &firstTokenMs
+			}
 			if opts.FailureReason != nil {
 				req.FailureReason = *opts.FailureReason
 			}
@@ -984,18 +989,23 @@ func (ut *UsageTracker) RecordRequestSuccessWithQuality(requestID, modelName str
 			slog.Debug("🔥 热池完成请求失败，降级到事件队列模式",
 				"request_id", requestID,
 				"error", err)
-			ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, duration, failureReason)
+			ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason)
 		}
 		return
 	}
 
 	// 传统模式：发送事件到队列
-	ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, duration, failureReason)
+	ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason)
 }
 
 // recordRequestSuccessLegacy 传统模式记录请求成功
 // 🔧 [方案A实现] 2025-12-20: 增加 failureReason 参数支持
-func (ut *UsageTracker) recordRequestSuccessLegacy(requestID, modelName string, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64, duration time.Duration, failureReason string) {
+func (ut *UsageTracker) recordRequestSuccessLegacy(
+	requestID, modelName string,
+	inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens int64,
+	duration time.Duration,
+	failureReason string,
+) {
 	path := ""
 	if ut.hotPoolEnabled && ut.hotPool != nil {
 		if req, ok := ut.hotPool.Get(requestID); ok && req != nil {
@@ -1011,14 +1021,16 @@ func (ut *UsageTracker) recordRequestSuccessLegacy(requestID, modelName string, 
 		RequestID: requestID,
 		Timestamp: ut.now(),
 		Data: RequestCompleteData{
-			ModelName:           modelName,
-			Path:                path,
-			InputTokens:         inputTokens,
-			OutputTokens:        outputTokens,
-			CacheCreationTokens: cacheCreationTokens,
-			CacheReadTokens:     cacheReadTokens,
-			Duration:            duration,
-			FailureReason:       failureReason,
+			ModelName:             modelName,
+			Path:                  path,
+			InputTokens:           inputTokens,
+			OutputTokens:          outputTokens,
+			CacheCreationTokens:   cacheCreationTokens,
+			CacheCreation5mTokens: cacheCreation5mTokens,
+			CacheCreation1hTokens: cacheCreation1hTokens,
+			CacheReadTokens:       cacheReadTokens,
+			Duration:              duration,
+			FailureReason:         failureReason,
 		},
 	}
 
@@ -1912,6 +1924,7 @@ func (ut *UsageTracker) GetHotPoolAndArchiveOverview() map[string]interface{} {
 func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail {
 	var endTime *time.Time
 	var durationMs *int64
+	var firstTokenMs *int64
 	var httpStatus *int
 
 	if req.EndTime != nil {
@@ -1919,6 +1932,9 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 	}
 	if req.DurationMs > 0 {
 		durationMs = &req.DurationMs
+	}
+	if req.FirstTokenMs != nil {
+		firstTokenMs = req.FirstTokenMs
 	}
 	if req.HTTPStatus > 0 {
 		httpStatus = &req.HTTPStatus
@@ -1968,6 +1984,7 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 		StartTime:             req.StartTime,
 		EndTime:               endTime,
 		DurationMs:            durationMs,
+		FirstTokenMs:          firstTokenMs,
 		EndpointName:          req.EndpointName,
 		Channel:               req.Channel, // v5.0: 渠道标签
 		GroupName:             req.GroupName,
