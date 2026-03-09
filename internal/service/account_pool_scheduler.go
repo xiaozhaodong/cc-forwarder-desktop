@@ -218,12 +218,11 @@ func (s *AccountPoolService) CompleteLatestScheduleSnapshot(ctx context.Context,
 }
 
 func (s *AccountPoolService) prepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) ([]*store.UpstreamAccountRecord, error) {
-	now := time.Now()
-	accounts, err := s.store.ListSchedulableAccounts(ctx, now)
-	if err != nil {
+	if err := s.ensureRuntimeCache(ctx); err != nil {
 		return nil, err
 	}
-
+	now := time.Now()
+	accounts := s.runtimeCache.listSchedulable(now)
 	ordered, snapshot := rankSchedulableAccounts(accounts, now, requestID, requestPath)
 	if s.scheduleSnapshots != nil && snapshot != nil {
 		s.scheduleSnapshots.saveDraft(snapshot)

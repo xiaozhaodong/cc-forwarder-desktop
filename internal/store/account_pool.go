@@ -69,6 +69,7 @@ type AccountPoolStore interface {
 	MarkAccountSuccess(ctx context.Context, id int64, successAt time.Time) error
 	MarkAccountSuccessIfNoNewerFailure(ctx context.Context, id int64, successAt, attemptStartedAt time.Time) (bool, error)
 	MarkAccountAuthFailed(ctx context.Context, id int64, reason string) error
+	MarkAccountAuthFailedWithProfile(ctx context.Context, record *UpstreamAccountRecord, reason string) error
 	MarkAccountTransientFailure(ctx context.Context, id int64, reason string, cooldownUntil time.Time) error
 	UpdateAccountProfile(ctx context.Context, record *UpstreamAccountRecord) error
 }
@@ -443,6 +444,47 @@ func (s *SQLiteAccountPoolStore) MarkAccountAuthFailed(ctx context.Context, id i
 		reason, currentDBTime(), id)
 	if err != nil {
 		return fmt.Errorf("更新账号鉴权失败状态失败: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteAccountPoolStore) MarkAccountAuthFailedWithProfile(ctx context.Context, record *UpstreamAccountRecord, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if record == nil || record.ID <= 0 {
+		return fmt.Errorf("无效的账号记录")
+	}
+	record.PlanType = strings.TrimSpace(record.PlanType)
+	record.ChatGPTAccountID = strings.TrimSpace(record.ChatGPTAccountID)
+	record.ChatGPTUserID = strings.TrimSpace(record.ChatGPTUserID)
+	record.OrganizationID = strings.TrimSpace(record.OrganizationID)
+	record.QuotaStatus = strings.TrimSpace(record.QuotaStatus)
+	record.Fingerprint = GenerateAccountFingerprint(record.ProviderType, record.CredentialRaw, record.BaseURL)
+
+	res, err := s.getQuerier().ExecContext(ctx, `
+		UPDATE upstream_accounts
+		SET enabled = 0, state = 'disabled_auth', cooldown_until = NULL, last_error = ?, updated_at = ?,
+			credential_raw = ?, plan_type = ?, chatgpt_account_id = ?, chatgpt_user_id = ?, organization_id = ?,
+			quota_5h_used_percent = ?, quota_5h_reset_at = ?, quota_weekly_used_percent = ?, quota_weekly_reset_at = ?,
+			quota_status = ?, quota_refreshed_at = ?, fingerprint = ?
+		WHERE id = ?
+	`,
+		reason, currentDBTime(),
+		record.CredentialRaw, record.PlanType, record.ChatGPTAccountID, record.ChatGPTUserID, record.OrganizationID,
+		nullableFloat(record.Quota5HUsedPercent), nullableTime(record.Quota5HResetAt),
+		nullableFloat(record.QuotaWeeklyUsedPercent), nullableTime(record.QuotaWeeklyResetAt),
+		record.QuotaStatus, nullableTime(record.QuotaRefreshedAt), record.Fingerprint, record.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("更新账号鉴权失败与画像状态失败: %w", err)
+	}
+	affected, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("获取账号鉴权失败画像影响行数失败: %w", rowsErr)
+	}
+	if affected == 0 {
+		return fmt.Errorf("账号不存在: %d", record.ID)
 	}
 	return nil
 }

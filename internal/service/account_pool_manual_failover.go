@@ -15,11 +15,14 @@ type groupedManualFailoverTier struct {
 
 // MoveAccountToTier 将账号移动到指定手动主备层。
 func (s *AccountPoolService) MoveAccountToTier(ctx context.Context, accountID int64, targetTierIndex int) (bool, error) {
+	if err := s.ensureRuntimeCache(ctx); err != nil {
+		return false, err
+	}
 	if accountID <= 0 {
 		return false, fmt.Errorf("无效的账号 ID: %d", accountID)
 	}
 
-	accounts, err := s.store.ListAccounts(ctx, true)
+	accounts, err := s.ListAccounts(ctx, true)
 	if err != nil {
 		return false, fmt.Errorf("加载账号列表失败: %w", err)
 	}
@@ -35,6 +38,7 @@ func (s *AccountPoolService) MoveAccountToTier(ctx context.Context, accountID in
 	if err := s.store.UpdateAccountPriorities(ctx, updates); err != nil {
 		return false, err
 	}
+	s.runtimeCache.applyPriorityUpdates(updates)
 	return true, nil
 }
 

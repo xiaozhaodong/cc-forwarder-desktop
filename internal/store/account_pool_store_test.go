@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,6 +195,27 @@ func TestMarkAccountTransientFailure_StoresMicrosecondUpdatedAt(t *testing.T) {
 	pattern := regexp.MustCompile(`\.\d{6}[+-]\d{2}:\d{2}$`)
 	if !pattern.MatchString(updatedAt) {
 		t.Fatalf("expected microsecond precision updated_at, got %q", updatedAt)
+	}
+}
+
+func TestMarkAccountAuthFailedWithProfile_ReturnsErrorWhenAccountMissing(t *testing.T) {
+	st := newTestSQLiteAccountPoolStore(t)
+	ctx := context.Background()
+
+	err := st.MarkAccountAuthFailedWithProfile(ctx, &UpstreamAccountRecord{
+		ID:            999,
+		ProviderType:  "chatgpt_refresh_token",
+		AccountName:   "missing",
+		CredentialRaw: "rt-missing",
+		BaseURL:       "https://chatgpt.com",
+		PlanType:      "free",
+		QuotaStatus:   "auth_invalid",
+	}, "oauth invalid")
+	if err == nil {
+		t.Fatal("expected missing account error")
+	}
+	if !strings.Contains(err.Error(), "账号不存在") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

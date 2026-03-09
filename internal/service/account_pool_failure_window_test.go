@@ -30,7 +30,7 @@ func TestAccountPoolService_RecordAccountSoftFailure_TriggersCooldownAfterThresh
 		if err := svc.RecordAccountSoftFailure(ctx, acc.ID, "server busy", accountSoftFailureCategoryServerError, 0); err != nil {
 			t.Fatalf("RecordAccountSoftFailure attempt %d failed: %v", attempt+1, err)
 		}
-		current, err := st.GetAccount(ctx, acc.ID)
+		current, err := svc.GetAccount(ctx, acc.ID)
 		if err != nil {
 			t.Fatalf("GetAccount failed: %v", err)
 		}
@@ -42,7 +42,7 @@ func TestAccountPoolService_RecordAccountSoftFailure_TriggersCooldownAfterThresh
 	if err := svc.RecordAccountSoftFailure(ctx, acc.ID, "server busy", accountSoftFailureCategoryServerError, 0); err != nil {
 		t.Fatalf("RecordAccountSoftFailure third attempt failed: %v", err)
 	}
-	current, err := st.GetAccount(ctx, acc.ID)
+	current, err := svc.GetAccount(ctx, acc.ID)
 	if err != nil {
 		t.Fatalf("GetAccount failed: %v", err)
 	}
@@ -58,6 +58,9 @@ func TestAccountPoolService_RecordAccountSoftFailure_TriggersCooldownAfterThresh
 	if got, want := current.CooldownUntil.Sub(base), defaultAccountServerErrorCooldown; got != want {
 		t.Fatalf("unexpected cooldown duration: got %v want %v", got, want)
 	}
+	waitForPersistedAccountState(t, st, acc.ID, func(record *store.UpstreamAccountRecord) bool {
+		return record != nil && record.State == "cooldown" && record.FailCount == 1 && record.CooldownUntil != nil && record.CooldownUntil.Sub(base) == defaultAccountServerErrorCooldown
+	})
 }
 
 func TestAccountPoolService_RecordAccountSoftFailure_UsesRetryAfterForRateLimit(t *testing.T) {
@@ -87,7 +90,7 @@ func TestAccountPoolService_RecordAccountSoftFailure_UsesRetryAfterForRateLimit(
 		t.Fatalf("RecordAccountSoftFailure third attempt failed: %v", err)
 	}
 
-	current, err := st.GetAccount(ctx, acc.ID)
+	current, err := svc.GetAccount(ctx, acc.ID)
 	if err != nil {
 		t.Fatalf("GetAccount failed: %v", err)
 	}
@@ -97,6 +100,9 @@ func TestAccountPoolService_RecordAccountSoftFailure_UsesRetryAfterForRateLimit(
 	if got := current.CooldownUntil.Sub(base); got != 45*time.Second {
 		t.Fatalf("unexpected rate limit cooldown: got %v want %v", got, 45*time.Second)
 	}
+	waitForPersistedAccountState(t, st, acc.ID, func(record *store.UpstreamAccountRecord) bool {
+		return record != nil && record.CooldownUntil != nil && record.CooldownUntil.Sub(base) == 45*time.Second
+	})
 }
 
 func TestAccountPoolService_MarkAccountSuccess_ClearsSoftFailureWindow(t *testing.T) {
@@ -130,7 +136,7 @@ func TestAccountPoolService_MarkAccountSuccess_ClearsSoftFailureWindow(t *testin
 		t.Fatalf("RecordAccountSoftFailure after success failed: %v", err)
 	}
 
-	current, err := st.GetAccount(ctx, acc.ID)
+	current, err := svc.GetAccount(ctx, acc.ID)
 	if err != nil {
 		t.Fatalf("GetAccount failed: %v", err)
 	}
@@ -139,5 +145,21 @@ func TestAccountPoolService_MarkAccountSuccess_ClearsSoftFailureWindow(t *testin
 	}
 	if current.FailCount != 0 {
 		t.Fatalf("expected fail_count to remain 0 after reset, got %d", current.FailCount)
+	}
+}
+
+func waitForPersistedAccountState(t *testing.T, st *store.SQLiteAccountPoolStore, accountID int64, predicate func(*store.UpstreamAccountRecord) bool) {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		record, err := st.GetAccount(context.Background(), accountID)
+		if err == nil && predicate(record) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("persisted account state did not converge in time: record=%+v err=%v", record, err)
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }
