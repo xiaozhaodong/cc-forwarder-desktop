@@ -22,6 +22,7 @@ const (
 	LineBufferInitSize   = 1024 // 1KB行缓冲区初始大小
 	BackgroundBufferSize = 4096 // 4KB后台解析缓冲区
 	DebugLineLimit       = 100  // 调试模式下最多保存100行SSE数据
+	DebugLineDebugLimit  = 2000 // 开启 token_debug 时保留最近 2000 行，避免单请求无上限增长
 )
 
 // StreamProcessor 流式处理器核心结构体
@@ -221,7 +222,7 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 			}
 
 			// 3. 并行解析Token信息 - 不影响转发性能
-			sp.parseTokensInBackground(chunk)
+			sp.parseTokensFromChunk(chunk)
 
 			// 4. 更新处理状态
 			sp.bytesProcessed += int64(n)
@@ -267,9 +268,9 @@ func (sp *StreamProcessor) forwardToClient(data []byte) error {
 	return nil
 }
 
-// parseTokensInBackground 并发Token解析，不阻塞主流
-// 这个方法在后台goroutine中解析SSE事件，提取模型信息和Token使用统计
-func (sp *StreamProcessor) parseTokensInBackground(data []byte) {
+// parseTokensFromChunk 同步解析当前数据块中的 SSE 行。
+// 这里不启动后台 goroutine，仅在当前读循环内增量更新解析状态。
+func (sp *StreamProcessor) parseTokensFromChunk(data []byte) {
 	parseBuffer := make([]byte, len(data))
 	copy(parseBuffer, data)
 
@@ -291,9 +292,7 @@ func (sp *StreamProcessor) parseTokensInBackground(data []byte) {
 // 修改版本：仅进行 Token 解析，不再直接记录到 usageTracker
 func (sp *StreamProcessor) processSSELine(line string) {
 	// 🔍 [调试数据收集] 轻量级收集SSE行数据（无性能影响）
-	if sp.captureAllDebugLines || len(sp.debugLines) < DebugLineLimit {
-		sp.debugLines = append(sp.debugLines, line)
-	}
+	sp.appendDebugLine(line)
 
 	// ✅ 使用V2架构进行解析
 	result := sp.tokenParser.ParseSSELineV2(line)
@@ -342,6 +341,22 @@ func (sp *StreamProcessor) processSSELine(line string) {
 			// sp.completionRecorded = true
 		}
 	}
+}
+
+func (sp *StreamProcessor) appendDebugLine(line string) {
+	limit := DebugLineLimit
+	if sp.captureAllDebugLines {
+		limit = DebugLineDebugLimit
+	}
+	if limit <= 0 {
+		return
+	}
+
+	if len(sp.debugLines) >= limit {
+		copy(sp.debugLines, sp.debugLines[1:])
+		sp.debugLines = sp.debugLines[:limit-1]
+	}
+	sp.debugLines = append(sp.debugLines, line)
 }
 
 // ensureRequestCompletion 确保请求完成状态被记录（fallback机制）

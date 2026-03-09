@@ -76,7 +76,8 @@ request_suspend:
   max_suspended_requests: 100 # 最大挂起请求数量，默认: 100
 
 # 账号池路由配置 (v6.0+)
-# 当 enabled=true 时，/v1/responses 走账号池链路，不再走 endpoint 链路
+# /v1/responses 专用于 Codex 账号池链路；endpoint 主要承载 Claude 相关请求
+# 当 enabled=true 时，/v1/responses 走账号池链路；当 enabled=false 时，该端点不会回退到 endpoint
 # 账号池数据依赖 usage_tracking 的 SQLite 数据库
 account_pool:
   enabled: false              # 是否启用账号池路由，默认: false

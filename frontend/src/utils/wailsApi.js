@@ -429,6 +429,10 @@ export const normalizeUpstreamAccount = (account = {}) => ({
   accountName: account.account_name || account.accountName || account.AccountName || '',
   credential_raw: account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
   credentialRaw: account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
+  credential_raw_masked: account.credential_raw_masked || account.credentialRawMasked || account.CredentialRawMasked || account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
+  credentialRawMasked: account.credential_raw_masked || account.credentialRawMasked || account.CredentialRawMasked || account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
+  has_credential: (account.has_credential ?? account.hasCredential ?? account.HasCredential) === true || !!(account.credential_raw || account.credentialRaw || account.CredentialRaw),
+  hasCredential: (account.has_credential ?? account.hasCredential ?? account.HasCredential) === true || !!(account.credential_raw || account.credentialRaw || account.CredentialRaw),
   base_url: account.base_url || account.baseURL || account.BaseURL || '',
   baseURL: account.base_url || account.baseURL || account.BaseURL || '',
   cost_multiplier: Number.parseFloat(account.cost_multiplier ?? account.costMultiplier ?? account.CostMultiplier) || 1.0,
@@ -604,6 +608,36 @@ export const updateUpstreamAccount = async (id, input) => {
   return result ?? { success: true };
 };
 
+export const getUpstreamAccountCredential = async (id) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('GetUpstreamAccountCredential', { optional: true });
+  if (!method) {
+    return {
+      unsupported: true,
+      id: normalizeEntityId(id),
+      credential_raw: '',
+      credentialRaw: '',
+      credential_raw_masked: '',
+      credentialRawMasked: '',
+      has_credential: false,
+      hasCredential: false
+    };
+  }
+
+  const result = await method(normalizeEntityId(id));
+  return {
+    id: parseEntityId(result?.id ?? result?.ID ?? normalizeEntityId(id)),
+    credential_raw: result?.credential_raw || result?.credentialRaw || '',
+    credentialRaw: result?.credential_raw || result?.credentialRaw || '',
+    credential_raw_masked: result?.credential_raw_masked || result?.credentialRawMasked || '',
+    credentialRawMasked: result?.credential_raw_masked || result?.credentialRawMasked || '',
+    has_credential: (result?.has_credential ?? result?.hasCredential) === true,
+    hasCredential: (result?.has_credential ?? result?.hasCredential) === true
+  };
+};
+
 export const deleteUpstreamAccount = async (id) => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
@@ -611,6 +645,24 @@ export const deleteUpstreamAccount = async (id) => {
   const method = getWailsMethod('DeleteUpstreamAccount');
   const result = await method(normalizeEntityId(id));
   return result ?? { success: true };
+};
+
+export const moveUpstreamAccountToTier = async (id, targetTier) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('MoveUpstreamAccountToTier', { optional: true });
+  if (!method) {
+    return {
+      success: false,
+      unsupported: true,
+      changed: false,
+      message: '当前后端版本暂未提供 MoveUpstreamAccountToTier'
+    };
+  }
+
+  const result = await method(normalizeEntityId(id), String(targetTier || 'primary'));
+  return result ?? { success: true, changed: true };
 };
 
 export const toggleUpstreamAccount = async (id, enabled) => {

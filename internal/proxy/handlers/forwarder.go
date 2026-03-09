@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"cc-forwarder/config"
@@ -18,6 +19,9 @@ import (
 type Forwarder struct {
 	config          *config.Config
 	endpointManager *endpoint.Manager
+	transportOnce   sync.Once
+	transportErr    error
+	httpTransport   *http.Transport
 }
 
 // NewForwarder 创建新的Forwarder实例
@@ -118,31 +122,39 @@ func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes
 }
 
 func (f *Forwarder) buildStreamingTransport() (*http.Transport, error) {
-	httpTransport, err := transport.CreateTransport(f.config)
-	if err != nil {
-		return nil, err
+	f.transportOnce.Do(func() {
+		httpTransport, err := transport.CreateTransport(f.config)
+		if err != nil {
+			f.transportErr = err
+			return
+		}
+
+		// 优化传输设置用于流式处理
+		httpTransport.DisableKeepAlives = false
+		httpTransport.MaxIdleConns = 10
+		httpTransport.MaxIdleConnsPerHost = 2
+		httpTransport.IdleConnTimeout = 0 // 无空闲超时
+		httpTransport.TLSHandshakeTimeout = 10 * time.Second
+		httpTransport.ExpectContinueTimeout = 1 * time.Second
+
+		// 从配置中读取响应头超时时间，默认60秒
+		responseHeaderTimeout := f.config.Streaming.ResponseHeaderTimeout
+		if responseHeaderTimeout == 0 {
+			responseHeaderTimeout = 60 * time.Second
+		}
+		httpTransport.ResponseHeaderTimeout = responseHeaderTimeout
+
+		httpTransport.DisableCompression = true // 禁用压缩以防缓冲延迟
+		httpTransport.WriteBufferSize = 4096    // 较小的写缓冲区
+		httpTransport.ReadBufferSize = 4096     // 较小的读缓冲区
+
+		f.httpTransport = httpTransport
+	})
+
+	if f.transportErr != nil {
+		return nil, f.transportErr
 	}
-
-	// 优化传输设置用于流式处理
-	httpTransport.DisableKeepAlives = false
-	httpTransport.MaxIdleConns = 10
-	httpTransport.MaxIdleConnsPerHost = 2
-	httpTransport.IdleConnTimeout = 0 // 无空闲超时
-	httpTransport.TLSHandshakeTimeout = 10 * time.Second
-	httpTransport.ExpectContinueTimeout = 1 * time.Second
-
-	// 从配置中读取响应头超时时间，默认60秒
-	responseHeaderTimeout := f.config.Streaming.ResponseHeaderTimeout
-	if responseHeaderTimeout == 0 {
-		responseHeaderTimeout = 60 * time.Second
-	}
-	httpTransport.ResponseHeaderTimeout = responseHeaderTimeout
-
-	httpTransport.DisableCompression = true // 禁用压缩以防缓冲延迟
-	httpTransport.WriteBufferSize = 4096    // 较小的写缓冲区
-	httpTransport.ReadBufferSize = 4096     // 较小的读缓冲区
-
-	return httpTransport, nil
+	return f.httpTransport, nil
 }
 
 // CopyHeaders 复制头部逻辑

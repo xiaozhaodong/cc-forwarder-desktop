@@ -110,7 +110,8 @@ proxy:
 # ========================================================
 
 # 账号池配置 (v6.0+)
-# 启用后 /v1/responses 请求走 Codex 账号池链路，与 Claude endpoint 链路分离
+# /v1/responses 专用于 Codex 账号池链路；endpoint 主要承载 Claude 相关请求
+# 启用后 /v1/responses 请求走账号池；未启用时该端点不会回退到 endpoint
 account_pool:
   enabled: true
 

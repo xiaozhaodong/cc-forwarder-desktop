@@ -6,16 +6,14 @@
 import { useCallback, useState } from 'react';
 import {
   deleteUpstreamAccount,
+  moveUpstreamAccountToTier,
   refreshUpstreamAccountProfile,
   testUpstreamAccount,
   toggleUpstreamAccount
 } from '@utils/api.js';
-import {
-  resolveAccountId,
-  switchUpstreamAccountToTier
-} from '../utils.js';
+import { resolveAccountId } from '../utils.js';
 
-const useAccountPoolActions = ({ accounts, loadData, loadLatestScheduleSnapshot, showNotice }) => {
+const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotice }) => {
   const [busyKey, setBusyKey] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
 
@@ -112,13 +110,14 @@ const useAccountPoolActions = ({ accounts, loadData, loadLatestScheduleSnapshot,
 
     setBusyKey(`account-switch-${accountId}`);
     try {
-      const result = await switchUpstreamAccountToTier({
-        accounts,
-        targetAccountId: accountId,
-        targetTierIndex
-      });
+      const result = await moveUpstreamAccountToTier(accountId, targetTier === 'backup' ? 'backup' : 'primary');
 
-      if (!result.changed) {
+      if (result?.unsupported) {
+        showNotice('info', result.message || '当前后端版本暂不支持手动切换层级');
+        return;
+      }
+
+      if (result?.changed !== true) {
         showNotice('info', targetTier === 'backup' ? '该账号已在备组位置' : '该账号已在主组位置');
         return;
       }
@@ -136,7 +135,7 @@ const useAccountPoolActions = ({ accounts, loadData, loadLatestScheduleSnapshot,
     } finally {
       setBusyKey('');
     }
-  }, [accounts, loadData, showNotice]);
+  }, [loadData, showNotice]);
 
   const handleTestAccount = useCallback(async (account) => {
     const accountId = resolveAccountId(account);

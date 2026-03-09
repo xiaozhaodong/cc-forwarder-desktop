@@ -756,6 +756,22 @@ export namespace main {
 	        this.has_default = source["has_default"];
 	    }
 	}
+	export class MoveUpstreamAccountToTierResult {
+	    success: boolean;
+	    changed: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MoveUpstreamAccountToTierResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.changed = source["changed"];
+	        this.message = source["message"];
+	    }
+	}
 	export class PortInfo {
 	    preferred_port: number;
 	    actual_port: number;
@@ -1054,11 +1070,31 @@ export namespace main {
 	    }
 	}
 	
+	export class UpstreamAccountCredentialInfo {
+	    id: number;
+	    credential_raw: string;
+	    credential_raw_masked: string;
+	    has_credential: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpstreamAccountCredentialInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.credential_raw = source["credential_raw"];
+	        this.credential_raw_masked = source["credential_raw_masked"];
+	        this.has_credential = source["has_credential"];
+	    }
+	}
 	export class UpstreamAccountInfo {
 	    id: number;
 	    provider_type: string;
 	    account_name: string;
 	    credential_raw: string;
+	    credential_raw_masked: string;
+	    has_credential: boolean;
 	    base_url: string;
 	    cost_multiplier: number;
 	    input_cost_multiplier: number;
@@ -1097,6 +1133,8 @@ export namespace main {
 	        this.provider_type = source["provider_type"];
 	        this.account_name = source["account_name"];
 	        this.credential_raw = source["credential_raw"];
+	        this.credential_raw_masked = source["credential_raw_masked"];
+	        this.has_credential = source["has_credential"];
 	        this.base_url = source["base_url"];
 	        this.cost_multiplier = source["cost_multiplier"];
 	        this.input_cost_multiplier = source["input_cost_multiplier"];

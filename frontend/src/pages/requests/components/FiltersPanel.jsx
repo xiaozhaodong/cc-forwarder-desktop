@@ -142,7 +142,7 @@ const FiltersPanel = ({
             />
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-gray-700 min-w-[40px]">端点:</label>
+            <label className="text-sm font-medium text-gray-700 min-w-[72px]">端点 / 账号:</label>
             <CustomSelect
               options={endpointOptions}
               value={filters.endpoint === 'all' ? '' : filters.endpoint}

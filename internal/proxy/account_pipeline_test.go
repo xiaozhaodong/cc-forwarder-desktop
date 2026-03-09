@@ -843,6 +843,27 @@ func TestParseAccountStreamStatusError_Cancelled(t *testing.T) {
 	}
 }
 
+func TestReadAndRestoreResponseBody_PreservesFullBody(t *testing.T) {
+	fullBody := strings.Repeat("abcdefghij", 300)
+	resp := &http.Response{
+		StatusCode: http.StatusServiceUnavailable,
+		Body:       io.NopCloser(strings.NewReader(fullBody)),
+	}
+
+	detail := readAndRestoreResponseBody(resp, 32)
+	if len(detail) != 32 {
+		t.Fatalf("expected truncated detail length 32, got %d", len(detail))
+	}
+
+	restoredBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll restored body failed: %v", err)
+	}
+	if string(restoredBody) != fullBody {
+		t.Fatal("expected restored body to keep full upstream payload")
+	}
+}
+
 func TestAccountPipeline_ResponsesStreamingCompletedAfterClientCancel_TreatedAsSuccess(t *testing.T) {
 	completedWritten := make(chan struct{})
 	allowClose := make(chan struct{})

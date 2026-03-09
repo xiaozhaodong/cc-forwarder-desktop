@@ -222,6 +222,44 @@ const summarizeCallbackURL = (raw = '') => {
   }
 };
 
+const toDateOrNull = (value) => {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const hasFutureQuotaReset = (account = {}) => {
+  const resetCandidates = [
+    account.quota_5h_reset_at ?? account.quota5hResetAt,
+    account.quota_weekly_reset_at ?? account.quotaWeeklyResetAt
+  ];
+
+  return resetCandidates.some((value) => {
+    const date = toDateOrNull(value);
+    return date ? date.getTime() > Date.now() : false;
+  });
+};
+
+const isAccountSchedulable = (account = {}) => {
+  if (!account || account.enabled === false) {
+    return false;
+  }
+
+  const state = String(account.state || '').trim().toLowerCase();
+  if (state === 'disabled_auth' || state === 'cooldown') {
+    return false;
+  }
+
+  const quotaStatus = String(account.quota_status || account.quotaStatus || '').trim().toLowerCase();
+  if (quotaStatus === 'exhausted' && hasFutureQuotaReset(account)) {
+    return false;
+  }
+
+  return true;
+};
+
 const maskSessionId = (sessionId = '') => {
   const text = String(sessionId || '').trim();
   if (text.length <= 6) return '***';
@@ -231,6 +269,8 @@ const maskSessionId = (sessionId = '') => {
 export {
   authMethodToProviderType,
   buildOAuthCredentialRaw,
+  hasFutureQuotaReset,
+  isAccountSchedulable,
   isAPIKeyProviderType,
   maskSessionId,
   normalizeEntityId,

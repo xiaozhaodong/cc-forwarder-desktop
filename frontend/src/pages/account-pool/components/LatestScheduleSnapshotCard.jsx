@@ -70,7 +70,7 @@ const LatestScheduleSnapshotCard = ({ snapshot = {}, snapshotUnsupported = false
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
           {!snapshotUnsupported && (
-            <Badge text="3s 自动刷新" className="bg-slate-100 text-slate-600 border-slate-200" />
+            <Badge text="5s 自动刷新" className="bg-slate-100 text-slate-600 border-slate-200" />
           )}
           {updatedAt && <span>更新于 {formatTimestamp(updatedAt)}</span>}
         </div>

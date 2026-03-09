@@ -371,10 +371,14 @@ func readAndRestoreResponseBody(resp *http.Response, limit int64) string {
 	if resp == nil || resp.Body == nil {
 		return ""
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, limit))
+	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(body))
-	return strings.TrimSpace(string(body))
+	visibleBody := body
+	if limit > 0 && int64(len(visibleBody)) > limit {
+		visibleBody = visibleBody[:limit]
+	}
+	return strings.TrimSpace(string(visibleBody))
 }
 
 func (h *Handler) getAccountHTTPClient(isSSE bool) (*http.Client, error) {

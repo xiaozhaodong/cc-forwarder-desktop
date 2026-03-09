@@ -87,6 +87,8 @@ export function GetSystemStatus():Promise<main.SystemStatus>;
 
 export function GetTokenUsage():Promise<main.TokenUsageData>;
 
+export function GetUpstreamAccountCredential(arg1:number):Promise<main.UpstreamAccountCredentialInfo>;
+
 export function GetUpstreamAccounts():Promise<Array<main.UpstreamAccountInfo>>;
 
 export function GetUsageStats(arg1:main.UsageStatsQueryParams):Promise<main.UsageStatsData>;
@@ -94,6 +96,8 @@ export function GetUsageStats(arg1:main.UsageStatsQueryParams):Promise<main.Usag
 export function GetUsageSummary(arg1:string,arg2:string):Promise<main.UsageSummary>;
 
 export function IsProxyRunning():Promise<boolean>;
+
+export function MoveUpstreamAccountToTier(arg1:number,arg2:string):Promise<main.MoveUpstreamAccountToTierResult>;
 
 export function PauseGroup(arg1:string):Promise<void>;
 

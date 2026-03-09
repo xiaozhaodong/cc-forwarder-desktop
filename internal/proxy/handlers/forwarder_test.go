@@ -143,6 +143,28 @@ func TestForwarder_ForwardStreamingRequestToEndpoint_UsesIndependentContext(t *t
 	_ = resp.Body.Close()
 }
 
+func TestForwarder_BuildStreamingTransport_ReusesTransport(t *testing.T) {
+	cfg := &config.Config{}
+	endpointManager := endpoint.NewManager(cfg)
+	forwarder := NewForwarder(cfg, endpointManager)
+
+	first, err := forwarder.buildStreamingTransport()
+	if err != nil {
+		t.Fatalf("first buildStreamingTransport failed: %v", err)
+	}
+	second, err := forwarder.buildStreamingTransport()
+	if err != nil {
+		t.Fatalf("second buildStreamingTransport failed: %v", err)
+	}
+
+	if first == nil || second == nil {
+		t.Fatal("expected non-nil transports")
+	}
+	if first != second {
+		t.Fatal("expected buildStreamingTransport to reuse the same transport instance")
+	}
+}
+
 func TestForwarder_CopyHeaders(t *testing.T) {
 	// 创建配置
 	cfg := &config.Config{}

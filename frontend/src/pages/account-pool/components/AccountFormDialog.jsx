@@ -3,7 +3,10 @@
 // 2026-03-07
 // ============================================
 
+import { useEffect, useState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { Button } from '@components/ui';
+import { maskSessionId } from '../utils.js';
 import OAuthHelperPanel from './OAuthHelperPanel.jsx';
 import { FormField } from './shared.jsx';
 import { AUTH_METHOD_OPTIONS, DEFAULT_BASE_URL, authMethodToProviderType, isAPIKeyProviderType } from '../utils.js';
@@ -12,6 +15,7 @@ const AccountFormDialog = ({
   open,
   editingAccount,
   accountSubmitting,
+  accountCredentialLoading,
   accountForm,
   setAccountForm,
   onClose,
@@ -28,9 +32,29 @@ const AccountFormDialog = ({
   showNotice,
   openExternalURL
 }) => {
+  const [showCredential, setShowCredential] = useState(true);
+
+  useEffect(() => {
+    setShowCredential(!editingAccount);
+  }, [editingAccount, open]);
+
   if (!open) return null;
 
   const isAPIKeyAccount = isAPIKeyProviderType(accountForm.provider_type || accountForm.auth_method);
+  const maskedCredentialPreview = (() => {
+    const raw = String(accountForm.credential_raw || '').trim();
+    if (!raw) {
+      return '';
+    }
+    if (raw.startsWith('{')) {
+      return raw
+        .replace(/"refresh_token"\s*:\s*"([^"]+)"/g, (_, value) => `"refresh_token":"${maskSessionId(value)}"`)
+        .replace(/"access_token"\s*:\s*"([^"]+)"/g, (_, value) => `"access_token":"${maskSessionId(value)}"`)
+        .replace(/"id_token"\s*:\s*"([^"]+)"/g, (_, value) => `"id_token":"${maskSessionId(value)}"`);
+    }
+    return maskSessionId(raw);
+  })();
+
   const renderMultiplierInput = (label, key, help = '') => (
     <FormField label={label}>
       <div className="space-y-1.5">
@@ -179,16 +203,45 @@ const AccountFormDialog = ({
               <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">认证信息</h4>
 
               <FormField label={accountForm.auth_method === 'chatgpt_refresh_token' ? 'ChatGPT Refresh Token (rt)' : 'API Key'} required>
-                <textarea
-                  value={accountForm.credential_raw}
-                  onChange={(event) => setAccountForm(prev => ({ ...prev, credential_raw: event.target.value }))}
-                  className="min-h-[120px] w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                  placeholder={
-                    accountForm.auth_method === 'chatgpt_refresh_token'
-                      ? '粘贴 Refresh Token，例如：rt-xxxxxx'
-                      : '例如: sk-xxxxxx'
-                  }
-                />
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[11px] text-slate-400">
+                      {editingAccount ? '已改为按需读取完整凭据，默认隐藏' : '支持直接粘贴完整凭据'}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowCredential(prev => !prev)}
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700"
+                      title={showCredential ? '隐藏凭据' : '显示凭据'}
+                    >
+                      {showCredential ? <EyeOff size={14} /> : <Eye size={14} />}
+                      {showCredential ? '隐藏' : '显示'}
+                    </button>
+                  </div>
+
+                  <textarea
+                    value={showCredential ? accountForm.credential_raw : maskedCredentialPreview}
+                    onChange={(event) => {
+                      if (!showCredential) {
+                        return;
+                      }
+                      setAccountForm(prev => ({ ...prev, credential_raw: event.target.value }));
+                    }}
+                    readOnly={!showCredential || accountCredentialLoading}
+                    className={`min-h-[120px] w-full rounded-lg border px-3 py-2 text-sm font-mono focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 ${
+                      !showCredential || accountCredentialLoading
+                        ? 'border-slate-100 bg-slate-50 text-slate-400'
+                        : 'border-slate-200'
+                    }`}
+                    placeholder={
+                      accountCredentialLoading
+                        ? '正在加载已保存凭据...'
+                        : accountForm.auth_method === 'chatgpt_refresh_token'
+                          ? '粘贴 Refresh Token，例如：rt-xxxxxx'
+                          : '例如: sk-xxxxxx'
+                    }
+                  />
+                </div>
               </FormField>
 
               {accountForm.auth_method === 'chatgpt_refresh_token' && (

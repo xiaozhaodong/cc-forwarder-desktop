@@ -39,13 +39,48 @@ export const getTodayTimeRange = () => {
  * 创建初始筛选器状态
  * @returns {Object}
  */
-const createInitialFilters = () => {
+export const createInitialFilters = () => {
   const todayRange = getTodayTimeRange();
   return {
     ...DEFAULT_FILTERS,
     startDate: todayRange.startDate,
     endDate: todayRange.endDate
   };
+};
+
+export const buildQueryParamsFromFilters = (filters = {}) => {
+  const queryParams = {};
+
+  if (filters.startDate) {
+    const timeStr = filters.startDate.includes(':')
+      ? filters.startDate + ':00'
+      : filters.startDate + ':00:00';
+    queryParams.start_date = timeStr + '+08:00';
+  }
+  if (filters.endDate) {
+    const timeStr = filters.endDate.includes(':')
+      ? filters.endDate + ':00'
+      : filters.endDate + ':00:00';
+    queryParams.end_date = timeStr + '+08:00';
+  }
+
+  if (filters.status && filters.status !== 'all') {
+    queryParams.status = filters.status;
+  }
+  if (filters.model && filters.model !== '') {
+    queryParams.model = filters.model;
+  }
+  if (filters.channel && filters.channel !== 'all') {
+    queryParams.channel = filters.channel;
+  }
+  if (filters.endpoint && filters.endpoint !== 'all') {
+    queryParams.endpoint = filters.endpoint;
+  }
+  if (filters.group && filters.group !== 'all') {
+    queryParams.group = filters.group;
+  }
+
+  return queryParams;
 };
 
 /**
@@ -72,51 +107,14 @@ export const useFilters = (initialFilters = {}) => {
 
   // 重置筛选器
   const resetFilters = useCallback(() => {
-    setFilters(createInitialFilters());
+    const nextFilters = createInitialFilters();
+    setFilters(nextFilters);
+    return nextFilters;
   }, []);
 
   // 构建 API 查询参数
   const buildQueryParams = useCallback(() => {
-    const queryParams = {};
-
-    // 处理时间筛选 - 添加时区信息
-    if (filters.startDate) {
-      const timeStr = filters.startDate.includes(':')
-        ? filters.startDate + ':00'
-        : filters.startDate + ':00:00';
-      queryParams.start_date = timeStr + '+08:00';
-    }
-    if (filters.endDate) {
-      const timeStr = filters.endDate.includes(':')
-        ? filters.endDate + ':00'
-        : filters.endDate + ':00:00';
-      queryParams.end_date = timeStr + '+08:00';
-    }
-
-    // 处理状态筛选 - 'all' 表示不筛选
-    if (filters.status && filters.status !== 'all') {
-      queryParams.status = filters.status;
-    }
-
-    // 处理模型筛选 - 空字符串表示不筛选
-    if (filters.model && filters.model !== '') {
-      queryParams.model = filters.model;
-    }
-
-    // 处理渠道筛选
-    if (filters.channel && filters.channel !== 'all') {
-      queryParams.channel = filters.channel;
-    }
-
-    // 处理其他筛选条件
-    if (filters.endpoint && filters.endpoint !== 'all') {
-      queryParams.endpoint = filters.endpoint;
-    }
-    if (filters.group && filters.group !== 'all') {
-      queryParams.group = filters.group;
-    }
-
-    return queryParams;
+    return buildQueryParamsFromFilters(filters);
   }, [filters]);
 
   // 检查是否有活动筛选器

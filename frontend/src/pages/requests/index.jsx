@@ -10,8 +10,8 @@ import { NoticeToast } from '@pages/account-pool/components';
 import { useNotice } from '@pages/account-pool/hooks';
 import {
   compareAccountsByManualPriority,
+  isAccountSchedulable,
   resolveAccountId,
-  switchUpstreamAccountToTier
 } from '@pages/account-pool/utils.js';
 import {
   fetchRequests,
@@ -20,10 +20,11 @@ import {
   fetchEndpoints,
   fetchGroups,
   activateGroup,
+  moveUpstreamAccountToTier,
   fetchUpstreamAccounts,
   fetchLatestAccountScheduleSnapshot
 } from '@utils/api.js';
-import { useFilters } from './hooks/useFilters.js';
+import { buildQueryParamsFromFilters, createInitialFilters, useFilters } from './hooks/useFilters.js';
 import { useColumnConfig } from './hooks/useColumnConfig.js';
 import { useTimeRange } from './hooks/useTimeRange.js';
 import { useAutoRefresh } from './hooks/useAutoRefresh.js';
@@ -68,6 +69,7 @@ const RequestsPage = () => {
     resetFilters,
     buildQueryParams
   } = useFilters();
+  const [appliedQueryParams, setAppliedQueryParams] = useState(() => buildQueryParams());
 
   // 列配置 Hook
   const {
@@ -107,9 +109,26 @@ const RequestsPage = () => {
   }, [accounts]);
 
   const activeAccount = useMemo(() => {
-    const enabledAccounts = sortedAccounts.filter(account => account.enabled !== false);
-    return enabledAccounts[0] || sortedAccounts[0] || null;
+    const schedulableAccounts = sortedAccounts.filter(isAccountSchedulable);
+    return schedulableAccounts[0] || sortedAccounts[0] || null;
   }, [sortedAccounts]);
+
+  const requestFilterEndpoints = useMemo(() => {
+    const options = new Set();
+    endpoints.forEach((endpoint) => {
+      const endpointName = endpoint?.name || endpoint?.endpoint_name || endpoint?.Name || '';
+      if (endpointName) {
+        options.add(endpointName);
+      }
+    });
+    accounts.forEach((account) => {
+      const accountName = account?.account_name || account?.accountName || '';
+      if (accountName) {
+        options.add(accountName);
+      }
+    });
+    return Array.from(options).sort((left, right) => left.localeCompare(right));
+  }, [accounts, endpoints]);
 
   const recentSelectedAccountId = useMemo(() => {
     const hasSnapshot = latestScheduleSnapshot?.hasSnapshot === true || latestScheduleSnapshot?.has_snapshot === true;
@@ -133,9 +152,8 @@ const RequestsPage = () => {
       }
       setError(null);
 
-      const queryParams = buildQueryParams();
       const requestsQueryParams = {
-        ...queryParams,
+        ...appliedQueryParams,
         source_view: 'all'
       };
 
@@ -216,7 +234,7 @@ const RequestsPage = () => {
         setLoading(false);
       }
     }
-  }, [buildQueryParams, pagination.page, pagination.pageSize]);
+  }, [appliedQueryParams, pagination.page, pagination.pageSize]);
 
   // 自动刷新 Hook (必须在 loadData 定义之后)
   const autoRefresh = useAutoRefresh(loadData);
@@ -237,13 +255,15 @@ const RequestsPage = () => {
 
   // 应用筛选
   const handleApplyFilters = () => {
+    setAppliedQueryParams(buildQueryParams());
     setPagination(prev => ({ ...prev, page: 1 }));
-    loadData();
   };
 
   // 重置筛选
   const handleResetFilters = () => {
-    resetFilters();
+    const nextFilters = createInitialFilters();
+    updateFilters(nextFilters);
+    setAppliedQueryParams(buildQueryParamsFromFilters(nextFilters));
     setPagination(prev => ({ ...prev, page: 1 }));
   };
 
@@ -320,13 +340,14 @@ const RequestsPage = () => {
 
     setAccountSwitching(true);
     try {
-      const result = await switchUpstreamAccountToTier({
-        accounts,
-        targetAccountId: accountId,
-        targetTierIndex: 0
-      });
+      const result = await moveUpstreamAccountToTier(accountId, 'primary');
 
-      if (!result.changed) {
+      if (result?.unsupported) {
+        showNotice('info', result.message || '当前后端版本暂不支持手动切主');
+        return;
+      }
+
+      if (result?.changed !== true) {
         showNotice('info', `「${accountName}」已经是主组账号`);
         return;
       }
@@ -339,7 +360,7 @@ const RequestsPage = () => {
     } finally {
       setAccountSwitching(false);
     }
-  }, [accounts, activeAccount, loadData, showNotice]);
+  }, [activeAccount, loadData, showNotice]);
 
   // ==================== 生命周期 ====================
 
@@ -410,7 +431,7 @@ const RequestsPage = () => {
             onReset={handleResetFilters}
             models={models}
             channels={channels}
-            endpoints={endpoints}
+            endpoints={requestFilterEndpoints}
             onQuickTimeSelect={handleQuickTimeSelect}
           />
         </div>

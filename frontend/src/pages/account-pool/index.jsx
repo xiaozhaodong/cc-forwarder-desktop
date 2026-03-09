@@ -16,7 +16,8 @@ import {
   StatsCards
 } from './components';
 import {
-  buildManualFailoverTierSummary
+  buildManualFailoverTierSummary,
+  isAccountSchedulable
 } from './utils.js';
 import {
   useAccountPoolAccounts,
@@ -51,6 +52,7 @@ const AccountPoolPage = () => {
   const {
     accountModalOpen,
     accountSubmitting,
+    accountCredentialLoading,
     editingAccount,
     accountForm,
     setAccountForm,
@@ -81,14 +83,13 @@ const AccountPoolPage = () => {
     handleTestAccount,
     handleToggleAccount
   } = useAccountPoolActions({
-    accounts,
     loadData,
     loadLatestScheduleSnapshot,
     showNotice
   });
 
   const accountCount = accounts.length;
-  const activeAccountCount = accounts.filter(item => item.enabled && item.state !== 'disabled_auth').length;
+  const activeAccountCount = accounts.filter(isAccountSchedulable).length;
   const authFailedCount = accounts.filter(item => item.state === 'disabled_auth').length;
   const priorityTierSummary = useMemo(() => buildManualFailoverTierSummary(accounts), [accounts]);
   const priorityTierMetaMap = useMemo(
@@ -146,6 +147,7 @@ const AccountPoolPage = () => {
         open={accountModalOpen}
         editingAccount={editingAccount}
         accountSubmitting={accountSubmitting}
+        accountCredentialLoading={accountCredentialLoading}
         accountForm={accountForm}
         setAccountForm={setAccountForm}
         onClose={closeAccountModal}

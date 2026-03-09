@@ -267,6 +267,102 @@ func TestListSchedulableAccounts_V1FiltersDisabledAuthAndFutureCooldown(t *testi
 	}
 }
 
+func TestMoveAccountToTier_ReordersPrioritiesAtomically(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	first, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "first",
+		CredentialRaw: "sk-first",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create first account failed: %v", err)
+	}
+	second, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "second",
+		CredentialRaw: "sk-second",
+		Priority:      20,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create second account failed: %v", err)
+	}
+	third, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "third",
+		CredentialRaw: "sk-third",
+		Priority:      30,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create third account failed: %v", err)
+	}
+
+	changed, err := svc.MoveAccountToTier(ctx, third.ID, 0)
+	if err != nil {
+		t.Fatalf("MoveAccountToTier failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected priorities to change")
+	}
+
+	accounts, err := st.ListAccounts(ctx, true)
+	if err != nil {
+		t.Fatalf("ListAccounts failed: %v", err)
+	}
+
+	got := collectAccountIDs(accounts)
+	want := []int64{third.ID, first.ID, second.ID}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected reordered accounts: got %v want %v", got, want)
+	}
+	if accounts[0].Priority != 10 || accounts[1].Priority != 20 || accounts[2].Priority != 30 {
+		t.Fatalf("unexpected priorities after reorder: %+v", accounts)
+	}
+}
+
+func TestMoveAccountToTier_NoChangeWhenAlreadyInTargetTier(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	first, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "first",
+		CredentialRaw: "sk-first",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create first account failed: %v", err)
+	}
+	if _, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "second",
+		CredentialRaw: "sk-second",
+		Priority:      20,
+		Enabled:       true,
+		State:         "active",
+	}); err != nil {
+		t.Fatalf("create second account failed: %v", err)
+	}
+
+	changed, err := svc.MoveAccountToTier(ctx, first.ID, 0)
+	if err != nil {
+		t.Fatalf("MoveAccountToTier failed: %v", err)
+	}
+	if changed {
+		t.Fatal("expected no priority change")
+	}
+}
+
 func collectAccountIDs(accounts []*store.UpstreamAccountRecord) []int64 {
 	ids := make([]int64, 0, len(accounts))
 	for _, account := range accounts {

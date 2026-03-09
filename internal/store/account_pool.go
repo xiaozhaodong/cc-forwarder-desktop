@@ -57,6 +57,7 @@ type UpstreamAccountRecord struct {
 type AccountPoolStore interface {
 	CreateAccount(ctx context.Context, record *UpstreamAccountRecord) (*UpstreamAccountRecord, error)
 	UpdateAccount(ctx context.Context, record *UpstreamAccountRecord) error
+	UpdateAccountPriorities(ctx context.Context, updates map[int64]int) error
 	DeleteAccount(ctx context.Context, id int64) error
 	GetAccount(ctx context.Context, id int64) (*UpstreamAccountRecord, error)
 	ListAccounts(ctx context.Context, includeDisabled bool) ([]*UpstreamAccountRecord, error)
@@ -168,6 +169,47 @@ func (s *SQLiteAccountPoolStore) UpdateAccount(ctx context.Context, record *Upst
 	}
 	if affected == 0 {
 		return fmt.Errorf("账号不存在: %d", record.ID)
+	}
+	return nil
+}
+
+// UpdateAccountPriorities 批量更新账号优先级。
+func (s *SQLiteAccountPoolStore) UpdateAccountPriorities(ctx context.Context, updates map[int64]int) error {
+	if len(updates) == 0 {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开始账号优先级事务失败: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `UPDATE upstream_accounts SET priority = ? WHERE id = ?`)
+	if err != nil {
+		return fmt.Errorf("准备账号优先级更新语句失败: %w", err)
+	}
+	defer stmt.Close()
+
+	for id, priority := range updates {
+		res, execErr := stmt.ExecContext(ctx, priority, id)
+		if execErr != nil {
+			return fmt.Errorf("更新账号优先级失败: %w", execErr)
+		}
+		affected, rowsErr := res.RowsAffected()
+		if rowsErr != nil {
+			return fmt.Errorf("获取账号优先级更新影响行数失败: %w", rowsErr)
+		}
+		if affected == 0 {
+			return fmt.Errorf("账号不存在: %d", id)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交账号优先级事务失败: %w", err)
 	}
 	return nil
 }
@@ -300,6 +342,8 @@ func (s *SQLiteAccountPoolStore) FindAccountByFingerprint(ctx context.Context, f
 
 	query := `
 		SELECT id, provider_type, account_name, credential_raw, base_url,
+			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
+			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
 			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,

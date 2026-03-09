@@ -523,10 +523,6 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 		"DROP TABLE IF EXISTS sync_logs",
 		"DROP TABLE IF EXISTS subscription_sources",
 	}
-	shouldDeleteLegacyAccountRows := hasLegacyAccountLogs || hasLegacySourceID || hasMirrorInsert || hasMirrorUpdate || hasMirrorDelete
-	if shouldDeleteLegacyAccountRows {
-		cleanupSQLs = append(cleanupSQLs, "DELETE FROM request_logs WHERE COALESCE(upstream_type, 'endpoint') = 'account'")
-	}
 	for _, stmt := range cleanupSQLs {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("failed to cleanup deprecated account pool schema: %w", err)

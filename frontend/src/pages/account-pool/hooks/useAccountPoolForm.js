@@ -7,6 +7,7 @@ import { useCallback, useState } from 'react';
 import {
   createUpstreamAccount,
   exchangeChatGPTOAuthCallback,
+  fetchUpstreamAccountCredential,
   generateChatGPTOAuthLink,
   updateUpstreamAccount
 } from '@utils/api.js';
@@ -25,6 +26,7 @@ import {
 const useAccountPoolForm = ({ loadData, showNotice }) => {
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [accountSubmitting, setAccountSubmitting] = useState(false);
+  const [accountCredentialLoading, setAccountCredentialLoading] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
   const [accountForm, setAccountForm] = useState(EMPTY_ACCOUNT_FORM);
   const [oauthActionLoading, setOauthActionLoading] = useState(false);
@@ -150,11 +152,10 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
     setAccountModalOpen(true);
   }, [resetOAuthWorkflow]);
 
-  const openEditAccount = useCallback((account) => {
+  const openEditAccount = useCallback(async (account) => {
     const providerType = account.provider_type || account.providerType || 'chatgpt_refresh_token';
     const isAPIKeyAccount = isAPIKeyProviderType(providerType);
-    setEditingAccount(account);
-    setAccountForm({
+    const nextForm = {
       account_name: account.account_name || account.accountName || '',
       auth_method: providerTypeToAuthMethod(providerType),
       provider_type: providerType,
@@ -168,11 +169,31 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
       enabled: account.enabled !== false,
       credential_raw: account.credential_raw || account.credentialRaw || '',
       base_url: account.base_url || account.baseURL || DEFAULT_BASE_URL
-    });
+    };
+
+    const accountId = resolveAccountId(account);
+    setAccountCredentialLoading(true);
+    try {
+      if (accountId !== undefined && accountId !== null && accountId !== '' && !nextForm.credential_raw) {
+        const credentialResult = await fetchUpstreamAccountCredential(accountId);
+        if (credentialResult?.unsupported) {
+          showNotice('info', credentialResult.message || '当前后端版本暂不支持读取已保存凭据');
+        } else if (credentialResult?.has_credential) {
+          nextForm.credential_raw = credentialResult.credential_raw || credentialResult.credentialRaw || '';
+        }
+      }
+    } catch (err) {
+      showNotice('error', err.message || '读取账号凭据失败，请手动重新填写');
+    } finally {
+      setAccountCredentialLoading(false);
+    }
+
+    setEditingAccount(account);
+    setAccountForm(nextForm);
     setOauthSectionExpanded(false);
     resetOAuthWorkflow();
     setAccountModalOpen(true);
-  }, [resetOAuthWorkflow]);
+  }, [resetOAuthWorkflow, showNotice]);
 
   const submitAccountForm = useCallback(async (event) => {
     event.preventDefault();
@@ -241,6 +262,7 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
   return {
     accountModalOpen,
     accountSubmitting,
+    accountCredentialLoading,
     editingAccount,
     accountForm,
     setAccountForm,

@@ -170,6 +170,10 @@ export function GetTokenUsage() {
   return window['go']['main']['App']['GetTokenUsage']();
 }
 
+export function GetUpstreamAccountCredential(arg1) {
+  return window['go']['main']['App']['GetUpstreamAccountCredential'](arg1);
+}
+
 export function GetUpstreamAccounts() {
   return window['go']['main']['App']['GetUpstreamAccounts']();
 }
@@ -184,6 +188,10 @@ export function GetUsageSummary(arg1, arg2) {
 
 export function IsProxyRunning() {
   return window['go']['main']['App']['IsProxyRunning']();
+}
+
+export function MoveUpstreamAccountToTier(arg1, arg2) {
+  return window['go']['main']['App']['MoveUpstreamAccountToTier'](arg1, arg2);
 }
 
 export function PauseGroup(arg1) {

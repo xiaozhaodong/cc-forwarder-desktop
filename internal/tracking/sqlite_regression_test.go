@@ -34,6 +34,7 @@ func TestSQLiteSchemaInit_OldRequestLogsWithoutUpstreamColumns(t *testing.T) {
 			endpoint_name TEXT,
 			group_name TEXT,
 			model_name TEXT,
+			upstream_type TEXT DEFAULT 'endpoint',
 			is_streaming BOOLEAN DEFAULT FALSE,
 			status TEXT NOT NULL DEFAULT 'pending',
 			http_status_code INTEGER,
@@ -245,11 +246,12 @@ func TestSQLiteMigrationRebuildsLegacyUpstreamAccountsAndRestoresForeignKeys(t *
 			start_time DATETIME NOT NULL,
 			end_time DATETIME,
 			duration_ms INTEGER,
-			channel TEXT DEFAULT '',
-			endpoint_name TEXT,
-			group_name TEXT,
-			model_name TEXT,
-			is_streaming BOOLEAN DEFAULT FALSE,
+				channel TEXT DEFAULT '',
+				endpoint_name TEXT,
+				group_name TEXT,
+				model_name TEXT,
+				upstream_type TEXT DEFAULT 'endpoint',
+				is_streaming BOOLEAN DEFAULT FALSE,
 			status TEXT NOT NULL DEFAULT 'pending',
 			http_status_code INTEGER,
 			retry_count INTEGER DEFAULT 0,
@@ -322,14 +324,20 @@ func TestSQLiteMigrationRebuildsLegacyUpstreamAccountsAndRestoresForeignKeys(t *
 		);
 
 		INSERT INTO subscription_sources (id, name, url, enabled) VALUES (1, 'legacy-source', 'https://example.com/legacy.txt', 1);
-		INSERT INTO upstream_accounts (
-			id, source_id, provider_type, account_name, credential_raw, base_url,
-			priority, enabled, state, fail_count, fingerprint, created_at, updated_at
-		) VALUES (
-			11, 1, 'api_key', 'legacy-account', 'sk-legacy', 'https://api.openai.com',
-			1, 1, 'active', 0, 'fp-legacy', datetime('now'), datetime('now')
-		);
-	`)
+			INSERT INTO upstream_accounts (
+				id, source_id, provider_type, account_name, credential_raw, base_url,
+				priority, enabled, state, fail_count, fingerprint, created_at, updated_at
+			) VALUES (
+				11, 1, 'api_key', 'legacy-account', 'sk-legacy', 'https://api.openai.com',
+				1, 1, 'active', 0, 'fp-legacy', datetime('now'), datetime('now')
+			);
+
+			INSERT INTO request_logs (
+				request_id, start_time, status, upstream_type, endpoint_name, model_name
+			) VALUES (
+				'legacy-account-request', datetime('now'), 'completed', 'account', 'legacy-account', 'gpt-5-codex'
+			);
+		`)
 	require.NoError(t, err)
 	require.NoError(t, rawDB.Close())
 
@@ -383,6 +391,11 @@ func TestSQLiteMigrationRebuildsLegacyUpstreamAccountsAndRestoresForeignKeys(t *
 	err = db.QueryRow(`SELECT COUNT(*) FROM upstream_accounts WHERE id = 11 AND account_name = 'legacy-account'`).Scan(&accountCount)
 	require.NoError(t, err)
 	assert.Equal(t, 1, accountCount, "legacy account row should be preserved during rebuild")
+
+	var requestCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM request_logs WHERE request_id = 'legacy-account-request'`).Scan(&requestCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, requestCount, "legacy account request log should be preserved during cleanup")
 }
 
 // TestSQLiteDataPersistence 测试SQLite数据持久化完整性

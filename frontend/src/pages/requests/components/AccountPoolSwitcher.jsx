@@ -8,6 +8,7 @@ import { AlertCircle, ArrowLeftRight, Check, Search, UserRound } from 'lucide-re
 import {
   buildManualFailoverTierSummary,
   compareAccountsByManualPriority,
+  isAccountSchedulable,
   normalizePriorityValue,
   resolveAccountId,
   toAccountAuthLabel,
@@ -19,10 +20,7 @@ const getAccountName = (account = {}) => account.account_name || account.account
 
 const isSameAccountId = (left, right) => String(left ?? '') === String(right ?? '');
 
-const isSwitchableAccount = (account = {}) => {
-  const state = String(account.state || '').trim().toLowerCase();
-  return account.enabled !== false && state !== 'disabled_auth';
-};
+const isSwitchableAccount = (account = {}) => isAccountSchedulable(account);
 
 const getIndicatorClass = (account = {}) => {
   const state = String(account.state || '').trim().toLowerCase();
@@ -128,7 +126,7 @@ const AccountPoolSwitcher = ({
     );
   }
 
-  const currentAccount = activeAccount || sortedAccounts[0];
+  const currentAccount = activeAccount || sortedAccounts.find(isSwitchableAccount) || sortedAccounts[0];
   const activeIndicatorClass = getIndicatorClass(currentAccount);
   const activeTierMeta = tierMetaMap.get(normalizePriorityValue(currentAccount?.priority ?? currentAccount?.Priority));
 

@@ -792,6 +792,14 @@ export const updateUpstreamAccount = async (id, input) => {
   });
 };
 
+export const fetchUpstreamAccountCredential = async (id) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.getUpstreamAccountCredential(id);
+  }
+
+  return await fetchWithTimeout(`/api/v1/upstream-accounts/${normalizeEntityIdForUrl(id)}/credential`);
+};
+
 export const deleteUpstreamAccount = async (id) => {
   if (isWailsEnvironment()) {
     return await WailsApi.deleteUpstreamAccount(id);
@@ -799,6 +807,17 @@ export const deleteUpstreamAccount = async (id) => {
 
   return await fetchWithTimeout(`/api/v1/upstream-accounts/${normalizeEntityIdForUrl(id)}`, {
     method: 'DELETE'
+  });
+};
+
+export const moveUpstreamAccountToTier = async (id, targetTier) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.moveUpstreamAccountToTier(id, targetTier);
+  }
+
+  return await fetchWithTimeout(`/api/v1/upstream-accounts/${normalizeEntityIdForUrl(id)}/tier`, {
+    method: 'POST',
+    body: JSON.stringify({ target_tier: targetTier || 'primary' })
   });
 };
 
