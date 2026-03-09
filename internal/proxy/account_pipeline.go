@@ -79,6 +79,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		lifecycleManager.SetUpstream("account", "", accountName, acc.ID)
 		lifecycleManager.SetEndpoint(accountName, "", "account-pool")
 		lifecycleManager.UpdateStatus("forwarding", idx, 0)
+		attemptStartedAt := time.Now()
 
 		resp, upstreamCancel, forwardErr := h.forwardRequestToAccount(ctx, r, bodyBytes, acc, isSSE)
 		// upstreamCancel 同时可能被 releaseUpstream 和 tail-drain 超时回调持有；context.CancelFunc 幂等，重复调用是安全的。
@@ -186,7 +187,21 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				return
 			}
 			lastErr = processErr
-			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, processErr.Error(), h.accountProcessingFailureCooldown())
+			if isSSE {
+				status, _ := parseAccountStreamStatusError(processErr)
+				switch status {
+				case "auth_error":
+					_ = h.accountPoolService.MarkAccountAuthFailed(ctx, acc.ID, processErr.Error())
+				case "rate_limited":
+					_ = h.accountPoolService.RecordAccountSoftFailure(ctx, acc.ID, processErr.Error(), accountSoftFailureCategoryRateLimit, 0)
+				case "stream_error", "error", "timeout", "network_error":
+					_ = h.accountPoolService.RecordAccountSoftFailure(ctx, acc.ID, processErr.Error(), accountSoftFailureCategoryServerError, 0)
+				default:
+					_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, processErr.Error(), h.accountProcessingFailureCooldown())
+				}
+			} else {
+				_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, processErr.Error(), h.accountProcessingFailureCooldown())
+			}
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, processErr.Error())
 			// 流式响应一旦开始输出，无法切换到下一个账号，直接终止
 			if isSSE {
@@ -196,7 +211,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		}
 
 		finalizeCtx, finalizeCancel := h.newAccountSuccessContext()
-		_ = h.accountPoolService.MarkAccountSuccess(finalizeCtx, acc.ID)
+		_, _ = h.accountPoolService.MarkAccountSuccessIfNoNewerFailure(finalizeCtx, acc.ID, attemptStartedAt)
 		if accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
 			h.accountPoolService.TryEnqueueQuotaRefresh(acc.ID)
 		}

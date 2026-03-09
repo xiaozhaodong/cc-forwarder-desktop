@@ -149,6 +149,17 @@ func (s *AccountPoolService) MarkAccountSuccess(ctx context.Context, id int64) e
 	return nil
 }
 
+func (s *AccountPoolService) MarkAccountSuccessIfNoNewerFailure(ctx context.Context, id int64, attemptStartedAt time.Time) (bool, error) {
+	updated, err := s.store.MarkAccountSuccessIfNoNewerFailure(ctx, id, time.Now(), attemptStartedAt)
+	if err != nil {
+		return false, err
+	}
+	if updated && s.softFailureTracker != nil {
+		s.softFailureTracker.Clear(id)
+	}
+	return updated, nil
+}
+
 func (s *AccountPoolService) MarkAccountAuthFailed(ctx context.Context, id int64, reason string) error {
 	if err := s.store.MarkAccountAuthFailed(ctx, id, reason); err != nil {
 		return err

@@ -13,6 +13,7 @@ type AccountPoolService interface {
 	CompleteLatestScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, outcome, finalError string) error
 	TryEnqueueQuotaRefresh(id int64) bool
 	MarkAccountSuccess(ctx context.Context, id int64) error
+	MarkAccountSuccessIfNoNewerFailure(ctx context.Context, id int64, attemptStartedAt time.Time) (bool, error)
 	MarkAccountAuthFailed(ctx context.Context, id int64, reason string) error
 	MarkAccountTransientFailure(ctx context.Context, id int64, reason string, cooldown time.Duration) error
 	RecordAccountSoftFailure(ctx context.Context, id int64, reason, category string, retryAfter time.Duration) error

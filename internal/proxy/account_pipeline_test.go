@@ -68,6 +68,7 @@ type mockAccountPoolService struct {
 	completeCtxErrs   []error
 	quotaRefreshCalls []int64
 	successCalls      []int64
+	successGuardTimes []time.Time
 	successCtxErrs    []error
 	authFailCalls     []accountAuthCall
 	transientCalls    []accountTransientCall
@@ -120,6 +121,15 @@ func (m *mockAccountPoolService) MarkAccountSuccess(ctx context.Context, id int6
 	m.successCtxErrs = append(m.successCtxErrs, ctx.Err())
 	m.successCalls = append(m.successCalls, id)
 	return nil
+}
+
+func (m *mockAccountPoolService) MarkAccountSuccessIfNoNewerFailure(ctx context.Context, id int64, attemptStartedAt time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.successCtxErrs = append(m.successCtxErrs, ctx.Err())
+	m.successCalls = append(m.successCalls, id)
+	m.successGuardTimes = append(m.successGuardTimes, attemptStartedAt)
+	return true, nil
 }
 
 func (m *mockAccountPoolService) MarkAccountAuthFailed(ctx context.Context, id int64, reason string) error {
@@ -770,6 +780,48 @@ func TestAccountPipeline_ResponsesStreamingCompleted_TreatedAsSuccess(t *testing
 	}
 	if len(service.authFailCalls) != 0 {
 		t.Fatalf("expected no auth failures, got %+v", service.authFailCalls)
+	}
+}
+
+func TestAccountPipeline_ResponsesStreamingFailed_RecordedAsServerSoftFailure(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("event: response.created\n"))
+		_, _ = w.Write([]byte(`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.4"}}` + "\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("event: response.failed\n"))
+		_, _ = w.Write([]byte(`data: {"type":"response.failed","response":{"id":"resp_1","model":"gpt-5.4","error":{"type":"unknown_error","message":"Unknown error"}}}` + "\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 71, AccountName: "acc-stream-failed", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: upstream.URL, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+
+	rec := performResponsesStreamingRequest(t, handler)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected streaming response to keep status 200 once headers are sent, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(service.softFailureCalls) != 1 {
+		t.Fatalf("expected one soft failure call, got %+v", service.softFailureCalls)
+	}
+	if service.softFailureCalls[0].id != 71 || service.softFailureCalls[0].category != accountSoftFailureCategoryServerError {
+		t.Fatalf("expected server_error soft failure for account 71, got %+v", service.softFailureCalls[0])
+	}
+	if len(service.transientCalls) != 0 {
+		t.Fatalf("expected no immediate transient cooldown for stream error, got %+v", service.transientCalls)
+	}
+	if len(service.successCalls) != 0 {
+		t.Fatalf("expected no success callbacks, got %+v", service.successCalls)
 	}
 }
 

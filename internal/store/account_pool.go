@@ -18,6 +18,8 @@ const (
 	defaultAccountPrio    = 100
 )
 
+var accountDBTimeZone = time.FixedZone("UTC+8", 8*60*60)
+
 // UpstreamAccountRecord 上游账号记录
 type UpstreamAccountRecord struct {
 	ID                            int64      `json:"id"`
@@ -65,6 +67,7 @@ type AccountPoolStore interface {
 	FindAccountByFingerprint(ctx context.Context, fingerprint string) (*UpstreamAccountRecord, error)
 	ToggleAccount(ctx context.Context, id int64, enabled bool) error
 	MarkAccountSuccess(ctx context.Context, id int64, successAt time.Time) error
+	MarkAccountSuccessIfNoNewerFailure(ctx context.Context, id int64, successAt, attemptStartedAt time.Time) (bool, error)
 	MarkAccountAuthFailed(ctx context.Context, id int64, reason string) error
 	MarkAccountTransientFailure(ctx context.Context, id int64, reason string, cooldownUntil time.Time) error
 	UpdateAccountProfile(ctx context.Context, record *UpstreamAccountRecord) error
@@ -398,12 +401,34 @@ func (s *SQLiteAccountPoolStore) MarkAccountSuccess(ctx context.Context, id int6
 	defer s.mu.Unlock()
 
 	_, err := s.getQuerier().ExecContext(ctx,
-		`UPDATE upstream_accounts SET fail_count = 0, state = 'active', cooldown_until = NULL, last_success_at = ?, last_error = '' WHERE id = ?`,
-		formatDBTime(successAt), id)
+		`UPDATE upstream_accounts
+		 SET fail_count = 0, state = 'active', cooldown_until = NULL, last_success_at = ?, last_error = '', updated_at = ?
+		 WHERE id = ?`,
+		formatDBTime(successAt), currentDBTime(), id)
 	if err != nil {
 		return fmt.Errorf("更新账号成功状态失败: %w", err)
 	}
 	return nil
+}
+
+func (s *SQLiteAccountPoolStore) MarkAccountSuccessIfNoNewerFailure(ctx context.Context, id int64, successAt, attemptStartedAt time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	res, err := s.getQuerier().ExecContext(ctx,
+		`UPDATE upstream_accounts
+		 SET fail_count = 0, state = 'active', cooldown_until = NULL, last_success_at = ?, last_error = '', updated_at = ?
+		 WHERE id = ?
+		   AND NOT (updated_at > ? AND state IN ('cooldown', 'disabled_auth'))`,
+		formatDBTime(successAt), currentDBTime(), id, formatDBTime(attemptStartedAt))
+	if err != nil {
+		return false, fmt.Errorf("条件更新账号成功状态失败: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("获取影响行数失败: %w", err)
+	}
+	return affected > 0, nil
 }
 
 // MarkAccountAuthFailed 标记账号鉴权失败
@@ -412,8 +437,10 @@ func (s *SQLiteAccountPoolStore) MarkAccountAuthFailed(ctx context.Context, id i
 	defer s.mu.Unlock()
 
 	_, err := s.getQuerier().ExecContext(ctx,
-		`UPDATE upstream_accounts SET enabled = 0, state = 'disabled_auth', cooldown_until = NULL, last_error = ? WHERE id = ?`,
-		reason, id)
+		`UPDATE upstream_accounts
+		 SET enabled = 0, state = 'disabled_auth', cooldown_until = NULL, last_error = ?, updated_at = ?
+		 WHERE id = ?`,
+		reason, currentDBTime(), id)
 	if err != nil {
 		return fmt.Errorf("更新账号鉴权失败状态失败: %w", err)
 	}
@@ -426,8 +453,10 @@ func (s *SQLiteAccountPoolStore) MarkAccountTransientFailure(ctx context.Context
 	defer s.mu.Unlock()
 
 	_, err := s.getQuerier().ExecContext(ctx,
-		`UPDATE upstream_accounts SET fail_count = fail_count + 1, state = 'cooldown', cooldown_until = ?, last_error = ? WHERE id = ?`,
-		formatDBTime(cooldownUntil), reason, id)
+		`UPDATE upstream_accounts
+		 SET fail_count = fail_count + 1, state = 'cooldown', cooldown_until = ?, last_error = ?, updated_at = ?
+		 WHERE id = ?`,
+		formatDBTime(cooldownUntil), reason, currentDBTime(), id)
 	if err != nil {
 		return fmt.Errorf("更新账号瞬时失败状态失败: %w", err)
 	}
@@ -560,7 +589,11 @@ func nullableFloat(v *float64) any {
 }
 
 func formatDBTime(t time.Time) string {
-	return t.Format("2006-01-02 15:04:05.999999-07:00")
+	return t.In(accountDBTimeZone).Format("2006-01-02 15:04:05.999999-07:00")
+}
+
+func currentDBTime() string {
+	return formatDBTime(time.Now())
 }
 
 type rowScanner interface {
