@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,7 +56,7 @@ func TestPrepareSchedulableAccounts_SelectsHighestPriorityTierOnly(t *testing.T)
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
-	if got, want := collectAccountIDs(accounts), []int64{mainAPI.ID, mainOAuth.ID}; !reflect.DeepEqual(got, want) {
+	if got, want := collectAccountIDs(accounts), []int64{mainOAuth.ID, mainAPI.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected selected tier accounts: got %v want %v", got, want)
 	}
 
@@ -137,81 +138,291 @@ func TestPrepareSchedulableAccounts_DegradesWhenHigherTierTemporarilyExhausted(t
 	}
 }
 
-func TestPrepareSchedulableAccounts_RanksByQuotaThenHealthWithinTier(t *testing.T) {
+func TestPrepareSchedulableAccounts_RanksByUtilizationThenHealthWithinTier(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 	now := time.Now()
 
-	best, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+	expiringSoon, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
 		ProviderType:           "chatgpt_refresh_token",
-		AccountName:            "best",
-		CredentialRaw:          "rt-best",
+		AccountName:            "expiring-soon",
+		CredentialRaw:          "rt-expiring-soon",
 		Priority:               10,
 		Enabled:                true,
 		State:                  "active",
 		QuotaStatus:            "ok",
-		Quota5HUsedPercent:     testFloat64Ptr(10),
-		QuotaWeeklyUsedPercent: testFloat64Ptr(30),
+		Quota5HUsedPercent:     testFloat64Ptr(40),
+		Quota5HResetAt:         testTimePtr(now.Add(20 * time.Minute)),
+		QuotaWeeklyUsedPercent: testFloat64Ptr(20),
+		QuotaWeeklyResetAt:     testTimePtr(now.Add(5 * 24 * time.Hour)),
 		FailCount:              0,
 		LastSuccessAt:          testTimePtr(now.Add(-2 * time.Minute)),
 	})
 	if err != nil {
-		t.Fatalf("create best account failed: %v", err)
+		t.Fatalf("create expiring soon account failed: %v", err)
 	}
 
-	second, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+	stableHigh, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
 		ProviderType:           "chatgpt_refresh_token",
-		AccountName:            "second",
-		CredentialRaw:          "rt-second",
+		AccountName:            "stable-high",
+		CredentialRaw:          "rt-stable-high",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		Quota5HUsedPercent:     testFloat64Ptr(20),
+		Quota5HResetAt:         testTimePtr(now.Add(4 * time.Hour)),
+		QuotaWeeklyUsedPercent: testFloat64Ptr(20),
+		QuotaWeeklyResetAt:     testTimePtr(now.Add(5 * 24 * time.Hour)),
+		FailCount:              0,
+		LastSuccessAt:          testTimePtr(now.Add(-1 * time.Minute)),
+	})
+	if err != nil {
+		t.Fatalf("create stable high account failed: %v", err)
+	}
+
+	weeklyGuarded, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "weekly-guarded",
+		CredentialRaw:          "rt-weekly-guarded",
 		Priority:               10,
 		Enabled:                true,
 		State:                  "active",
 		QuotaStatus:            "ok",
 		Quota5HUsedPercent:     testFloat64Ptr(10),
-		QuotaWeeklyUsedPercent: testFloat64Ptr(30),
-		FailCount:              1,
-		LastSuccessAt:          testTimePtr(now.Add(-1 * time.Minute)),
-	})
-	if err != nil {
-		t.Fatalf("create second account failed: %v", err)
-	}
-
-	third, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
-		ProviderType:           "chatgpt_refresh_token",
-		AccountName:            "third",
-		CredentialRaw:          "rt-third",
-		Priority:               10,
-		Enabled:                true,
-		State:                  "active",
-		QuotaStatus:            "ok",
-		Quota5HUsedPercent:     testFloat64Ptr(50),
-		QuotaWeeklyUsedPercent: testFloat64Ptr(60),
+		Quota5HResetAt:         testTimePtr(now.Add(1 * time.Hour)),
+		QuotaWeeklyUsedPercent: testFloat64Ptr(92),
+		QuotaWeeklyResetAt:     testTimePtr(now.Add(5 * 24 * time.Hour)),
 		FailCount:              0,
 		LastSuccessAt:          testTimePtr(now.Add(-30 * time.Second)),
 	})
 	if err != nil {
-		t.Fatalf("create third account failed: %v", err)
+		t.Fatalf("create weekly guarded account failed: %v", err)
+	}
+
+	smallUrgent, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "small-urgent",
+		CredentialRaw:          "rt-small-urgent",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		Quota5HUsedPercent:     testFloat64Ptr(93),
+		Quota5HResetAt:         testTimePtr(now.Add(5 * time.Minute)),
+		QuotaWeeklyUsedPercent: testFloat64Ptr(0),
+		QuotaWeeklyResetAt:     testTimePtr(now.Add(5 * 24 * time.Hour)),
+		FailCount:              0,
+		LastSuccessAt:          testTimePtr(now.Add(-45 * time.Second)),
+	})
+	if err != nil {
+		t.Fatalf("create small urgent account failed: %v", err)
 	}
 
 	unknown, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
-		ProviderType:  "chatgpt_refresh_token",
-		AccountName:   "unknown",
-		CredentialRaw: "rt-unknown",
-		Priority:      10,
-		Enabled:       true,
-		State:         "active",
-		QuotaStatus:   "unavailable",
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "unknown-no-reset",
+		CredentialRaw:          "rt-unknown-no-reset",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		QuotaWeeklyUsedPercent: testFloat64Ptr(10),
 	})
 	if err != nil {
 		t.Fatalf("create unknown account failed: %v", err)
+	}
+
+	apiFallback, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "api-fallback",
+		CredentialRaw: "sk-api-fallback",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create api fallback account failed: %v", err)
 	}
 
 	accounts, err := svc.PrepareSchedulableAccounts(ctx, "req-rank", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
-	if got, want := collectAccountIDs(accounts), []int64{best.ID, second.ID, third.ID, unknown.ID}; !reflect.DeepEqual(got, want) {
+	if got, want := collectAccountIDs(accounts), []int64{expiringSoon.ID, smallUrgent.ID, weeklyGuarded.ID, stableHigh.ID, unknown.ID, apiFallback.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected ranked order: got %v want %v", got, want)
+	}
+}
+
+func TestPrepareSchedulableAccounts_UsesSingleCompleteQuotaWindowWhenScoring(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	single5H, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:       "chatgpt_refresh_token",
+		AccountName:        "single-5h",
+		CredentialRaw:      "rt-single-5h",
+		Priority:           10,
+		Enabled:            true,
+		State:              "active",
+		QuotaStatus:        "ok",
+		Quota5HUsedPercent: testFloat64Ptr(45),
+		Quota5HResetAt:     testTimePtr(now.Add(1 * time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("create single 5h account failed: %v", err)
+	}
+
+	singleWeekly, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "single-weekly",
+		CredentialRaw:          "rt-single-weekly",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		QuotaWeeklyUsedPercent: testFloat64Ptr(30),
+		QuotaWeeklyResetAt:     testTimePtr(now.Add(12 * time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("create single weekly account failed: %v", err)
+	}
+
+	noReset, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "known-percent-no-reset",
+		CredentialRaw:          "rt-known-percent-no-reset",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		QuotaWeeklyUsedPercent: testFloat64Ptr(10),
+	})
+	if err != nil {
+		t.Fatalf("create no reset account failed: %v", err)
+	}
+
+	apiFallback, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "api-fallback",
+		CredentialRaw: "sk-api-fallback",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create api fallback account failed: %v", err)
+	}
+
+	accounts, err := svc.PrepareSchedulableAccounts(ctx, "req-single-window", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
+	}
+	if got, want := collectAccountIDs(accounts), []int64{single5H.ID, singleWeekly.ID, noReset.ID, apiFallback.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected single-window ranking: got %v want %v", got, want)
+	}
+}
+
+func TestPrepareSchedulableAccounts_SnapshotReasonDetailsExplainUtilizationPriority(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	expiringSoon, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "expiring-soon",
+		CredentialRaw:          "rt-expiring-soon",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		Quota5HUsedPercent:     testFloat64Ptr(40),
+		Quota5HResetAt:         testTimePtr(now.Add(20 * time.Minute)),
+		QuotaWeeklyUsedPercent: testFloat64Ptr(20),
+		QuotaWeeklyResetAt:     testTimePtr(now.Add(5 * 24 * time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("create expiring soon account failed: %v", err)
+	}
+
+	weeklyGuarded, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "weekly-guarded",
+		CredentialRaw:          "rt-weekly-guarded",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		Quota5HUsedPercent:     testFloat64Ptr(10),
+		Quota5HResetAt:         testTimePtr(now.Add(1 * time.Hour)),
+		QuotaWeeklyUsedPercent: testFloat64Ptr(92),
+		QuotaWeeklyResetAt:     testTimePtr(now.Add(5 * 24 * time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("create weekly guarded account failed: %v", err)
+	}
+
+	unknown, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "unknown-no-reset",
+		CredentialRaw:          "rt-unknown-no-reset",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		QuotaWeeklyUsedPercent: testFloat64Ptr(10),
+	})
+	if err != nil {
+		t.Fatalf("create unknown account failed: %v", err)
+	}
+
+	apiFallback, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "api-fallback",
+		CredentialRaw: "sk-api-fallback",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create api fallback account failed: %v", err)
+	}
+
+	if _, err := svc.PrepareSchedulableAccounts(ctx, "req-snapshot-reason", "/v1/responses"); err != nil {
+		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
+	}
+
+	snapshot, err := svc.GetLatestAccountScheduleSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("GetLatestAccountScheduleSnapshot failed: %v", err)
+	}
+	if snapshot == nil {
+		t.Fatal("expected latest snapshot")
+	}
+
+	selected := mustFindCandidateDecision(t, snapshot, expiringSoon.ID)
+	assertStringContainsAll(t, selected.ReasonDetail, []string{"5h", "重置"})
+	if selected.EffectiveQuotaRemaining == nil {
+		t.Fatal("expected selected candidate effective quota remaining to stay populated")
+	}
+
+	guarded := mustFindCandidateDecision(t, snapshot, weeklyGuarded.ID)
+	assertStringContainsAll(t, guarded.ReasonDetail, []string{"周额度", "护栏"})
+	if guarded.EffectiveQuotaRemaining == nil {
+		t.Fatal("expected guarded candidate effective quota remaining to stay populated")
+	}
+
+	unknownCandidate := mustFindCandidateDecision(t, snapshot, unknown.ID)
+	assertStringContainsAll(t, unknownCandidate.ReasonDetail, []string{"quota", "未知", "劣后"})
+	if unknownCandidate.EffectiveQuotaRemaining == nil {
+		t.Fatal("expected unknown candidate effective quota remaining to stay populated when usage percent exists")
+	}
+
+	apiCandidate := mustFindCandidateDecision(t, snapshot, apiFallback.ID)
+	assertStringContainsAll(t, apiCandidate.ReasonDetail, []string{"api_key", "兜底", "OAuth"})
+	if apiCandidate.EffectiveQuotaRemaining != nil {
+		t.Fatal("expected api_key candidate effective quota remaining to remain nil")
 	}
 }
 
@@ -300,4 +511,13 @@ func mustFindCandidateDecision(t *testing.T, snapshot *LatestAccountScheduleSnap
 	}
 	t.Fatalf("candidate %d not found in snapshot %+v", accountID, snapshot)
 	return AccountScheduleCandidateDecision{}
+}
+
+func assertStringContainsAll(t *testing.T, got string, wants []string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q to contain %q", got, want)
+		}
+	}
 }

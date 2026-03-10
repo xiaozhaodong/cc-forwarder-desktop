@@ -72,8 +72,14 @@ type LatestAccountScheduleSnapshot struct {
 
 type rankedSchedulableAccount struct {
 	account                 *store.UpstreamAccountRecord
-	quotaBucket             int
+	bucket                  int
+	finalScore              float64
 	effectiveQuotaRemaining *float64
+	remaining5H             *float64
+	remainingWeekly         *float64
+	hoursToReset5H          *float64
+	hoursToResetWeekly      *float64
+	weeklyGuardrailApplied  bool
 	skipReason              string
 	skipReasonDetail        string
 }
@@ -276,11 +282,11 @@ func rankSchedulableAccounts(accounts []*store.UpstreamAccountRecord, now time.T
 			for idx, candidate := range tier.eligible {
 				decision := accountScheduleDecisionEligible
 				reason := "same_tier_lower_rank"
-				detail := fmt.Sprintf("同层排序位次 %d", idx+1)
+				detail := buildRankingReasonDetail(candidate, idx+1, false)
 				if idx == 0 {
 					decision = accountScheduleDecisionSelected
 					reason = "highest_ranked_in_selected_tier"
-					detail = "当前优先级组内排序第一"
+					detail = buildRankingReasonDetail(candidate, idx+1, true)
 				}
 				snapshot.Candidates = append(snapshot.Candidates, buildCandidateDecision(candidate, tier, decision, reason, detail))
 				ordered = append(ordered, candidate.account)
@@ -317,6 +323,23 @@ type groupedPriorityTier struct {
 	priority int
 	accounts []*store.UpstreamAccountRecord
 }
+
+const (
+	utilizationBucketKnownOAuth   = 1
+	utilizationBucketUnknownOAuth = 2
+	utilizationBucketAPIKey       = 3
+)
+
+const (
+	weeklyGuardrailLowThreshold      = 20.0
+	weeklyGuardrailCriticalThreshold = 10.0
+	weeklyGuardrailLowFactor         = 0.6
+	weeklyGuardrailCriticalFactor    = 0.3
+	recentSuccessSuppressionWindow   = time.Minute
+	recentSuccessSuppressionFactor   = 0.85
+	minResetHours5H                  = 0.25
+	minResetHoursWeekly              = 6.0
+)
 
 func groupAccountsByPriority(accounts []*store.UpstreamAccountRecord) []groupedPriorityTier {
 	sorted := append([]*store.UpstreamAccountRecord(nil), accounts...)
@@ -364,11 +387,11 @@ func rankPriorityTier(accounts []*store.UpstreamAccountRecord, now time.Time) ([
 	sort.SliceStable(eligible, func(i, j int) bool {
 		left := eligible[i]
 		right := eligible[j]
-		if left.quotaBucket != right.quotaBucket {
-			return left.quotaBucket < right.quotaBucket
+		if left.bucket != right.bucket {
+			return left.bucket < right.bucket
 		}
-		if cmp := compareEffectiveQuotaRemaining(left.effectiveQuotaRemaining, right.effectiveQuotaRemaining); cmp != 0 {
-			return cmp > 0
+		if left.bucket == utilizationBucketKnownOAuth && left.finalScore != right.finalScore {
+			return left.finalScore > right.finalScore
 		}
 		if left.account.FailCount != right.account.FailCount {
 			return left.account.FailCount < right.account.FailCount
@@ -393,9 +416,11 @@ func classifySchedulableAccount(account *store.UpstreamAccountRecord, now time.T
 	providerType := accountauth.NormalizeProviderType(account.ProviderType)
 	quotaStatus := normalizeQuotaStatus(account.QuotaStatus)
 	candidate.effectiveQuotaRemaining = effectiveQuotaRemaining(account)
+	candidate.remaining5H, candidate.hoursToReset5H = quotaWindowUtilization(account.Quota5HUsedPercent, account.Quota5HResetAt, now)
+	candidate.remainingWeekly, candidate.hoursToResetWeekly = quotaWindowUtilization(account.QuotaWeeklyUsedPercent, account.QuotaWeeklyResetAt, now)
 
 	if providerType == accountauth.ProviderAPIKey {
-		candidate.quotaBucket = 0
+		candidate.bucket = utilizationBucketAPIKey
 		return candidate
 	}
 
@@ -405,17 +430,20 @@ func classifySchedulableAccount(account *store.UpstreamAccountRecord, now time.T
 		return candidate
 	}
 
-	switch quotaStatus {
-	case "ok":
-		candidate.quotaBucket = 1
-	case "", "pending", "unavailable":
-		candidate.quotaBucket = 2
-	case "exhausted":
-		candidate.quotaBucket = 3
-	default:
-		candidate.quotaBucket = 4
+	if quotaStatus != "ok" {
+		candidate.bucket = utilizationBucketUnknownOAuth
+		return candidate
 	}
 
+	score, knownQuota := utilizationScore(account, candidate)
+	if !knownQuota {
+		candidate.bucket = utilizationBucketUnknownOAuth
+		return candidate
+	}
+
+	candidate.bucket = utilizationBucketKnownOAuth
+	candidate.finalScore, candidate.weeklyGuardrailApplied = applyWeeklyGuardrail(score, candidate.remainingWeekly)
+	candidate.finalScore = applyRecentSuccessSuppression(candidate.finalScore, account.LastSuccessAt, now)
 	return candidate
 }
 
@@ -460,6 +488,80 @@ func usedPercentToRemaining(used *float64) *float64 {
 	return &remaining
 }
 
+func quotaWindowUtilization(usedPercent *float64, resetAt *time.Time, now time.Time) (*float64, *float64) {
+	remaining := usedPercentToRemaining(usedPercent)
+	if remaining == nil || resetAt == nil {
+		return remaining, nil
+	}
+	hours := resetAt.Sub(now).Hours()
+	if hours <= 0 {
+		return remaining, nil
+	}
+	return remaining, &hours
+}
+
+func utilizationScore(account *store.UpstreamAccountRecord, candidate *rankedSchedulableAccount) (float64, bool) {
+	if account == nil || candidate == nil {
+		return 0, false
+	}
+
+	planType := strings.TrimSpace(strings.ToLower(account.PlanType))
+	if planType == "free" {
+		if candidate.remainingWeekly == nil || candidate.hoursToResetWeekly == nil {
+			return 0, false
+		}
+		return pressureScore(*candidate.remainingWeekly, *candidate.hoursToResetWeekly, minResetHoursWeekly), true
+	}
+
+	score := 0.0
+	knownQuota := false
+	if candidate.remaining5H != nil && candidate.hoursToReset5H != nil {
+		score += pressureScore(*candidate.remaining5H, *candidate.hoursToReset5H, minResetHours5H)
+		knownQuota = true
+	}
+	if candidate.remainingWeekly != nil && candidate.hoursToResetWeekly != nil {
+		score += 0.2 * pressureScore(*candidate.remainingWeekly, *candidate.hoursToResetWeekly, minResetHoursWeekly)
+		knownQuota = true
+	}
+
+	return score, knownQuota
+}
+
+func pressureScore(remainingPercent, hoursToReset, minHours float64) float64 {
+	if hoursToReset < minHours {
+		hoursToReset = minHours
+	}
+	if hoursToReset <= 0 {
+		return 0
+	}
+	return remainingPercent / hoursToReset
+}
+
+func applyWeeklyGuardrail(score float64, remainingWeekly *float64) (float64, bool) {
+	if remainingWeekly == nil {
+		return score, false
+	}
+
+	switch {
+	case *remainingWeekly <= weeklyGuardrailCriticalThreshold:
+		return score * weeklyGuardrailCriticalFactor, true
+	case *remainingWeekly <= weeklyGuardrailLowThreshold:
+		return score * weeklyGuardrailLowFactor, true
+	default:
+		return score, false
+	}
+}
+
+func applyRecentSuccessSuppression(score float64, lastSuccessAt *time.Time, now time.Time) float64 {
+	if lastSuccessAt == nil {
+		return score
+	}
+	if now.Sub(*lastSuccessAt) > recentSuccessSuppressionWindow {
+		return score
+	}
+	return score * recentSuccessSuppressionFactor
+}
+
 func hasExhaustedQuotaReset(account *store.UpstreamAccountRecord, now time.Time) bool {
 	if account == nil {
 		return false
@@ -483,23 +585,6 @@ func quotaWindowExhaustedUntilReset(usedPercent *float64, resetAt *time.Time, no
 
 func normalizeQuotaStatus(raw string) string {
 	return strings.TrimSpace(strings.ToLower(raw))
-}
-
-func compareEffectiveQuotaRemaining(left, right *float64) int {
-	switch {
-	case left != nil && right == nil:
-		return 1
-	case left == nil && right != nil:
-		return -1
-	case left == nil && right == nil:
-		return 0
-	case *left > *right:
-		return 1
-	case *left < *right:
-		return -1
-	default:
-		return 0
-	}
 }
 
 func compareOptionalTimeDesc(left, right *time.Time) int {
@@ -565,6 +650,45 @@ func buildCandidateDecision(candidate *rankedSchedulableAccount, tier *rankedPri
 	item.FailCount = candidate.account.FailCount
 	item.LastSuccessAt = candidate.account.LastSuccessAt
 	return item
+}
+
+func buildRankingReasonDetail(candidate *rankedSchedulableAccount, rank int, selected bool) string {
+	if candidate == nil || candidate.account == nil {
+		if selected {
+			return "当前优先级组内排序第一"
+		}
+		return fmt.Sprintf("同层排序位次 %d", rank)
+	}
+
+	rankDetail := fmt.Sprintf("同层排序位次 %d", rank)
+	if selected {
+		rankDetail = "当前优先级组内排序第一"
+	}
+
+	switch candidate.bucket {
+	case utilizationBucketKnownOAuth:
+		return buildKnownQuotaReasonDetail(candidate, rankDetail)
+	case utilizationBucketUnknownOAuth:
+		return fmt.Sprintf("quota 信息未知，保留候选但劣后于已知 OAuth；%s", rankDetail)
+	case utilizationBucketAPIKey:
+		return fmt.Sprintf("api_key 账号作为不重置兜底，排在 OAuth 后；%s", rankDetail)
+	default:
+		return rankDetail
+	}
+}
+
+func buildKnownQuotaReasonDetail(candidate *rankedSchedulableAccount, rankDetail string) string {
+	parts := make([]string, 0, 4)
+	if candidate.remaining5H != nil && candidate.hoursToReset5H != nil {
+		parts = append(parts, fmt.Sprintf("5h 窗口 %.1f 小时后重置，剩余 %.0f%%", *candidate.hoursToReset5H, *candidate.remaining5H))
+	} else if candidate.remainingWeekly != nil && candidate.hoursToResetWeekly != nil {
+		parts = append(parts, fmt.Sprintf("weekly 窗口 %.1f 小时后重置，剩余 %.0f%%", *candidate.hoursToResetWeekly, *candidate.remainingWeekly))
+	}
+	if candidate.weeklyGuardrailApplied && candidate.remainingWeekly != nil {
+		parts = append(parts, fmt.Sprintf("周额度仅剩 %.0f%%，已触发护栏降权", *candidate.remainingWeekly))
+	}
+	parts = append(parts, rankDetail)
+	return strings.Join(parts, "；")
 }
 
 func appendSkippedCandidates(snapshot *LatestAccountScheduleSnapshot, tier *rankedPriorityTier, candidates []*rankedSchedulableAccount) {
