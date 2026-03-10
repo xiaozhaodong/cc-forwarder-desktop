@@ -138,6 +138,171 @@ func TestPrepareSchedulableAccounts_DegradesWhenHigherTierTemporarilyExhausted(t
 	}
 }
 
+func TestPrepareSchedulableAccounts_KeepsActiveAccountStickyWithinTier(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	sticky, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "sticky-main",
+		CredentialRaw:          "rt-sticky-main",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		Quota5HUsedPercent:     testFloat64Ptr(35),
+		Quota5HResetAt:         testTimePtr(now.Add(25 * time.Minute)),
+		QuotaWeeklyUsedPercent: testFloat64Ptr(20),
+		QuotaWeeklyResetAt:     testTimePtr(now.Add(5 * 24 * time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("create sticky account failed: %v", err)
+	}
+
+	challenger, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "challenger",
+		CredentialRaw:          "rt-challenger",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		Quota5HUsedPercent:     testFloat64Ptr(30),
+		Quota5HResetAt:         testTimePtr(now.Add(4 * time.Hour)),
+		QuotaWeeklyUsedPercent: testFloat64Ptr(20),
+		QuotaWeeklyResetAt:     testTimePtr(now.Add(5 * 24 * time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("create challenger account failed: %v", err)
+	}
+
+	initial, err := svc.PrepareSchedulableAccounts(ctx, "req-sticky-initial", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts initial failed: %v", err)
+	}
+	if got, want := collectAccountIDs(initial), []int64{sticky.ID, challenger.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected initial same-tier ranking: got %v want %v", got, want)
+	}
+
+	updatedChallenger, err := st.GetAccount(ctx, challenger.ID)
+	if err != nil {
+		t.Fatalf("store GetAccount challenger failed: %v", err)
+	}
+	if updatedChallenger == nil {
+		t.Fatal("expected challenger account")
+	}
+	updatedChallenger.Quota5HUsedPercent = testFloat64Ptr(5)
+	updatedChallenger.Quota5HResetAt = testTimePtr(now.Add(5 * time.Minute))
+	updatedChallenger.QuotaWeeklyUsedPercent = testFloat64Ptr(0)
+	updatedChallenger.QuotaWeeklyResetAt = testTimePtr(now.Add(5 * 24 * time.Hour))
+	if err := st.UpdateAccount(ctx, updatedChallenger); err != nil {
+		t.Fatalf("store UpdateAccount challenger failed: %v", err)
+	}
+	if err := svc.reloadAccountIntoCache(ctx, challenger.ID); err != nil {
+		t.Fatalf("reloadAccountIntoCache challenger failed: %v", err)
+	}
+
+	next, err := svc.PrepareSchedulableAccounts(ctx, "req-sticky-next", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts next failed: %v", err)
+	}
+	if got, want := collectAccountIDs(next), []int64{sticky.ID, challenger.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected current active account to remain sticky, got %v want %v", got, want)
+	}
+
+	snapshot, err := svc.GetLatestAccountScheduleSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("GetLatestAccountScheduleSnapshot failed: %v", err)
+	}
+	selected := mustFindCandidateDecision(t, snapshot, sticky.ID)
+	assertStringContainsAll(t, selected.ReasonDetail, []string{"活跃账号", "同组"})
+}
+
+func TestPrepareSchedulableAccounts_DoesNotAutoReturnToHigherTierAfterDegrade(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	primary, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "primary-exhausted",
+		CredentialRaw:          "rt-primary-exhausted",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "exhausted",
+		Quota5HUsedPercent:     testFloat64Ptr(100),
+		Quota5HResetAt:         testTimePtr(now.Add(2 * time.Hour)),
+		QuotaWeeklyUsedPercent: testFloat64Ptr(100),
+	})
+	if err != nil {
+		t.Fatalf("create exhausted primary failed: %v", err)
+	}
+
+	backup, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "backup-sticky",
+		CredentialRaw:          "rt-backup-sticky",
+		Priority:               20,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		Quota5HUsedPercent:     testFloat64Ptr(20),
+		Quota5HResetAt:         testTimePtr(now.Add(90 * time.Minute)),
+		QuotaWeeklyUsedPercent: testFloat64Ptr(25),
+		QuotaWeeklyResetAt:     testTimePtr(now.Add(6 * 24 * time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("create backup account failed: %v", err)
+	}
+
+	degraded, err := svc.PrepareSchedulableAccounts(ctx, "req-degrade-sticky", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts degraded failed: %v", err)
+	}
+	if got, want := collectAccountIDs(degraded), []int64{backup.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected initial degrade to backup, got %v want %v", got, want)
+	}
+
+	recoveredPrimary, err := st.GetAccount(ctx, primary.ID)
+	if err != nil {
+		t.Fatalf("store GetAccount primary failed: %v", err)
+	}
+	if recoveredPrimary == nil {
+		t.Fatal("expected recovered primary account")
+	}
+	recoveredPrimary.QuotaStatus = "ok"
+	recoveredPrimary.Quota5HUsedPercent = testFloat64Ptr(10)
+	recoveredPrimary.Quota5HResetAt = testTimePtr(now.Add(30 * time.Minute))
+	recoveredPrimary.QuotaWeeklyUsedPercent = testFloat64Ptr(10)
+	recoveredPrimary.QuotaWeeklyResetAt = testTimePtr(now.Add(5 * 24 * time.Hour))
+	if err := st.UpdateAccount(ctx, recoveredPrimary); err != nil {
+		t.Fatalf("store UpdateAccount primary failed: %v", err)
+	}
+	if err := svc.reloadAccountIntoCache(ctx, primary.ID); err != nil {
+		t.Fatalf("reloadAccountIntoCache primary failed: %v", err)
+	}
+
+	stillBackup, err := svc.PrepareSchedulableAccounts(ctx, "req-still-backup", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts after recovery failed: %v", err)
+	}
+	if got, want := collectAccountIDs(stillBackup), []int64{backup.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected degraded tier to remain active until manual return, got %v want %v", got, want)
+	}
+
+	snapshot, err := svc.GetLatestAccountScheduleSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("GetLatestAccountScheduleSnapshot failed: %v", err)
+	}
+	recoveredPrimaryCandidate := mustFindCandidateDecision(t, snapshot, primary.ID)
+	if recoveredPrimaryCandidate.Reason != "higher_priority_tier_recovered_but_retained_degraded_tier" {
+		t.Fatalf("expected recovered primary to be marked as retained degraded tier, got %+v", recoveredPrimaryCandidate)
+	}
+	assertStringContainsAll(t, recoveredPrimaryCandidate.ReasonDetail, []string{"未自动切回", "更高优先级组"})
+}
+
 func TestPrepareSchedulableAccounts_RanksByUtilizationThenHealthWithinTier(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()

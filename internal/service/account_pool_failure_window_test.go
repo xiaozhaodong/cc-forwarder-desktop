@@ -27,8 +27,12 @@ func TestAccountPoolService_RecordAccountSoftFailure_TriggersCooldownAfterThresh
 	}
 
 	for attempt := 0; attempt < 2; attempt++ {
-		if err := svc.RecordAccountSoftFailure(ctx, acc.ID, "server busy", accountSoftFailureCategoryServerError, 0); err != nil {
+		shouldFailover, err := svc.RecordAccountSoftFailure(ctx, acc.ID, "server busy", accountSoftFailureCategoryServerError, 0)
+		if err != nil {
 			t.Fatalf("RecordAccountSoftFailure attempt %d failed: %v", attempt+1, err)
+		}
+		if shouldFailover {
+			t.Fatalf("expected no failover before threshold, got true on attempt %d", attempt+1)
 		}
 		current, err := svc.GetAccount(ctx, acc.ID)
 		if err != nil {
@@ -39,8 +43,12 @@ func TestAccountPoolService_RecordAccountSoftFailure_TriggersCooldownAfterThresh
 		}
 	}
 
-	if err := svc.RecordAccountSoftFailure(ctx, acc.ID, "server busy", accountSoftFailureCategoryServerError, 0); err != nil {
+	shouldFailover, err := svc.RecordAccountSoftFailure(ctx, acc.ID, "server busy", accountSoftFailureCategoryServerError, 0)
+	if err != nil {
 		t.Fatalf("RecordAccountSoftFailure third attempt failed: %v", err)
+	}
+	if !shouldFailover {
+		t.Fatal("expected failover trigger after threshold")
 	}
 	current, err := svc.GetAccount(ctx, acc.ID)
 	if err != nil {
@@ -82,12 +90,20 @@ func TestAccountPoolService_RecordAccountSoftFailure_UsesRetryAfterForRateLimit(
 	}
 
 	for attempt := 0; attempt < 2; attempt++ {
-		if err := svc.RecordAccountSoftFailure(ctx, acc.ID, "rate limited", accountSoftFailureCategoryRateLimit, 45*time.Second); err != nil {
+		shouldFailover, err := svc.RecordAccountSoftFailure(ctx, acc.ID, "rate limited", accountSoftFailureCategoryRateLimit, 45*time.Second)
+		if err != nil {
 			t.Fatalf("RecordAccountSoftFailure attempt %d failed: %v", attempt+1, err)
 		}
+		if shouldFailover {
+			t.Fatalf("expected no failover before threshold, got true on attempt %d", attempt+1)
+		}
 	}
-	if err := svc.RecordAccountSoftFailure(ctx, acc.ID, "rate limited", accountSoftFailureCategoryRateLimit, 45*time.Second); err != nil {
+	shouldFailover, err := svc.RecordAccountSoftFailure(ctx, acc.ID, "rate limited", accountSoftFailureCategoryRateLimit, 45*time.Second)
+	if err != nil {
 		t.Fatalf("RecordAccountSoftFailure third attempt failed: %v", err)
+	}
+	if !shouldFailover {
+		t.Fatal("expected failover trigger after threshold")
 	}
 
 	current, err := svc.GetAccount(ctx, acc.ID)
@@ -124,16 +140,24 @@ func TestAccountPoolService_MarkAccountSuccess_ClearsSoftFailureWindow(t *testin
 	}
 
 	for attempt := 0; attempt < 2; attempt++ {
-		if err := svc.RecordAccountSoftFailure(ctx, acc.ID, "server busy", accountSoftFailureCategoryServerError, 0); err != nil {
+		shouldFailover, err := svc.RecordAccountSoftFailure(ctx, acc.ID, "server busy", accountSoftFailureCategoryServerError, 0)
+		if err != nil {
 			t.Fatalf("RecordAccountSoftFailure attempt %d failed: %v", attempt+1, err)
+		}
+		if shouldFailover {
+			t.Fatalf("expected no failover before threshold, got true on attempt %d", attempt+1)
 		}
 	}
 
 	if err := svc.MarkAccountSuccess(ctx, acc.ID); err != nil {
 		t.Fatalf("MarkAccountSuccess failed: %v", err)
 	}
-	if err := svc.RecordAccountSoftFailure(ctx, acc.ID, "server busy", accountSoftFailureCategoryServerError, 0); err != nil {
+	shouldFailover, err := svc.RecordAccountSoftFailure(ctx, acc.ID, "server busy", accountSoftFailureCategoryServerError, 0)
+	if err != nil {
 		t.Fatalf("RecordAccountSoftFailure after success failed: %v", err)
+	}
+	if shouldFailover {
+		t.Fatal("expected success to reset failover threshold")
 	}
 
 	current, err := svc.GetAccount(ctx, acc.ID)

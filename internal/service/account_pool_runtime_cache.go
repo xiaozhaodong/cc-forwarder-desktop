@@ -13,6 +13,8 @@ type accountRuntimeCache struct {
 	byID          map[int64]*store.UpstreamAccountRecord
 	stateVersions map[int64]uint64
 	ordered       []*store.UpstreamAccountRecord
+	activeTier    int
+	activeAccount int64
 }
 
 type accountRuntimeStateSnapshot struct {
@@ -54,6 +56,14 @@ func (c *accountRuntimeCache) replaceAll(records []*store.UpstreamAccountRecord)
 		} else {
 			c.stateVersions[record.ID] = 1
 		}
+	}
+	if c.activeAccount > 0 {
+		if _, ok := c.byID[c.activeAccount]; !ok {
+			c.activeAccount = 0
+		}
+	}
+	if c.activeTier > 0 && !c.hasPriorityLocked(c.activeTier) {
+		c.activeTier = 0
 	}
 	c.rebuildOrderedLocked()
 }
@@ -116,6 +126,12 @@ func (c *accountRuntimeCache) remove(id int64) {
 	defer c.mu.Unlock()
 	delete(c.byID, id)
 	delete(c.stateVersions, id)
+	if c.activeAccount == id {
+		c.activeAccount = 0
+	}
+	if c.activeTier > 0 && !c.hasPriorityLocked(c.activeTier) {
+		c.activeTier = 0
+	}
 	c.rebuildOrderedLocked()
 }
 
@@ -133,7 +149,90 @@ func (c *accountRuntimeCache) applyPriorityUpdates(updates map[int64]int) {
 		}
 		record.Priority = priority
 	}
+	c.activeTier = 0
+	c.activeAccount = 0
 	c.rebuildOrderedLocked()
+}
+
+func (c *accountRuntimeCache) resolveActiveSelection(prepared []*rankedPriorityTier) (*rankedPriorityTier, int) {
+	if c == nil {
+		return selectFirstEligibleTier(prepared), 0
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	selectedTier, selectedIndex := c.resolveActiveSelectionLocked(prepared)
+	if selectedTier == nil {
+		c.activeAccount = 0
+		return nil, -1
+	}
+
+	if selectedIndex < 0 || selectedIndex >= len(selectedTier.eligible) {
+		selectedIndex = 0
+	}
+	c.activeTier = selectedTier.priority
+	if len(selectedTier.eligible) > 0 && selectedTier.eligible[selectedIndex] != nil && selectedTier.eligible[selectedIndex].account != nil {
+		c.activeAccount = selectedTier.eligible[selectedIndex].account.ID
+	}
+	return selectedTier, selectedIndex
+}
+
+func (c *accountRuntimeCache) resolveActiveSelectionLocked(prepared []*rankedPriorityTier) (*rankedPriorityTier, int) {
+	if len(prepared) == 0 {
+		return nil, -1
+	}
+
+	if c.activeTier > 0 {
+		for _, tier := range prepared {
+			if tier == nil || tier.priority != c.activeTier {
+				continue
+			}
+			if len(tier.eligible) > 0 {
+				if c.activeAccount > 0 {
+					for idx, candidate := range tier.eligible {
+						if candidate != nil && candidate.account != nil && candidate.account.ID == c.activeAccount {
+							return tier, idx
+						}
+					}
+				}
+				return tier, 0
+			}
+			break
+		}
+
+		for _, tier := range prepared {
+			if tier == nil || len(tier.eligible) == 0 || tier.priority < c.activeTier {
+				continue
+			}
+			return tier, 0
+		}
+		return nil, -1
+	}
+
+	selectedTier := selectFirstEligibleTier(prepared)
+	if selectedTier == nil {
+		return nil, -1
+	}
+	return selectedTier, 0
+}
+
+func selectFirstEligibleTier(prepared []*rankedPriorityTier) *rankedPriorityTier {
+	for _, tier := range prepared {
+		if tier != nil && len(tier.eligible) > 0 {
+			return tier
+		}
+	}
+	return nil
+}
+
+func (c *accountRuntimeCache) hasPriorityLocked(priority int) bool {
+	for _, record := range c.byID {
+		if record != nil && record.Priority == priority {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *accountRuntimeCache) matchesStateVersion(id int64, version uint64) bool {
@@ -231,6 +330,8 @@ func (c *accountRuntimeCache) markSuccessIfNoNewerFailure(id int64, successAt, a
 	record.LastSuccessAt = cloneTimePtr(&successAt)
 	record.LastError = ""
 	record.UpdatedAt = successAt
+	c.activeTier = record.Priority
+	c.activeAccount = id
 	return true, c.bumpStateVersionLocked(id)
 }
 
@@ -253,6 +354,8 @@ func (c *accountRuntimeCache) markSuccess(id int64, successAt time.Time) (bool, 
 	record.LastSuccessAt = cloneTimePtr(&successAt)
 	record.LastError = ""
 	record.UpdatedAt = successAt
+	c.activeTier = record.Priority
+	c.activeAccount = id
 	return true, c.bumpStateVersionLocked(id)
 }
 
@@ -274,6 +377,9 @@ func (c *accountRuntimeCache) markAuthFailed(id int64, reason string, failedAt t
 	record.CooldownUntil = nil
 	record.LastError = reason
 	record.UpdatedAt = failedAt
+	if c.activeAccount == id {
+		c.activeAccount = 0
+	}
 	return true, c.bumpStateVersionLocked(id)
 }
 
@@ -295,6 +401,9 @@ func (c *accountRuntimeCache) markTransientFailure(id int64, reason string, cool
 	record.CooldownUntil = cloneTimePtr(&cooldownUntil)
 	record.LastError = reason
 	record.UpdatedAt = failedAt
+	if c.activeAccount == id {
+		c.activeAccount = 0
+	}
 	return true, c.bumpStateVersionLocked(id)
 }
 
@@ -328,8 +437,13 @@ func (c *accountRuntimeCache) applyToggle(id int64, enabled bool, changedAt time
 		record.FailCount = 0
 		record.CooldownUntil = nil
 		record.LastError = ""
+	} else if c.activeAccount == id {
+		c.activeAccount = 0
 	}
 	record.UpdatedAt = changedAt
+	if c.activeTier > 0 && !c.hasPriorityLocked(c.activeTier) {
+		c.activeTier = 0
+	}
 	return true, c.bumpStateVersionLocked(id), snapshot
 }
 

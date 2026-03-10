@@ -17,5 +17,5 @@ type AccountPoolService interface {
 	MarkAccountAuthFailed(ctx context.Context, id int64, reason string) error
 	MarkAccountTransientFailure(ctx context.Context, id int64, reason string, cooldown time.Duration) error
 	MarkAccountUsageLimitExceeded(ctx context.Context, id int64, reason, planType string, resetAt time.Time) error
-	RecordAccountSoftFailure(ctx context.Context, id int64, reason, category string, retryAfter time.Duration) error
+	RecordAccountSoftFailure(ctx context.Context, id int64, reason, category string, retryAfter time.Duration) (bool, error)
 }

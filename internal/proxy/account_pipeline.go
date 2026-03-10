@@ -142,16 +142,22 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		if forwardErr != nil {
 			releaseUpstream()
 			lastErr = forwardErr
-			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, forwardErr.Error(), h.accountConnectionFailureCooldown())
+			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, forwardErr.Error(), accountSoftFailureCategoryServerError, 0)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, forwardErr.Error())
+			if !shouldFailover {
+				break
+			}
 			continue
 		}
 
 		if resp == nil {
 			lastErr = fmt.Errorf("empty response from account %d", acc.ID)
 			releaseUpstream()
-			_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, lastErr.Error(), h.accountConnectionFailureCooldown())
+			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, lastErr.Error(), accountSoftFailureCategoryServerError, 0)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, lastErr.Error())
+			if !shouldFailover {
+				break
+			}
 			continue
 		}
 
@@ -193,10 +199,14 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
 			if usageLimit, ok := parseAccountUsageLimitWindow(detail, time.Now()); ok {
 				_ = h.accountPoolService.MarkAccountUsageLimitExceeded(ctx, acc.ID, detail, usageLimit.planType, usageLimit.resetAt)
-			} else {
-				_ = h.accountPoolService.RecordAccountSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryRateLimit, retryAfter)
+				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
+				continue
 			}
+			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryRateLimit, retryAfter)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
+			if !shouldFailover {
+				break
+			}
 			continue
 		}
 
@@ -207,8 +217,11 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				detail = fmt.Sprintf("upstream returned %d", resp.StatusCode)
 			}
 			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
-			_ = h.accountPoolService.RecordAccountSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryServerError, 0)
+			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryServerError, 0)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
+			if !shouldFailover {
+				break
+			}
 			continue
 		}
 
@@ -250,21 +263,27 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 					if usageLimit, ok := parseAccountStreamUsageLimitWindow(processErr); ok {
 						_ = h.accountPoolService.MarkAccountUsageLimitExceeded(ctx, acc.ID, processErr.Error(), usageLimit.planType, usageLimit.resetAt)
 					} else {
-						_ = h.accountPoolService.RecordAccountSoftFailure(ctx, acc.ID, processErr.Error(), accountSoftFailureCategoryRateLimit, 0)
+						_ = h.shouldFailOverAfterSoftFailure(ctx, acc.ID, processErr.Error(), accountSoftFailureCategoryRateLimit, 0)
 					}
 				case "stream_error", "error", "timeout", "network_error":
-					_ = h.accountPoolService.RecordAccountSoftFailure(ctx, acc.ID, processErr.Error(), accountSoftFailureCategoryServerError, 0)
+					_ = h.shouldFailOverAfterSoftFailure(ctx, acc.ID, processErr.Error(), accountSoftFailureCategoryServerError, 0)
 				default:
 					_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, processErr.Error(), h.accountProcessingFailureCooldown())
 				}
 			} else {
-				_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, processErr.Error(), h.accountProcessingFailureCooldown())
+				shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, processErr.Error(), accountSoftFailureCategoryServerError, 0)
+				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, processErr.Error())
+				if !shouldFailover {
+					break
+				}
+				continue
 			}
-			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, processErr.Error())
 			// 流式响应一旦开始输出，无法切换到下一个账号，直接终止
 			if isSSE {
+				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, processErr.Error())
 				return
 			}
+			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, processErr.Error())
 			continue
 		}
 
@@ -286,6 +305,18 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 	lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
 	lifecycleManager.FailRequest("account_pool_exhausted", reason, http.StatusServiceUnavailable)
 	writeAccountPipelineError(w, http.StatusServiceUnavailable, "account_pool_unavailable", reason)
+}
+
+func (h *Handler) shouldFailOverAfterSoftFailure(ctx context.Context, accountID int64, reason, category string, retryAfter time.Duration) bool {
+	if h == nil || h.accountPoolService == nil {
+		return true
+	}
+
+	shouldFailover, err := h.accountPoolService.RecordAccountSoftFailure(ctx, accountID, reason, category, retryAfter)
+	if err != nil {
+		return true
+	}
+	return shouldFailover
 }
 
 func (h *Handler) completeAccountScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, outcome, finalError string) error {

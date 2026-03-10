@@ -429,12 +429,12 @@ func accountResetMatchDistance(existing *time.Time, target time.Time) (time.Dura
 	return diff, true
 }
 
-func (s *AccountPoolService) RecordAccountSoftFailure(ctx context.Context, id int64, reason, category string, retryAfter time.Duration) error {
+func (s *AccountPoolService) RecordAccountSoftFailure(ctx context.Context, id int64, reason, category string, retryAfter time.Duration) (bool, error) {
 	if err := s.ensureRuntimeCache(ctx); err != nil {
-		return err
+		return false, err
 	}
 	if id <= 0 {
-		return fmt.Errorf("invalid account id: %d", id)
+		return false, fmt.Errorf("invalid account id: %d", id)
 	}
 
 	tracker := s.softFailureTracker
@@ -446,20 +446,20 @@ func (s *AccountPoolService) RecordAccountSoftFailure(ctx context.Context, id in
 	now := tracker.Now()
 	count := tracker.Record(id)
 	if count < tracker.threshold {
-		return nil
+		return false, nil
 	}
 
 	cooldown := resolveAccountSoftFailureCooldown(s.config, category, retryAfter)
 	cooldownUntil := now.Add(cooldown)
 	ok, stateVersion := s.runtimeCache.markTransientFailure(id, reason, cooldownUntil, now)
 	if !ok {
-		return fmt.Errorf("账号不存在: %d", id)
+		return false, fmt.Errorf("账号不存在: %d", id)
 	}
 	if s.runtimeWriter != nil {
 		s.runtimeWriter.EnqueueTransientFailure(id, stateVersion, reason, cooldownUntil, now)
 	}
 	tracker.Clear(id)
-	return nil
+	return true, nil
 }
 
 // TestUpstreamAccount 测试账号连通性

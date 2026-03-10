@@ -229,14 +229,14 @@ func (s *AccountPoolService) prepareSchedulableAccounts(ctx context.Context, req
 	}
 	now := time.Now()
 	accounts := s.runtimeCache.listSchedulable(now)
-	ordered, snapshot := rankSchedulableAccounts(accounts, now, requestID, requestPath)
+	ordered, snapshot := s.rankSchedulableAccounts(accounts, now, requestID, requestPath)
 	if s.scheduleSnapshots != nil && snapshot != nil {
 		s.scheduleSnapshots.saveDraft(snapshot)
 	}
 	return ordered, nil
 }
 
-func rankSchedulableAccounts(accounts []*store.UpstreamAccountRecord, now time.Time, requestID, requestPath string) ([]*store.UpstreamAccountRecord, *LatestAccountScheduleSnapshot) {
+func (s *AccountPoolService) rankSchedulableAccounts(accounts []*store.UpstreamAccountRecord, now time.Time, requestID, requestPath string) ([]*store.UpstreamAccountRecord, *LatestAccountScheduleSnapshot) {
 	preparedTiers := preparePriorityTiers(accounts, now)
 	snapshot := &LatestAccountScheduleSnapshot{
 		RequestID:   requestID,
@@ -246,11 +246,11 @@ func rankSchedulableAccounts(accounts []*store.UpstreamAccountRecord, now time.T
 	}
 
 	selectedTier := (*rankedPriorityTier)(nil)
-	for idx := range preparedTiers {
-		if len(preparedTiers[idx].eligible) > 0 {
-			selectedTier = preparedTiers[idx]
-			break
-		}
+	selectedIndex := 0
+	if s != nil && s.runtimeCache != nil {
+		selectedTier, selectedIndex = s.runtimeCache.resolveActiveSelection(preparedTiers)
+	} else {
+		selectedTier = selectFirstEligibleTier(preparedTiers)
 	}
 
 	if selectedTier == nil {
@@ -266,27 +266,33 @@ func rankSchedulableAccounts(accounts []*store.UpstreamAccountRecord, now time.T
 	snapshot.SelectedTierIndex = selectedTier.index
 	snapshot.SelectedTierLabel = accountPriorityTierLabel(selectedTier.index)
 	snapshot.DegradedToLowerPriority = selectedTier.index > 1
-	if len(selectedTier.eligible) > 0 {
-		snapshot.SelectedAccountID = selectedTier.eligible[0].account.ID
-		snapshot.SelectedAccountName = displayAccountName(selectedTier.eligible[0].account)
+	if len(selectedTier.eligible) > 0 && selectedIndex >= 0 && selectedIndex < len(selectedTier.eligible) {
+		snapshot.SelectedAccountID = selectedTier.eligible[selectedIndex].account.ID
+		snapshot.SelectedAccountName = displayAccountName(selectedTier.eligible[selectedIndex].account)
 	}
 	snapshot.Summary = buildScheduleSummary(selectedTier, snapshot.SelectedAccountName)
 
 	ordered := make([]*store.UpstreamAccountRecord, 0, len(selectedTier.eligible))
 	for _, tier := range preparedTiers {
 		if tier.index < selectedTier.index {
+			for _, candidate := range tier.eligible {
+				snapshot.Candidates = append(snapshot.Candidates, buildCandidateDecision(candidate, tier, accountScheduleDecisionSkipped, "higher_priority_tier_recovered_but_retained_degraded_tier", "当前仍保持已降级优先级组，未自动切回更高优先级组"))
+			}
 			appendSkippedCandidates(snapshot, tier, tier.skipped)
 			continue
 		}
 		if tier.index == selectedTier.index {
-			for idx, candidate := range tier.eligible {
+			for idx, candidate := range selectedTierEligibleOrder(tier.eligible, selectedIndex) {
 				decision := accountScheduleDecisionEligible
 				reason := "same_tier_lower_rank"
-				detail := buildRankingReasonDetail(candidate, idx+1, false)
+				detail := buildRankingReasonDetail(candidate, idx+1, false, false)
 				if idx == 0 {
 					decision = accountScheduleDecisionSelected
 					reason = "highest_ranked_in_selected_tier"
-					detail = buildRankingReasonDetail(candidate, idx+1, true)
+					if selectedIndex > 0 {
+						reason = "retained_active_account_in_selected_tier"
+					}
+					detail = buildRankingReasonDetail(candidate, idx+1, true, selectedIndex > 0)
 				}
 				snapshot.Candidates = append(snapshot.Candidates, buildCandidateDecision(candidate, tier, decision, reason, detail))
 				ordered = append(ordered, candidate.account)
@@ -302,6 +308,18 @@ func rankSchedulableAccounts(accounts []*store.UpstreamAccountRecord, now time.T
 	}
 
 	return ordered, snapshot
+}
+
+func selectedTierEligibleOrder(eligible []*rankedSchedulableAccount, selectedIndex int) []*rankedSchedulableAccount {
+	if len(eligible) == 0 || selectedIndex <= 0 || selectedIndex >= len(eligible) {
+		return eligible
+	}
+
+	ordered := make([]*rankedSchedulableAccount, 0, len(eligible))
+	ordered = append(ordered, eligible[selectedIndex])
+	ordered = append(ordered, eligible[:selectedIndex]...)
+	ordered = append(ordered, eligible[selectedIndex+1:]...)
+	return ordered
 }
 
 func preparePriorityTiers(accounts []*store.UpstreamAccountRecord, now time.Time) []*rankedPriorityTier {
@@ -652,7 +670,7 @@ func buildCandidateDecision(candidate *rankedSchedulableAccount, tier *rankedPri
 	return item
 }
 
-func buildRankingReasonDetail(candidate *rankedSchedulableAccount, rank int, selected bool) string {
+func buildRankingReasonDetail(candidate *rankedSchedulableAccount, rank int, selected, retainedActive bool) string {
 	if candidate == nil || candidate.account == nil {
 		if selected {
 			return "当前优先级组内排序第一"
@@ -667,17 +685,23 @@ func buildRankingReasonDetail(candidate *rankedSchedulableAccount, rank int, sel
 
 	switch candidate.bucket {
 	case utilizationBucketKnownOAuth:
-		return buildKnownQuotaReasonDetail(candidate, rankDetail)
+		return buildKnownQuotaReasonDetail(candidate, rankDetail, retainedActive)
 	case utilizationBucketUnknownOAuth:
+		if retainedActive {
+			return fmt.Sprintf("保持当前活跃账号，未因同组分数变化切换；quota 信息未知，保留候选但劣后于已知 OAuth；%s", rankDetail)
+		}
 		return fmt.Sprintf("quota 信息未知，保留候选但劣后于已知 OAuth；%s", rankDetail)
 	case utilizationBucketAPIKey:
+		if retainedActive {
+			return fmt.Sprintf("保持当前活跃账号，未因同组分数变化切换；api_key 账号作为不重置兜底，排在 OAuth 后；%s", rankDetail)
+		}
 		return fmt.Sprintf("api_key 账号作为不重置兜底，排在 OAuth 后；%s", rankDetail)
 	default:
 		return rankDetail
 	}
 }
 
-func buildKnownQuotaReasonDetail(candidate *rankedSchedulableAccount, rankDetail string) string {
+func buildKnownQuotaReasonDetail(candidate *rankedSchedulableAccount, rankDetail string, retainedActive bool) string {
 	parts := make([]string, 0, 4)
 	if candidate.remaining5H != nil && candidate.hoursToReset5H != nil {
 		parts = append(parts, fmt.Sprintf("5h 窗口 %.1f 小时后重置，剩余 %.0f%%", *candidate.hoursToReset5H, *candidate.remaining5H))
@@ -686,6 +710,9 @@ func buildKnownQuotaReasonDetail(candidate *rankedSchedulableAccount, rankDetail
 	}
 	if candidate.weeklyGuardrailApplied && candidate.remainingWeekly != nil {
 		parts = append(parts, fmt.Sprintf("周额度仅剩 %.0f%%，已触发护栏降权", *candidate.remainingWeekly))
+	}
+	if retainedActive {
+		parts = append(parts, "保持当前活跃账号，未因同组分数变化切换")
 	}
 	parts = append(parts, rankDetail)
 	return strings.Join(parts, "；")

@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +23,8 @@ import (
 	"cc-forwarder/internal/endpoint"
 	servicepkg "cc-forwarder/internal/service"
 	"cc-forwarder/internal/store"
+
+	_ "modernc.org/sqlite"
 )
 
 type accountTransientCall struct {
@@ -82,6 +87,8 @@ type mockAccountPoolService struct {
 	transientCalls    []accountTransientCall
 	softFailureCalls  []accountSoftFailureCall
 	usageLimitCalls   []accountUsageLimitCall
+
+	softFailureShouldFailover *bool
 }
 
 func (m *mockAccountPoolService) PrepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) ([]*store.UpstreamAccountRecord, error) {
@@ -162,11 +169,14 @@ func (m *mockAccountPoolService) MarkAccountUsageLimitExceeded(ctx context.Conte
 	return nil
 }
 
-func (m *mockAccountPoolService) RecordAccountSoftFailure(ctx context.Context, id int64, reason, category string, retryAfter time.Duration) error {
+func (m *mockAccountPoolService) RecordAccountSoftFailure(ctx context.Context, id int64, reason, category string, retryAfter time.Duration) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.softFailureCalls = append(m.softFailureCalls, accountSoftFailureCall{id: id, reason: reason, category: category, retryAfter: retryAfter})
-	return nil
+	if m.softFailureShouldFailover != nil {
+		return *m.softFailureShouldFailover, nil
+	}
+	return true, nil
 }
 
 func newAccountPipelineTestHandlerWithEnabled(t *testing.T, fallbackURL string, accountService AccountPoolService, enabled bool) *Handler {
@@ -221,6 +231,40 @@ func performResponsesStreamingRequest(t *testing.T, handler *Handler) *httptest.
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec
+}
+
+func newRealAccountPipelineTestService(t *testing.T, accounts []*store.UpstreamAccountRecord) *servicepkg.AccountPoolService {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite failed: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	schemaPath := filepath.Join("..", "tracking", "schema.sql")
+	schemaSQL, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("read schema failed: %v", err)
+	}
+	if _, err := db.Exec(string(schemaSQL)); err != nil {
+		t.Fatalf("exec schema failed: %v", err)
+	}
+
+	st := store.NewSQLiteAccountPoolStore(db)
+	svc := servicepkg.NewAccountPoolService(st, nil)
+	t.Cleanup(func() { _ = svc.Close() })
+
+	for _, account := range accounts {
+		if account == nil {
+			continue
+		}
+		if _, err := svc.CreateAccount(context.Background(), account); err != nil {
+			t.Fatalf("create account failed: %v", err)
+		}
+	}
+
+	return svc
 }
 
 func TestAccountPipeline_NoEndpointFallbackWhenAccountPoolEmpty(t *testing.T) {
@@ -480,7 +524,7 @@ func TestAccountPipeline_OAuthSuccessEnqueuesQuotaRefresh(t *testing.T) {
 	}
 }
 
-func TestAccountPipeline_429FailoverThenSuccess(t *testing.T) {
+func TestAccountPipeline_429SoftFailure_RespectsServiceNoFailoverDecision(t *testing.T) {
 	firstHits := 0
 	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		firstHits++
@@ -496,20 +540,22 @@ func TestAccountPipeline_429FailoverThenSuccess(t *testing.T) {
 	}))
 	defer secondServer.Close()
 
+	shouldFailover := false
 	service := &mockAccountPoolService{
 		accounts: []*store.UpstreamAccountRecord{
 			{ID: 11, AccountName: "acc-a", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: firstServer.URL, Enabled: true},
 			{ID: 12, AccountName: "acc-b", ProviderType: "api_key", CredentialRaw: "sk-b", BaseURL: secondServer.URL, Enabled: true},
 		},
+		softFailureShouldFailover: &shouldFailover,
 	}
 	handler := newAccountPipelineTestHandler(t, firstServer.URL, service)
 
 	rec := performResponsesRequest(t, handler)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected first 429 soft failure to stop on active account, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if firstHits != 1 || secondHits != 1 {
-		t.Fatalf("expected both accounts to be attempted once, got first=%d second=%d", firstHits, secondHits)
+	if firstHits != 1 || secondHits != 0 {
+		t.Fatalf("expected backup account not to be attempted when service keeps active account, got first=%d second=%d", firstHits, secondHits)
 	}
 
 	if len(service.softFailureCalls) != 1 || service.softFailureCalls[0].id != 11 {
@@ -521,8 +567,8 @@ func TestAccountPipeline_429FailoverThenSuccess(t *testing.T) {
 	if len(service.transientCalls) != 0 {
 		t.Fatalf("expected no direct transient cooldown for first 429, got %+v", service.transientCalls)
 	}
-	if len(service.successCalls) != 1 || service.successCalls[0] != 12 {
-		t.Fatalf("expected success on account 12, got %+v", service.successCalls)
+	if len(service.successCalls) != 0 {
+		t.Fatalf("expected no backup success while service keeps active account, got %+v", service.successCalls)
 	}
 	if len(service.authFailCalls) != 0 {
 		t.Fatalf("expected no auth-failed call, got %+v", service.authFailCalls)
@@ -545,20 +591,22 @@ func TestAccountPipeline_UsesServiceReturnedOrderWithoutPriorityReordering(t *te
 	}))
 	defer secondServer.Close()
 
+	shouldFailover := false
 	service := &mockAccountPoolService{
 		accounts: []*store.UpstreamAccountRecord{
 			{ID: 41, AccountName: "manual-backup", ProviderType: "api_key", CredentialRaw: "sk-backup", BaseURL: firstServer.URL, Priority: 20, Enabled: true},
 			{ID: 42, AccountName: "manual-main", ProviderType: "api_key", CredentialRaw: "sk-main", BaseURL: secondServer.URL, Priority: 10, Enabled: true},
 		},
+		softFailureShouldFailover: &shouldFailover,
 	}
 	handler := newAccountPipelineTestHandler(t, firstServer.URL, service)
 
 	rec := performResponsesRequest(t, handler)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected first returned account to remain active when service rejects failover, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if firstHits != 1 || secondHits != 1 {
-		t.Fatalf("expected proxy to use returned order, got first=%d second=%d", firstHits, secondHits)
+	if firstHits != 1 || secondHits != 0 {
+		t.Fatalf("expected proxy to honor returned order without trying second account, got first=%d second=%d", firstHits, secondHits)
 	}
 	if len(service.softFailureCalls) != 1 || service.softFailureCalls[0].id != 41 {
 		t.Fatalf("expected first returned account to record soft failure, got %+v", service.softFailureCalls)
@@ -566,8 +614,8 @@ func TestAccountPipeline_UsesServiceReturnedOrderWithoutPriorityReordering(t *te
 	if len(service.transientCalls) != 0 {
 		t.Fatalf("expected no immediate cooldown for first returned account, got %+v", service.transientCalls)
 	}
-	if len(service.successCalls) != 1 || service.successCalls[0] != 42 {
-		t.Fatalf("expected second returned account to succeed, got %+v", service.successCalls)
+	if len(service.successCalls) != 0 {
+		t.Fatalf("expected second returned account not to be attempted, got %+v", service.successCalls)
 	}
 }
 
@@ -691,20 +739,22 @@ func TestAccountPipeline_Generic503RecordedAsServerSoftFailure(t *testing.T) {
 	}))
 	defer secondServer.Close()
 
+	shouldFailover := false
 	service := &mockAccountPoolService{
 		accounts: []*store.UpstreamAccountRecord{
 			{ID: 51, AccountName: "acc-a", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: firstServer.URL, Enabled: true},
 			{ID: 52, AccountName: "acc-b", ProviderType: "api_key", CredentialRaw: "sk-b", BaseURL: secondServer.URL, Enabled: true},
 		},
+		softFailureShouldFailover: &shouldFailover,
 	}
 	handler := newAccountPipelineTestHandler(t, firstServer.URL, service)
 
 	rec := performResponsesRequest(t, handler)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected generic 503 soft failure to stay on active account when service rejects failover, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if firstHits != 1 || secondHits != 1 {
-		t.Fatalf("expected both accounts attempted, got first=%d second=%d", firstHits, secondHits)
+	if firstHits != 1 || secondHits != 0 {
+		t.Fatalf("expected no backup attempt on first generic 503 soft failure, got first=%d second=%d", firstHits, secondHits)
 	}
 	if len(service.softFailureCalls) != 1 || service.softFailureCalls[0].id != 51 {
 		t.Fatalf("expected soft failure for first account, got %+v", service.softFailureCalls)
@@ -715,8 +765,117 @@ func TestAccountPipeline_Generic503RecordedAsServerSoftFailure(t *testing.T) {
 	if len(service.transientCalls) != 0 {
 		t.Fatalf("expected no immediate transient cooldown, got %+v", service.transientCalls)
 	}
-	if len(service.successCalls) != 1 || service.successCalls[0] != 52 {
-		t.Fatalf("expected second account success, got %+v", service.successCalls)
+	if len(service.successCalls) != 0 {
+		t.Fatalf("expected second account not to be attempted on first generic 503, got %+v", service.successCalls)
+	}
+}
+
+func TestAccountPipeline_ServerSoftFailure_DoesNotFailOverBeforeThirdConsecutiveFailure(t *testing.T) {
+	firstHits := 0
+	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstHits++
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":{"type":"service_unavailable","message":"upstream overloaded"}}`, http.StatusServiceUnavailable)
+	}))
+	defer firstServer.Close()
+
+	secondHits := 0
+	secondServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_after_threshold","status":"completed","output":[]}`))
+	}))
+	defer secondServer.Close()
+
+	service := newRealAccountPipelineTestService(t, []*store.UpstreamAccountRecord{
+		{ProviderType: "api_key", AccountName: "active-main", CredentialRaw: "sk-main", BaseURL: firstServer.URL, Priority: 10, Enabled: true, State: "active"},
+		{ProviderType: "api_key", AccountName: "same-tier-backup", CredentialRaw: "sk-backup", BaseURL: secondServer.URL, Priority: 10, Enabled: true, State: "active"},
+	})
+	handler := newAccountPipelineTestHandler(t, firstServer.URL, service)
+
+	firstAttempt := performResponsesRequest(t, handler)
+	if firstAttempt.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected first soft failure to stop without failover, got %d body=%s", firstAttempt.Code, firstAttempt.Body.String())
+	}
+	if firstHits != 1 || secondHits != 0 {
+		t.Fatalf("expected only active account attempted on first soft failure, got first=%d second=%d", firstHits, secondHits)
+	}
+
+	secondAttempt := performResponsesRequest(t, handler)
+	if secondAttempt.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected second consecutive soft failure to stop without failover, got %d body=%s", secondAttempt.Code, secondAttempt.Body.String())
+	}
+	if firstHits != 2 || secondHits != 0 {
+		t.Fatalf("expected backup account not attempted before threshold, got first=%d second=%d", firstHits, secondHits)
+	}
+
+	thirdAttempt := performResponsesRequest(t, handler)
+	if thirdAttempt.Code != http.StatusOK {
+		t.Fatalf("expected third consecutive soft failure to fail over, got %d body=%s", thirdAttempt.Code, thirdAttempt.Body.String())
+	}
+	if firstHits != 3 || secondHits != 1 {
+		t.Fatalf("expected backup to be attempted only after threshold, got first=%d second=%d", firstHits, secondHits)
+	}
+}
+
+func TestAccountPipeline_SuccessResetsTransientFailureThreshold(t *testing.T) {
+	var firstHits int
+	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstHits++
+		w.Header().Set("Content-Type", "application/json")
+		switch firstHits {
+		case 2:
+			_, _ = w.Write([]byte(`{"id":"resp_recovered","status":"completed","output":[]}`))
+		default:
+			http.Error(w, `{"error":{"type":"service_unavailable","message":"upstream overloaded"}}`, http.StatusServiceUnavailable)
+		}
+	}))
+	defer firstServer.Close()
+
+	secondHits := 0
+	secondServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_after_reset","status":"completed","output":[]}`))
+	}))
+	defer secondServer.Close()
+
+	service := newRealAccountPipelineTestService(t, []*store.UpstreamAccountRecord{
+		{ProviderType: "api_key", AccountName: "active-main", CredentialRaw: "sk-main", BaseURL: firstServer.URL, Priority: 10, Enabled: true, State: "active"},
+		{ProviderType: "api_key", AccountName: "same-tier-backup", CredentialRaw: "sk-backup", BaseURL: secondServer.URL, Priority: 10, Enabled: true, State: "active"},
+	})
+	handler := newAccountPipelineTestHandler(t, firstServer.URL, service)
+
+	firstAttempt := performResponsesRequest(t, handler)
+	if firstAttempt.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected initial transient failure to stay on active account, got %d body=%s", firstAttempt.Code, firstAttempt.Body.String())
+	}
+	if firstHits != 1 || secondHits != 0 {
+		t.Fatalf("expected no failover on first transient failure, got first=%d second=%d", firstHits, secondHits)
+	}
+
+	secondAttempt := performResponsesRequest(t, handler)
+	if secondAttempt.Code != http.StatusOK {
+		t.Fatalf("expected active account recovery success, got %d body=%s", secondAttempt.Code, secondAttempt.Body.String())
+	}
+	if firstHits != 2 || secondHits != 0 {
+		t.Fatalf("expected recovered active account to serve success itself, got first=%d second=%d", firstHits, secondHits)
+	}
+
+	thirdAttempt := performResponsesRequest(t, handler)
+	if thirdAttempt.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected post-success first failure to stay on active account, got %d body=%s", thirdAttempt.Code, thirdAttempt.Body.String())
+	}
+	if firstHits != 3 || secondHits != 0 {
+		t.Fatalf("expected failover counter reset after success, got first=%d second=%d", firstHits, secondHits)
+	}
+
+	fourthAttempt := performResponsesRequest(t, handler)
+	if fourthAttempt.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected post-success second failure to stay on active account, got %d body=%s", fourthAttempt.Code, fourthAttempt.Body.String())
+	}
+	if firstHits != 4 || secondHits != 0 {
+		t.Fatalf("expected no failover before the new third consecutive failure, got first=%d second=%d", firstHits, secondHits)
 	}
 }
 
