@@ -18,6 +18,7 @@ endpoint_forwarder
 go.work
 
 .claude/
+.worktrees/
 # IDE files
 .vscode/
 .idea/
