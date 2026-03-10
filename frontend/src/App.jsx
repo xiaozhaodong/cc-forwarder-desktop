@@ -73,7 +73,7 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#FAFAFA] font-sans text-slate-900 pb-20">
+    <div className="h-screen overflow-hidden bg-[#FAFAFA] font-sans text-slate-900 flex flex-col">
       {/* 背景纹理 */}
       <div
         className="fixed inset-0 pointer-events-none opacity-[0.4]"
@@ -92,10 +92,12 @@ function App() {
       />
 
       {/* 主内容区 */}
-      <main className="max-w-7xl mx-auto px-6 pt-8 relative z-10">
-        <Suspense fallback={<LoadingSpinner text="加载页面..." />}>
-          {renderPage()}
-        </Suspense>
+      <main id="app-scroll-container" className="flex-1 min-h-0 overflow-y-auto overscroll-none relative z-10">
+        <div className="max-w-7xl mx-auto px-6 pt-8 pb-20">
+          <Suspense fallback={<LoadingSpinner text="加载页面..." />}>
+            {renderPage()}
+          </Suspense>
+        </div>
       </main>
     </div>
   );

@@ -49,8 +49,18 @@
   background: #94a3b8;
 }
 
-/* 确保 root 元素填满视口 */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: #fafafa;
+}
+
+/* 确保 root 元素填满视口并禁止根层滚动回弹 */
 #root {
-  min-height: 100vh;
+  height: 100%;
   width: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }

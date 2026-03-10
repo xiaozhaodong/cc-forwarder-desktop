@@ -27,6 +27,7 @@ import {
 import RequestStatusBadge from './RequestStatusBadge.jsx';
 import ModelTag from './ModelTag.jsx';
 import { formatCost, formatTimestamp } from '@utils/api.js';
+import { lockAppScroll } from '@utils/scrollLock.js';
 import { copyTextToClipboard } from './clipboard.js';
 
 /**
@@ -147,19 +148,17 @@ const RequestDetailModal = ({ isOpen, onClose, request }) => {
 
   // ESC 键关闭 & 阻止滚动
   useEffect(() => {
+    if (!isOpen) return undefined;
+
+    const unlockScroll = lockAppScroll();
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') onClose();
     };
 
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-      window.addEventListener('keydown', handleKeyDown);
-    } else {
-      document.body.style.overflow = 'unset';
-    }
+    window.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      document.body.style.overflow = 'unset';
+      unlockScroll();
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [isOpen, onClose]);

@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { ChevronDown, Key, Check, Search, Settings2, Gauge } from 'lucide-react';
+import { lockAppScroll } from '@utils/scrollLock.js';
 
 /**
  * 根据 Token 名称推断类型
@@ -56,29 +57,35 @@ const TokenSelectionModal = ({ isOpen, onClose, keys, activeKey, onSelect, switc
 
   // 阻止滚动 & 自动聚焦
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-      // 延迟聚焦，确保模态框完全渲染
-      setTimeout(() => {
-        searchInputRef.current?.focus();
-      }, 100);
-    } else {
-      document.body.style.overflow = 'unset';
-    }
-    return () => { document.body.style.overflow = 'unset'; };
+    if (!isOpen) return undefined;
+
+    const unlockScroll = lockAppScroll();
+    let focusTimer = 0;
+
+    // 延迟聚焦，确保模态框完全渲染
+    focusTimer = window.setTimeout(() => {
+      searchInputRef.current?.focus();
+    }, 100);
+
+    return () => {
+      unlockScroll();
+      if (focusTimer) {
+        window.clearTimeout(focusTimer);
+      }
+    };
   }, [isOpen]);
 
   // ESC 键关闭
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
     if (isOpen) {
+      const handleKeyDown = (e) => {
+        if (e.key === 'Escape') {
+          onClose();
+        }
+      };
       window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
     }
-    return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
