@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -37,6 +38,13 @@ type accountSoftFailureCall struct {
 	reason     string
 	category   string
 	retryAfter time.Duration
+}
+
+type accountUsageLimitCall struct {
+	id       int64
+	reason   string
+	planType string
+	resetAt  time.Time
 }
 
 type accountSchedulePrepareCall struct {
@@ -73,6 +81,7 @@ type mockAccountPoolService struct {
 	authFailCalls     []accountAuthCall
 	transientCalls    []accountTransientCall
 	softFailureCalls  []accountSoftFailureCall
+	usageLimitCalls   []accountUsageLimitCall
 }
 
 func (m *mockAccountPoolService) PrepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) ([]*store.UpstreamAccountRecord, error) {
@@ -143,6 +152,13 @@ func (m *mockAccountPoolService) MarkAccountTransientFailure(ctx context.Context
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.transientCalls = append(m.transientCalls, accountTransientCall{id: id, reason: reason, cooldown: cooldown})
+	return nil
+}
+
+func (m *mockAccountPoolService) MarkAccountUsageLimitExceeded(ctx context.Context, id int64, reason, planType string, resetAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.usageLimitCalls = append(m.usageLimitCalls, accountUsageLimitCall{id: id, reason: reason, planType: planType, resetAt: resetAt})
 	return nil
 }
 
@@ -555,6 +571,60 @@ func TestAccountPipeline_UsesServiceReturnedOrderWithoutPriorityReordering(t *te
 	}
 }
 
+func TestAccountPipeline_UsageLimitReachedUsesResetTimeCooldown(t *testing.T) {
+	resetAt := time.Now().Add(90 * time.Minute).Round(time.Second)
+
+	firstHits := 0
+	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstHits++
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, fmt.Sprintf(`{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"free","resets_at":%d,"resets_in_seconds":5400}}`, resetAt.Unix()), http.StatusTooManyRequests)
+	}))
+	defer firstServer.Close()
+
+	secondHits := 0
+	secondServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_after_usage_limit","status":"completed","output":[]}`))
+	}))
+	defer secondServer.Close()
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 61, AccountName: "acc-usage-limit", ProviderType: "api_key", CredentialRaw: "sk-usage-limit", BaseURL: firstServer.URL, Enabled: true},
+			{ID: 62, AccountName: "acc-fallback", ProviderType: "api_key", CredentialRaw: "sk-fallback", BaseURL: secondServer.URL, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, firstServer.URL, service)
+
+	rec := performResponsesRequest(t, handler)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if firstHits != 1 || secondHits != 1 {
+		t.Fatalf("expected both accounts attempted once, got first=%d second=%d", firstHits, secondHits)
+	}
+	if len(service.usageLimitCalls) != 1 || service.usageLimitCalls[0].id != 61 {
+		t.Fatalf("expected usage limit call on account 61, got %+v", service.usageLimitCalls)
+	}
+	if service.usageLimitCalls[0].planType != "free" {
+		t.Fatalf("expected free plan type, got %+v", service.usageLimitCalls[0])
+	}
+	if got := service.usageLimitCalls[0].resetAt.Unix(); got != resetAt.Unix() {
+		t.Fatalf("expected resetAt=%d, got %d", resetAt.Unix(), got)
+	}
+	if len(service.softFailureCalls) != 0 {
+		t.Fatalf("expected no soft failure calls, got %+v", service.softFailureCalls)
+	}
+	if len(service.transientCalls) != 0 {
+		t.Fatalf("expected no generic transient failure calls, got %+v", service.transientCalls)
+	}
+	if len(service.successCalls) != 1 || service.successCalls[0] != 62 {
+		t.Fatalf("expected fallback account success, got %+v", service.successCalls)
+	}
+}
+
 func TestAccountPipeline_Local503NoAvailableProviders_PassthroughWithoutCooldown(t *testing.T) {
 	firstHits := 0
 	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -822,6 +892,53 @@ func TestAccountPipeline_ResponsesStreamingFailed_RecordedAsServerSoftFailure(t 
 	}
 	if len(service.successCalls) != 0 {
 		t.Fatalf("expected no success callbacks, got %+v", service.successCalls)
+	}
+}
+
+func TestAccountPipeline_ResponsesStreamingUsageLimitReached_UsesResetTimeCooldown(t *testing.T) {
+	resetAt := time.Now().Add(90 * time.Minute).Round(time.Second)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("event: response.created\n"))
+		_, _ = w.Write([]byte(`data: {"type":"response.created","response":{"id":"resp_usage_limit","model":"gpt-5.4"}}` + "\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("event: response.failed\n"))
+		_, _ = w.Write([]byte(fmt.Sprintf(`data: {"type":"response.failed","response":{"id":"resp_usage_limit","model":"gpt-5.4","error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"free","resets_at":%d,"resets_in_seconds":5400}}}`+"\n\n", resetAt.Unix())))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 81, AccountName: "acc-stream-usage-limit", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: upstream.URL, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+
+	rec := performResponsesStreamingRequest(t, handler)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected streaming response to keep status 200 once headers are sent, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(service.usageLimitCalls) != 1 {
+		t.Fatalf("expected one usage-limit cooldown call, got %+v", service.usageLimitCalls)
+	}
+	if service.usageLimitCalls[0].id != 81 || service.usageLimitCalls[0].planType != "free" {
+		t.Fatalf("unexpected usage-limit call: %+v", service.usageLimitCalls[0])
+	}
+	if service.usageLimitCalls[0].resetAt.Unix() != resetAt.Unix() {
+		t.Fatalf("expected resetAt=%d, got %d", resetAt.Unix(), service.usageLimitCalls[0].resetAt.Unix())
+	}
+	if len(service.softFailureCalls) != 0 {
+		t.Fatalf("expected no soft failure fallback for usage-limit stream, got %+v", service.softFailureCalls)
+	}
+	if len(service.transientCalls) != 0 {
+		t.Fatalf("expected no generic transient cooldown, got %+v", service.transientCalls)
 	}
 }
 

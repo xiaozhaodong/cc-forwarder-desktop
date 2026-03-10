@@ -231,15 +231,30 @@ const toDateOrNull = (value) => {
 };
 
 const hasFutureQuotaReset = (account = {}) => {
-  const resetCandidates = [
-    account.quota_5h_reset_at ?? account.quota5hResetAt,
-    account.quota_weekly_reset_at ?? account.quotaWeeklyResetAt
-  ];
+  const normalizedPlanType = normalizePlanType(account.plan_type || account.planType || '');
+  const isExhaustedWindow = (usedValue, resetValue) => {
+    const used = Number.parseFloat(usedValue);
+    const resetAt = toDateOrNull(resetValue);
+    if (!Number.isFinite(used) || !resetAt) {
+      return false;
+    }
+    return used >= 99.999 && resetAt.getTime() > Date.now();
+  };
 
-  return resetCandidates.some((value) => {
-    const date = toDateOrNull(value);
-    return date ? date.getTime() > Date.now() : false;
-  });
+  if (normalizedPlanType === 'free') {
+    return isExhaustedWindow(
+      account.quota_weekly_used_percent ?? account.quotaWeeklyUsedPercent,
+      account.quota_weekly_reset_at ?? account.quotaWeeklyResetAt
+    );
+  }
+
+  return isExhaustedWindow(
+    account.quota_5h_used_percent ?? account.quota5hUsedPercent,
+    account.quota_5h_reset_at ?? account.quota5hResetAt
+  ) || isExhaustedWindow(
+    account.quota_weekly_used_percent ?? account.quotaWeeklyUsedPercent,
+    account.quota_weekly_reset_at ?? account.quotaWeeklyResetAt
+  );
 };
 
 const isAccountSchedulable = (account = {}) => {
@@ -248,7 +263,12 @@ const isAccountSchedulable = (account = {}) => {
   }
 
   const state = String(account.state || '').trim().toLowerCase();
-  if (state === 'disabled_auth' || state === 'cooldown') {
+  if (state === 'disabled_auth') {
+    return false;
+  }
+
+  const cooldownUntil = toDateOrNull(account.cooldown_until ?? account.cooldownUntil);
+  if (state === 'cooldown' && (!cooldownUntil || cooldownUntil.getTime() > Date.now())) {
     return false;
   }
 

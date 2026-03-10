@@ -37,8 +37,11 @@ type ParseResult struct {
 
 // ErrorInfo 错误信息结构体
 type ErrorInfo struct {
-	Type    string
-	Message string
+	Type            string
+	Message         string
+	PlanType        string
+	ResetsAt        int64
+	ResetsInSeconds int64
 }
 
 // TokenParserInterface 统一的Token解析接口
@@ -102,9 +105,12 @@ type MessageDelta struct {
 type SSEErrorData struct {
 	Type  string `json:"type"`
 	Error struct {
-		Type      string `json:"type"`
-		Message   string `json:"message"`
-		RequestID string `json:"request_id,omitempty"`
+		Type            string `json:"type"`
+		Message         string `json:"message"`
+		RequestID       string `json:"request_id,omitempty"`
+		PlanType        string `json:"plan_type,omitempty"`
+		ResetsAt        int64  `json:"resets_at,omitempty"`
+		ResetsInSeconds int64  `json:"resets_in_seconds,omitempty"`
 	} `json:"error"`
 }
 
@@ -470,13 +476,7 @@ func (tp *TokenParser) parseResponsesEventV2(eventType string) *ParseResult {
 	case "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
 		tp.hasResponseCompleted = true
 		tp.responseTerminalEvent = eventType
-		errorType, errorMessage := extractResponsesErrorInfo(payload)
-		if errorType == "" {
-			errorType = "response_failed"
-		}
-		if errorMessage == "" {
-			errorMessage = "responses stream failed"
-		}
+		errorInfo := normalizeErrorInfo(extractResponsesErrorInfo(payload), "response_failed", "responses stream failed")
 		return &ParseResult{
 			TokenUsage: &tracking.TokenUsage{
 				InputTokens:         0,
@@ -484,8 +484,8 @@ func (tp *TokenParser) parseResponsesEventV2(eventType string) *ParseResult {
 				CacheCreationTokens: 0,
 				CacheReadTokens:     0,
 			},
-			ModelName:       fmt.Sprintf("error:%s", errorType),
-			ErrorInfo:       &ErrorInfo{Type: errorType, Message: errorMessage},
+			ModelName:       fmt.Sprintf("error:%s", errorInfo.Type),
+			ErrorInfo:       errorInfo,
 			IsCompleted:     true,
 			Status:          StatusErrorAPI,
 			HasStreamOutput: true,
@@ -591,13 +591,9 @@ func (tp *TokenParser) parseResponsesEvent(eventType string) *monitor.TokenUsage
 	case "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
 		tp.hasResponseCompleted = true
 		tp.responseTerminalEvent = eventType
-		errorType, errorMessage := extractResponsesErrorInfo(payload)
-		if errorType == "" {
-			errorType = "response_failed"
-		}
-		if errorMessage == "" {
-			errorMessage = "responses stream failed"
-		}
+		errorInfo := normalizeErrorInfo(extractResponsesErrorInfo(payload), "response_failed", "responses stream failed")
+		errorType := errorInfo.Type
+		errorMessage := errorInfo.Message
 		slog.Info(fmt.Sprintf("❌ [API错误] [%s] 错误类型: %s, 错误信息: %s",
 			tp.requestID, errorType, errorMessage))
 		return nil
@@ -651,14 +647,21 @@ func extractResponsesUsageMap(payload map[string]interface{}) map[string]interfa
 	return nil
 }
 
-func extractResponsesErrorInfo(payload map[string]interface{}) (string, string) {
-	readErrorMap := func(m map[string]interface{}) (string, string) {
+func extractResponsesErrorInfo(payload map[string]interface{}) *ErrorInfo {
+	readErrorMap := func(m map[string]interface{}) *ErrorInfo {
 		if m == nil {
-			return "", ""
+			return nil
 		}
 		typ, _ := m["type"].(string)
 		msg, _ := m["message"].(string)
-		return typ, msg
+		planType, _ := m["plan_type"].(string)
+		return &ErrorInfo{
+			Type:            typ,
+			Message:         msg,
+			PlanType:        planType,
+			ResetsAt:        parseInt64Field(m["resets_at"]),
+			ResetsInSeconds: parseInt64Field(m["resets_in_seconds"]),
+		}
 	}
 
 	if errorObj, ok := payload["error"].(map[string]interface{}); ok {
@@ -669,7 +672,25 @@ func extractResponsesErrorInfo(payload map[string]interface{}) (string, string) 
 			return readErrorMap(errorObj)
 		}
 	}
-	return "", ""
+	return nil
+}
+
+func normalizeErrorInfo(info *ErrorInfo, fallbackType, fallbackMessage string) *ErrorInfo {
+	if info == nil {
+		return &ErrorInfo{
+			Type:    fallbackType,
+			Message: fallbackMessage,
+		}
+	}
+
+	normalized := *info
+	if normalized.Type == "" {
+		normalized.Type = fallbackType
+	}
+	if normalized.Message == "" {
+		normalized.Message = fallbackMessage
+	}
+	return &normalized
 }
 
 func extractVisibleTextFromResponsesPayload(eventType string, payload map[string]interface{}) string {
@@ -1265,14 +1286,15 @@ func (tp *TokenParser) parseErrorEventV2() *ParseResult {
 	}
 
 	// 提取错误类型和消息
-	errorType := errorData.Error.Type
-	errorMessage := errorData.Error.Message
-	if errorType == "" {
-		errorType = "unknown_error"
-	}
-	if errorMessage == "" {
-		errorMessage = "Unknown error"
-	}
+	errorInfo := normalizeErrorInfo(&ErrorInfo{
+		Type:            errorData.Error.Type,
+		Message:         errorData.Error.Message,
+		PlanType:        errorData.Error.PlanType,
+		ResetsAt:        errorData.Error.ResetsAt,
+		ResetsInSeconds: errorData.Error.ResetsInSeconds,
+	}, "unknown_error", "Unknown error")
+	errorType := errorInfo.Type
+	errorMessage := errorInfo.Message
 
 	// 记录API错误
 	if tp.requestID != "" {
@@ -1294,7 +1316,7 @@ func (tp *TokenParser) parseErrorEventV2() *ParseResult {
 			CacheReadTokens:     0,
 		},
 		ModelName:   errorModelName,
-		ErrorInfo:   &ErrorInfo{Type: errorType, Message: errorMessage},
+		ErrorInfo:   errorInfo,
 		IsCompleted: true,
 		Status:      StatusErrorAPI,
 	}

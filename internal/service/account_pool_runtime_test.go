@@ -28,8 +28,9 @@ type flakyTransientFailureStore struct {
 type failingUpdateStore struct {
 	inner store.AccountPoolStore
 
-	failUpdate bool
-	failToggle bool
+	failUpdate        bool
+	failToggle        bool
+	failProfileUpdate bool
 }
 
 func (s *countingAccountPoolStore) CreateAccount(ctx context.Context, record *store.UpstreamAccountRecord) (*store.UpstreamAccountRecord, error) {
@@ -227,6 +228,9 @@ func (s *failingUpdateStore) MarkAccountTransientFailure(ctx context.Context, id
 }
 
 func (s *failingUpdateStore) UpdateAccountProfile(ctx context.Context, record *store.UpstreamAccountRecord) error {
+	if s.failProfileUpdate {
+		return context.DeadlineExceeded
+	}
 	return s.inner.UpdateAccountProfile(ctx, record)
 }
 
@@ -321,7 +325,7 @@ func TestMarkAccountTransientFailure_UpdatesRuntimeImmediatelyAndFlushesAsync(t 
 
 func TestAccountRuntimeCache_MergeProfilePreservesRuntimeState(t *testing.T) {
 	cache := newAccountRuntimeCache()
-	startedAt := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
+	startedAt := time.Now().Add(2 * time.Minute).Round(time.Second)
 	cooldownUntil := startedAt.Add(5 * time.Minute)
 	lastSuccessAt := startedAt.Add(-time.Minute)
 

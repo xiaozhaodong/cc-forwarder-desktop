@@ -199,15 +199,21 @@ func (s *AccountPoolService) refreshChatGPTOAuthProfile(ctx context.Context, acc
 	switch resp.StatusCode {
 	case http.StatusOK:
 		if mergedQuota.hasAnyQuota() {
-			profileUpdateTime(acc, now, quotaStatusOK)
+			status := quotaStatusOK
+			message := "账号信息已刷新"
+			if hasExhaustedQuotaReset(acc, now) {
+				status = quotaStatusExhausted
+				message = "账号信息已刷新，当前额度已耗尽"
+			}
+			profileUpdateTime(acc, now, status)
 			if err := s.store.UpdateAccountProfile(ctx, acc); err != nil {
 				return AccountProfileRefreshResult{}, fmt.Errorf("写回账号画像失败: %w", err)
 			}
 			s.runtimeCache.mergeRecordPreservingRuntimeState(acc)
 			return AccountProfileRefreshResult{
 				Success:     true,
-				Message:     "账号信息已刷新",
-				QuotaStatus: quotaStatusOK,
+				Message:     message,
+				QuotaStatus: status,
 			}, nil
 		}
 
@@ -243,6 +249,8 @@ func (s *AccountPoolService) refreshChatGPTOAuthProfile(ctx context.Context, acc
 			QuotaStatus: quotaStatusAuthInvalid,
 		}, nil
 	case http.StatusPaymentRequired:
+		mergedQuota = normalizeExhaustedQuotaSnapshot(mergedQuota, now)
+		applyQuotaSnapshotToRecord(acc, mergedQuota)
 		if looksLikeWorkspaceDeactivated(upstreamMessage) || looksLikeAccountDeactivated(upstreamMessage) {
 			profileUpdateTime(acc, now, quotaStatusWorkspaceDeactivated)
 			authReason := firstNonEmptyString(upstreamMessage, "工作区已停用")
@@ -347,6 +355,26 @@ func applyQuotaSnapshotToRecord(record *store.UpstreamAccountRecord, snapshot qu
 func profileUpdateTime(record *store.UpstreamAccountRecord, now time.Time, status string) {
 	record.QuotaStatus = status
 	record.QuotaRefreshedAt = &now
+}
+
+func normalizeExhaustedQuotaSnapshot(snapshot quotaSnapshot, now time.Time) quotaSnapshot {
+	planType := accountauth.NormalizeOpenAIPlanType(snapshot.PlanType)
+	if planType == "free" {
+		if snapshot.QuotaWeeklyResetAt != nil && snapshot.QuotaWeeklyResetAt.After(now) {
+			snapshot.QuotaWeeklyUsedPercent = float64Ptr(100)
+		}
+		return snapshot
+	}
+
+	if snapshot.Quota5HResetAt != nil && snapshot.Quota5HResetAt.After(now) &&
+		(snapshot.Quota5HUsedPercent == nil || *snapshot.Quota5HUsedPercent >= 99.999) {
+		snapshot.Quota5HUsedPercent = float64Ptr(100)
+	}
+	if snapshot.QuotaWeeklyResetAt != nil && snapshot.QuotaWeeklyResetAt.After(now) &&
+		(snapshot.QuotaWeeklyUsedPercent == nil || *snapshot.QuotaWeeklyUsedPercent >= 99.999) {
+		snapshot.QuotaWeeklyUsedPercent = float64Ptr(100)
+	}
+	return snapshot
 }
 
 func mergeQuotaSnapshot(primary, fallback quotaSnapshot) quotaSnapshot {

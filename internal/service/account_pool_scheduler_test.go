@@ -91,6 +91,7 @@ func TestPrepareSchedulableAccounts_DegradesWhenHigherTierTemporarilyExhausted(t
 		Enabled:                true,
 		State:                  "active",
 		QuotaStatus:            "exhausted",
+		Quota5HUsedPercent:     testFloat64Ptr(100),
 		Quota5HResetAt:         testTimePtr(now.Add(2 * time.Hour)),
 		QuotaWeeklyUsedPercent: testFloat64Ptr(100),
 	})

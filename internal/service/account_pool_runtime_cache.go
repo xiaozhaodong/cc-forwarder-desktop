@@ -153,6 +153,8 @@ func (c *accountRuntimeCache) get(id int64) (*store.UpstreamAccountRecord, bool)
 		return nil, false
 	}
 
+	now := time.Now()
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -160,13 +162,15 @@ func (c *accountRuntimeCache) get(id int64) (*store.UpstreamAccountRecord, bool)
 	if !ok || record == nil {
 		return nil, false
 	}
-	return cloneUpstreamAccountRecord(record), true
+	return normalizeAccountRuntimeView(cloneUpstreamAccountRecord(record), now), true
 }
 
 func (c *accountRuntimeCache) list(includeDisabled bool) []*store.UpstreamAccountRecord {
 	if c == nil {
 		return nil
 	}
+
+	now := time.Now()
 
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -179,7 +183,7 @@ func (c *accountRuntimeCache) list(includeDisabled bool) []*store.UpstreamAccoun
 		if !includeDisabled && !record.Enabled {
 			continue
 		}
-		records = append(records, cloneUpstreamAccountRecord(record))
+		records = append(records, normalizeAccountRuntimeView(cloneUpstreamAccountRecord(record), now))
 	}
 	return records
 }
@@ -200,7 +204,7 @@ func (c *accountRuntimeCache) listSchedulable(now time.Time) []*store.UpstreamAc
 		if record.CooldownUntil != nil && record.CooldownUntil.After(now) {
 			continue
 		}
-		records = append(records, cloneUpstreamAccountRecord(record))
+		records = append(records, normalizeAccountRuntimeView(cloneUpstreamAccountRecord(record), now))
 	}
 	return records
 }
@@ -425,4 +429,15 @@ func cloneFloat64Ptr(value *float64) *float64 {
 	}
 	cloned := *value
 	return &cloned
+}
+
+func normalizeAccountRuntimeView(record *store.UpstreamAccountRecord, now time.Time) *store.UpstreamAccountRecord {
+	if record == nil {
+		return nil
+	}
+	if record.State == "cooldown" && record.CooldownUntil != nil && !record.CooldownUntil.After(now) {
+		record.State = "active"
+		record.CooldownUntil = nil
+	}
+	return record
 }

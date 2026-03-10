@@ -399,7 +399,7 @@ func classifySchedulableAccount(account *store.UpstreamAccountRecord, now time.T
 		return candidate
 	}
 
-	if quotaStatus == "exhausted" && hasFutureQuotaReset(account, now) {
+	if quotaStatus == "exhausted" && hasExhaustedQuotaReset(account, now) {
 		candidate.skipReason = "quota_exhausted_until_reset"
 		candidate.skipReasonDetail = "额度已耗尽且重置时间未到，本轮暂不参与调度"
 		return candidate
@@ -460,16 +460,25 @@ func usedPercentToRemaining(used *float64) *float64 {
 	return &remaining
 }
 
-func hasFutureQuotaReset(account *store.UpstreamAccountRecord, now time.Time) bool {
+func hasExhaustedQuotaReset(account *store.UpstreamAccountRecord, now time.Time) bool {
 	if account == nil {
 		return false
 	}
-	for _, resetAt := range []*time.Time{account.Quota5HResetAt, account.QuotaWeeklyResetAt} {
-		if resetAt != nil && resetAt.After(now) {
-			return true
-		}
+
+	planType := strings.TrimSpace(strings.ToLower(account.PlanType))
+	if planType == "free" {
+		return quotaWindowExhaustedUntilReset(account.QuotaWeeklyUsedPercent, account.QuotaWeeklyResetAt, now)
 	}
-	return false
+
+	return quotaWindowExhaustedUntilReset(account.Quota5HUsedPercent, account.Quota5HResetAt, now) ||
+		quotaWindowExhaustedUntilReset(account.QuotaWeeklyUsedPercent, account.QuotaWeeklyResetAt, now)
+}
+
+func quotaWindowExhaustedUntilReset(usedPercent *float64, resetAt *time.Time, now time.Time) bool {
+	if usedPercent == nil || resetAt == nil || !resetAt.After(now) {
+		return false
+	}
+	return *usedPercent >= 99.999
 }
 
 func normalizeQuotaStatus(raw string) string {

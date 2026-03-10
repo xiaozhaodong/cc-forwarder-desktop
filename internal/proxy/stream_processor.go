@@ -34,8 +34,9 @@ type StreamProcessor struct {
 	flusher        http.Flusher           // HTTP刷新器，用于立即发送数据到客户端
 
 	// 错误处理和恢复
-	errorRecovery *ErrorRecoveryManager // 错误恢复管理器
-	lastAPIError  error                 // V2架构：最后一次API错误信息
+	errorRecovery    *ErrorRecoveryManager // 错误恢复管理器
+	lastAPIError     error                 // V2架构：最后一次API错误信息
+	lastAPIErrorInfo *ErrorInfo            // 保留结构化错误元数据，供上层做 cooldown 判定
 
 	// 请求标识信息
 	requestID string // 请求唯一标识符
@@ -317,6 +318,7 @@ func (sp *StreamProcessor) processSSELine(line string) {
 				sp.requestID, result.ErrorInfo.Type, result.ErrorInfo.Message))
 
 			// 将错误信息存储，供上层生命周期管理器处理
+			sp.lastAPIErrorInfo = result.ErrorInfo
 			sp.lastAPIError = fmt.Errorf("API错误 %s: %s", result.ErrorInfo.Type, result.ErrorInfo.Message)
 			return
 		}
@@ -495,19 +497,18 @@ func (sp *StreamProcessor) ProcessStreamWithRetry(ctx context.Context, resp *htt
 			}
 
 			// 根据API错误内容智能确定状态
-			status := "stream_error"
-			errorMsg := sp.lastAPIError.Error()
-			if strings.Contains(errorMsg, "rate") || strings.Contains(errorMsg, "429") {
-				status = "rate_limited"
-			} else if strings.Contains(errorMsg, "timeout") || strings.Contains(errorMsg, "deadline") {
-				status = "timeout"
-			} else if strings.Contains(errorMsg, "cancel") {
-				status = "cancelled"
-			} else if strings.Contains(errorMsg, "auth") || strings.Contains(errorMsg, "401") {
-				status = "auth_error"
+			status := classifyAccountStreamAPIError(sp.lastAPIErrorInfo, sp.lastAPIError.Error())
+			var usageLimit *accountUsageLimitWindow
+			if window, ok := accountUsageLimitWindowFromErrorInfo(sp.lastAPIErrorInfo, time.Now()); ok {
+				usageLimit = &window
 			}
 
-			wrappedErr := fmt.Errorf("stream_status:%s:model:%s: %w", status, modelName, sp.lastAPIError)
+			wrappedErr := &accountStreamStatusError{
+				status:     status,
+				modelName:  modelName,
+				usageLimit: usageLimit,
+				cause:      sp.lastAPIError,
+			}
 			return finalTokenUsage, modelName, wrappedErr
 		}
 
@@ -588,6 +589,7 @@ func (sp *StreamProcessor) waitForBackgroundParsing() {
 		if result.ErrorInfo != nil {
 			slog.Error(fmt.Sprintf("❌ [Flush错误] [%s] 类型: %s, 消息: %s",
 				sp.requestID, result.ErrorInfo.Type, result.ErrorInfo.Message))
+			sp.lastAPIErrorInfo = result.ErrorInfo
 			sp.lastAPIError = fmt.Errorf("API错误 %s: %s", result.ErrorInfo.Type, result.ErrorInfo.Message)
 		} else if result.TokenUsage != nil {
 			slog.Debug(fmt.Sprintf("🔄 [Flush成功] [%s] 成功解析待处理事件的Token信息", sp.requestID))
@@ -651,6 +653,8 @@ func (sp *StreamProcessor) Reset() {
 	sp.parseErrors = sp.parseErrors[:0]
 	sp.lastTokenLogSignature = ""
 	sp.firstTokenRecorded = false
+	sp.lastAPIError = nil
+	sp.lastAPIErrorInfo = nil
 
 	// 重置TokenParser状态
 	if sp.tokenParser != nil {
@@ -658,6 +662,41 @@ func (sp *StreamProcessor) Reset() {
 	}
 
 	slog.Info(fmt.Sprintf("🔄 [处理器重置] [%s] 流处理器已重置", sp.requestID))
+}
+
+func classifyAccountStreamAPIError(info *ErrorInfo, errorText string) string {
+	if info != nil {
+		switch strings.TrimSpace(strings.ToLower(info.Type)) {
+		case "usage_limit_reached", "rate_limited", "rate_limit_exceeded":
+			return "rate_limited"
+		case "timeout", "deadline_exceeded":
+			return "timeout"
+		case "cancelled", "canceled":
+			return "cancelled"
+		case "auth_error", "authentication_error", "unauthorized", "forbidden":
+			return "auth_error"
+		}
+	}
+
+	switch {
+	case strings.Contains(errorText, "rate"), strings.Contains(errorText, "429"):
+		return "rate_limited"
+	case strings.Contains(errorText, "timeout"), strings.Contains(errorText, "deadline"):
+		return "timeout"
+	case strings.Contains(errorText, "cancel"):
+		return "cancelled"
+	case strings.Contains(errorText, "auth"), strings.Contains(errorText, "401"):
+		return "auth_error"
+	default:
+		return "stream_error"
+	}
+}
+
+func accountUsageLimitWindowFromErrorInfo(info *ErrorInfo, now time.Time) (accountUsageLimitWindow, bool) {
+	if info == nil {
+		return accountUsageLimitWindow{}, false
+	}
+	return buildAccountUsageLimitWindow(info.Type, info.PlanType, info.ResetsAt, info.ResetsInSeconds, now)
 }
 
 // handleCancellation 处理客户端取消请求 - Phase 2 优雅取消处理器

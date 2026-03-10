@@ -242,6 +242,287 @@ func TestRefreshAccountProfile_BodyPriorityAndHeaderFallback(t *testing.T) {
 	}
 }
 
+func TestRefreshAccountProfile_FreeAccountZeroRemainingMarksExhausted(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "at-free-exhausted",
+			"refresh_token": "rt-free-exhausted",
+			"expires_in":    3600,
+			"id_token":      testServiceIDTokenWithProfile("free", "acc-free-exhausted", "user-free-exhausted", "org-free-exhausted"),
+		})
+	}))
+	defer authServer.Close()
+
+	quotaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"plan_type": "free",
+			"rate_limit": map[string]any{
+				"primary_window": map[string]any{
+					"used_percent":        100.0,
+					"reset_after_seconds": 600,
+				},
+			},
+		})
+	}))
+	defer quotaServer.Close()
+
+	svc, st, accountID := newOAuthProfileTestService(t, accountauth.BuildStoredOpenAICredential(
+		"rt-free-exhausted",
+		"",
+		"",
+		accountauth.OpenAIAccountProfile{},
+		time.Time{},
+	))
+
+	oldRefreshURL := accountauthOpenAIRefreshURL()
+	oldQuotaURL := chatGPTWhamUsageURL
+	t.Cleanup(func() {
+		setAccountauthOpenAIRefreshURL(oldRefreshURL)
+		chatGPTWhamUsageURL = oldQuotaURL
+	})
+	setAccountauthOpenAIRefreshURL(authServer.URL)
+	chatGPTWhamUsageURL = quotaServer.URL
+
+	result, err := svc.RefreshAccountProfile(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("RefreshAccountProfile failed: %v", err)
+	}
+	if !result.Success || result.QuotaStatus != quotaStatusExhausted {
+		t.Fatalf("unexpected refresh result: %+v", result)
+	}
+
+	rec, err := st.GetAccount(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if rec.QuotaStatus != quotaStatusExhausted {
+		t.Fatalf("expected exhausted quota status, got %s", rec.QuotaStatus)
+	}
+	if rec.QuotaWeeklyUsedPercent == nil || *rec.QuotaWeeklyUsedPercent != 100 {
+		t.Fatalf("expected weekly used percent 100, got %+v", rec.QuotaWeeklyUsedPercent)
+	}
+	if rec.QuotaWeeklyResetAt == nil {
+		t.Fatalf("expected weekly reset at to be populated")
+	}
+}
+
+func TestRefreshAccountProfile_TeamWeeklyZeroRemainingMarksExhausted(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "at-team-exhausted",
+			"refresh_token": "rt-team-exhausted",
+			"expires_in":    3600,
+			"id_token":      testServiceIDTokenWithProfile("team", "acc-team-exhausted", "user-team-exhausted", "org-team-exhausted"),
+		})
+	}))
+	defer authServer.Close()
+
+	quotaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"plan_type": "team",
+			"rate_limit": map[string]any{
+				"primary_window": map[string]any{
+					"used_percent":        25.0,
+					"reset_after_seconds": 600,
+				},
+				"secondary_window": map[string]any{
+					"used_percent":        100.0,
+					"reset_after_seconds": 3600,
+				},
+			},
+		})
+	}))
+	defer quotaServer.Close()
+
+	svc, st, accountID := newOAuthProfileTestService(t, accountauth.BuildStoredOpenAICredential(
+		"rt-team-exhausted",
+		"",
+		"",
+		accountauth.OpenAIAccountProfile{
+			PlanType:         "team",
+			ChatGPTAccountID: "acc-team-exhausted",
+		},
+		time.Time{},
+	))
+
+	oldRefreshURL := accountauthOpenAIRefreshURL()
+	oldQuotaURL := chatGPTWhamUsageURL
+	t.Cleanup(func() {
+		setAccountauthOpenAIRefreshURL(oldRefreshURL)
+		chatGPTWhamUsageURL = oldQuotaURL
+	})
+	setAccountauthOpenAIRefreshURL(authServer.URL)
+	chatGPTWhamUsageURL = quotaServer.URL
+
+	result, err := svc.RefreshAccountProfile(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("RefreshAccountProfile failed: %v", err)
+	}
+	if !result.Success || result.QuotaStatus != quotaStatusExhausted {
+		t.Fatalf("unexpected refresh result: %+v", result)
+	}
+
+	rec, err := st.GetAccount(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if rec.QuotaStatus != quotaStatusExhausted {
+		t.Fatalf("expected exhausted quota status, got %s", rec.QuotaStatus)
+	}
+	if rec.Quota5HUsedPercent == nil || *rec.Quota5HUsedPercent != 25 {
+		t.Fatalf("expected 5h quota preserved, got %+v", rec.Quota5HUsedPercent)
+	}
+	if rec.QuotaWeeklyUsedPercent == nil || *rec.QuotaWeeklyUsedPercent != 100 {
+		t.Fatalf("expected weekly quota 100, got %+v", rec.QuotaWeeklyUsedPercent)
+	}
+}
+
+func TestRefreshAccountProfile_402WithResetWithoutUsedPercentNormalizesExhaustedWindow(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "at-free-402",
+			"refresh_token": "rt-free-402",
+			"expires_in":    3600,
+			"id_token":      testServiceIDTokenWithProfile("free", "acc-free-402", "user-free-402", "org-free-402"),
+		})
+	}))
+	defer authServer.Close()
+
+	quotaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusPaymentRequired)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"plan_type": "free",
+			"rate_limit": map[string]any{
+				"primary_window": map[string]any{
+					"reset_after_seconds": 600,
+				},
+			},
+		})
+	}))
+	defer quotaServer.Close()
+
+	svc, st, accountID := newOAuthProfileTestService(t, accountauth.BuildStoredOpenAICredential(
+		"rt-free-402",
+		"",
+		"",
+		accountauth.OpenAIAccountProfile{},
+		time.Time{},
+	))
+
+	oldRefreshURL := accountauthOpenAIRefreshURL()
+	oldQuotaURL := chatGPTWhamUsageURL
+	t.Cleanup(func() {
+		setAccountauthOpenAIRefreshURL(oldRefreshURL)
+		chatGPTWhamUsageURL = oldQuotaURL
+	})
+	setAccountauthOpenAIRefreshURL(authServer.URL)
+	chatGPTWhamUsageURL = quotaServer.URL
+
+	result, err := svc.RefreshAccountProfile(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("RefreshAccountProfile failed: %v", err)
+	}
+	if !result.Success || result.QuotaStatus != quotaStatusExhausted {
+		t.Fatalf("unexpected refresh result: %+v", result)
+	}
+
+	rec, err := st.GetAccount(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if rec.QuotaStatus != quotaStatusExhausted {
+		t.Fatalf("expected exhausted quota status, got %s", rec.QuotaStatus)
+	}
+	if rec.QuotaWeeklyUsedPercent == nil || *rec.QuotaWeeklyUsedPercent != 100 {
+		t.Fatalf("expected weekly used percent normalized to 100, got %+v", rec.QuotaWeeklyUsedPercent)
+	}
+	if rec.QuotaWeeklyResetAt == nil || !rec.QuotaWeeklyResetAt.After(time.Now()) {
+		t.Fatalf("expected future weekly reset after normalization, got %+v", rec.QuotaWeeklyResetAt)
+	}
+
+	candidate := classifySchedulableAccount(rec, time.Now())
+	if candidate.skipReason != "quota_exhausted_until_reset" {
+		t.Fatalf("expected exhausted account skipped until reset, got %+v", candidate)
+	}
+}
+
+func TestRefreshAccountProfile_402NonFreeDoesNotPoisonOtherWindow(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "at-team-402",
+			"refresh_token": "rt-team-402",
+			"expires_in":    3600,
+			"id_token":      testServiceIDTokenWithProfile("team", "acc-team-402", "user-team-402", "org-team-402"),
+		})
+	}))
+	defer authServer.Close()
+
+	quotaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusPaymentRequired)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"plan_type": "team",
+			"rate_limit": map[string]any{
+				"primary_window": map[string]any{
+					"reset_after_seconds": 600,
+				},
+				"secondary_window": map[string]any{
+					"used_percent":        35.0,
+					"reset_after_seconds": 3600,
+				},
+			},
+		})
+	}))
+	defer quotaServer.Close()
+
+	svc, st, accountID := newOAuthProfileTestService(t, accountauth.BuildStoredOpenAICredential(
+		"rt-team-402",
+		"",
+		"",
+		accountauth.OpenAIAccountProfile{
+			PlanType:         "team",
+			ChatGPTAccountID: "acc-team-402",
+		},
+		time.Time{},
+	))
+
+	oldRefreshURL := accountauthOpenAIRefreshURL()
+	oldQuotaURL := chatGPTWhamUsageURL
+	t.Cleanup(func() {
+		setAccountauthOpenAIRefreshURL(oldRefreshURL)
+		chatGPTWhamUsageURL = oldQuotaURL
+	})
+	setAccountauthOpenAIRefreshURL(authServer.URL)
+	chatGPTWhamUsageURL = quotaServer.URL
+
+	result, err := svc.RefreshAccountProfile(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("RefreshAccountProfile failed: %v", err)
+	}
+	if !result.Success || result.QuotaStatus != quotaStatusExhausted {
+		t.Fatalf("unexpected refresh result: %+v", result)
+	}
+
+	rec, err := st.GetAccount(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if rec.Quota5HUsedPercent == nil || *rec.Quota5HUsedPercent != 100 {
+		t.Fatalf("expected only 5h window normalized to 100, got %+v", rec.Quota5HUsedPercent)
+	}
+	if rec.QuotaWeeklyUsedPercent == nil || *rec.QuotaWeeklyUsedPercent != 35 {
+		t.Fatalf("expected weekly window preserved, got %+v", rec.QuotaWeeklyUsedPercent)
+	}
+	if rec.Quota5HResetAt == nil {
+		t.Fatalf("expected 5h reset time to be populated")
+	}
+
+	after5HReset := cloneUpstreamAccountRecord(rec)
+	candidate := classifySchedulableAccount(after5HReset, rec.Quota5HResetAt.Add(time.Minute))
+	if candidate.skipReason != "" {
+		t.Fatalf("expected account schedulable after 5h reset when weekly window remains available, got %+v", candidate)
+	}
+}
+
 func TestTestUpstreamAccount_ReachableStillTriggersProfileRefresh(t *testing.T) {
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{

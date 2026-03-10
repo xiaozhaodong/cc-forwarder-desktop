@@ -7,6 +7,7 @@ import (
 	crand "crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,6 +36,55 @@ const (
 	openAIBetaResponsesValue = "responses=experimental"
 	defaultOAuthOriginator   = "codex_cli_rs"
 )
+
+type accountUsageLimitErrorEnvelope struct {
+	Error accountUsageLimitErrorDetail `json:"error"`
+}
+
+type accountUsageLimitErrorDetail struct {
+	Type            string `json:"type"`
+	Message         string `json:"message"`
+	PlanType        string `json:"plan_type"`
+	ResetsAt        int64  `json:"resets_at"`
+	ResetsInSeconds int64  `json:"resets_in_seconds"`
+}
+
+type accountUsageLimitWindow struct {
+	planType string
+	resetAt  time.Time
+}
+
+type accountStreamStatusError struct {
+	status     string
+	modelName  string
+	usageLimit *accountUsageLimitWindow
+	cause      error
+}
+
+func (e *accountStreamStatusError) Error() string {
+	if e == nil {
+		return ""
+	}
+	status := strings.TrimSpace(e.status)
+	if status == "" {
+		status = "error"
+	}
+	modelName := strings.TrimSpace(e.modelName)
+	if modelName == "" {
+		modelName = "unknown"
+	}
+	if e.cause == nil {
+		return fmt.Sprintf("stream_status:%s:model:%s", status, modelName)
+	}
+	return fmt.Sprintf("stream_status:%s:model:%s: %v", status, modelName, e.cause)
+}
+
+func (e *accountStreamStatusError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
 
 // handleAccountPipeline 账号池链路（阶段2）
 func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, lifecycleManager *RequestLifecycleManager) {
@@ -141,7 +191,11 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				detail = fmt.Sprintf("upstream returned %d", resp.StatusCode)
 			}
 			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
-			_ = h.accountPoolService.RecordAccountSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryRateLimit, retryAfter)
+			if usageLimit, ok := parseAccountUsageLimitWindow(detail, time.Now()); ok {
+				_ = h.accountPoolService.MarkAccountUsageLimitExceeded(ctx, acc.ID, detail, usageLimit.planType, usageLimit.resetAt)
+			} else {
+				_ = h.accountPoolService.RecordAccountSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryRateLimit, retryAfter)
+			}
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
 			continue
 		}
@@ -193,7 +247,11 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				case "auth_error":
 					_ = h.accountPoolService.MarkAccountAuthFailed(ctx, acc.ID, processErr.Error())
 				case "rate_limited":
-					_ = h.accountPoolService.RecordAccountSoftFailure(ctx, acc.ID, processErr.Error(), accountSoftFailureCategoryRateLimit, 0)
+					if usageLimit, ok := parseAccountStreamUsageLimitWindow(processErr); ok {
+						_ = h.accountPoolService.MarkAccountUsageLimitExceeded(ctx, acc.ID, processErr.Error(), usageLimit.planType, usageLimit.resetAt)
+					} else {
+						_ = h.accountPoolService.RecordAccountSoftFailure(ctx, acc.ID, processErr.Error(), accountSoftFailureCategoryRateLimit, 0)
+					}
 				case "stream_error", "error", "timeout", "network_error":
 					_ = h.accountPoolService.RecordAccountSoftFailure(ctx, acc.ID, processErr.Error(), accountSoftFailureCategoryServerError, 0)
 				default:
@@ -380,6 +438,51 @@ func parseAccountRetryAfter(resp *http.Response) time.Duration {
 		return d
 	}
 	return 0
+}
+
+func parseAccountUsageLimitWindow(detail string, now time.Time) (accountUsageLimitWindow, bool) {
+	text := strings.TrimSpace(detail)
+	if text == "" {
+		return accountUsageLimitWindow{}, false
+	}
+
+	var payload accountUsageLimitErrorEnvelope
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		return accountUsageLimitWindow{}, false
+	}
+
+	return buildAccountUsageLimitWindow(
+		payload.Error.Type,
+		payload.Error.PlanType,
+		payload.Error.ResetsAt,
+		payload.Error.ResetsInSeconds,
+		now,
+	)
+}
+
+func buildAccountUsageLimitWindow(errorType, planType string, resetsAt, resetsInSeconds int64, now time.Time) (accountUsageLimitWindow, bool) {
+	if strings.TrimSpace(strings.ToLower(errorType)) != "usage_limit_reached" {
+		return accountUsageLimitWindow{}, false
+	}
+
+	resetAt := time.Time{}
+	switch {
+	case resetsAt > 0:
+		resetAt = time.Unix(resetsAt, 0)
+	case resetsInSeconds > 0:
+		resetAt = now.Add(time.Duration(resetsInSeconds) * time.Second)
+	default:
+		return accountUsageLimitWindow{}, false
+	}
+
+	if !resetAt.After(now) {
+		return accountUsageLimitWindow{}, false
+	}
+
+	return accountUsageLimitWindow{
+		planType: strings.TrimSpace(planType),
+		resetAt:  resetAt,
+	}, true
 }
 
 func readAndRestoreResponseBody(resp *http.Response, limit int64) string {
@@ -680,6 +783,19 @@ func parseAccountStreamStatusError(err error) (string, string) {
 		return "error", "unknown"
 	}
 
+	var streamErr *accountStreamStatusError
+	if errors.As(err, &streamErr) && streamErr != nil {
+		status := strings.TrimSpace(streamErr.status)
+		if status == "" {
+			status = "error"
+		}
+		modelName := strings.TrimSpace(streamErr.modelName)
+		if modelName == "" {
+			modelName = "unknown"
+		}
+		return status, modelName
+	}
+
 	status := "error"
 	modelName := "unknown"
 	errText := err.Error()
@@ -696,6 +812,18 @@ func parseAccountStreamStatusError(err error) (string, string) {
 	}
 
 	return status, modelName
+}
+
+func parseAccountStreamUsageLimitWindow(err error) (accountUsageLimitWindow, bool) {
+	if err == nil {
+		return accountUsageLimitWindow{}, false
+	}
+
+	var streamErr *accountStreamStatusError
+	if errors.As(err, &streamErr) && streamErr != nil && streamErr.usageLimit != nil {
+		return *streamErr.usageLimit, true
+	}
+	return accountUsageLimitWindow{}, false
 }
 
 func isCancelledAccountStreamError(err error) bool {

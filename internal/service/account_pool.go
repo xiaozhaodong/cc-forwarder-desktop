@@ -22,6 +22,15 @@ const (
 	defaultChatGPTCodexTestURL  = "https://chatgpt.com/backend-api/codex/responses"
 	defaultOpenAIBetaHeader     = "responses=experimental"
 	defaultOAuthOriginatorValue = "codex_cli_rs"
+	usageLimitResetMatchWindow  = 15 * time.Minute
+)
+
+type usageLimitQuotaWindow string
+
+const (
+	usageLimitQuotaWindowUnknown usageLimitQuotaWindow = ""
+	usageLimitQuotaWindow5H      usageLimitQuotaWindow = "5h"
+	usageLimitQuotaWindowWeekly  usageLimitQuotaWindow = "weekly"
 )
 
 var chatGPTCodexTestURL = defaultChatGPTCodexTestURL
@@ -312,6 +321,112 @@ func (s *AccountPoolService) MarkAccountTransientFailure(ctx context.Context, id
 		s.softFailureTracker.Clear(id)
 	}
 	return nil
+}
+
+func (s *AccountPoolService) MarkAccountUsageLimitExceeded(ctx context.Context, id int64, reason, planType string, resetAt time.Time) error {
+	if err := s.ensureRuntimeCache(ctx); err != nil {
+		return err
+	}
+	if id <= 0 {
+		return fmt.Errorf("invalid account id: %d", id)
+	}
+
+	now := time.Now()
+	if resetAt.IsZero() || !resetAt.After(now) {
+		return fmt.Errorf("invalid usage limit reset time: %v", resetAt)
+	}
+
+	acc, err := s.GetAccount(ctx, id)
+	if err != nil {
+		return err
+	}
+	if acc == nil {
+		return fmt.Errorf("账号不存在: %d", id)
+	}
+
+	resolvedPlanType := accountauth.NormalizeOpenAIPlanType(firstNonEmptyString(planType, acc.PlanType))
+	if resolvedPlanType != "" {
+		acc.PlanType = resolvedPlanType
+	}
+
+	quotaWindow := inferUsageLimitQuotaWindow(acc, resolvedPlanType, resetAt)
+	shouldPersistProfile := false
+	switch quotaWindow {
+	case usageLimitQuotaWindowWeekly:
+		if resolvedPlanType == "free" {
+			acc.Quota5HUsedPercent = nil
+			acc.Quota5HResetAt = nil
+		}
+		acc.QuotaWeeklyUsedPercent = float64Ptr(100)
+		acc.QuotaWeeklyResetAt = cloneTimePtr(&resetAt)
+		shouldPersistProfile = true
+	case usageLimitQuotaWindow5H:
+		acc.Quota5HUsedPercent = float64Ptr(100)
+		acc.Quota5HResetAt = cloneTimePtr(&resetAt)
+		shouldPersistProfile = true
+	}
+
+	profileStatus := quotaStatusUnavailable
+	if shouldPersistProfile {
+		profileStatus = quotaStatusExhausted
+	}
+	profileUpdateTime(acc, now, profileStatus)
+
+	ok, stateVersion := s.runtimeCache.markTransientFailure(id, reason, resetAt, now)
+	if !ok {
+		return fmt.Errorf("账号不存在: %d", id)
+	}
+	if s.runtimeWriter != nil {
+		s.runtimeWriter.EnqueueTransientFailure(id, stateVersion, reason, resetAt, now)
+	}
+	if s.softFailureTracker != nil {
+		s.softFailureTracker.Clear(id)
+	}
+
+	if err := s.store.UpdateAccountProfile(ctx, acc); err != nil {
+		if shouldPersistProfile {
+			return fmt.Errorf("写回额度耗尽画像失败: %w", err)
+		}
+		return fmt.Errorf("写回未知额度窗口画像失败: %w", err)
+	}
+	if !s.runtimeCache.mergeRecordPreservingRuntimeState(acc) {
+		if err := s.reloadAccountIntoCache(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func inferUsageLimitQuotaWindow(acc *store.UpstreamAccountRecord, planType string, resetAt time.Time) usageLimitQuotaWindow {
+	if accountauth.NormalizeOpenAIPlanType(planType) == "free" {
+		return usageLimitQuotaWindowWeekly
+	}
+	if acc == nil || resetAt.IsZero() {
+		return usageLimitQuotaWindowUnknown
+	}
+
+	fiveHDiff, hasFiveH := accountResetMatchDistance(acc.Quota5HResetAt, resetAt)
+	weeklyDiff, hasWeekly := accountResetMatchDistance(acc.QuotaWeeklyResetAt, resetAt)
+
+	switch {
+	case hasFiveH && (!hasWeekly || fiveHDiff <= weeklyDiff) && fiveHDiff <= usageLimitResetMatchWindow:
+		return usageLimitQuotaWindow5H
+	case hasWeekly && weeklyDiff <= usageLimitResetMatchWindow:
+		return usageLimitQuotaWindowWeekly
+	default:
+		return usageLimitQuotaWindowUnknown
+	}
+}
+
+func accountResetMatchDistance(existing *time.Time, target time.Time) (time.Duration, bool) {
+	if existing == nil || existing.IsZero() || target.IsZero() {
+		return 0, false
+	}
+	diff := existing.Sub(target)
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff, true
 }
 
 func (s *AccountPoolService) RecordAccountSoftFailure(ctx context.Context, id int64, reason, category string, retryAfter time.Duration) error {

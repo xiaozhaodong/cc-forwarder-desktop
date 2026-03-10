@@ -11,7 +11,7 @@ import (
 func TestAccountPoolService_RecordAccountSoftFailure_TriggersCooldownAfterThreshold(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
-	base := time.Date(2026, 3, 8, 12, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	base := time.Now().Add(2 * time.Minute).Round(time.Second)
 	svc.softFailureTracker.now = func() time.Time { return base }
 
 	acc, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
@@ -66,7 +66,7 @@ func TestAccountPoolService_RecordAccountSoftFailure_TriggersCooldownAfterThresh
 func TestAccountPoolService_RecordAccountSoftFailure_UsesRetryAfterForRateLimit(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
-	base := time.Date(2026, 3, 8, 13, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	base := time.Now().Add(2 * time.Minute).Round(time.Second)
 	svc.softFailureTracker.now = func() time.Time { return base }
 
 	acc, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
@@ -108,7 +108,7 @@ func TestAccountPoolService_RecordAccountSoftFailure_UsesRetryAfterForRateLimit(
 func TestAccountPoolService_MarkAccountSuccess_ClearsSoftFailureWindow(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
-	base := time.Date(2026, 3, 8, 14, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	base := time.Now().Add(2 * time.Minute).Round(time.Second)
 	svc.softFailureTracker.now = func() time.Time { return base }
 
 	acc, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
