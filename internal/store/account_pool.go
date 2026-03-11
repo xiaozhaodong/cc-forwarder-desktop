@@ -634,6 +634,14 @@ func formatDBTime(t time.Time) string {
 	return t.In(accountDBTimeZone).Format("2006-01-02 15:04:05.999999-07:00")
 }
 
+// FormatAccountDisplayTime 统一将账号池时间输出为展示时区字符串。
+func FormatAccountDisplayTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.In(accountDBTimeZone).Format("2006-01-02 15:04:05")
+}
+
 func currentDBTime() string {
 	return formatDBTime(time.Now())
 }
@@ -716,16 +724,36 @@ func parseNullableFloat(v sql.NullFloat64) *float64 {
 }
 
 func parseDBTime(text string) time.Time {
-	candidates := []string{
-		"2006-01-02 15:04:05.999999-07:00",
-		time.RFC3339Nano,
-		time.RFC3339,
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return time.Time{}
+	}
+
+	if t, err := time.Parse("2006-01-02 15:04:05.999999-07:00", text); err == nil {
+		return t
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if t, err := time.Parse(layout, text); err == nil {
+			if looksLikeLegacySQLiteUTC(text, t) {
+				return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), accountDBTimeZone)
+			}
+			return t
+		}
+	}
+	localCandidates := []string{
+		"2006-01-02 15:04:05.999999",
 		"2006-01-02 15:04:05",
 	}
-	for _, layout := range candidates {
-		if t, err := time.Parse(layout, text); err == nil {
+	for _, layout := range localCandidates {
+		if t, err := time.ParseInLocation(layout, text, accountDBTimeZone); err == nil {
 			return t
 		}
 	}
 	return time.Time{}
+}
+
+func looksLikeLegacySQLiteUTC(text string, parsed time.Time) bool {
+	return strings.Contains(text, "T") &&
+		strings.HasSuffix(text, "Z") &&
+		parsed.Location() == time.UTC
 }

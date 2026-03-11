@@ -166,23 +166,23 @@ func (a *App) GetUpstreamAccounts() ([]UpstreamAccountInfo, error) {
 			Priority:                      rec.Priority,
 			Enabled:                       rec.Enabled,
 			State:                         rec.State,
-			CooldownUntil:                 formatOptionalTime(rec.CooldownUntil),
+			CooldownUntil:                 formatOptionalAccountRecordTime(rec.CooldownUntil),
 			FailCount:                     rec.FailCount,
-			LastSuccessAt:                 formatOptionalTime(rec.LastSuccessAt),
+			LastSuccessAt:                 formatOptionalAccountRecordTime(rec.LastSuccessAt),
 			LastError:                     rec.LastError,
 			PlanType:                      rec.PlanType,
 			ChatGPTAccountID:              rec.ChatGPTAccountID,
 			ChatGPTUserID:                 rec.ChatGPTUserID,
 			OrganizationID:                rec.OrganizationID,
 			Quota5HUsedPercent:            rec.Quota5HUsedPercent,
-			Quota5HResetAt:                formatOptionalTime(rec.Quota5HResetAt),
+			Quota5HResetAt:                formatOptionalAccountRecordTime(rec.Quota5HResetAt),
 			QuotaWeeklyUsedPercent:        rec.QuotaWeeklyUsedPercent,
-			QuotaWeeklyResetAt:            formatOptionalTime(rec.QuotaWeeklyResetAt),
+			QuotaWeeklyResetAt:            formatOptionalAccountRecordTime(rec.QuotaWeeklyResetAt),
 			QuotaStatus:                   rec.QuotaStatus,
-			QuotaRefreshedAt:              formatOptionalTime(rec.QuotaRefreshedAt),
+			QuotaRefreshedAt:              formatOptionalAccountRecordTime(rec.QuotaRefreshedAt),
 			Fingerprint:                   rec.Fingerprint,
-			CreatedAt:                     formatTime(rec.CreatedAt),
-			UpdatedAt:                     formatTime(rec.UpdatedAt),
+			CreatedAt:                     formatAccountRecordTime(rec.CreatedAt),
+			UpdatedAt:                     formatAccountRecordTime(rec.UpdatedAt),
 		})
 	}
 	return out, nil
@@ -264,7 +264,7 @@ func (a *App) GetLatestAccountScheduleSnapshot() (LatestAccountScheduleSnapshotI
 			QuotaStatus:             candidate.QuotaStatus,
 			EffectiveQuotaRemaining: candidate.EffectiveQuotaRemaining,
 			FailCount:               candidate.FailCount,
-			LastSuccessAt:           formatOptionalTime(candidate.LastSuccessAt),
+			LastSuccessAt:           formatOptionalAccountRecordTime(candidate.LastSuccessAt),
 			Decision:                candidate.Decision,
 			Reason:                  candidate.Reason,
 			ReasonDetail:            candidate.ReasonDetail,
@@ -478,6 +478,20 @@ func formatOptionalTime(t *time.Time) string {
 		return ""
 	}
 	return formatTime(*t)
+}
+
+func formatOptionalAccountRecordTime(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return formatAccountRecordTime(*t)
+}
+
+func formatAccountRecordTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return store.FormatAccountDisplayTime(t)
 }
 
 func formatTime(t time.Time) string {
