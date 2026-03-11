@@ -31,15 +31,30 @@ func (s *AccountPoolService) MoveAccountToTier(ctx context.Context, accountID in
 	if err != nil {
 		return false, err
 	}
+	shouldSelectAccount := targetTierIndex <= 0
 	if len(updates) == 0 {
-		return false, nil
+		selectionChanged := false
+		if shouldSelectAccount {
+			selectionChanged = s.runtimeCache.selectAccount(accountID)
+		}
+		if selectionChanged && s.scheduleSnapshots != nil {
+			s.scheduleSnapshots.clear()
+		}
+		return selectionChanged, nil
 	}
 
 	if err := s.store.UpdateAccountPriorities(ctx, updates); err != nil {
 		return false, err
 	}
 	s.runtimeCache.applyPriorityUpdates(updates)
-	return true, nil
+	selectionChanged := false
+	if shouldSelectAccount {
+		selectionChanged = s.runtimeCache.selectAccount(accountID)
+	}
+	if s.scheduleSnapshots != nil {
+		s.scheduleSnapshots.clear()
+	}
+	return selectionChanged || len(updates) > 0, nil
 }
 
 func buildManualFailoverPriorityUpdates(accounts []*store.UpstreamAccountRecord, targetAccountID int64, targetTierIndex int) (map[int64]int, error) {

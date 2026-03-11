@@ -132,8 +132,10 @@ const toScheduleReasonLabel = (reason = '') => {
   const normalized = String(reason || '').trim().toLowerCase();
   const labels = {
     highest_ranked_in_selected_tier: '当前层内排序第一，优先命中',
+    retained_active_account_in_selected_tier: '保持当前活跃账号，本轮继续优先命中',
     same_tier_lower_rank: '同层排序靠后，本轮作为后续候选',
     higher_priority_tier_selected: '更高优先级层已有可用账号',
+    higher_priority_tier_recovered_but_retained_degraded_tier: '更高优先级层已恢复，但当前仍保持降级层',
     quota_exhausted_until_reset: '额度已耗尽，等待窗口重置',
     invalid_account: '账号记录异常，未参与调度',
     not_selected: '本轮未被调度'

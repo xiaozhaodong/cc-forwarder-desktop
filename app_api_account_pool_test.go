@@ -141,6 +141,81 @@ func TestGetLatestAccountScheduleSnapshot_UsesAccountDisplayTimeZoneForCandidate
 	}
 }
 
+func TestMoveUpstreamAccountToTier_ReturnsChangedWhenManualSwitchOverridesStickySelection(t *testing.T) {
+	app, _ := newAccountPoolAPITestApp(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	primary, err := app.accountPoolService.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "manual-primary",
+		CredentialRaw:          `{"refresh_token":"rt-manual-primary"}`,
+		BaseURL:                "https://api.openai.com",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "exhausted",
+		Quota5HUsedPercent:     float64Ptr(100),
+		Quota5HResetAt:         timePtr(now.Add(90 * time.Minute)),
+		QuotaWeeklyUsedPercent: float64Ptr(100),
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount primary failed: %v", err)
+	}
+
+	_, err = app.accountPoolService.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:                  "chatgpt_refresh_token",
+		AccountName:                   "sticky-backup",
+		CredentialRaw:                 `{"refresh_token":"rt-sticky-backup"}`,
+		BaseURL:                       "https://api.openai.com",
+		Priority:                      20,
+		Enabled:                       true,
+		State:                         "active",
+		QuotaStatus:                   "ok",
+		Quota5HUsedPercent:            float64Ptr(20),
+		Quota5HResetAt:                timePtr(now.Add(45 * time.Minute)),
+		QuotaWeeklyUsedPercent:        float64Ptr(20),
+		QuotaWeeklyResetAt:            timePtr(now.Add(6 * 24 * time.Hour)),
+		CostMultiplier:                1,
+		InputCostMultiplier:           1,
+		OutputCostMultiplier:          1,
+		CacheCreationCostMultiplier:   1,
+		CacheCreationCostMultiplier1h: 1,
+		CacheReadCostMultiplier:       1,
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount backup failed: %v", err)
+	}
+
+	if _, err := app.accountPoolService.PrepareSchedulableAccounts(ctx, "req-before-manual-switch", "/v1/responses"); err != nil {
+		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
+	}
+
+	recoveredPrimary, err := app.accountPoolService.GetAccount(ctx, primary.ID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if recoveredPrimary == nil {
+		t.Fatal("expected recovered primary account")
+	}
+	recoveredPrimary.QuotaStatus = "ok"
+	recoveredPrimary.Quota5HUsedPercent = nil
+	recoveredPrimary.Quota5HResetAt = nil
+	recoveredPrimary.QuotaWeeklyUsedPercent = nil
+	recoveredPrimary.QuotaWeeklyResetAt = nil
+	if err := app.accountPoolService.UpdateAccount(ctx, recoveredPrimary); err != nil {
+		t.Fatalf("UpdateAccount failed: %v", err)
+	}
+
+	result, err := app.MoveUpstreamAccountToTier(primary.ID, "primary")
+	if err != nil {
+		t.Fatalf("MoveUpstreamAccountToTier failed: %v", err)
+	}
+	if !result.Changed {
+		t.Fatalf("expected manual switch override to report changed, got %+v", result)
+	}
+}
+
 func TestFormatTime_PreservesInputLocationWallClock(t *testing.T) {
 	loc := time.FixedZone("UTC-7", -7*60*60)
 	timestamp := time.Date(2026, 3, 11, 6, 30, 0, 0, loc)
@@ -176,5 +251,9 @@ func newAccountPoolAPITestApp(t *testing.T) (*App, *sql.DB) {
 }
 
 func float64Ptr(value float64) *float64 {
+	return &value
+}
+
+func timePtr(value time.Time) *time.Time {
 	return &value
 }

@@ -189,6 +189,17 @@ func (s *latestAccountScheduleSnapshotStore) getLatest() *LatestAccountScheduleS
 	return cloneLatestAccountScheduleSnapshot(s.latest)
 }
 
+func (s *latestAccountScheduleSnapshotStore) clear() {
+	if s == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.latest = nil
+	s.pending = make(map[string]*LatestAccountScheduleSnapshot)
+}
+
 func cloneLatestAccountScheduleSnapshot(snapshot *LatestAccountScheduleSnapshot) *LatestAccountScheduleSnapshot {
 	if snapshot == nil {
 		return nil

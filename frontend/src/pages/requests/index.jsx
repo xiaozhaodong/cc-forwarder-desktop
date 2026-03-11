@@ -108,11 +108,6 @@ const RequestsPage = () => {
     return [...accounts].sort(compareAccountsByManualPriority);
   }, [accounts]);
 
-  const activeAccount = useMemo(() => {
-    const schedulableAccounts = sortedAccounts.filter(isAccountSchedulable);
-    return schedulableAccounts[0] || sortedAccounts[0] || null;
-  }, [sortedAccounts]);
-
   const requestFilterEndpoints = useMemo(() => {
     const options = new Set();
     endpoints.forEach((endpoint) => {
@@ -136,10 +131,33 @@ const RequestsPage = () => {
       return null;
     }
 
+    const finalOutcome = String(
+      latestScheduleSnapshot?.finalOutcome
+      ?? latestScheduleSnapshot?.final_outcome
+      ?? ''
+    ).trim().toLowerCase();
+    if (finalOutcome === 'transient_failure' || finalOutcome === 'auth_failed' || finalOutcome === 'no_schedulable_accounts') {
+      return null;
+    }
+
     return latestScheduleSnapshot?.selectedAccountId
       ?? latestScheduleSnapshot?.selected_account_id
       ?? null;
   }, [latestScheduleSnapshot]);
+
+  const activeAccount = useMemo(() => {
+    if (recentSelectedAccountId !== null && recentSelectedAccountId !== undefined) {
+      const selectedAccount = sortedAccounts.find((account) => {
+        return String(resolveAccountId(account) ?? '') === String(recentSelectedAccountId);
+      });
+      if (selectedAccount) {
+        return selectedAccount;
+      }
+    }
+
+    const schedulableAccounts = sortedAccounts.filter(isAccountSchedulable);
+    return schedulableAccounts[0] || sortedAccounts[0] || null;
+  }, [recentSelectedAccountId, sortedAccounts]);
 
   // ==================== 数据加载 ====================
 

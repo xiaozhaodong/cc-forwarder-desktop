@@ -303,6 +303,96 @@ func TestPrepareSchedulableAccounts_DoesNotAutoReturnToHigherTierAfterDegrade(t 
 	assertStringContainsAll(t, recoveredPrimaryCandidate.ReasonDetail, []string{"未自动切回", "更高优先级组"})
 }
 
+func TestMoveAccountToTier_OverridesDegradedSelectionEvenWhenPriorityUnchanged(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	primary, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "manual-primary",
+		CredentialRaw:          "rt-manual-primary",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "exhausted",
+		Quota5HUsedPercent:     testFloat64Ptr(100),
+		Quota5HResetAt:         testTimePtr(now.Add(90 * time.Minute)),
+		QuotaWeeklyUsedPercent: testFloat64Ptr(100),
+	})
+	if err != nil {
+		t.Fatalf("create primary account failed: %v", err)
+	}
+
+	backup, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "sticky-backup",
+		CredentialRaw:          "rt-sticky-backup",
+		Priority:               20,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		Quota5HUsedPercent:     testFloat64Ptr(20),
+		Quota5HResetAt:         testTimePtr(now.Add(45 * time.Minute)),
+		QuotaWeeklyUsedPercent: testFloat64Ptr(30),
+		QuotaWeeklyResetAt:     testTimePtr(now.Add(6 * 24 * time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("create backup account failed: %v", err)
+	}
+
+	degraded, err := svc.PrepareSchedulableAccounts(ctx, "req-before-manual-switch", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts degraded failed: %v", err)
+	}
+	if got, want := collectAccountIDs(degraded), []int64{backup.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected initial degrade to sticky backup, got %v want %v", got, want)
+	}
+
+	recoveredPrimary, err := st.GetAccount(ctx, primary.ID)
+	if err != nil {
+		t.Fatalf("store GetAccount primary failed: %v", err)
+	}
+	if recoveredPrimary == nil {
+		t.Fatal("expected recovered primary account")
+	}
+	recoveredPrimary.QuotaStatus = "ok"
+	recoveredPrimary.Quota5HUsedPercent = nil
+	recoveredPrimary.Quota5HResetAt = nil
+	recoveredPrimary.QuotaWeeklyUsedPercent = nil
+	recoveredPrimary.QuotaWeeklyResetAt = nil
+	if err := st.UpdateAccount(ctx, recoveredPrimary); err != nil {
+		t.Fatalf("store UpdateAccount primary failed: %v", err)
+	}
+	if err := svc.reloadAccountIntoCache(ctx, primary.ID); err != nil {
+		t.Fatalf("reloadAccountIntoCache primary failed: %v", err)
+	}
+
+	changed, err := svc.MoveAccountToTier(ctx, primary.ID, 0)
+	if err != nil {
+		t.Fatalf("MoveAccountToTier failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected manual switch to count as effective change even when priority stays primary")
+	}
+
+	snapshot, err := svc.GetLatestAccountScheduleSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("GetLatestAccountScheduleSnapshot failed: %v", err)
+	}
+	if snapshot != nil {
+		t.Fatalf("expected stale schedule snapshot to be cleared after manual switch, got %+v", snapshot)
+	}
+
+	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-after-manual-switch", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts after manual switch failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{primary.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected manual switch to force primary account selection, got %v want %v", got, want)
+	}
+}
+
 func TestPrepareSchedulableAccounts_RanksByUtilizationThenHealthWithinTier(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()

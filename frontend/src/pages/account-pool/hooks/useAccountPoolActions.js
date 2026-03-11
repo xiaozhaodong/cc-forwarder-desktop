@@ -106,8 +106,6 @@ const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotic
       return;
     }
 
-    const targetTierIndex = targetTier === 'backup' ? 1 : 0;
-
     setBusyKey(`account-switch-${accountId}`);
     try {
       const result = await moveUpstreamAccountToTier(accountId, targetTier === 'backup' ? 'backup' : 'primary');
@@ -129,13 +127,16 @@ const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotic
           ? `已将「${accountName}」切到备组，顺序已立即生效`
           : `已将「${accountName}」切到主组，顺序已立即生效`
       );
-      await loadData({ silent: true });
+      await Promise.all([
+        loadData({ silent: true }),
+        loadLatestScheduleSnapshot({ silent: true })
+      ]);
     } catch (err) {
       showNotice('error', err.message || '手动切换顺序失败');
     } finally {
       setBusyKey('');
     }
-  }, [loadData, showNotice]);
+  }, [loadData, loadLatestScheduleSnapshot, showNotice]);
 
   const handleTestAccount = useCallback(async (account) => {
     const accountId = resolveAccountId(account);

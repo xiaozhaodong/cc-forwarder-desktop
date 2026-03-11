@@ -154,6 +154,25 @@ func (c *accountRuntimeCache) applyPriorityUpdates(updates map[int64]int) {
 	c.rebuildOrderedLocked()
 }
 
+func (c *accountRuntimeCache) selectAccount(id int64) bool {
+	if c == nil || id <= 0 {
+		return false
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	record := c.byID[id]
+	if record == nil {
+		return false
+	}
+
+	changed := c.activeTier != record.Priority || c.activeAccount != id
+	c.activeTier = record.Priority
+	c.activeAccount = id
+	return changed
+}
+
 func (c *accountRuntimeCache) resolveActiveSelection(prepared []*rankedPriorityTier) (*rankedPriorityTier, int) {
 	if c == nil {
 		return selectFirstEligibleTier(prepared), 0
