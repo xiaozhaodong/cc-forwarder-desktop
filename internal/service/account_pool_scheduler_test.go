@@ -393,6 +393,87 @@ func TestMoveAccountToTier_OverridesDegradedSelectionEvenWhenPriorityUnchanged(t
 	}
 }
 
+func TestMoveAccountToTier_MovingTierToPrimaryPromotesWholeTierAndSelectsClickedAccount(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	primaryA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-a",
+		CredentialRaw: "sk-primary-a",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create primary-a failed: %v", err)
+	}
+	primaryB, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-b",
+		CredentialRaw: "sk-primary-b",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create primary-b failed: %v", err)
+	}
+	backupA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-a",
+		CredentialRaw: "sk-backup-a",
+		Priority:      20,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup-a failed: %v", err)
+	}
+	backupB, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-b",
+		CredentialRaw: "sk-backup-b",
+		Priority:      20,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup-b failed: %v", err)
+	}
+
+	changed, err := svc.MoveAccountToTier(ctx, backupB.ID, 0)
+	if err != nil {
+		t.Fatalf("MoveAccountToTier failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected moving backup tier to primary to count as a change")
+	}
+
+	for accountID, wantPriority := range map[int64]int{
+		backupA.ID:  10,
+		backupB.ID:  10,
+		primaryA.ID: 20,
+		primaryB.ID: 20,
+	} {
+		record, getErr := st.GetAccount(ctx, accountID)
+		if getErr != nil {
+			t.Fatalf("GetAccount %d failed: %v", accountID, getErr)
+		}
+		if record == nil || record.Priority != wantPriority {
+			t.Fatalf("unexpected priority for account %d: got %+v want priority %d", accountID, record, wantPriority)
+		}
+	}
+
+	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-after-tier-promotion", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts after tier promotion failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{backupB.ID, backupA.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected clicked backup account to lead promoted tier, got %v want %v", got, want)
+	}
+}
+
 func TestPrepareSchedulableAccounts_RanksByUtilizationThenHealthWithinTier(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()

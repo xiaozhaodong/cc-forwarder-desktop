@@ -88,29 +88,26 @@ const buildManualFailoverPriorityPlan = ({ accounts = [], targetAccountId, targe
   }
 
   const remainingTiers = [];
-  let targetAccount = null;
+  let targetTier = null;
 
   tiers.forEach((tier) => {
-    const nextAccounts = [];
-    tier.accounts.forEach((account) => {
-      const accountId = resolveAccountId(account);
-      if (targetAccount === null && accountId === targetAccountId) {
-        targetAccount = account;
-        return;
-      }
-      nextAccounts.push(account);
-    });
-    if (nextAccounts.length > 0) {
-      remainingTiers.push({ priority: tier.priority, accounts: nextAccounts });
+    const containsTarget = tier.accounts.some((account) => resolveAccountId(account) === targetAccountId);
+    if (containsTarget) {
+      targetTier = {
+        priority: tier.priority,
+        accounts: [...tier.accounts]
+      };
+      return;
     }
+    remainingTiers.push(tier);
   });
 
-  if (!targetAccount) {
+  if (!targetTier) {
     return [];
   }
 
   const insertIndex = Math.max(0, Math.min(targetTierIndex, remainingTiers.length));
-  remainingTiers.splice(insertIndex, 0, { priority: null, accounts: [targetAccount] });
+  remainingTiers.splice(insertIndex, 0, targetTier);
 
   return remainingTiers.flatMap((tier, index) => {
     const nextPriority = (index + 1) * 10;

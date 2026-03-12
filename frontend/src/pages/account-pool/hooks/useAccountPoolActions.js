@@ -124,8 +124,8 @@ const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotic
       showNotice(
         'success',
         targetTier === 'backup'
-          ? `已将「${accountName}」切到备组，顺序已立即生效`
-          : `已将「${accountName}」切到主组，顺序已立即生效`
+          ? `已将「${accountName}」设为备组当前账号，切换已立即生效`
+          : `已将「${accountName}」设为主组当前账号，切换已立即生效`
       );
       await Promise.all([
         loadData({ silent: true }),

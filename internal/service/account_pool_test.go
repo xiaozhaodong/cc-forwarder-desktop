@@ -371,7 +371,127 @@ func TestMoveAccountToTier_NoChangeWhenSelectionAlreadyApplied(t *testing.T) {
 	}
 }
 
-func TestMoveAccountToTier_MovingToBackupDoesNotPinRuntimeSelection(t *testing.T) {
+func TestMoveAccountToTier_ChangingPrimaryAccountWithinSameTierCountsAsChange(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	first, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "first",
+		CredentialRaw: "sk-first",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create first account failed: %v", err)
+	}
+	second, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "second",
+		CredentialRaw: "sk-second",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create second account failed: %v", err)
+	}
+
+	changed, err := svc.MoveAccountToTier(ctx, first.ID, 0)
+	if err != nil {
+		t.Fatalf("MoveAccountToTier first failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected first manual primary selection to change runtime state")
+	}
+
+	changed, err = svc.MoveAccountToTier(ctx, second.ID, 0)
+	if err != nil {
+		t.Fatalf("MoveAccountToTier second failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected switching to another account in the same primary tier to count as change")
+	}
+
+	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-same-tier-manual-switch", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{second.ID, first.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected second account to become active selection, got %v want %v", got, want)
+	}
+}
+
+func TestMoveAccountToTier_BackupNoOpWithSingleTierPreservesSnapshotAndSelection(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	first, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "first",
+		CredentialRaw: "sk-first",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create first account failed: %v", err)
+	}
+	second, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "second",
+		CredentialRaw: "sk-second",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create second account failed: %v", err)
+	}
+
+	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-before-single-tier-backup", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts before backup no-op failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{first.ID, second.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected baseline selected accounts: got %v want %v", got, want)
+	}
+
+	snapshotBefore, err := svc.GetLatestAccountScheduleSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("GetLatestAccountScheduleSnapshot before backup no-op failed: %v", err)
+	}
+	if snapshotBefore == nil {
+		t.Fatal("expected existing snapshot before backup no-op")
+	}
+
+	changed, err := svc.MoveAccountToTier(ctx, second.ID, 1)
+	if err != nil {
+		t.Fatalf("MoveAccountToTier backup no-op failed: %v", err)
+	}
+	if changed {
+		t.Fatal("expected moving a single tier into backup to be a no-op")
+	}
+
+	snapshotAfter, err := svc.GetLatestAccountScheduleSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("GetLatestAccountScheduleSnapshot after backup no-op failed: %v", err)
+	}
+	if snapshotAfter == nil || snapshotAfter.RequestID != snapshotBefore.RequestID {
+		t.Fatalf("expected latest snapshot to be preserved after backup no-op, got before=%+v after=%+v", snapshotBefore, snapshotAfter)
+	}
+
+	ordered, err = svc.PrepareSchedulableAccounts(ctx, "req-after-single-tier-backup", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts after backup no-op failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{first.ID, second.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected backup no-op to preserve active selection, got %v want %v", got, want)
+	}
+}
+
+func TestMoveAccountToTier_MovingToBackupMovesWholeTierAndSelectsClickedAccount(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 
@@ -408,6 +528,17 @@ func TestMoveAccountToTier_MovingToBackupDoesNotPinRuntimeSelection(t *testing.T
 	if err != nil {
 		t.Fatalf("create third account failed: %v", err)
 	}
+	thirdPeer, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "third-peer",
+		CredentialRaw: "sk-third-peer",
+		Priority:      30,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create third peer account failed: %v", err)
+	}
 
 	changed, err := svc.MoveAccountToTier(ctx, third.ID, 1)
 	if err != nil {
@@ -421,16 +552,93 @@ func TestMoveAccountToTier_MovingToBackupDoesNotPinRuntimeSelection(t *testing.T
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
-	if got, want := collectAccountIDs(ordered), []int64{first.ID}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected primary tier selection to stay on first account, got %v want %v", got, want)
+	if got, want := collectAccountIDs(ordered), []int64{third.ID, thirdPeer.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected clicked backup tier account to become active selection, got %v want %v", got, want)
+	}
+
+	for accountID, wantPriority := range map[int64]int{
+		first.ID:     10,
+		third.ID:     20,
+		thirdPeer.ID: 20,
+		second.ID:    30,
+	} {
+		record, getErr := st.GetAccount(ctx, accountID)
+		if getErr != nil {
+			t.Fatalf("GetAccount %d failed: %v", accountID, getErr)
+		}
+		if record == nil || record.Priority != wantPriority {
+			t.Fatalf("unexpected priority for account %d: got %+v want priority %d", accountID, record, wantPriority)
+		}
 	}
 
 	accounts, err := st.ListAccounts(ctx, true)
 	if err != nil {
 		t.Fatalf("ListAccounts failed: %v", err)
 	}
-	if got, want := collectAccountIDs(accounts), []int64{first.ID, third.ID, second.ID}; !reflect.DeepEqual(got, want) {
+	if got, want := collectAccountIDs(accounts), []int64{first.ID, third.ID, thirdPeer.ID, second.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected reordered accounts after moving to backup: got %v want %v", got, want)
+	}
+}
+
+func TestMoveAccountToTier_ChangingBackupAccountWithinSameTierCountsAsChange(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	if _, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary",
+		CredentialRaw: "sk-primary",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	}); err != nil {
+		t.Fatalf("create primary account failed: %v", err)
+	}
+	backupA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-a",
+		CredentialRaw: "sk-backup-a",
+		Priority:      20,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup-a failed: %v", err)
+	}
+	backupB, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-b",
+		CredentialRaw: "sk-backup-b",
+		Priority:      20,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup-b failed: %v", err)
+	}
+
+	changed, err := svc.MoveAccountToTier(ctx, backupA.ID, 1)
+	if err != nil {
+		t.Fatalf("MoveAccountToTier backup-a failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected first backup selection to change runtime state")
+	}
+
+	changed, err = svc.MoveAccountToTier(ctx, backupB.ID, 1)
+	if err != nil {
+		t.Fatalf("MoveAccountToTier backup-b failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected switching to another account in the same backup tier to count as change")
+	}
+
+	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-same-tier-backup-switch", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{backupB.ID, backupA.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected second backup account to become active selection, got %v want %v", got, want)
 	}
 }
 
