@@ -26,12 +26,16 @@ func (s *AccountPoolService) MoveAccountToTier(ctx context.Context, accountID in
 	if err != nil {
 		return false, fmt.Errorf("加载账号列表失败: %w", err)
 	}
+	tiers := buildManualFailoverTierGroups(accounts)
+	if targetTierIndex > 0 && len(tiers) <= targetTierIndex {
+		return false, nil
+	}
 
 	updates, err := buildManualFailoverPriorityUpdates(accounts, accountID, targetTierIndex)
 	if err != nil {
 		return false, err
 	}
-	shouldSelectAccount := targetTierIndex <= 0
+	shouldSelectAccount := true
 	if len(updates) == 0 {
 		selectionChanged := false
 		if shouldSelectAccount {
@@ -63,28 +67,32 @@ func buildManualFailoverPriorityUpdates(accounts []*store.UpstreamAccountRecord,
 		return nil, fmt.Errorf("当前没有可调整顺序的账号")
 	}
 
-	var targetAccount *store.UpstreamAccountRecord
+	var targetTier *groupedManualFailoverTier
 	remainingTiers := make([]groupedManualFailoverTier, 0, len(tiers))
 	for _, tier := range tiers {
-		nextAccounts := make([]*store.UpstreamAccountRecord, 0, len(tier.accounts))
+		containsTarget := false
 		for _, account := range tier.accounts {
 			if account == nil {
 				continue
 			}
-			if targetAccount == nil && account.ID == targetAccountID {
-				targetAccount = account
-				continue
+			if account.ID == targetAccountID {
+				containsTarget = true
+				break
 			}
-			nextAccounts = append(nextAccounts, account)
 		}
-		if len(nextAccounts) > 0 {
-			remainingTiers = append(remainingTiers, groupedManualFailoverTier{
+
+		if containsTarget {
+			copiedAccounts := make([]*store.UpstreamAccountRecord, 0, len(tier.accounts))
+			copiedAccounts = append(copiedAccounts, tier.accounts...)
+			targetTier = &groupedManualFailoverTier{
 				priority: tier.priority,
-				accounts: nextAccounts,
-			})
+				accounts: copiedAccounts,
+			}
+			continue
 		}
+		remainingTiers = append(remainingTiers, tier)
 	}
-	if targetAccount == nil {
+	if targetTier == nil {
 		return nil, fmt.Errorf("账号不存在: %d", targetAccountID)
 	}
 
@@ -95,11 +103,7 @@ func buildManualFailoverPriorityUpdates(accounts []*store.UpstreamAccountRecord,
 		targetTierIndex = len(remainingTiers)
 	}
 
-	insertedTier := groupedManualFailoverTier{
-		priority: 0,
-		accounts: []*store.UpstreamAccountRecord{targetAccount},
-	}
-	remainingTiers = append(remainingTiers[:targetTierIndex], append([]groupedManualFailoverTier{insertedTier}, remainingTiers[targetTierIndex:]...)...)
+	remainingTiers = append(remainingTiers[:targetTierIndex], append([]groupedManualFailoverTier{*targetTier}, remainingTiers[targetTierIndex:]...)...)
 
 	updates := make(map[int64]int)
 	for index, tier := range remainingTiers {

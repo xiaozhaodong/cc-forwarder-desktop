@@ -86,8 +86,9 @@ const AccountRow = ({
   const planTypeLabel = toPlanTypeLabel(planType);
   const priority = normalizePriorityValue(account.priority ?? account.Priority);
   const tierMeta = Number.isFinite(priority) ? priorityTierMetaMap.get(priority) : null;
+  const priorityTierCount = priorityTierMetaMap?.size || 0;
   const canSetAsPrimary = accountCount > 1 && (!tierMeta || tierMeta.order !== 1 || tierMeta.count > 1);
-  const canSetAsBackup = accountCount > 1 && (!tierMeta || tierMeta.order !== 2 || tierMeta.count > 1);
+  const canSetAsBackup = accountCount > 1 && priorityTierCount > 1 && (!tierMeta || tierMeta.order !== 2 || tierMeta.count > 1);
   const refreshedAt = account.quota_refreshed_at || account.quotaRefreshedAt;
   const rowBusy = busyKey.startsWith('account-') && busyKey.includes(String(accountId));
 
@@ -172,7 +173,7 @@ const AccountRow = ({
               onClick={() => onMoveTier(account, 'primary')}
               disabled={rowBusy}
               className="inline-flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
-              title="将当前账号提升为新的主组，其他账号顺延"
+              title="将该账号所在层提升为新的主组；若已在主组，则切换当前活跃账号"
             >
               设为主组
             </button>
@@ -186,7 +187,9 @@ const AccountRow = ({
               onClick={() => onMoveTier(account, 'backup')}
               disabled={rowBusy}
               className="inline-flex items-center rounded-md border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs font-medium text-cyan-700 transition-colors hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
-              title="将当前账号切到备组，主组仍优先，其他组顺延"
+              title={tierMeta?.order === 2
+                ? '保持当前备组层级，并切换这一层当前使用账号'
+                : '将该账号所在层切到备组，并切换这一层当前使用账号'}
             >
               设为备组
             </button>

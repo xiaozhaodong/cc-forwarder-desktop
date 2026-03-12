@@ -1,0 +1,67 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { buildManualFailoverPriorityPlan } from './manualFailover.js';
+
+const summarizePlan = (plan = []) => plan
+  .map(({ account, priority }) => [account.id, priority])
+  .sort((left, right) => left[0] - right[0]);
+
+test('buildManualFailoverPriorityPlan promotes the whole tier to primary', () => {
+  const accounts = [
+    { id: 1, priority: 10, account_name: 'primary-a' },
+    { id: 2, priority: 10, account_name: 'primary-b' },
+    { id: 3, priority: 20, account_name: 'backup-a' },
+    { id: 4, priority: 20, account_name: 'backup-b' }
+  ];
+
+  const plan = buildManualFailoverPriorityPlan({
+    accounts,
+    targetAccountId: 4,
+    targetTierIndex: 0
+  });
+
+  assert.deepEqual(summarizePlan(plan), [
+    [1, 20],
+    [2, 20],
+    [3, 10],
+    [4, 10]
+  ]);
+});
+
+test('buildManualFailoverPriorityPlan moves the whole tier into backup position', () => {
+  const accounts = [
+    { id: 1, priority: 10, account_name: 'primary' },
+    { id: 2, priority: 20, account_name: 'backup-old' },
+    { id: 3, priority: 30, account_name: 'fallback-a' },
+    { id: 4, priority: 30, account_name: 'fallback-b' }
+  ];
+
+  const plan = buildManualFailoverPriorityPlan({
+    accounts,
+    targetAccountId: 3,
+    targetTierIndex: 1
+  });
+
+  assert.deepEqual(summarizePlan(plan), [
+    [2, 30],
+    [3, 20],
+    [4, 20]
+  ]);
+});
+
+test('buildManualFailoverPriorityPlan keeps an existing primary tier intact', () => {
+  const accounts = [
+    { id: 1, priority: 10, account_name: 'primary-a' },
+    { id: 2, priority: 10, account_name: 'primary-b' },
+    { id: 3, priority: 20, account_name: 'backup' }
+  ];
+
+  const plan = buildManualFailoverPriorityPlan({
+    accounts,
+    targetAccountId: 2,
+    targetTierIndex: 0
+  });
+
+  assert.deepEqual(plan, []);
+});
