@@ -427,6 +427,8 @@ export const normalizeUpstreamAccount = (account = {}) => ({
   providerType: account.provider_type || account.providerType || account.ProviderType || '',
   account_name: account.account_name || account.accountName || account.AccountName || '',
   accountName: account.account_name || account.accountName || account.AccountName || '',
+  is_active_selection: (account.is_active_selection ?? account.isActiveSelection ?? account.IsActiveSelection) === true,
+  isActiveSelection: (account.is_active_selection ?? account.isActiveSelection ?? account.IsActiveSelection) === true,
   credential_raw: account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
   credentialRaw: account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
   credential_raw_masked: account.credential_raw_masked || account.credentialRawMasked || account.CredentialRawMasked || account.credential_raw || account.credentialRaw || account.CredentialRaw || '',

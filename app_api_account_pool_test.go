@@ -99,6 +99,76 @@ func TestGetUpstreamAccounts_PreservesLegacyNaiveTimestamps(t *testing.T) {
 	}
 }
 
+func TestGetUpstreamAccounts_ReportsActiveSelectionAfterSameTierManualSwitch(t *testing.T) {
+	app, _ := newAccountPoolAPITestApp(t)
+	ctx := context.Background()
+
+	first, err := app.accountPoolService.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-a",
+		CredentialRaw: "sk-primary-a",
+		BaseURL:       "https://api.openai.com",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+		QuotaStatus:   "ok",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount first failed: %v", err)
+	}
+
+	second, err := app.accountPoolService.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-b",
+		CredentialRaw: "sk-primary-b",
+		BaseURL:       "https://api.openai.com",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+		QuotaStatus:   "ok",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount second failed: %v", err)
+	}
+
+	result, err := app.MoveUpstreamAccountToTier(second.ID, "primary")
+	if err != nil {
+		t.Fatalf("MoveUpstreamAccountToTier failed: %v", err)
+	}
+	if !result.Changed {
+		t.Fatalf("expected same-tier manual switch to report changed, got %+v", result)
+	}
+
+	accounts, err := app.GetUpstreamAccounts()
+	if err != nil {
+		t.Fatalf("GetUpstreamAccounts failed: %v", err)
+	}
+	if len(accounts) != 2 {
+		t.Fatalf("expected 2 accounts, got %d", len(accounts))
+	}
+
+	var firstInfo *UpstreamAccountInfo
+	var secondInfo *UpstreamAccountInfo
+	for idx := range accounts {
+		account := accounts[idx]
+		switch account.ID {
+		case first.ID:
+			firstInfo = &account
+		case second.ID:
+			secondInfo = &account
+		}
+	}
+	if firstInfo == nil || secondInfo == nil {
+		t.Fatalf("expected both accounts in response, got %+v", accounts)
+	}
+	if firstInfo.IsActiveSelection {
+		t.Fatalf("expected first account to be inactive after same-tier switch, got %+v", firstInfo)
+	}
+	if !secondInfo.IsActiveSelection {
+		t.Fatalf("expected second account to be marked active after same-tier switch, got %+v", secondInfo)
+	}
+}
+
 func TestGetLatestAccountScheduleSnapshot_UsesAccountDisplayTimeZoneForCandidateTimes(t *testing.T) {
 	app, _ := newAccountPoolAPITestApp(t)
 

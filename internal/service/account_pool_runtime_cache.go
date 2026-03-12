@@ -283,6 +283,24 @@ func (c *accountRuntimeCache) get(id int64) (*store.UpstreamAccountRecord, bool)
 	return normalizeAccountRuntimeView(cloneUpstreamAccountRecord(record), now), true
 }
 
+func (c *accountRuntimeCache) activeSelectionAccountID() (int64, bool) {
+	if c == nil {
+		return 0, false
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.activeAccount <= 0 {
+		return 0, false
+	}
+	record, ok := c.byID[c.activeAccount]
+	if !ok || record == nil {
+		return 0, false
+	}
+	return c.activeAccount, true
+}
+
 func (c *accountRuntimeCache) list(includeDisabled bool) []*store.UpstreamAccountRecord {
 	if c == nil {
 		return nil

@@ -90,6 +90,17 @@ func (s *AccountPoolService) GetAccount(ctx context.Context, id int64) (*store.U
 	return record, nil
 }
 
+func (s *AccountPoolService) GetActiveSelectionAccountID(ctx context.Context) (int64, bool, error) {
+	if err := s.ensureRuntimeCache(ctx); err != nil {
+		return 0, false, err
+	}
+	if s.runtimeCache == nil {
+		return 0, false, nil
+	}
+	accountID, ok := s.runtimeCache.activeSelectionAccountID()
+	return accountID, ok, nil
+}
+
 func (s *AccountPoolService) CreateAccount(ctx context.Context, rec *store.UpstreamAccountRecord) (*store.UpstreamAccountRecord, error) {
 	if err := s.ensureRuntimeCache(ctx); err != nil {
 		return nil, err

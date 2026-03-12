@@ -1097,6 +1097,7 @@ export namespace main {
 	    credential_raw: string;
 	    credential_raw_masked: string;
 	    has_credential: boolean;
+	    is_active_selection: boolean;
 	    base_url: string;
 	    cost_multiplier: number;
 	    input_cost_multiplier: number;
@@ -1137,6 +1138,7 @@ export namespace main {
 	        this.credential_raw = source["credential_raw"];
 	        this.credential_raw_masked = source["credential_raw_masked"];
 	        this.has_credential = source["has_credential"];
+	        this.is_active_selection = source["is_active_selection"];
 	        this.base_url = source["base_url"];
 	        this.cost_multiplier = source["cost_multiplier"];
 	        this.input_cost_multiplier = source["input_cost_multiplier"];

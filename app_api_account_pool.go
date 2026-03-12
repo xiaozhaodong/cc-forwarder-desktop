@@ -19,6 +19,7 @@ type UpstreamAccountInfo struct {
 	CredentialRaw                 string   `json:"credential_raw"`
 	CredentialRawMasked           string   `json:"credential_raw_masked"`
 	HasCredential                 bool     `json:"has_credential"`
+	IsActiveSelection             bool     `json:"is_active_selection"`
 	BaseURL                       string   `json:"base_url"`
 	CostMultiplier                float64  `json:"cost_multiplier"`
 	InputCostMultiplier           float64  `json:"input_cost_multiplier"`
@@ -146,6 +147,10 @@ func (a *App) GetUpstreamAccounts() ([]UpstreamAccountInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("获取账号列表失败: %w", err)
 	}
+	activeSelectionAccountID, hasActiveSelection, err := a.accountPoolService.GetActiveSelectionAccountID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("获取当前选中账号失败: %w", err)
+	}
 
 	out := make([]UpstreamAccountInfo, 0, len(records))
 	for _, rec := range records {
@@ -156,6 +161,7 @@ func (a *App) GetUpstreamAccounts() ([]UpstreamAccountInfo, error) {
 			CredentialRaw:                 "",
 			CredentialRawMasked:           maskCredentialRaw(rec.ProviderType, rec.CredentialRaw),
 			HasCredential:                 strings.TrimSpace(rec.CredentialRaw) != "",
+			IsActiveSelection:             hasActiveSelection && rec.ID == activeSelectionAccountID,
 			BaseURL:                       rec.BaseURL,
 			CostMultiplier:                rec.CostMultiplier,
 			InputCostMultiplier:           rec.InputCostMultiplier,

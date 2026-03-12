@@ -10,7 +10,6 @@ import { NoticeToast } from '@pages/account-pool/components';
 import { useNotice } from '@pages/account-pool/hooks';
 import {
   compareAccountsByManualPriority,
-  isAccountSchedulable,
   resolveAccountId,
 } from '@pages/account-pool/utils.js';
 import {
@@ -30,6 +29,7 @@ import { useTimeRange } from './hooks/useTimeRange.js';
 import { useAutoRefresh } from './hooks/useAutoRefresh.js';
 import { FiltersPanel, StatsOverview, RequestsTable, Toolbar, RequestDetailModal } from './components';
 import { PAGINATION_CONFIG } from './utils/constants.js';
+import { resolveDisplayedActiveAccount } from './utils/accountSwitcherState.js';
 
 // ============================================
 // Requests 页面
@@ -146,17 +146,10 @@ const RequestsPage = () => {
   }, [latestScheduleSnapshot]);
 
   const activeAccount = useMemo(() => {
-    if (recentSelectedAccountId !== null && recentSelectedAccountId !== undefined) {
-      const selectedAccount = sortedAccounts.find((account) => {
-        return String(resolveAccountId(account) ?? '') === String(recentSelectedAccountId);
-      });
-      if (selectedAccount) {
-        return selectedAccount;
-      }
-    }
-
-    const schedulableAccounts = sortedAccounts.filter(isAccountSchedulable);
-    return schedulableAccounts[0] || sortedAccounts[0] || null;
+    return resolveDisplayedActiveAccount({
+      accounts: sortedAccounts,
+      recentSelectedAccountId
+    });
   }, [recentSelectedAccountId, sortedAccounts]);
 
   // ==================== 数据加载 ====================
