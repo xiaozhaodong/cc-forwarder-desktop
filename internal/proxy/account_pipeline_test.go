@@ -403,6 +403,16 @@ func TestHandler_GetAccountHTTPClient_ReusesSharedTransport(t *testing.T) {
 	if regularClient1.Transport != sseClient.Transport {
 		t.Fatal("expected regular and SSE clients to share the same transport")
 	}
+	httpTransport, ok := regularClient1.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected shared transport to be *http.Transport, got %T", regularClient1.Transport)
+	}
+	if httpTransport.MaxIdleConnsPerHost != 16 {
+		t.Fatalf("expected MaxIdleConnsPerHost=16, got %d", httpTransport.MaxIdleConnsPerHost)
+	}
+	if httpTransport.MaxConnsPerHost != 32 {
+		t.Fatalf("expected MaxConnsPerHost=32, got %d", httpTransport.MaxConnsPerHost)
+	}
 	if regularClient1.Timeout <= 0 {
 		t.Fatalf("expected regular client timeout to be set, got %v", regularClient1.Timeout)
 	}

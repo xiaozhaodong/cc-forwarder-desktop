@@ -561,7 +561,8 @@ func (h *Handler) getAccountHTTPClient(isSSE bool) (*http.Client, error) {
 
 		httpTransport.DisableKeepAlives = false
 		httpTransport.MaxIdleConns = 100
-		httpTransport.MaxIdleConnsPerHost = 10
+		httpTransport.MaxIdleConnsPerHost = 16
+		httpTransport.MaxConnsPerHost = 32
 		httpTransport.IdleConnTimeout = 90 * time.Second
 		httpTransport.TLSHandshakeTimeout = 10 * time.Second
 		httpTransport.ExpectContinueTimeout = 1 * time.Second

@@ -132,7 +132,8 @@ func (f *Forwarder) buildStreamingTransport() (*http.Transport, error) {
 		// 优化传输设置用于流式处理
 		httpTransport.DisableKeepAlives = false
 		httpTransport.MaxIdleConns = 10
-		httpTransport.MaxIdleConnsPerHost = 2
+		httpTransport.MaxIdleConnsPerHost = 16
+		httpTransport.MaxConnsPerHost = 32
 		httpTransport.IdleConnTimeout = 0 // 无空闲超时
 		httpTransport.TLSHandshakeTimeout = 10 * time.Second
 		httpTransport.ExpectContinueTimeout = 1 * time.Second

@@ -3,7 +3,7 @@ package proxy
 import (
 	"context"
 	"encoding/json"
-	"io"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -471,9 +471,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// 读取请求体
 		var bodyBytes []byte
 		if r.Body != nil {
+			if limit := requestBodyMaxBytes(h.config); limit > 0 {
+				r.Body = http.MaxBytesReader(w, r.Body, limit)
+			}
 			var err error
-			bodyBytes, err = io.ReadAll(r.Body)
+			bodyBytes, err = readRequestBodyWithPrealloc(r)
 			if err != nil {
+				if maxErr, ok := extractMaxBytesError(err); ok {
+					http.Error(w, buildRequestBodyTooLargeMessage(maxErr.Limit), http.StatusRequestEntityTooLarge)
+					return
+				}
 				http.Error(w, "Failed to read request body", http.StatusInternalServerError)
 				return
 			}
@@ -503,12 +510,33 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		lifecycleManager.SetEndpointManager(h.endpointManager)
 	}
 
+	clientIP := r.RemoteAddr
+	userAgent := r.Header.Get("User-Agent")
+	requestStarted := false
+	startTrackedRequest := func(isStreaming bool) {
+		if requestStarted {
+			return
+		}
+		lifecycleManager.StartRequest(clientIP, userAgent, r.Method, r.URL.Path, isStreaming)
+		requestStarted = true
+	}
+
 	// 克隆请求体用于重试
 	var bodyBytes []byte
 	if r.Body != nil {
+		if limit := requestBodyMaxBytes(h.config); limit > 0 {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
 		var err error
-		bodyBytes, err = io.ReadAll(r.Body)
+		bodyBytes, err = readRequestBodyWithPrealloc(r)
 		if err != nil {
+			if maxErr, ok := extractMaxBytesError(err); ok {
+				startTrackedRequest(false)
+				lifecycleManager.HandleError(fmt.Errorf("request body too large: %w", err))
+				http.Error(w, buildRequestBodyTooLargeMessage(maxErr.Limit), http.StatusRequestEntityTooLarge)
+				return
+			}
+			startTrackedRequest(false)
 			lifecycleManager.HandleError(err)
 			http.Error(w, "Failed to read request body", http.StatusInternalServerError)
 			return
@@ -521,15 +549,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if modelName := h.extractModelFromRequestBody(body, path); modelName != "" {
 			lifecycleManager.SetModel(modelName)
 		}
-	}(append([]byte(nil), bodyBytes...), r.URL.Path) // 传递副本避免数据竞争
+	}(bodyBytes, r.URL.Path)
 
 	// 检测是否为SSE流式请求
 	isSSE := h.detectSSERequest(r, bodyBytes)
 
 	// 开始请求跟踪（传递流式标记）
-	clientIP := r.RemoteAddr
-	userAgent := r.Header.Get("User-Agent")
-	lifecycleManager.StartRequest(clientIP, userAgent, r.Method, r.URL.Path, isSSE)
+	startTrackedRequest(isSSE)
 
 	// Codex /v1/responses 仅由账号池链路处理，不回退到 endpoint
 	if h.shouldUseAccountPipeline(r.URL.Path) {

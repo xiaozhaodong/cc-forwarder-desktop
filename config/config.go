@@ -15,26 +15,27 @@ import (
 )
 
 type Config struct {
-	Server           ServerConfig           `yaml:"server"`
-	Strategy         StrategyConfig         `yaml:"strategy"`
-	Retry            RetryConfig            `yaml:"retry"`
-	Health           HealthConfig           `yaml:"health"`
-	Logging          LoggingConfig          `yaml:"logging"`
-	Streaming        StreamingConfig        `yaml:"streaming"`
-	Group            GroupConfig            `yaml:"group"`             // Group configuration (DEPRECATED: use Failover instead)
-	Failover         FailoverConfig         `yaml:"failover"`          // Failover configuration (v4.0+)
-	FailureTracker   FailureTrackerConfig   `yaml:"failure_tracker"`   // Failure tracker configuration (v5.2.6+)
-	RequestSuspend   RequestSuspendConfig   `yaml:"request_suspend"`   // Request suspension configuration
-	UsageTracking    UsageTrackingConfig    `yaml:"usage_tracking"`    // Usage tracking configuration
-	TokenCounting    TokenCountingConfig    `yaml:"token_counting"`    // Token counting configuration
-	EndpointsStorage EndpointsStorageConfig `yaml:"endpoints_storage"` // Endpoints storage configuration (v5.0+)
-	AccountPool      AccountPoolConfig      `yaml:"account_pool"`      // Account pool routing configuration (v6.0+)
-	Proxy            ProxyConfig            `yaml:"proxy"`
-	Auth             AuthConfig             `yaml:"auth"`
-	TUI              TUIConfig              `yaml:"tui"`            // TUI configuration (DEPRECATED: TUI has been removed)
-	GlobalTimeout    time.Duration          `yaml:"global_timeout"` // Global timeout for non-streaming requests
-	Timezone         string                 `yaml:"timezone"`       // Global timezone setting for all components
-	Endpoints        []EndpointConfig       `yaml:"endpoints"`
+	Server              ServerConfig           `yaml:"server"`
+	Strategy            StrategyConfig         `yaml:"strategy"`
+	Retry               RetryConfig            `yaml:"retry"`
+	Health              HealthConfig           `yaml:"health"`
+	Logging             LoggingConfig          `yaml:"logging"`
+	Streaming           StreamingConfig        `yaml:"streaming"`
+	Group               GroupConfig            `yaml:"group"`             // Group configuration (DEPRECATED: use Failover instead)
+	Failover            FailoverConfig         `yaml:"failover"`          // Failover configuration (v4.0+)
+	FailureTracker      FailureTrackerConfig   `yaml:"failure_tracker"`   // Failure tracker configuration (v5.2.6+)
+	RequestSuspend      RequestSuspendConfig   `yaml:"request_suspend"`   // Request suspension configuration
+	UsageTracking       UsageTrackingConfig    `yaml:"usage_tracking"`    // Usage tracking configuration
+	TokenCounting       TokenCountingConfig    `yaml:"token_counting"`    // Token counting configuration
+	EndpointsStorage    EndpointsStorageConfig `yaml:"endpoints_storage"` // Endpoints storage configuration (v5.0+)
+	AccountPool         AccountPoolConfig      `yaml:"account_pool"`      // Account pool routing configuration (v6.0+)
+	Proxy               ProxyConfig            `yaml:"proxy"`
+	Auth                AuthConfig             `yaml:"auth"`
+	TUI                 TUIConfig              `yaml:"tui"`                    // TUI configuration (DEPRECATED: TUI has been removed)
+	GlobalTimeout       time.Duration          `yaml:"global_timeout"`         // Global timeout for non-streaming requests
+	RequestBodyMaxBytes int64                  `yaml:"request_body_max_bytes"` // Optional max request body size in bytes, 0 = unlimited
+	Timezone            string                 `yaml:"timezone"`               // Global timezone setting for all components
+	Endpoints           []EndpointConfig       `yaml:"endpoints"`
 
 	// Runtime priority override (not serialized to YAML)
 	PrimaryEndpoint string `yaml:"-"` // Primary endpoint name from command line
@@ -728,6 +729,10 @@ func (c *Config) validate() error {
 		if c.RequestSuspend.MaxSuspendedRequests > 10000 {
 			return fmt.Errorf("max suspended requests cannot exceed 10000 for performance reasons")
 		}
+	}
+
+	if c.RequestBodyMaxBytes < 0 {
+		return fmt.Errorf("request body max bytes cannot be negative")
 	}
 
 	// Validate usage tracking configuration

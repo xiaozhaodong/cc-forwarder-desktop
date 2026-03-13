@@ -163,6 +163,12 @@ func TestForwarder_BuildStreamingTransport_ReusesTransport(t *testing.T) {
 	if first != second {
 		t.Fatal("expected buildStreamingTransport to reuse the same transport instance")
 	}
+	if first.MaxIdleConnsPerHost != 16 {
+		t.Fatalf("expected MaxIdleConnsPerHost=16, got %d", first.MaxIdleConnsPerHost)
+	}
+	if first.MaxConnsPerHost != 32 {
+		t.Fatalf("expected MaxConnsPerHost=32, got %d", first.MaxConnsPerHost)
+	}
 }
 
 func TestForwarder_CopyHeaders(t *testing.T) {
