@@ -11,7 +11,7 @@ import {
   testUpstreamAccount,
   toggleUpstreamAccount
 } from '@utils/api.js';
-import { resolveAccountId } from '../utils.js';
+import { buildManualSwitchSuccessMessage, resolveAccountId } from '../utils.js';
 
 const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotice }) => {
   const [busyKey, setBusyKey] = useState('');
@@ -123,9 +123,7 @@ const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotic
       const accountName = account.account_name || account.accountName || `账号 ${accountId}`;
       showNotice(
         'success',
-        targetTier === 'backup'
-          ? `已将「${accountName}」设为备组当前账号，切换已立即生效`
-          : `已将「${accountName}」设为主组当前账号，切换已立即生效`
+        buildManualSwitchSuccessMessage(accountName, targetTier)
       );
       await Promise.all([
         loadData({ silent: true }),

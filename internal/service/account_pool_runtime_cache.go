@@ -9,23 +9,27 @@ import (
 )
 
 type accountRuntimeCache struct {
-	mu            sync.RWMutex
-	byID          map[int64]*store.UpstreamAccountRecord
-	stateVersions map[int64]uint64
-	ordered       []*store.UpstreamAccountRecord
-	activeTier    int
-	activeAccount int64
+	mu              sync.RWMutex
+	byID            map[int64]*store.UpstreamAccountRecord
+	stateVersions   map[int64]uint64
+	ordered         []*store.UpstreamAccountRecord
+	activeTier      int
+	activeAccount   int64
+	selectionPinned bool
 }
 
 type accountRuntimeStateSnapshot struct {
-	enabled       bool
-	state         string
-	cooldownUntil *time.Time
-	failCount     int
-	lastSuccessAt *time.Time
-	lastError     string
-	updatedAt     time.Time
-	stateVersion  uint64
+	enabled         bool
+	state           string
+	cooldownUntil   *time.Time
+	failCount       int
+	lastSuccessAt   *time.Time
+	lastError       string
+	updatedAt       time.Time
+	stateVersion    uint64
+	activeTier      int
+	activeAccount   int64
+	selectionPinned bool
 }
 
 func newAccountRuntimeCache() *accountRuntimeCache {
@@ -62,8 +66,11 @@ func (c *accountRuntimeCache) replaceAll(records []*store.UpstreamAccountRecord)
 			c.activeAccount = 0
 		}
 	}
+	c.syncPinnedSelectionLocked()
 	if c.activeTier > 0 && !c.hasPriorityLocked(c.activeTier) {
-		c.activeTier = 0
+		c.clearSelectionLocked()
+	} else if !c.selectionPinned {
+		c.clearSelectionLocked()
 	}
 	c.rebuildOrderedLocked()
 }
@@ -79,6 +86,7 @@ func (c *accountRuntimeCache) upsert(record *store.UpstreamAccountRecord) {
 	if _, ok := c.stateVersions[record.ID]; !ok {
 		c.stateVersions[record.ID] = 1
 	}
+	c.syncPinnedSelectionLocked()
 	c.rebuildOrderedLocked()
 }
 
@@ -113,6 +121,7 @@ func (c *accountRuntimeCache) mergeRecordPreservingRuntimeState(record *store.Up
 	merged.UpdatedAt = runtimeUpdatedAt
 
 	c.byID[record.ID] = merged
+	c.syncPinnedSelectionLocked()
 	c.rebuildOrderedLocked()
 	return true
 }
@@ -130,7 +139,9 @@ func (c *accountRuntimeCache) remove(id int64) {
 		c.activeAccount = 0
 	}
 	if c.activeTier > 0 && !c.hasPriorityLocked(c.activeTier) {
-		c.activeTier = 0
+		c.clearSelectionLocked()
+	} else if !c.selectionPinned {
+		c.clearSelectionLocked()
 	}
 	c.rebuildOrderedLocked()
 }
@@ -149,8 +160,7 @@ func (c *accountRuntimeCache) applyPriorityUpdates(updates map[int64]int) {
 		}
 		record.Priority = priority
 	}
-	c.activeTier = 0
-	c.activeAccount = 0
+	c.clearSelectionLocked()
 	c.rebuildOrderedLocked()
 }
 
@@ -170,6 +180,7 @@ func (c *accountRuntimeCache) selectAccount(id int64) bool {
 	changed := c.activeTier != record.Priority || c.activeAccount != id
 	c.activeTier = record.Priority
 	c.activeAccount = id
+	c.selectionPinned = true
 	return changed
 }
 
@@ -183,16 +194,14 @@ func (c *accountRuntimeCache) resolveActiveSelection(prepared []*rankedPriorityT
 
 	selectedTier, selectedIndex := c.resolveActiveSelectionLocked(prepared)
 	if selectedTier == nil {
-		c.activeAccount = 0
+		if !c.selectionPinned {
+			c.clearSelectionLocked()
+		}
 		return nil, -1
 	}
 
 	if selectedIndex < 0 || selectedIndex >= len(selectedTier.eligible) {
 		selectedIndex = 0
-	}
-	c.activeTier = selectedTier.priority
-	if len(selectedTier.eligible) > 0 && selectedTier.eligible[selectedIndex] != nil && selectedTier.eligible[selectedIndex].account != nil {
-		c.activeAccount = selectedTier.eligible[selectedIndex].account.ID
 	}
 	return selectedTier, selectedIndex
 }
@@ -200,6 +209,14 @@ func (c *accountRuntimeCache) resolveActiveSelection(prepared []*rankedPriorityT
 func (c *accountRuntimeCache) resolveActiveSelectionLocked(prepared []*rankedPriorityTier) (*rankedPriorityTier, int) {
 	if len(prepared) == 0 {
 		return nil, -1
+	}
+
+	if !c.selectionPinned {
+		selectedTier := selectFirstEligibleTier(prepared)
+		if selectedTier == nil {
+			return nil, -1
+		}
+		return selectedTier, 0
 	}
 
 	if c.activeTier > 0 {
@@ -221,10 +238,9 @@ func (c *accountRuntimeCache) resolveActiveSelectionLocked(prepared []*rankedPri
 		}
 
 		for _, tier := range prepared {
-			if tier == nil || len(tier.eligible) == 0 || tier.priority < c.activeTier {
-				continue
+			if tier != nil && len(tier.eligible) > 0 {
+				return tier, 0
 			}
-			return tier, 0
 		}
 		return nil, -1
 	}
@@ -291,7 +307,7 @@ func (c *accountRuntimeCache) activeSelectionAccountID() (int64, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if c.activeAccount <= 0 {
+	if !c.selectionPinned || c.activeAccount <= 0 {
 		return 0, false
 	}
 	record, ok := c.byID[c.activeAccount]
@@ -367,8 +383,10 @@ func (c *accountRuntimeCache) markSuccessIfNoNewerFailure(id int64, successAt, a
 	record.LastSuccessAt = cloneTimePtr(&successAt)
 	record.LastError = ""
 	record.UpdatedAt = successAt
-	c.activeTier = record.Priority
-	c.activeAccount = id
+	if c.selectionPinned && c.activeAccount == id {
+		c.activeTier = record.Priority
+		c.activeAccount = id
+	}
 	return true, c.bumpStateVersionLocked(id)
 }
 
@@ -391,8 +409,10 @@ func (c *accountRuntimeCache) markSuccess(id int64, successAt time.Time) (bool, 
 	record.LastSuccessAt = cloneTimePtr(&successAt)
 	record.LastError = ""
 	record.UpdatedAt = successAt
-	c.activeTier = record.Priority
-	c.activeAccount = id
+	if c.selectionPinned && c.activeAccount == id {
+		c.activeTier = record.Priority
+		c.activeAccount = id
+	}
 	return true, c.bumpStateVersionLocked(id)
 }
 
@@ -415,7 +435,11 @@ func (c *accountRuntimeCache) markAuthFailed(id int64, reason string, failedAt t
 	record.LastError = reason
 	record.UpdatedAt = failedAt
 	if c.activeAccount == id {
+		// 保留当前层级 pin，但释放具体账号，让调度器在同层其他可用账号中继续选择。
 		c.activeAccount = 0
+		if c.activeTier <= 0 {
+			c.selectionPinned = false
+		}
 	}
 	return true, c.bumpStateVersionLocked(id)
 }
@@ -439,7 +463,14 @@ func (c *accountRuntimeCache) markTransientFailure(id int64, reason string, cool
 	record.LastError = reason
 	record.UpdatedAt = failedAt
 	if c.activeAccount == id {
-		c.activeAccount = 0
+		// 手动 pin 的目标进入 cooldown 时，当前请求可以降级，但目标账号本身不能丢；
+		// 等 cooldown 结束后，调度器应自动回到该账号。
+		if !c.selectionPinned {
+			c.activeAccount = 0
+		}
+		if c.activeTier <= 0 {
+			c.selectionPinned = false
+		}
 	}
 	return true, c.bumpStateVersionLocked(id)
 }
@@ -458,14 +489,17 @@ func (c *accountRuntimeCache) applyToggle(id int64, enabled bool, changedAt time
 	}
 
 	snapshot := accountRuntimeStateSnapshot{
-		enabled:       record.Enabled,
-		state:         record.State,
-		cooldownUntil: cloneTimePtr(record.CooldownUntil),
-		failCount:     record.FailCount,
-		lastSuccessAt: cloneTimePtr(record.LastSuccessAt),
-		lastError:     record.LastError,
-		updatedAt:     record.UpdatedAt,
-		stateVersion:  c.stateVersions[id],
+		enabled:         record.Enabled,
+		state:           record.State,
+		cooldownUntil:   cloneTimePtr(record.CooldownUntil),
+		failCount:       record.FailCount,
+		lastSuccessAt:   cloneTimePtr(record.LastSuccessAt),
+		lastError:       record.LastError,
+		updatedAt:       record.UpdatedAt,
+		stateVersion:    c.stateVersions[id],
+		activeTier:      c.activeTier,
+		activeAccount:   c.activeAccount,
+		selectionPinned: c.selectionPinned,
 	}
 
 	record.Enabled = enabled
@@ -479,7 +513,9 @@ func (c *accountRuntimeCache) applyToggle(id int64, enabled bool, changedAt time
 	}
 	record.UpdatedAt = changedAt
 	if c.activeTier > 0 && !c.hasPriorityLocked(c.activeTier) {
-		c.activeTier = 0
+		c.clearSelectionLocked()
+	} else if !c.selectionPinned {
+		c.clearSelectionLocked()
 	}
 	return true, c.bumpStateVersionLocked(id), snapshot
 }
@@ -507,6 +543,9 @@ func (c *accountRuntimeCache) restoreRuntimeStateIfVersion(id int64, expectedVer
 	current.LastSuccessAt = cloneTimePtr(snapshot.lastSuccessAt)
 	current.LastError = snapshot.lastError
 	current.UpdatedAt = snapshot.updatedAt
+	c.activeTier = snapshot.activeTier
+	c.activeAccount = snapshot.activeAccount
+	c.selectionPinned = snapshot.selectionPinned
 	if snapshot.stateVersion > 0 {
 		c.stateVersions[id] = snapshot.stateVersion
 	}
@@ -522,6 +561,24 @@ func (c *accountRuntimeCache) bumpStateVersionLocked(id int64) uint64 {
 	}
 	c.stateVersions[id] = current
 	return current
+}
+
+func (c *accountRuntimeCache) clearSelectionLocked() {
+	c.activeTier = 0
+	c.activeAccount = 0
+	c.selectionPinned = false
+}
+
+func (c *accountRuntimeCache) syncPinnedSelectionLocked() {
+	if c == nil || !c.selectionPinned || c.activeAccount <= 0 {
+		return
+	}
+	record := c.byID[c.activeAccount]
+	if record == nil {
+		c.activeAccount = 0
+		return
+	}
+	c.activeTier = record.Priority
 }
 
 func (c *accountRuntimeCache) rebuildOrderedLocked() {

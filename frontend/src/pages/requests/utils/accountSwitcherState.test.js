@@ -30,3 +30,17 @@ test('resolveDisplayedActiveAccount falls back to recent selected snapshot when 
 
   assert.equal(resolved?.id, 2);
 });
+
+test('resolveDisplayedActiveAccount keeps runtime pinned target even when latest request temporarily hit backup', () => {
+  const accounts = [
+    { id: 1, account_name: 'primary-a', priority: 10, enabled: true, state: 'cooldown', is_active_selection: true },
+    { id: 2, account_name: 'backup-a', priority: 20, enabled: true, state: 'active' }
+  ];
+
+  const resolved = resolveDisplayedActiveAccount({
+    accounts,
+    recentSelectedAccountId: 2
+  });
+
+  assert.equal(resolved?.id, 1);
+});

@@ -172,6 +172,16 @@ const resolveAccountId = (account = {}) => {
   );
 };
 
+const buildManualSwitchSuccessMessage = (accountName = '', targetTier = 'primary', { includeRequestPath = false } = {}) => {
+  const safeAccountName = String(accountName || '').trim() || '目标账号';
+  const normalizedTargetTier = String(targetTier || 'primary').trim().toLowerCase();
+  const tierLabel = normalizedTargetTier === 'backup' ? '备组目标账号' : '主组目标账号';
+  const usageHint = includeRequestPath
+    ? '后续 /v1/responses 会按当前可调度状态优先使用它；若暂时不可调度，恢复后会自动回切'
+    : '系统会按当前可调度状态优先使用它；若暂时不可调度，恢复后会自动回切';
+  return `已将「${safeAccountName}」设为${tierLabel}，${usageHint}`;
+};
+
 const summarizeCallbackURL = (raw = '') => {
   const text = String(raw || '').trim();
   if (!text) {
@@ -291,6 +301,7 @@ const maskSessionId = (sessionId = '') => {
 export {
   authMethodToProviderType,
   buildOAuthCredentialRaw,
+  buildManualSwitchSuccessMessage,
   hasFutureQuotaReset,
   isAccountSchedulable,
   isAPIKeyProviderType,

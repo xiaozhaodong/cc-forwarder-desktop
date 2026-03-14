@@ -41,6 +41,9 @@ func (s *AccountPoolService) MoveAccountToTier(ctx context.Context, accountID in
 		if shouldSelectAccount {
 			selectionChanged = s.runtimeCache.selectAccount(accountID)
 		}
+		if selectionChanged && s.softFailureTracker != nil {
+			s.softFailureTracker.Clear(accountID)
+		}
 		if selectionChanged && s.scheduleSnapshots != nil {
 			s.scheduleSnapshots.clear()
 		}
@@ -54,6 +57,9 @@ func (s *AccountPoolService) MoveAccountToTier(ctx context.Context, accountID in
 	selectionChanged := false
 	if shouldSelectAccount {
 		selectionChanged = s.runtimeCache.selectAccount(accountID)
+	}
+	if (selectionChanged || len(updates) > 0) && s.softFailureTracker != nil {
+		s.softFailureTracker.Clear(accountID)
 	}
 	if s.scheduleSnapshots != nil {
 		s.scheduleSnapshots.clear()

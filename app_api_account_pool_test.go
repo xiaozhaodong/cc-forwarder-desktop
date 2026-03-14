@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -283,6 +284,78 @@ func TestMoveUpstreamAccountToTier_ReturnsChangedWhenManualSwitchOverridesSticky
 	}
 	if !result.Changed {
 		t.Fatalf("expected manual switch override to report changed, got %+v", result)
+	}
+}
+
+func TestMoveUpstreamAccountToTier_MessageReflectsSchedulableStatusAndCooldownPinnedSelection(t *testing.T) {
+	app, _ := newAccountPoolAPITestApp(t)
+	ctx := context.Background()
+
+	primary, err := app.accountPoolService.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-cooldown",
+		CredentialRaw: "sk-primary-cooldown",
+		BaseURL:       "https://api.openai.com",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+		QuotaStatus:   "ok",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount primary failed: %v", err)
+	}
+	backup, err := app.accountPoolService.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-active",
+		CredentialRaw: "sk-backup-active",
+		BaseURL:       "https://api.openai.com",
+		Priority:      20,
+		Enabled:       true,
+		State:         "active",
+		QuotaStatus:   "ok",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount backup failed: %v", err)
+	}
+
+	if err := app.accountPoolService.MarkAccountTransientFailure(ctx, primary.ID, "temporary failure", 2*time.Minute); err != nil {
+		t.Fatalf("MarkAccountTransientFailure primary failed: %v", err)
+	}
+
+	result, err := app.MoveUpstreamAccountToTier(primary.ID, "primary")
+	if err != nil {
+		t.Fatalf("MoveUpstreamAccountToTier failed: %v", err)
+	}
+	if !result.Changed {
+		t.Fatalf("expected manual switch to report changed, got %+v", result)
+	}
+	if !strings.Contains(result.Message, "当前可调度状态优先使用") || strings.Contains(result.Message, "立即生效") {
+		t.Fatalf("expected API message to describe deferred schedulable semantics, got %q", result.Message)
+	}
+
+	accounts, err := app.GetUpstreamAccounts()
+	if err != nil {
+		t.Fatalf("GetUpstreamAccounts failed: %v", err)
+	}
+	var primaryInfo *UpstreamAccountInfo
+	var backupInfo *UpstreamAccountInfo
+	for idx := range accounts {
+		account := accounts[idx]
+		switch account.ID {
+		case primary.ID:
+			primaryInfo = &account
+		case backup.ID:
+			backupInfo = &account
+		}
+	}
+	if primaryInfo == nil || backupInfo == nil {
+		t.Fatalf("expected both accounts in response, got %+v", accounts)
+	}
+	if !primaryInfo.IsActiveSelection {
+		t.Fatalf("expected cooldown primary to remain manual active selection, got %+v", primaryInfo)
+	}
+	if backupInfo.IsActiveSelection {
+		t.Fatalf("expected backup not to become manual active selection, got %+v", backupInfo)
 	}
 }
 

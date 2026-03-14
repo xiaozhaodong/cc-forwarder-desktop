@@ -311,9 +311,9 @@ func (a *App) MoveUpstreamAccountToTier(id int64, targetTier string) (MoveUpstre
 	message := "账号层级未发生变化"
 	if changed {
 		if targetTierIndex == 0 {
-			message = "账号已切换到主组"
+			message = "账号已设为主组目标账号，系统将按当前可调度状态优先使用；若暂时不可调度，恢复后会自动回切"
 		} else {
-			message = "账号已切换到备组"
+			message = "账号已设为备组目标账号，系统将按当前可调度状态优先使用；若暂时不可调度，恢复后会自动回切"
 		}
 	}
 	return MoveUpstreamAccountToTierResult{

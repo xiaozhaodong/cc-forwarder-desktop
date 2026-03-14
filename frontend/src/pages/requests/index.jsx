@@ -9,6 +9,7 @@ import { ErrorMessage } from '@components/ui';
 import { NoticeToast } from '@pages/account-pool/components';
 import { useNotice } from '@pages/account-pool/hooks';
 import {
+  buildManualSwitchSuccessMessage,
   compareAccountsByManualPriority,
   resolveAccountId,
 } from '@pages/account-pool/utils.js';
@@ -363,7 +364,7 @@ const RequestsPage = () => {
         return;
       }
 
-      showNotice('success', `已将「${accountName}」切为主组，后续 /v1/responses 将优先使用该账号`);
+      showNotice('success', buildManualSwitchSuccessMessage(accountName, 'primary', { includeRequestPath: true }));
       await loadData(true);
     } catch (err) {
       showNotice('error', err.message || '切换账号失败');

@@ -138,7 +138,7 @@ func TestPrepareSchedulableAccounts_DegradesWhenHigherTierTemporarilyExhausted(t
 	}
 }
 
-func TestPrepareSchedulableAccounts_KeepsActiveAccountStickyWithinTier(t *testing.T) {
+func TestPrepareSchedulableAccounts_ReevaluatesWithinTierWhenNoManualSelection(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -207,19 +207,21 @@ func TestPrepareSchedulableAccounts_KeepsActiveAccountStickyWithinTier(t *testin
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts next failed: %v", err)
 	}
-	if got, want := collectAccountIDs(next), []int64{sticky.ID, challenger.ID}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected current active account to remain sticky, got %v want %v", got, want)
+	if got, want := collectAccountIDs(next), []int64{challenger.ID, sticky.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected same-tier ranking to be recalculated after challenger improves, got %v want %v", got, want)
 	}
 
 	snapshot, err := svc.GetLatestAccountScheduleSnapshot(ctx)
 	if err != nil {
 		t.Fatalf("GetLatestAccountScheduleSnapshot failed: %v", err)
 	}
-	selected := mustFindCandidateDecision(t, snapshot, sticky.ID)
-	assertStringContainsAll(t, selected.ReasonDetail, []string{"活跃账号", "同组"})
+	selected := mustFindCandidateDecision(t, snapshot, challenger.ID)
+	if selected.Reason != "highest_ranked_in_selected_tier" {
+		t.Fatalf("expected challenger to be selected by current ranking, got %+v", selected)
+	}
 }
 
-func TestPrepareSchedulableAccounts_DoesNotAutoReturnToHigherTierAfterDegrade(t *testing.T) {
+func TestPrepareSchedulableAccounts_AutoReturnsToHigherTierAfterRecovery(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -288,19 +290,25 @@ func TestPrepareSchedulableAccounts_DoesNotAutoReturnToHigherTierAfterDegrade(t 
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts after recovery failed: %v", err)
 	}
-	if got, want := collectAccountIDs(stillBackup), []int64{backup.ID}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected degraded tier to remain active until manual return, got %v want %v", got, want)
+	if got, want := collectAccountIDs(stillBackup), []int64{primary.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected recovered primary tier to be selected again, got %v want %v", got, want)
 	}
 
 	snapshot, err := svc.GetLatestAccountScheduleSnapshot(ctx)
 	if err != nil {
 		t.Fatalf("GetLatestAccountScheduleSnapshot failed: %v", err)
 	}
-	recoveredPrimaryCandidate := mustFindCandidateDecision(t, snapshot, primary.ID)
-	if recoveredPrimaryCandidate.Reason != "higher_priority_tier_recovered_but_retained_degraded_tier" {
-		t.Fatalf("expected recovered primary to be marked as retained degraded tier, got %+v", recoveredPrimaryCandidate)
+	if snapshot.DegradedToLowerPriority {
+		t.Fatalf("expected snapshot to return to primary tier after recovery, got %+v", snapshot)
 	}
-	assertStringContainsAll(t, recoveredPrimaryCandidate.ReasonDetail, []string{"未自动切回", "更高优先级组"})
+	recoveredPrimaryCandidate := mustFindCandidateDecision(t, snapshot, primary.ID)
+	if recoveredPrimaryCandidate.Reason != "highest_ranked_in_selected_tier" {
+		t.Fatalf("expected recovered primary to win by current ranking, got %+v", recoveredPrimaryCandidate)
+	}
+	backupCandidate := mustFindCandidateDecision(t, snapshot, backup.ID)
+	if backupCandidate.Reason != "higher_priority_tier_selected" {
+		t.Fatalf("expected backup tier to be skipped after primary recovers, got %+v", backupCandidate)
+	}
 }
 
 func TestMoveAccountToTier_OverridesDegradedSelectionEvenWhenPriorityUnchanged(t *testing.T) {
@@ -390,6 +398,80 @@ func TestMoveAccountToTier_OverridesDegradedSelectionEvenWhenPriorityUnchanged(t
 	}
 	if got, want := collectAccountIDs(ordered), []int64{primary.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected manual switch to force primary account selection, got %v want %v", got, want)
+	}
+}
+
+func TestPrepareSchedulableAccounts_FallsBackToRecoveredHigherPriorityTierWhenPinnedBackupBecomesUnavailable(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	primary, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "primary-ok",
+		CredentialRaw:          "rt-primary-ok",
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		Quota5HUsedPercent:     testFloat64Ptr(15),
+		Quota5HResetAt:         testTimePtr(now.Add(30 * time.Minute)),
+		QuotaWeeklyUsedPercent: testFloat64Ptr(10),
+		QuotaWeeklyResetAt:     testTimePtr(now.Add(5 * 24 * time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("create primary account failed: %v", err)
+	}
+
+	backup, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "backup-pinned",
+		CredentialRaw:          "rt-backup-pinned",
+		Priority:               20,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		Quota5HUsedPercent:     testFloat64Ptr(10),
+		Quota5HResetAt:         testTimePtr(now.Add(20 * time.Minute)),
+		QuotaWeeklyUsedPercent: testFloat64Ptr(10),
+		QuotaWeeklyResetAt:     testTimePtr(now.Add(5 * 24 * time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("create backup account failed: %v", err)
+	}
+
+	changed, err := svc.MoveAccountToTier(ctx, backup.ID, 1)
+	if err != nil {
+		t.Fatalf("MoveAccountToTier backup failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected pinning backup account to change runtime selection")
+	}
+
+	updatedBackup, err := st.GetAccount(ctx, backup.ID)
+	if err != nil {
+		t.Fatalf("GetAccount backup failed: %v", err)
+	}
+	if updatedBackup == nil {
+		t.Fatal("expected backup account")
+	}
+	updatedBackup.QuotaStatus = "exhausted"
+	updatedBackup.Quota5HUsedPercent = testFloat64Ptr(100)
+	updatedBackup.Quota5HResetAt = testTimePtr(now.Add(2 * time.Hour))
+	updatedBackup.QuotaWeeklyUsedPercent = testFloat64Ptr(100)
+	if err := st.UpdateAccount(ctx, updatedBackup); err != nil {
+		t.Fatalf("UpdateAccount backup failed: %v", err)
+	}
+	if err := svc.reloadAccountIntoCache(ctx, backup.ID); err != nil {
+		t.Fatalf("reloadAccountIntoCache backup failed: %v", err)
+	}
+
+	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-pinned-backup-unavailable", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{primary.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected scheduler to fall back to recovered higher-priority tier, got %v want %v", got, want)
 	}
 }
 

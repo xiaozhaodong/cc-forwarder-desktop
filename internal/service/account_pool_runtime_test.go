@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -894,5 +895,66 @@ func TestToggleAccount_FailedPersistRestoresRuntimeStateVersion(t *testing.T) {
 	}
 	if dbRecord == nil || dbRecord.Enabled || dbRecord.State != "disabled_auth" {
 		t.Fatalf("expected DB auth_failed to persist after failed toggle rollback, got %+v", dbRecord)
+	}
+}
+
+func TestToggleAccount_FailedPersistRestoresPinnedSelectionState(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	first, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-a",
+		CredentialRaw: "sk-primary-a",
+		BaseURL:       "https://api.openai.com",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create first account failed: %v", err)
+	}
+	second, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-b",
+		CredentialRaw: "sk-primary-b",
+		BaseURL:       "https://api.openai.com",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create second account failed: %v", err)
+	}
+
+	changed, err := svc.MoveAccountToTier(ctx, second.ID, 0)
+	if err != nil {
+		t.Fatalf("MoveAccountToTier failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected manual switch to pin second account")
+	}
+
+	failingStore := &failingUpdateStore{inner: st, failToggle: true}
+	svc.store = failingStore
+
+	if err := svc.ToggleAccount(ctx, second.ID, false); err == nil {
+		t.Fatal("expected ToggleAccount to fail")
+	}
+
+	activeAccountID, ok, err := svc.GetActiveSelectionAccountID(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveSelectionAccountID failed: %v", err)
+	}
+	if !ok || activeAccountID != second.ID {
+		t.Fatalf("expected pinned selection to be restored, got ok=%v activeAccountID=%d", ok, activeAccountID)
+	}
+
+	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-toggle-rollback-selection", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{second.ID, first.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected pinned account order restored after failed toggle persist, got %v want %v", got, want)
 	}
 }
