@@ -31,6 +31,7 @@ import { useAutoRefresh } from './hooks/useAutoRefresh.js';
 import { FiltersPanel, StatsOverview, RequestsTable, Toolbar, RequestDetailModal } from './components';
 import { PAGINATION_CONFIG } from './utils/constants.js';
 import { resolveDisplayedActiveAccount } from './utils/accountSwitcherState.js';
+import { buildTimeRangeSelectionState } from './utils/timeRangeSelection.js';
 
 // ============================================
 // Requests 页面
@@ -82,7 +83,9 @@ const RequestsPage = () => {
 
   // 时间范围 Hook
   const { activeRange, selectRange } = useTimeRange((timeRange) => {
-    updateFilters(timeRange);
+    const nextState = buildTimeRangeSelectionState(filters, timeRange);
+    updateFilters(nextState.filters);
+    setAppliedQueryParams(nextState.appliedQueryParams);
     setPagination(prev => ({ ...prev, page: 1 }));
   });
 
