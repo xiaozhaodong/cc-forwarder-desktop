@@ -1,5 +1,7 @@
 package main
 
+import "context"
+
 func (a *App) scheduleStartupConnectivityChecks() {
 	if a == nil {
 		return
@@ -54,7 +56,18 @@ func (a *App) runStartupAccountChecks() {
 		a.startupAccountCheckRunner()
 		return
 	}
+	if a.accountPoolService == nil {
+		return
+	}
+
+	summary := a.accountPoolService.RunStartupConnectivityChecks(context.Background(), 0)
 	if a.logger != nil {
-		a.logger.Debug("启动连通性检查: 账号批量检测待后续任务接入")
+		a.logger.Info(
+			"启动连通性检查: 账号批量检测完成",
+			"total", summary.Total,
+			"success", summary.SuccessCount,
+			"failed", summary.FailureCount,
+			"skipped", summary.SkippedCount,
+		)
 	}
 }

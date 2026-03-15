@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/store"
 )
 
 func TestScheduleStartupConnectivityChecks_DoesNotBlockStartup(t *testing.T) {
@@ -81,4 +85,40 @@ func TestScheduleStartupConnectivityChecks_SkipsWhenNothingConfigured(t *testing
 	}
 
 	app.scheduleStartupConnectivityChecks()
+}
+
+func TestScheduleStartupConnectivityChecks_TriggersAccountChecksWhenEligibleAccountsExist(t *testing.T) {
+	app, _ := newAccountPoolAPITestApp(t)
+
+	requests := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Fatalf("expected request to /v1/responses, got %s", r.URL.Path)
+		}
+		requests <- struct{}{}
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	_, err := app.accountPoolService.CreateAccount(context.Background(), &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "startup-account",
+		CredentialRaw: "sk-startup-account",
+		BaseURL:       server.URL,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+		QuotaStatus:   "ok",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount failed: %v", err)
+	}
+
+	app.scheduleStartupConnectivityChecks()
+
+	select {
+	case <-requests:
+	case <-time.After(time.Second):
+		t.Fatal("expected startup account checks to trigger upstream connectivity test")
+	}
 }
