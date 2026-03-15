@@ -1,12 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,31 @@ import (
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/store"
 )
+
+type syncWriter struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (w *syncWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.buf = append(w.buf, p...)
+	return len(p), nil
+}
+
+func (w *syncWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return string(w.buf)
+}
+
+var _ io.Writer = (*syncWriter)(nil)
+
+func TestScheduleStartupConnectivityChecks_NilAppDoesNotPanic(t *testing.T) {
+	var app *App
+	app.scheduleStartupConnectivityChecks()
+}
 
 func TestScheduleStartupConnectivityChecks_DoesNotBlockStartup(t *testing.T) {
 	app := NewApp()
@@ -92,6 +118,7 @@ func TestScheduleStartupConnectivityChecks_SkipsWhenNothingConfigured(t *testing
 
 func TestScheduleStartupConnectivityChecks_TriggersAccountChecksWhenEligibleAccountsExist(t *testing.T) {
 	app, _ := newAccountPoolAPITestApp(t)
+	app.ctx = context.Background()
 
 	requests := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +155,7 @@ func TestScheduleStartupConnectivityChecks_TriggersAccountChecksWhenEligibleAcco
 
 func TestScheduleStartupConnectivityChecks_DoesNotTriggerAccountRequestsWhenNoEligibleAccountsExist(t *testing.T) {
 	app, _ := newAccountPoolAPITestApp(t)
+	app.ctx = context.Background()
 
 	requests := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -136,8 +164,8 @@ func TestScheduleStartupConnectivityChecks_DoesNotTriggerAccountRequestsWhenNoEl
 	}))
 	defer server.Close()
 
-	var logs bytes.Buffer
-	app.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logs := &syncWriter{}
+	app.logger = slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	_, err := app.accountPoolService.CreateAccount(context.Background(), &store.UpstreamAccountRecord{
 		ProviderType:  "api_key",
@@ -174,5 +202,35 @@ func TestScheduleStartupConnectivityChecks_DoesNotTriggerAccountRequestsWhenNoEl
 	case <-requests:
 		t.Fatal("expected no upstream connectivity request when no eligible accounts exist")
 	default:
+	}
+}
+
+func TestRunStartupEndpointChecks_DoesNotLogWrapperCompletionOnSuccess(t *testing.T) {
+	logs := &syncWriter{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	app := NewApp()
+	app.logger = slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	app.endpointManager = endpoint.NewManager(&config.Config{
+		Health: config.HealthConfig{
+			Timeout:    time.Second,
+			HealthPath: "/v1/models",
+		},
+		Endpoints: []config.EndpointConfig{
+			{
+				Name:  "startup-endpoint",
+				URL:   server.URL,
+				Token: "test-token",
+			},
+		},
+	})
+
+	app.runStartupEndpointChecks()
+
+	if strings.Contains(logs.String(), "启动连通性检查: 端点批量检测完成") {
+		t.Fatalf("expected no wrapper completion log on endpoint success, got %s", logs.String())
 	}
 }

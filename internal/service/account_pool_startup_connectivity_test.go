@@ -140,6 +140,14 @@ func TestRunStartupConnectivityChecks_ContinuesAfterSingleAccountFailure(t *test
 	}
 }
 
+func TestRunStartupConnectivityCheck_NilServiceReturnsNil(t *testing.T) {
+	var svc *AccountPoolService
+
+	if err := svc.runStartupConnectivityCheck(context.Background(), 42); err != nil {
+		t.Fatalf("expected nil error for nil service helper, got %v", err)
+	}
+}
+
 func mustCreateStartupConnectivityAccount(t *testing.T, st *store.SQLiteAccountPoolStore, rec *store.UpstreamAccountRecord) *store.UpstreamAccountRecord {
 	t.Helper()
 

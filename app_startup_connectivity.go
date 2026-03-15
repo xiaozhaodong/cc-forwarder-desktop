@@ -1,12 +1,9 @@
 package main
 
-import "context"
-
 func (a *App) scheduleStartupConnectivityChecks() {
 	if a == nil {
 		return
 	}
-
 	if a.shouldRunStartupEndpointChecks() {
 		go a.runStartupEndpointChecks()
 	}
@@ -16,7 +13,10 @@ func (a *App) scheduleStartupConnectivityChecks() {
 }
 
 func (a *App) shouldRunStartupEndpointChecks() bool {
-	if a == nil || a.endpointManager == nil {
+	if a == nil {
+		return false
+	}
+	if a.endpointManager == nil {
 		return false
 	}
 	return len(a.endpointManager.GetAllEndpoints()) > 0
@@ -43,7 +43,8 @@ func (a *App) runStartupEndpointChecks() {
 	if a.endpointManager == nil {
 		return
 	}
-	if _, _, err := a.endpointManager.BatchHealthCheckAll(); err != nil && a.logger != nil {
+	_, _, err := a.endpointManager.BatchHealthCheckAll()
+	if err != nil && a.logger != nil {
 		a.logger.Warn("启动连通性检查: 端点批量检测失败", "error", err)
 	}
 }
@@ -60,7 +61,7 @@ func (a *App) runStartupAccountChecks() {
 		return
 	}
 
-	summary := a.accountPoolService.RunStartupConnectivityChecks(context.Background(), 0)
+	summary := a.accountPoolService.RunStartupConnectivityChecks(a.ctx, 0)
 	if summary.Total == 0 {
 		if a.logger != nil {
 			a.logger.Debug(
