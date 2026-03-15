@@ -10,6 +10,8 @@ const StatsOverview = ({ groups = [] }) => {
   const activeGroup = groups.find(g => g.is_active);
   const totalEndpoints = groups.reduce((sum, g) => sum + (g.total_endpoints || 0), 0);
   const healthyEndpoints = groups.reduce((sum, g) => sum + (g.healthy_endpoints || 0), 0);
+  const uncheckedEndpoints = groups.reduce((sum, g) => sum + (g.unchecked_endpoints || 0), 0);
+  const checkedEndpoints = Math.max(totalEndpoints - uncheckedEndpoints, 0);
   const cooldownGroups = groups.filter(g => g.in_cooldown).length;
 
   const stats = [
@@ -30,8 +32,8 @@ const StatsOverview = ({ groups = [] }) => {
       iconBg: 'bg-indigo-50 text-indigo-600'
     },
     {
-      label: '健康端点',
-      value: `${healthyEndpoints}/${totalEndpoints}`,
+      label: '最近可达',
+      value: checkedEndpoints > 0 ? `${healthyEndpoints}/${checkedEndpoints}` : '未检测',
       icon: Server,
       status: 'good',
       color: 'text-emerald-600',

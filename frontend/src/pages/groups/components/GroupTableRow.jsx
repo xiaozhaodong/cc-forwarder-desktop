@@ -8,8 +8,10 @@ import { Play, Pause, Clock, Activity, Server, Settings2, Power } from 'lucide-r
 const GroupTableRow = ({ group, onActivate, onPause, loading }) => {
   const isActive = group.is_active;
   const isCooldown = group.in_cooldown;
-  const healthyPercent = group.total_endpoints > 0
-    ? Math.round((group.healthy_endpoints / group.total_endpoints) * 100)
+  const uncheckedCount = group.unchecked_endpoints || 0;
+  const checkedCount = Math.max((group.total_endpoints || 0) - uncheckedCount, 0);
+  const healthyPercent = checkedCount > 0
+    ? Math.round((group.healthy_endpoints / checkedCount) * 100)
     : 0;
 
   return (
@@ -55,12 +57,13 @@ const GroupTableRow = ({ group, onActivate, onPause, loading }) => {
         )}
       </td>
 
-      {/* 健康度指标 */}
+      {/* 连通性指标 */}
       <td className="px-6 py-4">
         <div className="flex items-center gap-3 w-full max-w-[180px]">
           <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full ${
+                checkedCount === 0 ? 'bg-transparent' :
                 healthyPercent === 100 ? 'bg-emerald-500' :
                 healthyPercent === 0 ? 'bg-transparent' : 'bg-amber-500'
               }`}
@@ -68,20 +71,25 @@ const GroupTableRow = ({ group, onActivate, onPause, loading }) => {
             />
           </div>
           <span className={`text-sm font-bold font-mono ${
+            checkedCount === 0 ? 'text-slate-500' :
             healthyPercent === 100 ? 'text-emerald-600' : 'text-amber-600'
           }`}>
-            {healthyPercent}%
+            {checkedCount > 0 ? `${healthyPercent}%` : '未检测'}
           </span>
         </div>
       </td>
 
-      {/* 端点概览 */}
+      {/* 最近可达概览 */}
       <td className="px-6 py-4">
-        <div className="flex items-center gap-2 text-gray-600">
-          <Server className="w-4 h-4 text-gray-400" />
-          <span className="font-medium">{group.healthy_endpoints}</span>
-          <span className="text-gray-400">/ {group.total_endpoints}</span>
-        </div>
+        {checkedCount > 0 ? (
+          <div className="flex items-center gap-2 text-gray-600">
+            <Server className="w-4 h-4 text-gray-400" />
+            <span className="font-medium">{group.healthy_endpoints}</span>
+            <span className="text-gray-400">/ {checkedCount}</span>
+          </div>
+        ) : (
+          <div className="text-sm font-medium text-slate-500">未检测</div>
+        )}
       </td>
 
       {/* 操作 */}

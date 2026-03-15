@@ -80,8 +80,8 @@ func NewSettingsService(store store.SettingsStore) *SettingsService {
 			},
 			CategoryHealth: {
 				Name:        CategoryHealth,
-				Label:       "健康检查",
-				Description: "配置端点健康检查参数",
+				Label:       "连通性测试",
+				Description: "配置手动/批量连通性测试参数",
 				Icon:        "❤️",
 				Order:       4,
 			},
@@ -357,10 +357,10 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 	case CategoryStrategy:
 		return []*store.SettingRecord{
 			{Category: CategoryStrategy, Key: "type", Value: "priority", ValueType: ValueTypeString, Label: "策略类型", Description: "路由策略: priority (优先级) 或 fastest (最快响应)", DisplayOrder: 1},
-			{Category: CategoryStrategy, Key: "fast_test_enabled", Value: "true", ValueType: ValueTypeBool, Label: "启用快速测试", Description: "仅在 fastest 策略下生效", DisplayOrder: 2},
+			{Category: CategoryStrategy, Key: "fast_test_enabled", Value: "true", ValueType: ValueTypeBool, Label: "启用快速测试", Description: "仅在 fastest 策略下生效，执行请求前连通性测试", DisplayOrder: 2},
 			{Category: CategoryStrategy, Key: "fast_test_cache_ttl", Value: "3s", ValueType: ValueTypeDuration, Label: "缓存时间", Description: "快速测试结果缓存时间", DisplayOrder: 3},
 			{Category: CategoryStrategy, Key: "fast_test_timeout", Value: "1s", ValueType: ValueTypeDuration, Label: "测试超时", Description: "快速测试超时时间", DisplayOrder: 4},
-			{Category: CategoryStrategy, Key: "fast_test_path", Value: "/v1/models", ValueType: ValueTypeString, Label: "测试路径", Description: "快速测试请求路径", DisplayOrder: 5},
+			{Category: CategoryStrategy, Key: "fast_test_path", Value: "", ValueType: ValueTypeString, Label: "测试路径", Description: "快速测试请求路径，留空则直接访问端点 URL", DisplayOrder: 5},
 		}
 
 	case CategoryRetry:
@@ -373,9 +373,9 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 
 	case CategoryHealth:
 		return []*store.SettingRecord{
-			{Category: CategoryHealth, Key: "check_interval", Value: "30s", ValueType: ValueTypeDuration, Label: "检查间隔", Description: "健康检查的时间间隔", DisplayOrder: 1},
-			{Category: CategoryHealth, Key: "timeout", Value: "5s", ValueType: ValueTypeDuration, Label: "检查超时", Description: "健康检查的超时时间", DisplayOrder: 2},
-			{Category: CategoryHealth, Key: "health_path", Value: "/v1/models", ValueType: ValueTypeString, Label: "检查路径", Description: "健康检查请求的 API 路径", DisplayOrder: 3},
+			{Category: CategoryHealth, Key: "check_interval", Value: "30s", ValueType: ValueTypeDuration, Label: "轮询间隔", Description: "旧版后台轮询间隔，当前仅保留兼容，不再触发自动检测", DisplayOrder: 1},
+			{Category: CategoryHealth, Key: "timeout", Value: "5s", ValueType: ValueTypeDuration, Label: "检测超时", Description: "手动/批量连通性测试的超时时间", DisplayOrder: 2},
+			{Category: CategoryHealth, Key: "health_path", Value: "", ValueType: ValueTypeString, Label: "检测路径", Description: "连通性测试请求路径，留空则直接访问端点 URL", DisplayOrder: 3},
 		}
 
 	case CategoryRequest:

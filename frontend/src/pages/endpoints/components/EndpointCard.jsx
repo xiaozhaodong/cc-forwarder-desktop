@@ -20,7 +20,7 @@ import {
 import { BrowserOpenURL } from '@wailsjs/runtime/runtime';
 
 // ============================================
-// 健康状态徽章
+// 连通性状态徽章
 // ============================================
 
 const HealthBadge = ({ healthy, neverChecked, inCooldown }) => {
@@ -45,12 +45,12 @@ const HealthBadge = ({ healthy, neverChecked, inCooldown }) => {
   return healthy ? (
     <div className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-600 border border-emerald-100">
       <CheckCircle2 size={10} className="mr-1" />
-      健康
+      可达
     </div>
   ) : (
     <div className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-rose-50 text-rose-600 border border-rose-100">
       <XCircle size={10} className="mr-1" />
-      异常
+      不可达
     </div>
   );
 };
@@ -90,7 +90,7 @@ const EndpointCard = ({
   const isSqliteMode = storageMode === 'sqlite';
   const isActive = isSqliteMode ? endpoint.enabled : endpoint.group_is_active;
   const responseTime = endpoint.response_time || endpoint.responseTimeMs || 0;
-  const isNeverChecked = endpoint.never_checked || (!endpoint.lastCheck && !endpoint.last_check && !endpoint.updatedAt);
+  const isNeverChecked = endpoint.never_checked === true || endpoint.neverChecked === true || (!endpoint.lastCheck && !endpoint.last_check);
   const inCooldown = endpoint.in_cooldown || endpoint.inCooldown;
 
   // 获取认证类型显示
@@ -129,7 +129,7 @@ const EndpointCard = ({
           )}
         </div>
 
-        {/* 名称 + 健康状态 */}
+        {/* 名称 + 连通性状态 */}
         <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
           <span className="font-semibold text-slate-800 text-sm truncate max-w-[120px]" title={endpoint.name}>
             {endpoint.name}

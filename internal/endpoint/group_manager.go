@@ -629,10 +629,14 @@ func (gm *GroupManager) GetGroupDetails() map[string]interface{} {
 
 		healthyCount := 0
 		unhealthyCount := 0
+		uncheckedCount := 0
 		totalEndpoints := len(group.Endpoints)
 
 		for _, ep := range group.Endpoints {
-			if ep.IsHealthy() {
+			status := ep.GetStatus()
+			if status.NeverChecked {
+				uncheckedCount++
+			} else if status.Healthy {
 				healthyCount++
 			} else {
 				unhealthyCount++
@@ -667,6 +671,7 @@ func (gm *GroupManager) GetGroupDetails() map[string]interface{} {
 			"total_endpoints":        totalEndpoints,
 			"healthy_endpoints":      healthyCount,
 			"unhealthy_endpoints":    unhealthyCount,
+			"unchecked_endpoints":    uncheckedCount,
 			"manually_paused":        group.ManuallyPaused,
 			"in_cooldown":            !group.CooldownUntil.IsZero() && time.Now().Before(group.CooldownUntil),
 			"cooldown_remaining":     cooldownRemaining.Round(time.Second).String(),

@@ -56,7 +56,7 @@ const EndpointsPage = () => {
   const [storageStatus, setStorageStatus] = useState(null);
   const [storageEndpoints, setStorageEndpoints] = useState([]);
 
-  // 批量检测状态
+  // 批量连通性测试状态
   const [batchCheckLoading, setBatchCheckLoading] = useState(false);
 
   // 表单状态
@@ -116,18 +116,18 @@ const EndpointsPage = () => {
     };
   }, [loadStorageStatus]);
 
-  // 批量健康检测处理
+  // 批量连通性测试处理
   const handleBatchHealthCheck = async () => {
     setBatchCheckLoading(true);
     try {
       await performBatchHealthCheckAll();
-      // 刷新数据以获取最新的健康状态、响应时间等
+      // 刷新数据以获取最新的连通性状态、响应时间等
       if (isSqliteMode) {
         await loadStorageStatus();
       }
     } catch (err) {
-      console.error('批量健康检测失败:', err);
-      alert(`批量健康检测失败: ${err.message}`);
+      console.error('批量连通性测试失败:', err);
+      alert(`批量连通性测试失败: ${err.message}`);
     } finally {
       setBatchCheckLoading(false);
     }
@@ -144,11 +144,11 @@ const EndpointsPage = () => {
     ? {
         total: storageEndpoints.length,
         healthy: storageEndpoints.filter(e => e.healthy).length,
-        unhealthy: storageEndpoints.filter(e => !e.healthy && e.lastCheck).length,
-        unchecked: storageEndpoints.filter(e => !e.lastCheck).length,
+        unhealthy: storageEndpoints.filter(e => !e.healthy && e.never_checked !== true && e.neverChecked !== true && (e.lastCheck || e.last_check)).length,
+        unchecked: storageEndpoints.filter(e => e.never_checked === true || e.neverChecked === true || !(e.lastCheck || e.last_check)).length,
         cooldown: storageEndpoints.filter(e => e.in_cooldown || e.inCooldown).length,
-        healthPercentage: storageEndpoints.length > 0
-          ? ((storageEndpoints.filter(e => e.healthy).length / storageEndpoints.length) * 100).toFixed(1)
+        healthPercentage: storageEndpoints.filter(e => e.never_checked !== true && e.neverChecked !== true && (e.lastCheck || e.last_check)).length > 0
+          ? ((storageEndpoints.filter(e => e.healthy).length / storageEndpoints.filter(e => e.never_checked !== true && e.neverChecked !== true && (e.lastCheck || e.last_check)).length) * 100).toFixed(1)
           : 0
       }
     : { ...stats, cooldown: 0 };
@@ -287,7 +287,7 @@ const EndpointsPage = () => {
             loading={batchCheckLoading}
             onClick={handleBatchHealthCheck}
           >
-            检测全部
+            测试连通性
           </Button>
 
           {/* 新建端点按钮 (SQLite 模式) */}
@@ -305,7 +305,7 @@ const EndpointsPage = () => {
       <div className="flex items-center gap-2 mb-6 px-3 py-2 bg-slate-50/80 rounded-lg border border-slate-100 text-xs text-slate-500">
         <Info className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
         <span>
-          提示：显示的健康状态与延迟仅基于探测请求（如 /v1/models）。实际路由调度基于真实请求的成功率与故障冷却策略，不完全依赖探测数据。
+          提示：列表中的“可达/不可达”仅代表最近一次连通性测试结果。实际路由调度主要依据真实请求失败追踪与冷却状态，而不是后台轮询探测。
         </span>
       </div>
 
@@ -332,11 +332,11 @@ const EndpointsPage = () => {
         )}
         <div className="bg-white rounded-xl border border-emerald-200/60 p-4 shadow-sm">
           <div className="text-2xl font-bold text-emerald-600">{displayStats.healthy}</div>
-          <div className="text-sm text-slate-500">健康端点</div>
+          <div className="text-sm text-slate-500">最近可达</div>
         </div>
         <div className="bg-white rounded-xl border border-rose-200/60 p-4 shadow-sm">
           <div className="text-2xl font-bold text-rose-600">{displayStats.unhealthy}</div>
-          <div className="text-sm text-slate-500">不健康端点</div>
+          <div className="text-sm text-slate-500">最近不可达</div>
         </div>
         {/* 冷却中端点卡片 - 仅在有冷却端点时显示 */}
         {displayStats.cooldown > 0 && (
@@ -347,7 +347,7 @@ const EndpointsPage = () => {
         )}
         <div className="bg-white rounded-xl border border-slate-200/60 p-4 shadow-sm">
           <div className="text-2xl font-bold text-slate-400">{displayStats.unchecked}</div>
-          <div className="text-sm text-slate-500">未检测端点</div>
+          <div className="text-sm text-slate-500">未检测</div>
         </div>
       </div>
 
@@ -384,9 +384,9 @@ const EndpointsPage = () => {
           {/* 底部统计 */}
           <div className="text-xs text-slate-500 text-center py-2">
             共 {groupedEndpoints.length} 个渠道，{displayEndpoints.length} 个端点
-            {displayStats.healthPercentage > 0 && (
+            {displayStats.healthy + displayStats.unhealthy > 0 && (
               <span className="ml-2 text-indigo-600">
-                · {displayStats.healthPercentage}% 健康率
+                · {displayStats.healthPercentage}% 最近可达率
               </span>
             )}
           </div>

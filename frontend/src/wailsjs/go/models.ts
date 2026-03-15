@@ -463,6 +463,7 @@ export namespace main {
 	    created_at: string;
 	    updated_at: string;
 	    healthy: boolean;
+	    never_checked: boolean;
 	    last_check: string;
 	    response_time_ms: number;
 	    in_cooldown: boolean;
@@ -498,6 +499,7 @@ export namespace main {
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
 	        this.healthy = source["healthy"];
+	        this.never_checked = source["never_checked"];
 	        this.last_check = source["last_check"];
 	        this.response_time_ms = source["response_time_ms"];
 	        this.in_cooldown = source["in_cooldown"];

@@ -122,7 +122,7 @@ export const checkAllEndpointsHealth = async () => {
     const result = await WailsApi.batchHealthCheckAll();
     return {
       success: result.success,
-      message: result.message || '批量健康检测完成',
+      message: result.message || '批量连通性测试完成',
       total: result.total,
       healthy_count: result.healthy_count,
       unhealthy_count: result.unhealthy_count

@@ -203,7 +203,7 @@ export const getEndpoints = async () => {
     last_check: ep.last_check,
     response_time: ep.response_time_ms,
     consecutive_fail: ep.consecutive_fail,
-    never_checked: !ep.last_check
+    never_checked: ep.never_checked === true || !ep.last_check
   }));
 
   const healthy = formattedEndpoints.filter(e => e.healthy).length;
@@ -228,7 +228,7 @@ export const triggerHealthCheck = async (endpointName) => {
   if (!WailsApp) throw new Error('Wails not available');
 
   await WailsApp.TriggerHealthCheck(endpointName);
-  return { success: true, healthy: true };
+  return { success: true, healthy: true, message: '连通性测试已完成' };
 };
 
 export const batchHealthCheckAll = async () => {
@@ -238,7 +238,7 @@ export const batchHealthCheckAll = async () => {
   const result = await WailsApp.BatchHealthCheckAll();
   return {
     success: result.success,
-    message: result.message,
+    message: result.message || '批量连通性测试完成',
     total: result.total,
     healthy_count: result.healthy_count,
     unhealthy_count: result.unhealthy_count
@@ -315,17 +315,19 @@ export const getGroups = async () => {
   ]);
 
   // v4.0: 一个端点 = 一个组，组名 = 端点名
-  // 计算每个组的健康端点统计
+  // 计算每个组的最近连通性统计
   const groupHealthMap = new Map();
   endpointsData.forEach(ep => {
     // v4.0: 使用端点名作为组名（因为一个端点就是一个组）
     const groupName = ep.name;
     if (!groupHealthMap.has(groupName)) {
-      groupHealthMap.set(groupName, { total: 0, healthy: 0 });
+      groupHealthMap.set(groupName, { total: 0, healthy: 0, unchecked: 0 });
     }
     const stats = groupHealthMap.get(groupName);
     stats.total++;
-    if (ep.healthy) {
+    if (ep.never_checked === true || !ep.last_check) {
+      stats.unchecked++;
+    } else if (ep.healthy) {
       stats.healthy++;
     }
   });
@@ -356,7 +358,7 @@ export const getGroups = async () => {
 
   // 转换为前端期望的格式
   const formattedGroups = groups.map(g => {
-    const healthStats = groupHealthMap.get(g.name) || { total: 0, healthy: 0 };
+    const healthStats = groupHealthMap.get(g.name) || { total: 0, healthy: 0, unchecked: 0 };
     // v4.0: 组名 = 端点名，从 endpointTokensMap 获取 tokens
     const tokens = endpointTokensMap.get(g.name) || [];
 
@@ -369,7 +371,8 @@ export const getGroups = async () => {
       endpoint_count: g.endpoint_count,
       total_endpoints: healthStats.total,
       healthy_endpoints: healthStats.healthy,
-      unhealthy_endpoints: healthStats.total - healthStats.healthy,
+      unhealthy_endpoints: healthStats.total - healthStats.healthy - healthStats.unchecked,
+      unchecked_endpoints: healthStats.unchecked,
       in_cooldown: g.in_cooldown,
       cooldown_remain_ms: g.cooldown_remain_ms,
       tokens: tokens // 添加 tokens 数组
@@ -1108,6 +1111,43 @@ export const getEndpointStorageStatus = async () => {
   };
 };
 
+export const mapEndpointRecord = (record = {}) => ({
+  id: record.id,
+  channel: record.channel,
+  name: record.name,
+  url: record.url,
+  token: record.token,
+  apiKey: record.api_key,
+  tokenMasked: record.token_masked,
+  apiKeyMasked: record.api_key_masked,
+  headers: record.headers || {},
+  priority: record.priority,
+  failoverEnabled: record.failover_enabled,
+  cooldownSeconds: record.cooldown_seconds,
+  timeoutSeconds: record.timeout_seconds,
+  supportsCountTokens: record.supports_count_tokens,
+  costMultiplier: record.cost_multiplier,
+  inputCostMultiplier: record.input_cost_multiplier,
+  outputCostMultiplier: record.output_cost_multiplier,
+  cacheCreationCostMultiplier: record.cache_creation_cost_multiplier,
+  cacheCreationCostMultiplier1h: record.cache_creation_cost_multiplier_1h,
+  cacheReadCostMultiplier: record.cache_read_cost_multiplier,
+  enabled: record.enabled,
+  createdAt: record.created_at,
+  updatedAt: record.updated_at,
+  healthy: record.healthy,
+  never_checked: record.never_checked === true,
+  neverChecked: record.never_checked === true,
+  lastCheck: record.last_check,
+  responseTimeMs: record.response_time_ms,
+  in_cooldown: record.in_cooldown,
+  inCooldown: record.in_cooldown,
+  cooldown_until: record.cooldown_until,
+  cooldownUntil: record.cooldown_until,
+  cooldown_reason: record.cooldown_reason,
+  cooldownReason: record.cooldown_reason
+});
+
 /**
  * 获取所有端点记录（SQLite 存储）
  * @returns {Promise<Array>} - 端点记录数组
@@ -1117,41 +1157,7 @@ export const getEndpointRecords = async () => {
   if (!WailsApp) throw new Error('Wails not available');
 
   const records = await WailsApp.GetEndpointRecords();
-  return (records || []).map(r => ({
-    id: r.id,
-    channel: r.channel,
-    name: r.name,
-    url: r.url,
-    token: r.token,       // v5.0: 本地桌面应用，直接返回原始 Token
-    apiKey: r.api_key,    // v5.0: 本地桌面应用，直接返回原始 ApiKey
-    tokenMasked: r.token_masked,
-    apiKeyMasked: r.api_key_masked,
-    headers: r.headers || {},
-    priority: r.priority,
-    failoverEnabled: r.failover_enabled,
-    cooldownSeconds: r.cooldown_seconds,
-    timeoutSeconds: r.timeout_seconds,
-    supportsCountTokens: r.supports_count_tokens,
-    costMultiplier: r.cost_multiplier,
-    inputCostMultiplier: r.input_cost_multiplier,
-    outputCostMultiplier: r.output_cost_multiplier,
-    cacheCreationCostMultiplier: r.cache_creation_cost_multiplier,
-    cacheCreationCostMultiplier1h: r.cache_creation_cost_multiplier_1h,
-    cacheReadCostMultiplier: r.cache_read_cost_multiplier,
-    enabled: r.enabled,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
-    healthy: r.healthy,
-    lastCheck: r.last_check,
-    responseTimeMs: r.response_time_ms,
-    // 冷却状态（请求级故障转移）
-    in_cooldown: r.in_cooldown,
-    inCooldown: r.in_cooldown,
-    cooldown_until: r.cooldown_until,
-    cooldownUntil: r.cooldown_until,
-    cooldown_reason: r.cooldown_reason,
-    cooldownReason: r.cooldown_reason
-  }));
+  return (records || []).map(mapEndpointRecord);
 };
 
 /**
@@ -1164,26 +1170,7 @@ export const getEndpointRecord = async (name) => {
   if (!WailsApp) throw new Error('Wails not available');
 
   const r = await WailsApp.GetEndpointRecord(name);
-  return {
-    id: r.id,
-    channel: r.channel,
-    name: r.name,
-    url: r.url,
-    tokenMasked: r.token_masked,
-    apiKeyMasked: r.api_key_masked,
-    headers: r.headers || {},
-    priority: r.priority,
-    failoverEnabled: r.failover_enabled,
-    cooldownSeconds: r.cooldown_seconds,
-    timeoutSeconds: r.timeout_seconds,
-    supportsCountTokens: r.supports_count_tokens,
-    costMultiplier: r.cost_multiplier,
-    enabled: r.enabled,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
-    healthy: r.healthy,
-    responseTimeMs: r.response_time_ms
-  };
+  return mapEndpointRecord(r);
 };
 
 /**

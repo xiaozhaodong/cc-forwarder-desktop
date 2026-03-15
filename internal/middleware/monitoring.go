@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime"
+	"sync"
 	"time"
 
 	"cc-forwarder/internal/endpoint"
@@ -18,6 +19,7 @@ type MonitoringMiddleware struct {
 	endpointManager *endpoint.Manager
 	metrics         *monitor.Metrics
 	eventBus        events.EventBus
+	lastBroadcastMu sync.Mutex
 	lastBroadcast   map[string]time.Time
 	startTime       time.Time
 }
@@ -71,9 +73,15 @@ func (mm *MonitoringMiddleware) handleHealth(w http.ResponseWriter, r *http.Requ
 
 	endpoints := mm.endpointManager.GetAllEndpoints()
 	healthyCount := 0
+	checkedCount := 0
 
 	for _, ep := range endpoints {
-		if ep.IsHealthy() {
+		status := ep.GetStatus()
+		if status.NeverChecked {
+			continue
+		}
+		checkedCount++
+		if status.Healthy {
 			healthyCount++
 		}
 	}
@@ -81,10 +89,12 @@ func (mm *MonitoringMiddleware) handleHealth(w http.ResponseWriter, r *http.Requ
 	status := "healthy"
 	statusCode := http.StatusOK
 
-	if healthyCount == 0 {
+	if checkedCount == 0 && len(endpoints) > 0 {
+		status = "unknown"
+	} else if healthyCount == 0 && checkedCount > 0 {
 		status = "unhealthy"
 		statusCode = http.StatusServiceUnavailable
-	} else if healthyCount < len(endpoints) {
+	} else if healthyCount < checkedCount || checkedCount < len(endpoints) {
 		status = "degraded"
 	}
 
@@ -94,6 +104,7 @@ func (mm *MonitoringMiddleware) handleHealth(w http.ResponseWriter, r *http.Requ
 	response := map[string]interface{}{
 		"status":            status,
 		"healthy_endpoints": healthyCount,
+		"checked_endpoints": checkedCount,
 		"total_endpoints":   len(endpoints),
 	}
 
@@ -109,10 +120,14 @@ func (mm *MonitoringMiddleware) handleDetailedHealth(w http.ResponseWriter, r *h
 
 	endpoints := mm.endpointManager.GetAllEndpoints()
 	healthyCount := 0
+	checkedCount := 0
 	endpointHealths := make([]EndpointHealth, 0, len(endpoints))
 
 	for _, ep := range endpoints {
 		status := ep.GetStatus()
+		if !status.NeverChecked {
+			checkedCount++
+		}
 		if status.Healthy {
 			healthyCount++
 		}
@@ -131,10 +146,12 @@ func (mm *MonitoringMiddleware) handleDetailedHealth(w http.ResponseWriter, r *h
 	overallStatus := "healthy"
 	statusCode := http.StatusOK
 
-	if healthyCount == 0 {
+	if checkedCount == 0 && len(endpoints) > 0 {
+		overallStatus = "unknown"
+	} else if healthyCount == 0 && checkedCount > 0 {
 		overallStatus = "unhealthy"
 		statusCode = http.StatusServiceUnavailable
-	} else if healthyCount < len(endpoints) {
+	} else if healthyCount < checkedCount || checkedCount < len(endpoints) {
 		overallStatus = "degraded"
 	}
 
@@ -342,6 +359,9 @@ func (mm *MonitoringMiddleware) GetActiveSuspendedConnections() []*monitor.Conne
 
 // shouldBroadcast 检查是否应该广播事件（基于频率限制）
 func (mm *MonitoringMiddleware) shouldBroadcast(eventType string, interval time.Duration) bool {
+	mm.lastBroadcastMu.Lock()
+	defer mm.lastBroadcastMu.Unlock()
+
 	lastTime, exists := mm.lastBroadcast[eventType]
 	if !exists || time.Since(lastTime) >= interval {
 		mm.lastBroadcast[eventType] = time.Now()

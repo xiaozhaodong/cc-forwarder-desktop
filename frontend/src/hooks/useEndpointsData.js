@@ -5,6 +5,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import useSSE from './useSSE.js';
+import { applyEndpointHealthCheckResult, calculateEndpointStats } from './useEndpointsData.helpers.js';
 import {
   fetchEndpoints as apiFetchEndpoints,
   checkEndpointHealth as apiCheckEndpointHealth,
@@ -21,7 +22,7 @@ import {
  * 功能:
  * - 端点数据状态管理
  * - SSE 实时更新
- * - API 交互方法 (健康检测、优先级更新、Key 切换等)
+ * - API 交互方法 (连通性测试、优先级更新、Key 切换等)
  */
 const useEndpointsData = () => {
   const [data, setData] = useState({
@@ -41,24 +42,7 @@ const useEndpointsData = () => {
   const [isInitialized, setIsInitialized] = useState(false);
 
   // 计算端点统计
-  const calculateStats = useCallback((endpoints) => {
-    if (!endpoints || endpoints.length === 0) {
-      return { total: 0, healthy: 0, unhealthy: 0, unchecked: 0, healthPercentage: 0 };
-    }
-
-    const healthy = endpoints.filter(e => e.healthy && !e.never_checked).length;
-    const unhealthy = endpoints.filter(e => !e.healthy && !e.never_checked).length;
-    const unchecked = endpoints.filter(e => e.never_checked).length;
-    const total = endpoints.length;
-
-    return {
-      total,
-      healthy,
-      unhealthy,
-      unchecked,
-      healthPercentage: total > 0 ? ((healthy / total) * 100).toFixed(1) : 0
-    };
-  }, []);
+  const calculateStats = calculateEndpointStats;
 
   // SSE 事件处理
   const handleSSEUpdate = useCallback((sseData, eventType) => {
@@ -166,41 +150,40 @@ const useEndpointsData = () => {
     }
   }, [loadData]);
 
-  // 执行健康检测
+  // 执行连通性测试
   const performHealthCheck = useCallback(async (endpointName) => {
     try {
       if (!endpointName) throw new Error('端点名称不能为空');
 
       // 使用 API 适配层（自动检测 Wails 环境）
       const result = await apiCheckEndpointHealth(endpointName);
+      const checkedAt = new Date().toISOString();
 
       // 本地更新状态
-      setData(prevData => ({
-        ...prevData,
-        endpoints: prevData.endpoints.map(ep =>
-          ep.name === endpointName
-            ? {
-                ...ep,
-                healthy: result.healthy !== false,
-                never_checked: false,
-                last_check: new Date().toISOString(),
-                response_time: result.response_time || ep.response_time
-              }
-            : ep
-        ),
-        ...calculateStats(prevData.endpoints),
-        lastUpdate: new Date().toLocaleTimeString()
-      }));
+      setData(prevData => {
+        const endpoints = applyEndpointHealthCheckResult(prevData.endpoints, endpointName, result, checkedAt);
+        return {
+          ...prevData,
+          endpoints,
+          ...calculateStats(endpoints),
+          lastUpdate: new Date().toLocaleTimeString()
+        };
+      });
 
       setTimeout(() => loadData(), 500);
-      return { success: true, healthy: result.healthy !== false, response_time: result.response_time };
+      return {
+        success: true,
+        healthy: result.healthy !== false,
+        response_time: result.response_time,
+        message: result.message || '连通性测试完成'
+      };
     } catch (error) {
-      console.error('❌ 健康检测失败:', error);
+      console.error('❌ 连通性测试失败:', error);
       return { success: false, error: error.message };
     }
   }, [loadData, calculateStats]);
 
-  // 批量健康检测
+  // 批量连通性测试
   const performBatchHealthCheckAll = useCallback(async () => {
     try {
       // 使用 API 适配层（自动检测 Wails 环境）
@@ -209,13 +192,13 @@ const useEndpointsData = () => {
       await loadData();
       return {
         success: true,
-        message: result.message || '批量健康检测完成',
+        message: result.message || '批量连通性测试完成',
         total: result.total,
         healthyCount: result.healthy_count,
         unhealthyCount: result.unhealthy_count
       };
     } catch (error) {
-      console.error('❌ 批量健康检测失败:', error);
+      console.error('❌ 批量连通性测试失败:', error);
       throw error;
     }
   }, [loadData]);

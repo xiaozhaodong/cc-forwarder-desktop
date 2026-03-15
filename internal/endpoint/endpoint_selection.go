@@ -23,16 +23,10 @@ func (m *Manager) GetHealthyEndpoints() []*Endpoint {
 	// 1. 首先尝试获取活跃组（用户激活的端点）的健康端点
 	activeEndpoints := m.groupManager.FilterEndpointsByActiveGroups(snapshot)
 
-	now := time.Now()
 	var healthy []*Endpoint
 	var failedEndpoints []string // 📊 [失败追踪] 记录达到失败阈值的端点
 
 	for _, endpoint := range activeEndpoints {
-		endpoint.mutex.RLock()
-		// 检查是否在请求冷却中
-		inCooldown := !endpoint.Status.CooldownUntil.IsZero() && now.Before(endpoint.Status.CooldownUntil)
-		endpoint.mutex.RUnlock()
-
 		// 📊 [失败追踪] 检查是否达到失败阈值
 		if cfg.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(endpoint.Config.Name) {
 			action := cfg.FailureTracker.Action
@@ -53,7 +47,7 @@ func (m *Manager) GetHealthyEndpoints() []*Endpoint {
 			continue // 跳过该端点
 		}
 
-		if !inCooldown {
+		if m.IsEndpointRoutable(endpoint) {
 			healthy = append(healthy, endpoint)
 		} else {
 			slog.Debug(fmt.Sprintf("⏭️ [端点选择] 跳过冷却中的端点: %s", endpoint.Config.Name))
@@ -94,7 +88,6 @@ func (m *Manager) getFailoverEndpoints(activeEndpoints, snapshot []*Endpoint) []
 		activeNames[ep.Config.Name] = true
 	}
 
-	now := time.Now()
 	var failoverEndpoints []*Endpoint
 	for _, endpoint := range snapshot {
 		// 跳过活跃端点（已经检查过了）
@@ -117,11 +110,7 @@ func (m *Manager) getFailoverEndpoints(activeEndpoints, snapshot []*Endpoint) []
 			continue
 		}
 
-		endpoint.mutex.RLock()
-		inCooldown := !endpoint.Status.CooldownUntil.IsZero() && now.Before(endpoint.Status.CooldownUntil)
-		endpoint.mutex.RUnlock()
-
-		if inCooldown {
+		if !m.IsEndpointRoutable(endpoint) {
 			slog.Debug(fmt.Sprintf("⏭️ [故障转移] 跳过冷却中的端点: %s", endpoint.Config.Name))
 			continue
 		}
@@ -145,12 +134,12 @@ func (m *Manager) sortHealthyEndpoints(healthy []*Endpoint, showLogs bool) []*En
 	case "fastest":
 		// Log endpoint latencies for fastest strategy (only if showLogs is true)
 		if len(healthy) > 1 && showLogs {
-			slog.Info("📊 [Fastest Strategy] 基于健康检查的端点延迟排序:")
+			slog.Info("📊 [Fastest Strategy] 基于最近记录的响应时间排序:")
 			for _, ep := range healthy {
 				ep.mutex.RLock()
 				responseTime := ep.Status.ResponseTime
 				ep.mutex.RUnlock()
-				slog.Info(fmt.Sprintf("  ⏱️ %s - 延迟: %dms (来源: 定期健康检查)",
+				slog.Info(fmt.Sprintf("  ⏱️ %s - 延迟: %dms (来源: 最近连通性记录)",
 					ep.Config.Name, responseTime.Milliseconds()))
 			}
 		}
@@ -251,13 +240,13 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*En
 
 	// Only show health check sorting if we're NOT using cache
 	if !usedCache && cfg.Strategy.Type == "fastest" && len(healthy) > 1 {
-		slog.InfoContext(ctx, "📊 [Fastest Strategy] 基于健康检查的活跃组端点延迟排序:")
+		slog.InfoContext(ctx, "📊 [Fastest Strategy] 基于最近记录的活跃组端点延迟排序:")
 		for _, ep := range healthy {
 			ep.mutex.RLock()
 			responseTime := ep.Status.ResponseTime
 			group := ep.Config.Group
 			ep.mutex.RUnlock()
-			slog.InfoContext(ctx, fmt.Sprintf("  ⏱️ %s (组: %s) - 延迟: %dms (来源: 定期健康检查)",
+			slog.InfoContext(ctx, fmt.Sprintf("  ⏱️ %s (组: %s) - 延迟: %dms (来源: 最近连通性记录)",
 				ep.Config.Name, group, responseTime.Milliseconds()))
 		}
 	}
@@ -293,8 +282,8 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*En
 	sortedResults := SortByResponseTime(testResults)
 
 	if len(sortedResults) == 0 {
-		slog.WarnContext(ctx, "⚠️ [Fastest Response Mode] 活跃组所有端点测试失败，回退到健康检查模式")
-		return healthy // Fall back to health check results if no fast tests succeeded
+		slog.WarnContext(ctx, "⚠️ [Fastest Response Mode] 活跃组所有端点测试失败，回退到当前可调度端点顺序")
+		return healthy
 	}
 
 	// Convert back to endpoint slice

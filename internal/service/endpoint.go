@@ -11,6 +11,7 @@ import (
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/store"
+	"cc-forwarder/internal/utils"
 )
 
 // EndpointService 端点管理业务服务
@@ -284,26 +285,34 @@ func (s *EndpointService) GetEndpointWithHealth(ctx context.Context, name string
 	// 获取健康状态
 	status := s.manager.GetEndpointStatus(name)
 
-	return map[string]interface{}{
-		"id":               record.ID,
-		"channel":          record.Channel,
-		"name":             record.Name,
-		"url":              record.URL,
-		"token_masked":     maskToken(record.Token),
-		"priority":         record.Priority,
-		"failover_enabled": record.FailoverEnabled,
-		"timeout_seconds":  record.TimeoutSeconds,
-		"cost_multiplier":  record.CostMultiplier,
-		"enabled":          record.Enabled,
-		"created_at":       record.CreatedAt,
-		"updated_at":       record.UpdatedAt,
+	result := map[string]interface{}{
+		"id":                                record.ID,
+		"channel":                           record.Channel,
+		"name":                              record.Name,
+		"url":                               record.URL,
+		"token_masked":                      maskToken(record.Token),
+		"priority":                          record.Priority,
+		"failover_enabled":                  record.FailoverEnabled,
+		"timeout_seconds":                   record.TimeoutSeconds,
+		"cost_multiplier":                   record.CostMultiplier,
+		"cache_creation_cost_multiplier_1h": record.CacheCreationCostMultiplier1h,
+		"enabled":                           record.Enabled,
+		"created_at":                        record.CreatedAt,
+		"updated_at":                        record.UpdatedAt,
 		"health": map[string]interface{}{
 			"healthy":          status.Healthy,
 			"never_checked":    status.NeverChecked,
-			"last_check":       status.LastCheck.Format("2006-01-02 15:04:05"),
+			"last_check":       "",
 			"response_time_ms": status.ResponseTime.Milliseconds(),
 		},
-	}, nil
+	}
+
+	if !status.LastCheck.IsZero() {
+		health := result["health"].(map[string]interface{})
+		health["last_check"] = status.LastCheck.Format("2006-01-02 15:04:05")
+	}
+
+	return result, nil
 }
 
 // validateRecord 验证端点记录
@@ -386,8 +395,5 @@ func (s *EndpointService) configToRecord(cfg config.EndpointConfig) *store.Endpo
 
 // maskToken 脱敏 Token
 func maskToken(token string) string {
-	if len(token) <= 8 {
-		return "****"
-	}
-	return token[:4] + "****" + token[len(token)-4:]
+	return utils.MaskToken(token)
 }

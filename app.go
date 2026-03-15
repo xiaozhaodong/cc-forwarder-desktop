@@ -972,6 +972,10 @@ func (a *App) setupSettingsStore() {
 		return
 	}
 
+	if err := a.migrateLegacyConnectivitySettings(ctx); err != nil {
+		a.logger.Warn("⚠️ 连通性设置迁移失败", "error", err)
+	}
+
 	// 从数据库加载设置并应用到配置
 	a.applySettingsToConfig()
 
@@ -980,6 +984,48 @@ func (a *App) setupSettingsStore() {
 	a.portManager = utils.NewPortManager(preferredPort)
 
 	a.logger.Info("✅ 系统设置存储已启用 (SQLite)")
+}
+
+func (a *App) migrateLegacyConnectivitySettings(ctx context.Context) error {
+	if a.settingsService == nil || a.settingsStore == nil {
+		return nil
+	}
+
+	legacyPath := "/v1/models"
+	updates := make([]*store.SettingRecord, 0, 2)
+
+	checks := []struct {
+		category string
+		key      string
+	}{
+		{category: service.CategoryHealth, key: "health_path"},
+		{category: service.CategoryStrategy, key: "fast_test_path"},
+	}
+
+	for _, item := range checks {
+		record, err := a.settingsService.Get(ctx, item.category, item.key)
+		if err != nil {
+			return err
+		}
+		if record != nil && record.Value == legacyPath {
+			updates = append(updates, &store.SettingRecord{
+				Category: item.category,
+				Key:      item.key,
+				Value:    "",
+			})
+		}
+	}
+
+	if len(updates) == 0 {
+		return nil
+	}
+
+	if err := a.settingsStore.BatchUpdateValues(ctx, updates); err != nil {
+		return err
+	}
+
+	a.logger.Info("🔄 已迁移旧版连通性路径默认值", "updated", len(updates), "from", legacyPath, "to", "<endpoint-url>")
+	return nil
 }
 
 // setupAccountPoolStore 设置账号池存储 (v6.0+ SQLite)

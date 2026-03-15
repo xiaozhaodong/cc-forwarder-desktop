@@ -16,9 +16,10 @@ import {
   Clock,
   Timer
 } from 'lucide-react';
+import { getEndpointLastCheckDisplayValue } from '../utils/lastCheckDisplay.js';
 
 // ============================================
-// 健康状态徽章
+// 连通性状态徽章
 // ============================================
 
 const HealthBadge = ({ healthy, neverChecked }) => {
@@ -34,12 +35,12 @@ const HealthBadge = ({ healthy, neverChecked }) => {
   return healthy ? (
     <div className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-600 border border-emerald-100">
       <CheckCircle2 size={10} className="mr-1" />
-      健康
+      可达
     </div>
   ) : (
     <div className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-rose-50 text-rose-600 border border-rose-100">
       <XCircle size={10} className="mr-1" />
-      异常
+      不可达
     </div>
   );
 };
@@ -131,7 +132,7 @@ const EndpointRow = ({
   const isSqliteMode = storageMode === 'sqlite';
   const isActive = isSqliteMode ? endpoint.enabled : endpoint.group_is_active;
   const responseTime = endpoint.response_time || endpoint.responseTimeMs || 0;
-  const isNeverChecked = endpoint.never_checked || !endpoint.lastCheck && !endpoint.last_check && !endpoint.updatedAt;
+  const isNeverChecked = endpoint.never_checked === true || endpoint.neverChecked === true || (!endpoint.lastCheck && !endpoint.last_check);
 
   // 获取认证类型显示
   const getAuthType = () => {
@@ -171,7 +172,7 @@ const EndpointRow = ({
         </div>
       </td>
 
-      {/* 渠道 / 名称 / 健康状态 */}
+      {/* 渠道 / 名称 / 连通性状态 */}
       <td className="px-6 py-4">
         <div className="flex flex-col space-y-1.5">
           <span className="font-bold text-slate-900 text-sm">{endpoint.name}</span>
@@ -248,9 +249,9 @@ const EndpointRow = ({
         </span>
       </td>
 
-      {/* 最后检查 */}
+      {/* 最近检测 */}
       <td className="px-6 py-4 text-slate-400 font-mono text-xs">
-        {formatLastCheck(endpoint.lastCheck || endpoint.last_check || endpoint.updatedAt)}
+        {formatLastCheck(getEndpointLastCheckDisplayValue(endpoint))}
       </td>
 
       {/* 操作 */}

@@ -1,5 +1,5 @@
 // app_api_endpoint.go - 端点管理 API (Wails Bindings)
-// 包含端点状态、优先级设置、健康检查、Key 管理等功能
+// 包含端点状态、优先级设置、连通性测试、Key 管理等功能
 
 package main
 
@@ -88,7 +88,8 @@ func (a *App) SetEndpointPriority(name string, priority int) error {
 	return a.endpointManager.UpdateEndpointPriority(name, priority)
 }
 
-// TriggerHealthCheck 手动触发健康检查
+// TriggerHealthCheck 手动触发连通性测试
+// 为兼容既有前端绑定，保留原函数名。
 func (a *App) TriggerHealthCheck(name string) error {
 	a.mu.RLock()
 	manager := a.endpointManager
@@ -103,13 +104,13 @@ func (a *App) TriggerHealthCheck(name string) error {
 		return err
 	}
 
-	// 健康检查完成后，推送端点状态更新到前端
+	// 检测完成后，推送端点状态更新到前端
 	go a.emitEndpointUpdate()
 
 	return nil
 }
 
-// BatchHealthCheckResult 批量健康检查结果
+// BatchHealthCheckResult 批量连通性测试结果
 type BatchHealthCheckResult struct {
 	Success        bool   `json:"success"`
 	Message        string `json:"message"`
@@ -118,7 +119,7 @@ type BatchHealthCheckResult struct {
 	UnhealthyCount int    `json:"unhealthy_count"`
 }
 
-// BatchHealthCheckAll 批量检查所有端点的健康状态
+// BatchHealthCheckAll 批量检查所有端点的连通性状态
 func (a *App) BatchHealthCheckAll() BatchHealthCheckResult {
 	a.mu.RLock()
 	manager := a.endpointManager
@@ -131,7 +132,7 @@ func (a *App) BatchHealthCheckAll() BatchHealthCheckResult {
 		}
 	}
 
-	// 调用 endpointManager 的批量健康检查
+	// 调用 endpointManager 的批量连通性测试
 	healthyCount, unhealthyCount, err := manager.BatchHealthCheckAll()
 	if err != nil {
 		return BatchHealthCheckResult{
@@ -145,7 +146,7 @@ func (a *App) BatchHealthCheckAll() BatchHealthCheckResult {
 
 	return BatchHealthCheckResult{
 		Success:        true,
-		Message:        "批量健康检测完成",
+		Message:        "批量连通性测试完成",
 		Total:          healthyCount + unhealthyCount,
 		HealthyCount:   healthyCount,
 		UnhealthyCount: unhealthyCount,

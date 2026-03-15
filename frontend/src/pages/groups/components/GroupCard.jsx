@@ -8,8 +8,10 @@ import { Play, Pause, Clock, Activity, Server, MoreVertical } from 'lucide-react
 const GroupCard = ({ group, onActivate, onPause, loading }) => {
   const isActive = group.is_active;
   const isCooldown = group.in_cooldown;
-  const healthyPercent = group.total_endpoints > 0
-    ? Math.round((group.healthy_endpoints / group.total_endpoints) * 100)
+  const uncheckedCount = group.unchecked_endpoints || 0;
+  const checkedCount = Math.max((group.total_endpoints || 0) - uncheckedCount, 0);
+  const healthyPercent = checkedCount > 0
+    ? Math.round((group.healthy_endpoints / checkedCount) * 100)
     : 0;
 
   return (
@@ -48,30 +50,41 @@ const GroupCard = ({ group, onActivate, onPause, loading }) => {
         {/* 统计数据 */}
         <div className="grid grid-cols-2 gap-6 mb-2">
           <div>
-            <div className={`text-xs mb-1 ${isActive ? 'text-slate-400' : 'text-gray-400'}`}>健康度</div>
+            <div className={`text-xs mb-1 ${isActive ? 'text-slate-400' : 'text-gray-400'}`}>最近可达率</div>
             <div className="flex items-center gap-2">
-              <Activity className={`w-4 h-4 ${healthyPercent === 100 ? (isActive ? 'text-emerald-400' : 'text-emerald-500') : 'text-rose-500'}`} />
-              <span className="font-bold text-xl">{healthyPercent}%</span>
+              <Activity className={`w-4 h-4 ${
+                checkedCount === 0
+                  ? (isActive ? 'text-slate-500' : 'text-slate-400')
+                  : healthyPercent === 100
+                    ? (isActive ? 'text-emerald-400' : 'text-emerald-500')
+                    : 'text-rose-500'
+              }`} />
+              <span className="font-bold text-xl">{checkedCount > 0 ? `${healthyPercent}%` : '未检测'}</span>
             </div>
           </div>
           <div>
-            <div className={`text-xs mb-1 ${isActive ? 'text-slate-400' : 'text-gray-400'}`}>健康端点</div>
+            <div className={`text-xs mb-1 ${isActive ? 'text-slate-400' : 'text-gray-400'}`}>最近可达</div>
             <div className="flex items-center gap-2">
               <Server className={`w-4 h-4 ${isActive ? 'text-slate-500' : 'text-gray-400'}`} />
-              <span className="font-bold text-xl">
-                {group.healthy_endpoints}
-                <span className={`text-sm ml-1 font-normal ${isActive ? 'text-slate-500' : 'text-gray-400'}`}>
-                  / {group.total_endpoints}
+              {checkedCount > 0 ? (
+                <span className="font-bold text-xl">
+                  {group.healthy_endpoints}
+                  <span className={`text-sm ml-1 font-normal ${isActive ? 'text-slate-500' : 'text-gray-400'}`}>
+                    / {checkedCount}
+                  </span>
                 </span>
-              </span>
+              ) : (
+                <span className={`font-bold text-xl ${isActive ? 'text-slate-300' : 'text-gray-500'}`}>未检测</span>
+              )}
             </div>
           </div>
         </div>
 
-        {/* 健康进度条 */}
+        {/* 连通性进度条 */}
         <div className={`h-1 w-full rounded-full overflow-hidden mt-4 ${isActive ? 'bg-slate-800' : 'bg-gray-100'}`}>
           <div
             className={`h-full rounded-full ${
+              checkedCount === 0 ? 'bg-transparent' :
               healthyPercent === 100 ? (isActive ? 'bg-emerald-500' : 'bg-emerald-500') :
               healthyPercent === 0 ? 'bg-transparent' : 'bg-amber-500'
             }`}

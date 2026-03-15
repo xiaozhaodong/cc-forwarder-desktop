@@ -153,22 +153,22 @@ const ConfigPage = () => {
           </ConfigSection>
         )}
 
-        {/* 健康检查配置 */}
+        {/* 连通性测试配置 */}
         {config?.health && (
-          <ConfigSection title="健康检查" icon={Shield}>
+          <ConfigSection title="连通性测试" icon={Shield}>
             <ConfigItem
-              label="检查间隔"
+              label="轮询间隔"
               value={config.health.CheckInterval}
               type="duration"
             />
             <ConfigItem
-              label="超时时间"
+              label="检测超时"
               value={config.health.Timeout}
               type="duration"
             />
             <ConfigItem
-              label="健康检查路径"
-              value={config.health.HealthPath}
+              label="检测路径"
+              value={config.health.HealthPath || '直接访问端点 URL'}
             />
           </ConfigSection>
         )}

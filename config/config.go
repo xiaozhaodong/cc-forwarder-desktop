@@ -396,7 +396,7 @@ func (c *Config) setDefaults() {
 		c.Health.Timeout = 5 * time.Second
 	}
 	if c.Health.HealthPath == "" {
-		c.Health.HealthPath = "/v1/models"
+		c.Health.HealthPath = ""
 	}
 	if c.Logging.Level == "" {
 		c.Logging.Level = "info"

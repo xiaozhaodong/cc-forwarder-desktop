@@ -117,17 +117,17 @@ func (a *App) GetConnectionActivityChart(minutes int) []ChartDataPoint {
 }
 
 // ============================================================
-// 端点健康状态图表 API
+// 端点最近连通性状态图表 API
 // ============================================================
 
-// EndpointHealthData 端点健康状态数据结构
+// EndpointHealthData 端点最近连通性状态数据结构
 type EndpointHealthData struct {
 	Healthy   int `json:"healthy"`
 	Unhealthy int `json:"unhealthy"`
 	Total     int `json:"total"`
 }
 
-// GetEndpointHealthChart 获取端点健康状态图表数据
+// GetEndpointHealthChart 获取端点最近连通性状态图表数据
 func (a *App) GetEndpointHealthChart() EndpointHealthData {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -142,7 +142,11 @@ func (a *App) GetEndpointHealthChart() EndpointHealthData {
 	unhealthyCount := 0
 
 	for _, endpoint := range endpoints {
-		if endpoint.IsHealthy() {
+		status := endpoint.GetStatus()
+		if status.NeverChecked {
+			continue
+		}
+		if status.Healthy {
 			healthyCount++
 		} else {
 			unhealthyCount++

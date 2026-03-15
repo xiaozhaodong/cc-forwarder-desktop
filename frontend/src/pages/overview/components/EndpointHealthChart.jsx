@@ -1,5 +1,5 @@
 // ============================================
-// 端点健康状态图组件
+// 端点最近连通性状态图组件
 // 2025-11-28
 // ============================================
 
@@ -13,10 +13,10 @@ import {
 } from 'recharts';
 import { fetchEndpointHealthData } from '@utils/api.js';
 
-// 健康状态配置
+// 连通性状态配置
 const HEALTH_CONFIG = {
-  healthy: { name: '健康', color: '#10b981', icon: CheckCircle2 },
-  unhealthy: { name: '异常', color: '#ef4444', icon: XCircle }
+  healthy: { name: '最近可达', color: '#10b981', icon: CheckCircle2 },
+  unhealthy: { name: '最近不可达', color: '#ef4444', icon: XCircle }
 };
 
 const EndpointHealthChart = () => {
@@ -37,7 +37,7 @@ const EndpointHealthChart = () => {
         unhealthy: data.unhealthy || 0
       });
     } catch (error) {
-      console.error('加载端点健康数据失败:', error);
+      console.error('加载端点连通性数据失败:', error);
     } finally {
       setLoading(false);
       setIsRefreshing(false);
@@ -49,7 +49,7 @@ const EndpointHealthChart = () => {
     loadData();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 定时刷新（每 30 秒，健康状态需要更频繁更新）
+  // 定时刷新最近连通性概览
   useEffect(() => {
     refreshIntervalRef.current = setInterval(() => {
       loadData(false);
@@ -79,7 +79,7 @@ const EndpointHealthChart = () => {
             const [healthy, unhealthy] = data.datasets[0]?.data || [0, 0];
             setHealthData({ healthy, unhealthy });
           }
-          console.log('📊 [SSE] 端点健康图已更新');
+          console.log('📊 [SSE] 端点连通性图已更新');
         }
       }
     };
@@ -97,15 +97,15 @@ const EndpointHealthChart = () => {
 
   // 计算统计数据
   const total = healthData.healthy + healthData.unhealthy;
-  const healthPercent = total > 0 ? Math.round((healthData.healthy / total) * 100) : 100;
+  const healthPercent = total > 0 ? Math.round((healthData.healthy / total) * 100) : 0;
 
   // 图表数据（半圆仪表盘）
   const chartData = [
-    { name: '健康', value: healthData.healthy, color: HEALTH_CONFIG.healthy.color },
-    { name: '异常', value: healthData.unhealthy, color: HEALTH_CONFIG.unhealthy.color }
+    { name: '最近可达', value: healthData.healthy, color: HEALTH_CONFIG.healthy.color },
+    { name: '最近不可达', value: healthData.unhealthy, color: HEALTH_CONFIG.unhealthy.color }
   ];
 
-  // 确定健康状态的显示样式
+  // 确定最近连通性状态的显示样式
   const getHealthStatus = () => {
     if (total === 0) return { text: '无数据', color: 'text-slate-400', bg: 'bg-slate-50' };
     if (healthPercent >= 90) return { text: '优秀', color: 'text-emerald-600', bg: 'bg-emerald-50' };
@@ -122,7 +122,7 @@ const EndpointHealthChart = () => {
           <div className="p-1.5 bg-emerald-50 text-emerald-500 rounded-md">
             <Activity size={16} />
           </div>
-          <h3 className="font-semibold text-slate-900">端点健康状态</h3>
+          <h3 className="font-semibold text-slate-900">端点连通性概览</h3>
         </div>
         <div className="flex items-center space-x-2">
           <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${status.bg} ${status.color}`}>
@@ -138,7 +138,7 @@ const EndpointHealthChart = () => {
           </button>
         </div>
       </div>
-      <p className="text-xs text-slate-500 mb-4">实时端点连通性监控</p>
+      <p className="text-xs text-slate-500 mb-4">基于最近一次检测结果的连通性概览</p>
 
       <div className="flex-1 min-h-[180px] flex items-center justify-center relative">
         {loading ? (
@@ -179,7 +179,7 @@ const EndpointHealthChart = () => {
               <span className="text-2xl font-bold text-slate-900 mt-1">
                 {healthData.healthy}/{total}
               </span>
-              <span className="text-xs text-slate-400">端点在线</span>
+              <span className="text-xs text-slate-400">最近可达</span>
             </div>
           </>
         )}
@@ -191,7 +191,7 @@ const EndpointHealthChart = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center text-xs text-slate-600">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 mr-2" />
-              健康
+              最近可达
             </div>
             <span className="font-mono text-sm font-semibold text-emerald-600">
               {healthData.healthy}
@@ -200,7 +200,7 @@ const EndpointHealthChart = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center text-xs text-slate-600">
               <span className="w-2.5 h-2.5 rounded-full bg-rose-500 mr-2" />
-              异常
+              最近不可达
             </div>
             <span className="font-mono text-sm font-semibold text-rose-600">
               {healthData.unhealthy}

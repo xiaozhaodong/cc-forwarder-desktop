@@ -79,18 +79,27 @@ const ActiveGroupSwitcher = ({
   // 获取健康状态样式
   const getHealthStyle = (endpoint) => {
     const healthyCount = endpoint.healthy_endpoints ?? 0;
-    const isHealthy = healthyCount > 0;
+    const uncheckedCount = endpoint.unchecked_endpoints ?? 0;
+    const checkedCount = Math.max((endpoint.total_endpoints ?? 0) - uncheckedCount, 0);
 
-    if (isHealthy) {
+    if (checkedCount === 0) {
+      return {
+        dot: 'bg-slate-300',
+        text: '未检测',
+        color: 'text-slate-500'
+      };
+    }
+
+    if (healthyCount > 0) {
       return {
         dot: 'bg-emerald-400',
-        text: '健康',
+        text: '最近可达',
         color: 'text-emerald-600'
       };
     }
     return {
       dot: 'bg-rose-400',
-      text: '异常',
+      text: '最近不可达',
       color: 'text-rose-600'
     };
   };
@@ -167,7 +176,7 @@ const ActiveGroupSwitcher = ({
                   } ${switching ? 'opacity-50 cursor-wait' : ''}`}
                 >
                   <div className="flex items-center gap-3">
-                    {/* 健康状态指示点 */}
+                    {/* 连通性状态指示点 */}
                     <span className={`w-2 h-2 rounded-full ${health.dot}`} />
 
                     <div className="flex flex-col">

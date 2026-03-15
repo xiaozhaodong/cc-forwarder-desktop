@@ -22,7 +22,6 @@ func (m *Manager) SyncEndpoints(configs []config.EndpointConfig) {
 			Config: cfg,
 			Status: EndpointStatus{
 				Healthy:      false,
-				LastCheck:    time.Now(),
 				NeverChecked: true,
 			},
 		}
@@ -67,8 +66,7 @@ func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
 	endpoint := &Endpoint{
 		Config: cfg,
 		Status: EndpointStatus{
-			Healthy:      false, // 悲观初始化，等待健康检查
-			LastCheck:    time.Now(),
+			Healthy:      false,
 			NeverChecked: true,
 		},
 	}
@@ -95,9 +93,6 @@ func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
 	copy(snapshot, m.endpoints)
 	m.endpointsMu.RUnlock()
 	m.groupManager.UpdateGroups(snapshot)
-
-	// 立即触发健康检查
-	go m.checkEndpointHealth(endpoint)
 
 	// 发布事件通知
 	if m.eventBus != nil {
@@ -218,9 +213,6 @@ func (m *Manager) UpdateEndpointConfig(name string, cfg config.EndpointConfig) e
 	copy(snapshot, m.endpoints)
 	m.endpointsMu.RUnlock()
 	m.groupManager.UpdateGroups(snapshot)
-
-	// 立即触发健康检查
-	go m.checkEndpointHealth(targetEndpoint)
 
 	// 发布事件通知
 	if m.eventBus != nil {

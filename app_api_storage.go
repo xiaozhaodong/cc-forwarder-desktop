@@ -10,6 +10,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/store"
+	"cc-forwarder/internal/utils"
 )
 
 // ============================================================
@@ -20,31 +21,33 @@ import (
 
 // EndpointRecordInfo 端点记录信息（给前端用的结构体）
 type EndpointRecordInfo struct {
-	ID                          int64             `json:"id"`
-	Channel                     string            `json:"channel"`
-	Name                        string            `json:"name"`
-	URL                         string            `json:"url"`
-	Token                       string            `json:"token"`        // v5.0: 本地桌面应用，直接返回原始 Token
-	ApiKey                      string            `json:"api_key"`      // v5.0: 本地桌面应用，直接返回原始 ApiKey
-	TokenMasked                 string            `json:"token_masked"` // 脱敏后的 Token（列表展示用）
-	ApiKeyMasked                string            `json:"api_key_masked"`
-	Headers                     map[string]string `json:"headers"`
-	Priority                    int               `json:"priority"`
-	FailoverEnabled             bool              `json:"failover_enabled"`
-	CooldownSeconds             *int              `json:"cooldown_seconds"`
-	TimeoutSeconds              int               `json:"timeout_seconds"`
-	SupportsCountTokens         bool              `json:"supports_count_tokens"`
-	CostMultiplier              float64           `json:"cost_multiplier"`
-	InputCostMultiplier         float64           `json:"input_cost_multiplier"`
-	OutputCostMultiplier        float64           `json:"output_cost_multiplier"`
-	CacheCreationCostMultiplier float64           `json:"cache_creation_cost_multiplier"`
-	CacheReadCostMultiplier     float64           `json:"cache_read_cost_multiplier"`
-	Enabled                     bool              `json:"enabled"`
-	CreatedAt                   string            `json:"created_at"`
-	UpdatedAt                   string            `json:"updated_at"`
+	ID                            int64             `json:"id"`
+	Channel                       string            `json:"channel"`
+	Name                          string            `json:"name"`
+	URL                           string            `json:"url"`
+	Token                         string            `json:"token"`        // v5.0: 本地桌面应用，直接返回原始 Token
+	ApiKey                        string            `json:"api_key"`      // v5.0: 本地桌面应用，直接返回原始 ApiKey
+	TokenMasked                   string            `json:"token_masked"` // 脱敏后的 Token（列表展示用）
+	ApiKeyMasked                  string            `json:"api_key_masked"`
+	Headers                       map[string]string `json:"headers"`
+	Priority                      int               `json:"priority"`
+	FailoverEnabled               bool              `json:"failover_enabled"`
+	CooldownSeconds               *int              `json:"cooldown_seconds"`
+	TimeoutSeconds                int               `json:"timeout_seconds"`
+	SupportsCountTokens           bool              `json:"supports_count_tokens"`
+	CostMultiplier                float64           `json:"cost_multiplier"`
+	InputCostMultiplier           float64           `json:"input_cost_multiplier"`
+	OutputCostMultiplier          float64           `json:"output_cost_multiplier"`
+	CacheCreationCostMultiplier   float64           `json:"cache_creation_cost_multiplier"`
+	CacheCreationCostMultiplier1h float64           `json:"cache_creation_cost_multiplier_1h"`
+	CacheReadCostMultiplier       float64           `json:"cache_read_cost_multiplier"`
+	Enabled                       bool              `json:"enabled"`
+	CreatedAt                     string            `json:"created_at"`
+	UpdatedAt                     string            `json:"updated_at"`
 	// 运行时健康状态
 	Healthy        bool    `json:"healthy"`
-	LastCheck      string  `json:"last_check"` // 最后健康检查时间
+	NeverChecked   bool    `json:"never_checked"`
+	LastCheck      string  `json:"last_check"` // 最近连通性测试时间
 	ResponseTimeMs float64 `json:"response_time_ms"`
 	// 冷却状态（请求级故障转移）
 	InCooldown     bool   `json:"in_cooldown"`     // 是否处于冷却中
@@ -54,22 +57,23 @@ type EndpointRecordInfo struct {
 
 // CreateEndpointInput 创建端点的输入参数
 type CreateEndpointInput struct {
-	Channel                     string            `json:"channel"`
-	Name                        string            `json:"name"`
-	URL                         string            `json:"url"`
-	Token                       string            `json:"token"`
-	ApiKey                      string            `json:"api_key"`
-	Headers                     map[string]string `json:"headers"`
-	Priority                    int               `json:"priority"`
-	FailoverEnabled             bool              `json:"failover_enabled"`
-	CooldownSeconds             *int              `json:"cooldown_seconds"`
-	TimeoutSeconds              int               `json:"timeout_seconds"`
-	SupportsCountTokens         bool              `json:"supports_count_tokens"`
-	CostMultiplier              float64           `json:"cost_multiplier"`
-	InputCostMultiplier         float64           `json:"input_cost_multiplier"`
-	OutputCostMultiplier        float64           `json:"output_cost_multiplier"`
-	CacheCreationCostMultiplier float64           `json:"cache_creation_cost_multiplier"`
-	CacheReadCostMultiplier     float64           `json:"cache_read_cost_multiplier"`
+	Channel                       string            `json:"channel"`
+	Name                          string            `json:"name"`
+	URL                           string            `json:"url"`
+	Token                         string            `json:"token"`
+	ApiKey                        string            `json:"api_key"`
+	Headers                       map[string]string `json:"headers"`
+	Priority                      int               `json:"priority"`
+	FailoverEnabled               bool              `json:"failover_enabled"`
+	CooldownSeconds               *int              `json:"cooldown_seconds"`
+	TimeoutSeconds                int               `json:"timeout_seconds"`
+	SupportsCountTokens           bool              `json:"supports_count_tokens"`
+	CostMultiplier                float64           `json:"cost_multiplier"`
+	InputCostMultiplier           float64           `json:"input_cost_multiplier"`
+	OutputCostMultiplier          float64           `json:"output_cost_multiplier"`
+	CacheCreationCostMultiplier   float64           `json:"cache_creation_cost_multiplier"`
+	CacheCreationCostMultiplier1h float64           `json:"cache_creation_cost_multiplier_1h"`
+	CacheReadCostMultiplier       float64           `json:"cache_read_cost_multiplier"`
 }
 
 // EndpointStorageStatus 端点存储状态
@@ -139,6 +143,7 @@ func (a *App) GetEndpointRecords() ([]EndpointRecordInfo, error) {
 		if a.endpointManager != nil {
 			status := a.endpointManager.GetEndpointStatus(r.Name)
 			info.Healthy = status.Healthy
+			info.NeverChecked = status.NeverChecked
 			info.ResponseTimeMs = float64(status.ResponseTime.Milliseconds())
 			// 格式化最后检查时间
 			if !status.LastCheck.IsZero() {
@@ -206,6 +211,9 @@ func (a *App) GetEndpointRecord(name string) (EndpointRecordInfo, error) {
 	if v, ok := detail["cost_multiplier"].(float64); ok {
 		info.CostMultiplier = v
 	}
+	if v, ok := detail["cache_creation_cost_multiplier_1h"].(float64); ok {
+		info.CacheCreationCostMultiplier1h = v
+	}
 	if v, ok := detail["enabled"].(bool); ok {
 		info.Enabled = v
 	}
@@ -215,8 +223,14 @@ func (a *App) GetEndpointRecord(name string) (EndpointRecordInfo, error) {
 		if v, ok := health["healthy"].(bool); ok {
 			info.Healthy = v
 		}
+		if v, ok := health["never_checked"].(bool); ok {
+			info.NeverChecked = v
+		}
 		if v, ok := health["response_time_ms"].(int64); ok {
 			info.ResponseTimeMs = float64(v)
+		}
+		if v, ok := health["last_check"].(string); ok {
+			info.LastCheck = v
 		}
 	}
 
@@ -244,23 +258,24 @@ func (a *App) CreateEndpointRecord(input CreateEndpointInput) error {
 	}
 
 	record := &store.EndpointRecord{
-		Channel:                     input.Channel,
-		Name:                        input.Name,
-		URL:                         input.URL,
-		Token:                       input.Token,
-		ApiKey:                      input.ApiKey,
-		Headers:                     input.Headers,
-		Priority:                    input.Priority,
-		FailoverEnabled:             input.FailoverEnabled,
-		CooldownSeconds:             input.CooldownSeconds,
-		TimeoutSeconds:              input.TimeoutSeconds,
-		SupportsCountTokens:         input.SupportsCountTokens,
-		CostMultiplier:              input.CostMultiplier,
-		InputCostMultiplier:         input.InputCostMultiplier,
-		OutputCostMultiplier:        input.OutputCostMultiplier,
-		CacheCreationCostMultiplier: input.CacheCreationCostMultiplier,
-		CacheReadCostMultiplier:     input.CacheReadCostMultiplier,
-		Enabled:                     false, // v5.0: 新建端点默认不激活，需手动激活
+		Channel:                       input.Channel,
+		Name:                          input.Name,
+		URL:                           input.URL,
+		Token:                         input.Token,
+		ApiKey:                        input.ApiKey,
+		Headers:                       input.Headers,
+		Priority:                      input.Priority,
+		FailoverEnabled:               input.FailoverEnabled,
+		CooldownSeconds:               input.CooldownSeconds,
+		TimeoutSeconds:                input.TimeoutSeconds,
+		SupportsCountTokens:           input.SupportsCountTokens,
+		CostMultiplier:                input.CostMultiplier,
+		InputCostMultiplier:           input.InputCostMultiplier,
+		OutputCostMultiplier:          input.OutputCostMultiplier,
+		CacheCreationCostMultiplier:   input.CacheCreationCostMultiplier,
+		CacheCreationCostMultiplier1h: input.CacheCreationCostMultiplier1h,
+		CacheReadCostMultiplier:       input.CacheReadCostMultiplier,
+		Enabled:                       false, // v5.0: 新建端点默认不激活，需手动激活
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -315,23 +330,24 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 	}
 
 	record := &store.EndpointRecord{
-		Channel:                     input.Channel,
-		Name:                        name, // 使用 URL 参数中的 name
-		URL:                         input.URL,
-		Token:                       token,  // 空值时保留原有值
-		ApiKey:                      apiKey, // 空值时保留原有值
-		Headers:                     input.Headers,
-		Priority:                    input.Priority,
-		FailoverEnabled:             input.FailoverEnabled,
-		CooldownSeconds:             input.CooldownSeconds,
-		TimeoutSeconds:              input.TimeoutSeconds,
-		SupportsCountTokens:         input.SupportsCountTokens,
-		CostMultiplier:              input.CostMultiplier,
-		InputCostMultiplier:         input.InputCostMultiplier,
-		OutputCostMultiplier:        input.OutputCostMultiplier,
-		CacheCreationCostMultiplier: input.CacheCreationCostMultiplier,
-		CacheReadCostMultiplier:     input.CacheReadCostMultiplier,
-		Enabled:                     existingRecord.Enabled, // 保持原有激活状态
+		Channel:                       input.Channel,
+		Name:                          name, // 使用 URL 参数中的 name
+		URL:                           input.URL,
+		Token:                         token,  // 空值时保留原有值
+		ApiKey:                        apiKey, // 空值时保留原有值
+		Headers:                       input.Headers,
+		Priority:                      input.Priority,
+		FailoverEnabled:               input.FailoverEnabled,
+		CooldownSeconds:               input.CooldownSeconds,
+		TimeoutSeconds:                input.TimeoutSeconds,
+		SupportsCountTokens:           input.SupportsCountTokens,
+		CostMultiplier:                input.CostMultiplier,
+		InputCostMultiplier:           input.InputCostMultiplier,
+		OutputCostMultiplier:          input.OutputCostMultiplier,
+		CacheCreationCostMultiplier:   input.CacheCreationCostMultiplier,
+		CacheCreationCostMultiplier1h: input.CacheCreationCostMultiplier1h,
+		CacheReadCostMultiplier:       input.CacheReadCostMultiplier,
+		Enabled:                       existingRecord.Enabled, // 保持原有激活状态
 	}
 
 	if err := a.endpointService.UpdateEndpoint(ctx, record); err != nil {
@@ -572,26 +588,27 @@ func (a *App) GetEndpointsByChannel(channel string) ([]EndpointRecordInfo, error
 // recordToInfo 将数据库记录转换为前端 Info 结构
 func (a *App) recordToInfo(r *store.EndpointRecord) EndpointRecordInfo {
 	info := EndpointRecordInfo{
-		ID:                          r.ID,
-		Channel:                     r.Channel,
-		Name:                        r.Name,
-		URL:                         r.URL,
-		Token:                       r.Token,  // v5.0: 本地桌面应用，直接返回原始 Token
-		ApiKey:                      r.ApiKey, // v5.0: 本地桌面应用，直接返回原始 ApiKey
-		TokenMasked:                 maskToken(r.Token),
-		ApiKeyMasked:                maskToken(r.ApiKey),
-		Headers:                     r.Headers,
-		Priority:                    r.Priority,
-		FailoverEnabled:             r.FailoverEnabled,
-		CooldownSeconds:             r.CooldownSeconds,
-		TimeoutSeconds:              r.TimeoutSeconds,
-		SupportsCountTokens:         r.SupportsCountTokens,
-		CostMultiplier:              r.CostMultiplier,
-		InputCostMultiplier:         r.InputCostMultiplier,
-		OutputCostMultiplier:        r.OutputCostMultiplier,
-		CacheCreationCostMultiplier: r.CacheCreationCostMultiplier,
-		CacheReadCostMultiplier:     r.CacheReadCostMultiplier,
-		Enabled:                     r.Enabled,
+		ID:                            r.ID,
+		Channel:                       r.Channel,
+		Name:                          r.Name,
+		URL:                           r.URL,
+		Token:                         r.Token,  // v5.0: 本地桌面应用，直接返回原始 Token
+		ApiKey:                        r.ApiKey, // v5.0: 本地桌面应用，直接返回原始 ApiKey
+		TokenMasked:                   maskToken(r.Token),
+		ApiKeyMasked:                  maskToken(r.ApiKey),
+		Headers:                       r.Headers,
+		Priority:                      r.Priority,
+		FailoverEnabled:               r.FailoverEnabled,
+		CooldownSeconds:               r.CooldownSeconds,
+		TimeoutSeconds:                r.TimeoutSeconds,
+		SupportsCountTokens:           r.SupportsCountTokens,
+		CostMultiplier:                r.CostMultiplier,
+		InputCostMultiplier:           r.InputCostMultiplier,
+		OutputCostMultiplier:          r.OutputCostMultiplier,
+		CacheCreationCostMultiplier:   r.CacheCreationCostMultiplier,
+		CacheCreationCostMultiplier1h: r.CacheCreationCostMultiplier1h,
+		CacheReadCostMultiplier:       r.CacheReadCostMultiplier,
+		Enabled:                       r.Enabled,
 	}
 
 	if !r.CreatedAt.IsZero() {
@@ -606,11 +623,5 @@ func (a *App) recordToInfo(r *store.EndpointRecord) EndpointRecordInfo {
 
 // maskToken Token 脱敏显示
 func maskToken(token string) string {
-	if token == "" {
-		return "" // 空 token 返回空字符串，不显示"已配置"
-	}
-	if len(token) <= 8 {
-		return "****"
-	}
-	return token[:4] + "****" + token[len(token)-4:]
+	return utils.MaskToken(token)
 }

@@ -27,6 +27,7 @@ const ChannelCard = ({
   const totalCount = endpoints.length;
   const enabledCount = endpoints.filter(e => isSqliteMode ? e.enabled : e.group_is_active).length;
   const healthyCount = endpoints.filter(e => e.healthy).length;
+  const checkedCount = endpoints.filter(e => e.never_checked !== true && e.neverChecked !== true).length;
   const cooldownCount = endpoints.filter(e => e.in_cooldown || e.inCooldown).length;
 
   // 是否有激活的端点
@@ -67,13 +68,13 @@ const ChannelCard = ({
               {enabledCount} 启用
             </span>
             <span className={`px-1.5 py-0.5 rounded border ${
-              healthyCount === totalCount
+              checkedCount > 0 && healthyCount === checkedCount
                 ? 'text-indigo-600 bg-indigo-50 border-indigo-100'
-                : healthyCount > 0
+              : healthyCount > 0
                   ? 'text-amber-600 bg-amber-50 border-amber-100'
                   : 'text-slate-400 bg-slate-50 border-slate-200'
             }`}>
-              {healthyCount}/{totalCount} 健康
+              {checkedCount > 0 ? `${healthyCount}/${checkedCount} 可达` : `${totalCount} 未检测`}
             </span>
             {cooldownCount > 0 && (
               <span className="text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">

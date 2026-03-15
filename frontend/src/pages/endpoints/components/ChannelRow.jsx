@@ -12,6 +12,7 @@ const ChannelRow = ({ channel, endpoints, expanded, onToggle, storageMode }) => 
   const totalCount = endpoints.length;
   const enabledCount = endpoints.filter(e => isSqliteMode ? e.enabled : e.group_is_active).length;
   const healthyCount = endpoints.filter(e => e.healthy).length;
+  const checkedCount = endpoints.filter(e => e.never_checked !== true && e.neverChecked !== true).length;
 
   return (
     <tr
@@ -45,13 +46,13 @@ const ChannelRow = ({ channel, endpoints, expanded, onToggle, storageMode }) => 
               {enabledCount} 启用
             </span>
             <span className={`px-2 py-0.5 rounded border ${
-              healthyCount === totalCount
+              checkedCount > 0 && healthyCount === checkedCount
                 ? 'text-emerald-600 bg-emerald-50 border-emerald-100'
                 : healthyCount > 0
                   ? 'text-amber-600 bg-amber-50 border-amber-100'
                   : 'text-slate-400 bg-slate-50 border-slate-200'
             }`}>
-              {healthyCount}/{totalCount} 健康
+              {checkedCount > 0 ? `${healthyCount}/${checkedCount} 可达` : `${totalCount} 未检测`}
             </span>
           </div>
         </div>

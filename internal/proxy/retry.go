@@ -65,6 +65,16 @@ func (rh *RetryHandler) SetUsageTracker(ut *tracking.UsageTracker) {
 	rh.usageTracker = ut
 }
 
+func (rh *RetryHandler) countRoutableEndpoints(endpoints []*endpoint.Endpoint) int {
+	count := 0
+	for _, ep := range endpoints {
+		if rh.endpointManager != nil && rh.endpointManager.IsEndpointRoutable(ep) {
+			count++
+		}
+	}
+	return count
+}
+
 // Operation represents a function that can be retried, returns response and error
 type Operation func(ep *endpoint.Endpoint, connID string) (*http.Response, error)
 
@@ -132,7 +142,7 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 				}
 			}
 
-			slog.WarnContext(ctx, "⚠️ [无可用端点] 当前活跃组中没有健康的端点，需要手动切换到其他组")
+			slog.WarnContext(ctx, "⚠️ [无可用端点] 当前活跃组中没有可调度端点，需要手动切换到其他组")
 			break
 		}
 
@@ -367,15 +377,9 @@ func (rh *RetryHandler) ExecuteWithContext(ctx context.Context, operation Operat
 		availableGroups := make([]string, 0)
 		for _, group := range allGroups {
 			if !group.IsActive && !rh.endpointManager.GetGroupManager().IsGroupInCooldown(group.Name) {
-				// Check if group has healthy endpoints
-				healthyInGroup := 0
-				for _, ep := range group.Endpoints {
-					if ep.IsHealthy() {
-						healthyInGroup++
-					}
-				}
-				if healthyInGroup > 0 {
-					availableGroups = append(availableGroups, fmt.Sprintf("%s(%d个健康端点)", group.Name, healthyInGroup))
+				routableInGroup := rh.countRoutableEndpoints(group.Endpoints)
+				if routableInGroup > 0 {
+					availableGroups = append(availableGroups, fmt.Sprintf("%s(%d个可调度端点)", group.Name, routableInGroup))
 				}
 			}
 		}
@@ -598,18 +602,12 @@ func (rh *RetryHandler) shouldSuspendRequest(ctx context.Context) bool {
 
 		// 检查非活跃组且不在冷却期的组
 		if !group.IsActive && !rh.endpointManager.GetGroupManager().IsGroupInCooldown(group.Name) {
-			// 检查组内是否有健康端点
-			healthyCount := 0
-			for _, ep := range group.Endpoints {
-				if ep.IsHealthy() {
-					healthyCount++
-				}
-			}
-			slog.InfoContext(ctx, fmt.Sprintf("🔍 [挂起检查] 组 %s 健康端点数: %d", group.Name, healthyCount))
+			routableCount := rh.countRoutableEndpoints(group.Endpoints)
+			slog.InfoContext(ctx, fmt.Sprintf("🔍 [挂起检查] 组 %s 可调度端点数: %d", group.Name, routableCount))
 
-			if healthyCount > 0 {
+			if routableCount > 0 {
 				hasAvailableBackupGroups = true
-				availableGroups = append(availableGroups, fmt.Sprintf("%s(%d个健康端点)", group.Name, healthyCount))
+				availableGroups = append(availableGroups, fmt.Sprintf("%s(%d个可调度端点)", group.Name, routableCount))
 			}
 		}
 	}
@@ -674,14 +672,14 @@ func (rh *RetryHandler) waitForGroupSwitch(ctx context.Context, connID string) b
 		// 收到组切换通知
 		slog.InfoContext(ctx, fmt.Sprintf("📡 [组切换通知] 连接 %s 收到组切换通知: %s，验证新组可用性", connID, newGroupName))
 
-		// 验证新激活的组是否有健康端点
+		// 验证新激活的组是否有可调度端点
 		newEndpoints := rh.endpointManager.GetHealthyEndpoints()
 		if len(newEndpoints) > 0 {
-			slog.InfoContext(ctx, fmt.Sprintf("✅ [切换成功] 连接 %s 新组 %s 有 %d 个健康端点，恢复请求处理",
+			slog.InfoContext(ctx, fmt.Sprintf("✅ [切换成功] 连接 %s 新组 %s 有 %d 个可调度端点，恢复请求处理",
 				connID, newGroupName, len(newEndpoints)))
 			return true
 		} else {
-			slog.WarnContext(ctx, fmt.Sprintf("⚠️ [切换无效] 连接 %s 新组 %s 暂无健康端点，挂起失败",
+			slog.WarnContext(ctx, fmt.Sprintf("⚠️ [切换无效] 连接 %s 新组 %s 暂无可调度端点，挂起失败",
 				connID, newGroupName))
 			return false
 		}

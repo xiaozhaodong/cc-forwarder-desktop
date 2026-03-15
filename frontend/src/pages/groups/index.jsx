@@ -152,10 +152,10 @@ const GroupsPage = () => {
                       状态
                     </th>
                     <th className="px-6 py-4 font-medium text-xs uppercase tracking-wider w-1/4">
-                      健康度指标
+                      连通性指标
                     </th>
                     <th className="px-6 py-4 font-medium text-xs uppercase tracking-wider w-1/6">
-                      端点概览
+                      最近可达概览
                     </th>
                     <th className="px-6 py-4 font-medium text-xs uppercase tracking-wider text-right">
                       操作

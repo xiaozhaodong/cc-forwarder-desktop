@@ -22,6 +22,8 @@ import (
 	"cc-forwarder/internal/transport"
 )
 
+var failureTrackerCleanupInterval = 30 * time.Second
+
 // EndpointStatus represents the health status of an endpoint
 type EndpointStatus struct {
 	Healthy          bool
@@ -115,9 +117,8 @@ func NewManager(cfg *config.Config) *Manager {
 		endpoint := &Endpoint{
 			Config: endpointCfg,
 			Status: EndpointStatus{
-				Healthy:      false, // Start pessimistic, let health checks determine actual status
-				LastCheck:    time.Now(),
-				NeverChecked: true, // 标记为未检测
+				Healthy:      false,
+				NeverChecked: true, // 标记为未检测，等待手动/批量连通性测试或真实请求结果
 			},
 		}
 		manager.endpoints = append(manager.endpoints, endpoint)
@@ -143,13 +144,18 @@ func NewManager(cfg *config.Config) *Manager {
 	return manager
 }
 
-// Start starts the health checking routine
+// Start starts endpoint background routines.
+// 2026-03: 后台健康轮询已停用，避免持续探测 /v1/models。
 func (m *Manager) Start() {
-	m.wg.Add(1)
-	go m.healthCheckLoop()
+	if m.failureTracker != nil {
+		m.wg.Add(1)
+		go m.failureTrackerCleanupLoop()
+	}
+
+	slog.Debug("🛑 [端点管理] 后台连通性轮询已停用，仅保留失败追踪清理与请求级状态更新")
 }
 
-// Stop stops the health checking routine
+// Stop stops endpoint background routines.
 func (m *Manager) Stop() {
 	m.cancel()
 	m.wg.Wait()
@@ -316,6 +322,36 @@ func (m *Manager) GetFailureStats() map[string]int {
 // 用于健康检查回退逻辑中过滤端点
 func (m *Manager) ShouldTriggerFailureAction(endpointName string) bool {
 	return m.failureTracker.ShouldTriggerAction(endpointName)
+}
+
+func (m *Manager) failureTrackerCleanupLoop() {
+	defer m.wg.Done()
+	ticker := time.NewTicker(failureTrackerCleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-ticker.C:
+			m.failureTracker.CleanupExpiredEvents()
+		}
+	}
+}
+
+// IsEndpointRoutable reports whether an endpoint can currently participate in routing.
+// 调度仅依赖真实请求失败追踪和冷却状态，不依赖后台健康轮询。
+func (m *Manager) IsEndpointRoutable(ep *Endpoint) bool {
+	if ep == nil {
+		return false
+	}
+
+	cfg := m.getConfigSnapshot()
+	if cfg.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(ep.Config.Name) {
+		return false
+	}
+
+	return !ep.IsInCooldown()
 }
 
 // UpdateFailureTrackerConfig 热更新失败追踪器配置

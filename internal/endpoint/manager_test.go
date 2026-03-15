@@ -80,10 +80,10 @@ func TestHealthCheckWithAPIEndpoint(t *testing.T) {
 	}{
 		{"Success 200", 200, true},
 		{"Success 201", 201, true},
-		{"Bad Request 400", 400, false},  // API reachable but invalid request - should be unhealthy
-		{"Unauthorized 401", 401, false}, // API reachable but needs auth - should be unhealthy
-		{"Forbidden 403", 403, false},    // API reachable but forbidden - should be unhealthy
-		{"Not Found 404", 404, false},    // API reachable but endpoint not found - should be unhealthy
+		{"Bad Request 400", 400, true},
+		{"Unauthorized 401", 401, true},
+		{"Forbidden 403", 403, true},
+		{"Not Found 404", 404, true},
 		{"Server Error 500", 500, false}, // API has issues
 		{"Bad Gateway 502", 502, false},  // API unreachable
 	}
@@ -128,12 +128,7 @@ func TestHealthCheckWithAPIEndpoint(t *testing.T) {
 			manager := NewManager(cfg)
 			endpoint := manager.GetAllEndpoints()[0]
 
-			// Perform health check twice for endpoints that should be unhealthy
-			// (due to 2-failure threshold)
 			manager.checkEndpointHealth(endpoint)
-			if !tc.expectHealthy {
-				manager.checkEndpointHealth(endpoint) // Second check to trigger unhealthy status
-			}
 
 			// Check result
 			if endpoint.IsHealthy() != tc.expectHealthy {
@@ -147,6 +142,145 @@ func TestHealthCheckWithAPIEndpoint(t *testing.T) {
 				t.Errorf("Expected response time to be recorded for status %d, got %v", tc.statusCode, responseTime)
 			}
 		})
+	}
+}
+
+func TestManagerStartDoesNotPerformAutomaticConnectivityChecks(t *testing.T) {
+	requests := make(chan struct{}, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Health: config.HealthConfig{
+			CheckInterval: 20 * time.Millisecond,
+			Timeout:       1 * time.Second,
+			HealthPath:    "/v1/models",
+		},
+		Endpoints: []config.EndpointConfig{
+			{
+				Name:    "auto-check-endpoint",
+				URL:     server.URL,
+				Token:   "test-token",
+				Timeout: 30 * time.Second,
+			},
+		},
+	}
+
+	manager := NewManager(cfg)
+	manager.Start()
+	defer manager.Stop()
+
+	time.Sleep(80 * time.Millisecond)
+
+	select {
+	case <-requests:
+		t.Fatal("expected manager start to avoid automatic connectivity checks")
+	default:
+	}
+}
+
+func TestAddEndpointDoesNotTriggerAutomaticConnectivityCheck(t *testing.T) {
+	requests := make(chan struct{}, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	manager := NewManager(&config.Config{})
+	err := manager.AddEndpoint(config.EndpointConfig{
+		Name: "new-endpoint",
+		URL:  server.URL,
+	})
+	if err != nil {
+		t.Fatalf("AddEndpoint returned error: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	select {
+	case <-requests:
+		t.Fatal("expected AddEndpoint to avoid automatic connectivity checks")
+	default:
+	}
+}
+
+func TestUpdateEndpointConfigDoesNotTriggerAutomaticConnectivityCheck(t *testing.T) {
+	requests := make(chan struct{}, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	manager := NewManager(&config.Config{
+		Endpoints: []config.EndpointConfig{
+			{
+				Name: "existing-endpoint",
+				URL:  "https://old.example.com",
+			},
+		},
+	})
+
+	err := manager.UpdateEndpointConfig("existing-endpoint", config.EndpointConfig{
+		URL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("UpdateEndpointConfig returned error: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	select {
+	case <-requests:
+		t.Fatal("expected UpdateEndpointConfig to avoid automatic connectivity checks")
+	default:
+	}
+}
+
+func TestManagerStartCleansExpiredFailureTrackerEntries(t *testing.T) {
+	originalCleanupInterval := failureTrackerCleanupInterval
+	failureTrackerCleanupInterval = 10 * time.Millisecond
+	defer func() {
+		failureTrackerCleanupInterval = originalCleanupInterval
+	}()
+
+	cfg := &config.Config{
+		Health: config.HealthConfig{
+			CheckInterval: time.Hour,
+		},
+		FailureTracker: config.FailureTrackerConfig{
+			Enabled:    true,
+			TimeWindow: 10 * time.Millisecond,
+			Threshold:  1,
+		},
+		Endpoints: []config.EndpointConfig{
+			{
+				Name: "tracked-endpoint",
+				URL:  "https://example.com",
+			},
+		},
+	}
+
+	manager := NewManager(cfg)
+	manager.RecordFailure("tracked-endpoint")
+
+	if len(manager.failureTracker.endpointFailures) != 1 {
+		t.Fatalf("expected failure tracker to contain one endpoint entry, got %d", len(manager.failureTracker.endpointFailures))
+	}
+
+	time.Sleep(15 * time.Millisecond)
+
+	manager.Start()
+	defer manager.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	if len(manager.failureTracker.endpointFailures) != 0 {
+		t.Fatalf("expected expired failure tracker entries to be cleaned, got %d", len(manager.failureTracker.endpointFailures))
 	}
 }
 
