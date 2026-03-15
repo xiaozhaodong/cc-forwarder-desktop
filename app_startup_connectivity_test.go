@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -120,5 +123,56 @@ func TestScheduleStartupConnectivityChecks_TriggersAccountChecksWhenEligibleAcco
 	case <-requests:
 	case <-time.After(time.Second):
 		t.Fatal("expected startup account checks to trigger upstream connectivity test")
+	}
+}
+
+func TestScheduleStartupConnectivityChecks_DoesNotTriggerAccountRequestsWhenNoEligibleAccountsExist(t *testing.T) {
+	app, _ := newAccountPoolAPITestApp(t)
+
+	requests := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- struct{}{}
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	var logs bytes.Buffer
+	app.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	_, err := app.accountPoolService.CreateAccount(context.Background(), &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "disabled-startup-account",
+		CredentialRaw: "sk-disabled-startup-account",
+		BaseURL:       server.URL,
+		Priority:      10,
+		Enabled:       false,
+		State:         "inactive",
+		QuotaStatus:   "ok",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount disabled failed: %v", err)
+	}
+
+	app.scheduleStartupConnectivityChecks()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		logText := logs.String()
+		if strings.Contains(logText, "账号批量检测完成") || strings.Contains(logText, "无可测账号，跳过账号批量检测") {
+			if strings.Contains(logText, "账号批量检测完成") {
+				t.Fatalf("expected no completion log when there are no eligible accounts, got logs: %s", logText)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected startup account checks to emit a skip signal, got logs: %s", logText)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	select {
+	case <-requests:
+		t.Fatal("expected no upstream connectivity request when no eligible accounts exist")
+	default:
 	}
 }

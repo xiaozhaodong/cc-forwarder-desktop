@@ -61,6 +61,16 @@ func (a *App) runStartupAccountChecks() {
 	}
 
 	summary := a.accountPoolService.RunStartupConnectivityChecks(context.Background(), 0)
+	if summary.Total == 0 {
+		if a.logger != nil {
+			a.logger.Debug(
+				"启动连通性检查: 无可测账号，跳过账号批量检测",
+				"skipped", summary.SkippedCount,
+			)
+		}
+		return
+	}
+
 	if a.logger != nil {
 		a.logger.Info(
 			"启动连通性检查: 账号批量检测完成",
