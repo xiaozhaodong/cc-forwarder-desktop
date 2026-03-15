@@ -83,6 +83,10 @@ type App struct {
 	// 日志处理器（用于查询和广播）
 	logHandler *logging.BroadcastHandler
 	logEmitter *logging.EventEmitter
+
+	// 启动连通性检查测试 seam（默认走真实实现）
+	startupEndpointCheckRunner func()
+	startupAccountCheckRunner  func()
 }
 
 // NewApp 创建新的应用实例
@@ -190,6 +194,7 @@ func (a *App) startup(ctx context.Context) {
 	a.isRunning = true
 	a.logger.Info("✅ CC-Forwarder 启动完成",
 		"proxy_port", a.config.Server.Port)
+	a.scheduleStartupConnectivityChecks()
 }
 
 // shutdown 在 Wails 应用关闭时调用
