@@ -1,13 +1,5 @@
 package main
 
-import (
-	"context"
-	"strings"
-	"time"
-)
-
-const startupAccountEligibilityTimeout = 2 * time.Second
-
 func (a *App) scheduleStartupConnectivityChecks() {
 	if a == nil {
 		return
@@ -29,32 +21,13 @@ func (a *App) shouldRunStartupEndpointChecks() bool {
 }
 
 func (a *App) shouldRunStartupAccountChecks() bool {
-	if a == nil || a.accountPoolService == nil {
+	if a == nil {
 		return false
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), startupAccountEligibilityTimeout)
-	defer cancel()
-
-	accounts, err := a.accountPoolService.ListAccounts(ctx, true)
-	if err != nil {
-		if a.logger != nil {
-			a.logger.Warn("启动连通性检查: 读取账号列表失败", "error", err)
-		}
-		return false
-	}
-
-	for _, account := range accounts {
-		if account == nil || !account.Enabled {
-			continue
-		}
-		if strings.TrimSpace(account.CredentialRaw) == "" {
-			continue
-		}
+	if a.startupAccountCheckRunner != nil {
 		return true
 	}
-
-	return false
+	return a.accountPoolService != nil
 }
 
 func (a *App) runStartupEndpointChecks() {
