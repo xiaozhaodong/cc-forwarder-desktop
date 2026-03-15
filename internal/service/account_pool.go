@@ -37,17 +37,18 @@ var chatGPTCodexTestURL = defaultChatGPTCodexTestURL
 
 // AccountPoolService 账号池服务
 type AccountPoolService struct {
-	store                  store.AccountPoolStore
-	config                 *config.Config
-	refreshTokenManager    *accountauth.OpenAIRefreshTokenManager
-	scheduleSnapshots      *latestAccountScheduleSnapshotStore
-	softFailureTracker     *accountSoftFailureTracker
-	quotaRefreshDispatcher *accountPoolQuotaRefreshDispatcher
-	quotaProbeScheduler    *accountPoolQuotaProbeScheduler
-	runtimeCache           *accountRuntimeCache
-	runtimeWriter          *accountPoolRuntimeWriter
-	runtimeInitMu          sync.Mutex
-	runtimeInitialized     atomic.Bool
+	store                         store.AccountPoolStore
+	config                        *config.Config
+	refreshTokenManager           *accountauth.OpenAIRefreshTokenManager
+	scheduleSnapshots             *latestAccountScheduleSnapshotStore
+	softFailureTracker            *accountSoftFailureTracker
+	quotaRefreshDispatcher        *accountPoolQuotaRefreshDispatcher
+	quotaProbeScheduler           *accountPoolQuotaProbeScheduler
+	runtimeCache                  *accountRuntimeCache
+	runtimeWriter                 *accountPoolRuntimeWriter
+	startupConnectivityTestRunner func(context.Context, int64) error
+	runtimeInitMu                 sync.Mutex
+	runtimeInitialized            atomic.Bool
 }
 
 // NewAccountPoolService 创建账号池服务
