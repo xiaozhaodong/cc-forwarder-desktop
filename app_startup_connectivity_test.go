@@ -73,26 +73,12 @@ func TestScheduleStartupConnectivityChecks_DoesNotBlockStartupWhenAccountChecksS
 func TestScheduleStartupConnectivityChecks_SkipsWhenNothingConfigured(t *testing.T) {
 	app := NewApp()
 
-	endpointCalled := make(chan struct{}, 1)
-	accountCalled := make(chan struct{}, 1)
-	app.startupEndpointCheckRunner = func() {
-		endpointCalled <- struct{}{}
+	if app.shouldRunStartupEndpointChecks() {
+		t.Fatal("expected endpoint startup checks to be skipped when no endpoints are configured")
 	}
-	app.startupAccountCheckRunner = func() {
-		accountCalled <- struct{}{}
+	if app.shouldRunStartupAccountChecks() {
+		t.Fatal("expected account startup checks to be skipped when no account service is configured")
 	}
 
 	app.scheduleStartupConnectivityChecks()
-
-	select {
-	case <-endpointCalled:
-		t.Fatal("expected endpoint startup check runner to be skipped")
-	default:
-	}
-
-	select {
-	case <-accountCalled:
-		t.Fatal("expected account startup check runner to be skipped")
-	default:
-	}
 }
