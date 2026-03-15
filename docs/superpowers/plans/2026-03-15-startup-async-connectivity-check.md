@@ -19,6 +19,10 @@
 - Create: `app_startup_connectivity.go`
 - Test: `app_startup_connectivity_test.go`
 
+实现约束：
+- 在 `app_startup_connectivity.go` 中为测试预留未导出的函数注入点，例如 `startupEndpointCheckRunner` / `startupAccountCheckRunner`，生产环境走默认实现，测试可替换。
+- 不新增导出 API，也不把测试 seam 暴露给前端或其他包。
+
 - [ ] **Step 1: 写一个失败测试，验证启动调度不会阻塞主流程**
 
 ```go
@@ -46,7 +50,7 @@ func TestScheduleStartupConnectivityChecks_DoesNotBlockStartup(t *testing.T) {
 
 - [ ] **Step 2: 运行测试，确认它因为缺少启动检查编排入口而失败**
 
-Run: `go test ./... -run TestScheduleStartupConnectivityChecks_DoesNotBlockStartup`
+Run: `go test . -run TestScheduleStartupConnectivityChecks_DoesNotBlockStartup`
 Expected: FAIL，提示 `scheduleStartupConnectivityChecks` 或注入点不存在
 
 - [ ] **Step 3: 写一个失败测试，验证无端点且无账号时会直接跳过**
@@ -71,7 +75,7 @@ func TestScheduleStartupConnectivityChecks_SkipsWhenNothingConfigured(t *testing
 
 - [ ] **Step 4: 运行测试，确认它失败并暴露出当前缺少条件判断**
 
-Run: `go test ./... -run TestScheduleStartupConnectivityChecks_SkipsWhenNothingConfigured`
+Run: `go test . -run TestScheduleStartupConnectivityChecks_SkipsWhenNothingConfigured`
 Expected: FAIL，提示启动检查逻辑尚未实现
 
 - [ ] **Step 5: 用最小实现新增启动检查编排文件**
@@ -85,14 +89,16 @@ Expected: FAIL，提示启动检查逻辑尚未实现
 
 - [ ] **Step 6: 运行编排测试，确认通过**
 
-Run: `go test ./... -run 'TestScheduleStartupConnectivityChecks_'`
+Run: `go test . -run 'TestScheduleStartupConnectivityChecks_'`
 Expected: PASS
 
 - [ ] **Step 7: 提交这一小步**
 
 ```bash
 git add app.go app_startup_connectivity.go app_startup_connectivity_test.go
-git commit -m "feat: 接入启动异步连通性检查编排"
+git commit -m "feat: 接入启动异步连通性检查编排" -m "在 App.startup 末尾调度一次性异步连通性检查。 
+保持启动主流程不等待网络请求，避免影响桌面应用可用速度。 
+为后续端点与账号批量检查预留稳定编排边界。"
 ```
 
 ## Chunk 2: Account Pool Startup Checks
@@ -153,6 +159,7 @@ Expected: FAIL
 - 内部通过 `ListAccounts(ctx, true)` 取数并过滤 `enabled=true && credential_raw 非空`
 - 用受限并发执行 `TestUpstreamAccount(ctx, id)`
 - 汇总成功数、失败数、跳过数与失败详情
+- 失败结果只进入摘要与日志，不新增 `last_error` 等持久化失败写回
 - 不修改 cooldown、fail_count、active_selection 等调度状态
 
 - [ ] **Step 6: 运行服务层测试，确认通过**
@@ -164,7 +171,9 @@ Expected: PASS
 
 ```bash
 git add internal/service/account_pool.go internal/service/account_pool_startup_connectivity.go internal/service/account_pool_startup_connectivity_test.go
-git commit -m "feat: 增加账号池启动连通性批量检查"
+git commit -m "feat: 增加账号池启动连通性批量检查" -m "新增仅供启动阶段使用的账号池批量连通性检查入口。 
+复用单账号 TestUpstreamAccount 逻辑，并限制并发避免启动时过度打上游。 
+失败仅进入摘要和日志，不改动调度相关状态。"
 ```
 
 ## Chunk 3: Integration, Logging, and Regression Coverage
@@ -174,7 +183,6 @@ git commit -m "feat: 增加账号池启动连通性批量检查"
 **Files:**
 - Modify: `app_startup_connectivity.go`
 - Modify: `app_startup_connectivity_test.go`
-- Modify: `internal/endpoint/manager_test.go`
 
 - [ ] **Step 1: 写一个失败测试，验证存在账号时会调度账号池启动检查**
 
@@ -199,45 +207,39 @@ func TestScheduleStartupConnectivityChecks_TriggersAccountChecksWhenEligibleAcco
 
 - [ ] **Step 2: 运行测试，确认它失败并暴露 app/service 接线缺口**
 
-Run: `go test ./... -run TestScheduleStartupConnectivityChecks_TriggersAccountChecksWhenEligibleAccountsExist`
+Run: `go test . -run TestScheduleStartupConnectivityChecks_TriggersAccountChecksWhenEligibleAccountsExist`
 Expected: FAIL
 
-- [ ] **Step 3: 写一个失败测试，锁定端点 manager 启动语义没有被回退**
-
-```go
-func TestManagerStartStillDoesNotPerformAutomaticConnectivityChecks(t *testing.T) {
-	// 复用现有 server 断言，确保 manager.Start() 仍不会同步发请求
-}
-```
-
-- [ ] **Step 4: 运行端点测试，确认当前基线仍然受保护**
+- [ ] **Step 3: 运行既有端点基线测试，确认 manager 启动语义仍受保护**
 
 Run: `go test ./internal/endpoint -run TestManagerStartDoesNotPerformAutomaticConnectivityChecks`
 Expected: PASS
 
-- [ ] **Step 5: 完成 App 与账号池接线，并补统一日志**
+- [ ] **Step 4: 完成 App 与账号池接线，并补统一日志**
 
 实现要求：
 - `app_startup_connectivity.go` 调用账号池新方法
 - 日志统一增加“启动连通性检查”前缀
-- 账号批量结束后触发一次前端更新事件（若现有事件方法可复用则直接复用）
+- 本次不新增账号池即时前端推送事件，账号状态由后续主动拉取获取
 - 端点和账号任一分支失败都不得影响应用启动完成日志
 
-- [ ] **Step 6: 跑目标测试集**
+- [ ] **Step 5: 跑目标测试集**
 
-Run: `go test ./... -run 'TestScheduleStartupConnectivityChecks_|TestRunStartupConnectivityChecks_|TestManagerStartDoesNotPerformAutomaticConnectivityChecks'`
+Run: `go test . ./internal/service ./internal/endpoint -run 'TestScheduleStartupConnectivityChecks_|TestRunStartupConnectivityChecks_|TestManagerStartDoesNotPerformAutomaticConnectivityChecks'`
 Expected: PASS
 
-- [ ] **Step 7: 跑回归测试**
+- [ ] **Step 6: 跑回归测试**
 
 Run: `go test ./internal/service ./internal/endpoint`
 Expected: PASS
 
-- [ ] **Step 8: 提交这一小步**
+- [ ] **Step 7: 提交这一小步**
 
 ```bash
-git add app_startup_connectivity.go app_startup_connectivity_test.go internal/endpoint/manager_test.go
-git commit -m "test: 补齐启动连通性检查回归覆盖"
+git add app_startup_connectivity.go app_startup_connectivity_test.go
+git commit -m "feat: 接回账号池启动连通性检查编排" -m "将账号池批量启动检查接入 App 启动异步编排流程。 
+统一启动连通性检查日志语义，并保持账号结果只写回状态不即时推送前端。 
+补齐根包编排测试，防止接线回归。"
 ```
 
 ## Chunk 4: Final Verification
@@ -254,22 +256,34 @@ git commit -m "test: 补齐启动连通性检查回归覆盖"
 
 - [ ] **Step 1: 运行与本次改动直接相关的 Go 测试**
 
-Run: `go test ./internal/service ./internal/endpoint ./... -run 'TestScheduleStartupConnectivityChecks_|TestRunStartupConnectivityChecks_|TestManagerStartDoesNotPerformAutomaticConnectivityChecks'`
+Run: `go test . ./internal/service ./internal/endpoint -run 'TestScheduleStartupConnectivityChecks_|TestRunStartupConnectivityChecks_|TestManagerStartDoesNotPerformAutomaticConnectivityChecks'`
 Expected: PASS
 
-- [ ] **Step 2: 运行账号池相关回归测试**
+- [ ] **Step 2: 运行格式化并确认代码树整洁**
+
+Run: `go fmt ./...`
+Expected: 所有相关 Go 文件完成格式化
+
+- [ ] **Step 3: 如本机已安装 goimports，则执行 import 整理**
+
+Run: `goimports -w app.go app_startup_connectivity.go app_startup_connectivity_test.go internal/service/account_pool.go internal/service/account_pool_startup_connectivity.go internal/service/account_pool_startup_connectivity_test.go`
+Expected: 相关文件 import 顺序与格式正确；若命令不存在，则记录为环境缺口
+
+- [ ] **Step 4: 运行账号池相关回归测试**
 
 Run: `go test ./internal/store ./internal/accountauth ./internal/service ./internal/proxy ./internal/proxy/handlers ./internal/tracking`
 Expected: PASS
 
-- [ ] **Step 3: 记录验证结果并检查工作区**
+- [ ] **Step 5: 记录验证结果并检查工作区**
 
 Run: `git status --short`
 Expected: 只包含本次实现相关文件改动
 
-- [ ] **Step 4: 最终提交**
+- [ ] **Step 6: 最终提交**
 
 ```bash
 git add app.go app_startup_connectivity.go app_startup_connectivity_test.go internal/service/account_pool.go internal/service/account_pool_startup_connectivity.go internal/service/account_pool_startup_connectivity_test.go internal/endpoint/manager_test.go
-git commit -m "feat: 启动时异步补充端点与账号连通性检查"
+git commit -m "feat: 启动时异步补充端点与账号连通性检查" -m "应用启动后会并行补一轮端点与账号连通性检查。 
+检查过程不阻塞启动，也不会把失败结果直接写成调度层面的禁用或冷却。 
+补齐相关单测与回归验证，保证现有手动连通性语义不回退。"
 ```
