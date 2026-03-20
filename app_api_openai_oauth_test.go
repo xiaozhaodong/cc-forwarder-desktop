@@ -38,8 +38,14 @@ func TestBuildOpenAIOAuthURL(t *testing.T) {
 	if !strings.Contains(scope, "offline_access") {
 		t.Fatalf("scope should include offline_access, got: %s", scope)
 	}
-	if strings.Contains(scope, "api.responses.write") {
-		t.Fatalf("scope should not include api.responses.write for current oauth client, got: %s", scope)
+	if !strings.Contains(scope, "api.connectors.read") {
+		t.Fatalf("scope should include api.connectors.read, got: %s", scope)
+	}
+	if !strings.Contains(scope, "api.connectors.invoke") {
+		t.Fatalf("scope should include api.connectors.invoke, got: %s", scope)
+	}
+	if query.Get("originator") != "codex_cli_rs" {
+		t.Fatalf("unexpected originator: %s", query.Get("originator"))
 	}
 	if query.Get("code_challenge") == "" {
 		t.Fatal("code_challenge should not be empty")

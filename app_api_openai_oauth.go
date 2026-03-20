@@ -24,7 +24,8 @@ const (
 	openAIOAuthAuthorizeURL         = "https://auth.openai.com/oauth/authorize"
 	openAIOAuthTokenURL             = "https://auth.openai.com/oauth/token"
 	openAIOAuthDefaultRedirectURI   = "http://localhost:1455/auth/callback"
-	openAIOAuthDefaultScopes        = "openid profile email offline_access"
+	openAIOAuthDefaultScopes        = "openid profile email offline_access api.connectors.read api.connectors.invoke"
+	openAIOAuthDefaultOriginator    = "codex_cli_rs"
 	openAIOAuthSessionTTL           = 10 * time.Minute
 	openAIOAuthTokenExchangeTimeout = 25 * time.Second
 	openAIOAuthResponseReadLimit    = 1024 * 1024
@@ -360,6 +361,7 @@ func buildOpenAIOAuthURL(state, codeVerifier, redirectURI string) string {
 	params.Set("code_challenge_method", "S256")
 	params.Set("id_token_add_organizations", "true")
 	params.Set("codex_cli_simplified_flow", "true")
+	params.Set("originator", openAIOAuthDefaultOriginator)
 	return openAIOAuthAuthorizeURL + "?" + params.Encode()
 }
 
