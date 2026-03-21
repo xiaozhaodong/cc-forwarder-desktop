@@ -33,6 +33,7 @@ const (
 	localNoAvailableProvidersMarker         = "no_available_providers::ccf_local"
 
 	chatGPTCodexResponsesURL = "https://chatgpt.com/backend-api/codex/responses"
+	chatGPTCodexCompactURL   = "https://chatgpt.com/backend-api/codex/responses/compact"
 	openAIBetaResponsesValue = "responses=experimental"
 	defaultOAuthOriginator   = "codex_cli_rs"
 )
@@ -602,7 +603,11 @@ func (h *Handler) getAccountHTTPClient(isSSE bool) (*http.Client, error) {
 
 func resolveAccountTargetURL(acc *store.UpstreamAccountRecord, path, rawQuery string) (string, error) {
 	if acc != nil && accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
-		upstreamURL, err := url.Parse(chatGPTCodexResponsesURL)
+		targetURL := chatGPTCodexResponsesURL
+		if strings.HasSuffix(path, "/compact") {
+			targetURL = chatGPTCodexCompactURL
+		}
+		upstreamURL, err := url.Parse(targetURL)
 		if err != nil {
 			return "", err
 		}
@@ -625,7 +630,7 @@ func (h *Handler) processAccountRegularResponse(w http.ResponseWriter, resp *htt
 		return fmt.Errorf("failed to read upstream response: %w", err)
 	}
 
-	if len(responseBytes) == 0 && r.URL.Path == "/v1/responses" {
+	if len(responseBytes) == 0 && h.isAccountPipelinePath(r.URL.Path) {
 		lifecycleManager.FailRequest("empty_response_body", "Upstream returned 2xx with empty body", http.StatusBadGateway)
 		return fmt.Errorf("empty response body")
 	}

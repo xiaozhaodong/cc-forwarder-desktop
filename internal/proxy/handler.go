@@ -440,7 +440,7 @@ func (h *Handler) SetAccountPoolService(service AccountPoolService) {
 // 仅对已知会携带 model 字段的路径进行解析，避免不必要的JSON解析开销
 func (h *Handler) extractModelFromRequestBody(bodyBytes []byte, path string) string {
 	// 仅对 Claude /v1/messages 与 Codex /v1/responses 尝试解析模型
-	if !strings.Contains(path, "/v1/messages") && path != "/v1/responses" {
+	if !strings.Contains(path, "/v1/messages") && !h.isAccountPipelinePath(path) {
 		return ""
 	}
 
@@ -592,18 +592,18 @@ func (h *Handler) shouldUseAccountPipeline(path string) bool {
 }
 
 func (h *Handler) isAccountPipelinePath(path string) bool {
-	return path == "/v1/responses"
+	return path == "/v1/responses" || path == "/v1/responses/compact"
 }
 
 func (h *Handler) handleUnavailableAccountPipeline(w http.ResponseWriter, lifecycleManager *RequestLifecycleManager) {
 	errType := "account_pool_disabled"
-	message := "account pool is disabled for Codex /v1/responses"
+	message := "account pool is disabled for Codex /v1/responses and /v1/responses/compact"
 	failureKey := "account_pool_disabled"
 
 	if h.config != nil && h.config.AccountPool.Enabled {
 		errType = "account_pool_unavailable"
 		failureKey = "account_pool_not_ready"
-		message = "account pool service is not initialized"
+		message = "account pool service is not initialized for Codex /v1/responses and /v1/responses/compact"
 	}
 
 	lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)

@@ -214,6 +214,11 @@ func TestExtractModelFromRequestBody_SupportsResponsesPath(t *testing.T) {
 		t.Fatalf("expected gpt-5-codex for /v1/responses, got %s", responsesModel)
 	}
 
+	compactModel := handler.extractModelFromRequestBody([]byte(`{"model":"gpt-5-codex","input":"hello"}`), "/v1/responses/compact")
+	if compactModel != "gpt-5-codex" {
+		t.Fatalf("expected gpt-5-codex for /v1/responses/compact, got %s", compactModel)
+	}
+
 	messagesModel := handler.extractModelFromRequestBody([]byte(`{"model":"claude-sonnet-4-20250514","messages":[]}`), "/v1/messages")
 	if messagesModel != "claude-sonnet-4-20250514" {
 		t.Fatalf("expected claude-sonnet-4-20250514 for /v1/messages, got %s", messagesModel)

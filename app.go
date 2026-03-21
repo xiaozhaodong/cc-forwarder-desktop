@@ -1038,7 +1038,7 @@ func (a *App) setupAccountPoolStore() {
 	// 使用 usageTracker 的数据库连接
 	if a.usageTracker == nil {
 		if a.config != nil && a.config.AccountPool.Enabled {
-			a.logger.Warn("⚠️ 账号池路由已启用，但 usage_tracking 未启用；Codex /v1/responses 将返回账号池未就绪错误")
+			a.logger.Warn("⚠️ 账号池路由已启用，但 usage_tracking 未启用；Codex /v1/responses 与 /v1/responses/compact 将返回账号池未就绪错误")
 		} else {
 			a.logger.Debug("账号池存储跳过初始化 (usage_tracking 未启用)")
 		}
@@ -1049,7 +1049,7 @@ func (a *App) setupAccountPoolStore() {
 	if db == nil {
 		a.logger.Error("❌ 无法获取数据库连接 (账号池存储)")
 		if a.config != nil && a.config.AccountPool.Enabled {
-			a.logger.Warn("⚠️ 账号池路由已启用，但数据库未就绪；Codex /v1/responses 将返回账号池未就绪错误")
+			a.logger.Warn("⚠️ 账号池路由已启用，但数据库未就绪；Codex /v1/responses 与 /v1/responses/compact 将返回账号池未就绪错误")
 		}
 		return
 	}

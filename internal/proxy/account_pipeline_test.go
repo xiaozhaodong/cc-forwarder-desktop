@@ -222,6 +222,16 @@ func performResponsesRequest(t *testing.T, handler *Handler) *httptest.ResponseR
 	return rec
 }
 
+func performResponsesCompactRequest(t *testing.T, handler *Handler) *httptest.ResponseRecorder {
+	t.Helper()
+	body := bytes.NewBufferString(`{"model":"gpt-4.1","input":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
 func performResponsesStreamingRequest(t *testing.T, handler *Handler) *httptest.ResponseRecorder {
 	t.Helper()
 	body := bytes.NewBufferString(`{"model":"gpt-4.1","input":"hello","stream":true}`)
@@ -326,6 +336,9 @@ func TestAccountPipeline_DoesNotUseEndpointWhenAccountPoolDisabled(t *testing.T)
 	if errObj["type"] != "account_pool_disabled" {
 		t.Fatalf("unexpected error type: %#v", errObj["type"])
 	}
+	if errObj["message"] != "account pool is disabled for Codex /v1/responses and /v1/responses/compact" {
+		t.Fatalf("unexpected error message: %#v", errObj["message"])
+	}
 }
 
 func TestAccountPipeline_DoesNotUseEndpointWhenServiceNotReady(t *testing.T) {
@@ -355,6 +368,9 @@ func TestAccountPipeline_DoesNotUseEndpointWhenServiceNotReady(t *testing.T) {
 	if errObj["type"] != "account_pool_unavailable" {
 		t.Fatalf("unexpected error type: %#v", errObj["type"])
 	}
+	if errObj["message"] != "account pool service is not initialized for Codex /v1/responses and /v1/responses/compact" {
+		t.Fatalf("unexpected error message: %#v", errObj["message"])
+	}
 }
 
 func TestShouldUseAccountPipeline_RequiresEnabledAndInitializedService(t *testing.T) {
@@ -375,6 +391,23 @@ func TestShouldUseAccountPipeline_RequiresEnabledAndInitializedService(t *testin
 	handler.config.AccountPool.Enabled = false
 	if handler.shouldUseAccountPipeline("/v1/responses") {
 		t.Fatal("expected disabled routing when account_pool.enabled=false")
+	}
+}
+
+func TestShouldUseAccountPipeline_SupportsResponsesCompactPath(t *testing.T) {
+	handler := &Handler{
+		config: &config.Config{
+			AccountPool: config.AccountPoolConfig{Enabled: true},
+		},
+		accountPoolService: &mockAccountPoolService{},
+	}
+
+	if !handler.shouldUseAccountPipeline("/v1/responses/compact") {
+		t.Fatal("expected /v1/responses/compact to use account pipeline")
+	}
+
+	if !handler.isAccountPipelinePath("/v1/responses/compact") {
+		t.Fatal("expected /v1/responses/compact to be treated as account pipeline path")
 	}
 }
 
@@ -480,6 +513,40 @@ func TestAccountPipeline_PreparesAndCompletesLatestScheduleSnapshot(t *testing.T
 	}
 	if len(service.quotaRefreshCalls) != 0 {
 		t.Fatalf("expected api_key success not to enqueue quota refresh, got %+v", service.quotaRefreshCalls)
+	}
+}
+
+func TestAccountPipeline_PreparesCompactRequestPath(t *testing.T) {
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 8, AccountName: "compact-main", ProviderType: "api_key", CredentialRaw: "sk-compact", BaseURL: "https://example.com", Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, "https://example.com", service)
+	handler.accountHTTPInitOnce.Do(func() {})
+	handler.accountHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/v1/responses/compact" {
+			t.Fatalf("expected upstream path /v1/responses/compact, got %s", req.URL.Path)
+		}
+		body := io.NopCloser(strings.NewReader(`{"output":[]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       body,
+			Request:    req,
+		}, nil
+	})}
+	handler.accountSSEHTTPClient = handler.accountHTTPClient
+
+	rec := performResponsesCompactRequest(t, handler)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(service.prepareCalls) != 1 {
+		t.Fatalf("expected one prepare call, got %+v", service.prepareCalls)
+	}
+	if service.prepareCalls[0].requestPath != "/v1/responses/compact" {
+		t.Fatalf("expected request path /v1/responses/compact, got %+v", service.prepareCalls[0])
 	}
 }
 
@@ -1130,6 +1197,32 @@ func TestResolveAccountTargetURL_OAuthUsesChatGPTCodexEndpoint(t *testing.T) {
 		t.Fatalf("expected chatgpt host, got %s://%s", parsed.Scheme, parsed.Host)
 	}
 	if parsed.Path != "/backend-api/codex/responses" {
+		t.Fatalf("unexpected path: %s", parsed.Path)
+	}
+	if parsed.RawQuery != "stream=true" {
+		t.Fatalf("unexpected query: %s", parsed.RawQuery)
+	}
+}
+
+func TestResolveAccountTargetURL_OAuthUsesChatGPTCodexCompactEndpoint(t *testing.T) {
+	acc := &store.UpstreamAccountRecord{
+		ProviderType: "chatgpt_refresh_token",
+		BaseURL:      "https://api.openai.com",
+	}
+
+	targetURL, err := resolveAccountTargetURL(acc, "/v1/responses/compact", "stream=true")
+	if err != nil {
+		t.Fatalf("resolveAccountTargetURL returned error: %v", err)
+	}
+
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		t.Fatalf("parse target url failed: %v", err)
+	}
+	if parsed.Scheme != "https" || parsed.Host != "chatgpt.com" {
+		t.Fatalf("expected chatgpt host, got %s://%s", parsed.Scheme, parsed.Host)
+	}
+	if parsed.Path != "/backend-api/codex/responses/compact" {
 		t.Fatalf("unexpected path: %s", parsed.Path)
 	}
 	if parsed.RawQuery != "stream=true" {

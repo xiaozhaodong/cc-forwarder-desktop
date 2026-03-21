@@ -161,6 +161,67 @@ func TestRequestLifecycleManager_RecordFirstToken_OnlyRecordsOnce(t *testing.T) 
 	}
 }
 
+func TestRequestLifecycleManager_CompactPathRecordedInHotPool(t *testing.T) {
+	tracker, err := tracking.NewUsageTracker(&tracking.Config{
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      10,
+		BatchSize:       5,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
+		HotPool: &tracking.HotPoolSettings{
+			Enabled:          true,
+			MaxAge:           30 * time.Minute,
+			MaxSize:          1000,
+			CleanupInterval:  time.Minute,
+			ArchiveOnCleanup: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create usage tracker: %v", err)
+	}
+	defer tracker.Close()
+
+	rlm := NewRequestLifecycleManager(tracker, nil, "req-compact-hot-pool", nil)
+	rlm.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/responses/compact", false)
+	rlm.HandleNonTokenResponse(`{"output":[]}`)
+
+	details, _, err := tracker.QueryRequestDetailsWithHotPool(context.Background(), &tracking.QueryOptions{
+		StartDate: func() *time.Time {
+			tm := time.Now().Add(-time.Minute)
+			return &tm
+		}(),
+		EndDate: func() *time.Time {
+			tm := time.Now().Add(time.Minute)
+			return &tm
+		}(),
+		Limit:  10,
+		Offset: 0,
+	})
+	if err != nil {
+		t.Fatalf("failed to query request details: %v", err)
+	}
+
+	var detail *tracking.RequestDetail
+	for i := range details {
+		if details[i].RequestID == "req-compact-hot-pool" {
+			detail = &details[i]
+			break
+		}
+	}
+	if detail == nil {
+		t.Fatal("expected compact request detail in hot pool results")
+	}
+	if detail.Path != "/v1/responses/compact" {
+		t.Fatalf("expected compact path to be recorded, got %s", detail.Path)
+	}
+	if detail.Status != "completed" {
+		t.Fatalf("expected compact request to be completed, got %s", detail.Status)
+	}
+}
+
 func TestRequestLifecycleManager_IsCompleted(t *testing.T) {
 	requestID := "test-completed-505"
 	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
