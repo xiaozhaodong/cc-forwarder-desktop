@@ -13,14 +13,17 @@
 ### 当前核心能力
 
 - 多端点智能路由、健康检查、故障转移与自愈
+- 桌面端启动完成后异步执行端点与账号池批量连通性检查
 - 请求生命周期追踪、Token/成本统计、SQLite 持久化
+- Codex `/v1/responses/compact` 已接入账号池路由、请求追踪与 OAuth compact 上游透传
 - Claude `/v1/messages` 与 Codex `/v1/responses` 流式尾部断连保护：
   - 独立 upstream context
   - tail drain 补齐 terminal event / usage
   - 已完成后的 `context canceled` 按 `completed` 处理
 - Wails 前端页面：概览、端点管理、请求追踪、配置、日志、账号池
 - ChatGPT OAuth 授权链接生成、回调兑换、RT / id_token 存储
-- Codex 账号池：单账号测试、调度、冷却、鉴权失效处理
+- Codex 账号池：单账号测试、启动批量连通性检查、分组编排、冷却、鉴权失效处理
+- 账号池编排：主组 / 备组 / 冷备、组内首选账号、全局固定账号、最近一次调度快照
 - 账号画像与额度刷新：
   - `plan_type`
   - `chatgpt_account_id / chatgpt_user_id / organization_id`
@@ -40,11 +43,16 @@
 
 - `main.go`：程序入口与版本号
 - `app.go`：Wails App 初始化与服务装配
+- `app_startup_connectivity.go`：启动完成后的端点/账号池异步批量连通性检查
 - `app_api_account_pool.go`：账号池 Wails API
 - `app_api_openai_oauth.go`：ChatGPT OAuth API
 - `internal/accountauth/openai_profile.go`：OAuth 画像解析
 - `internal/accountauth/openai_refresh_token.go`：RT -> AT 刷新与缓存
 - `internal/service/account_pool.go`：账号池 CRUD、测试连通性
+- `internal/service/account_pool_startup_connectivity.go`：账号池启动连通性批量检查摘要
+- `internal/service/account_pool_groups.go`：`primary / backup / cold` 分组推断与排序
+- `internal/service/account_pool_runtime_cache.go`：账号池运行态缓存、组内首选与固定账号恢复
+- `internal/service/account_pool_scheduler.go`：可调度账号排序与最近一次调度快照
 - `internal/service/account_pool_profile.go`：账号画像与 quota 刷新
 - `internal/store/account_pool.go`：`upstream_accounts` 存储层
 - `internal/proxy/account_pipeline.go`：账号池转发链路
@@ -59,6 +67,10 @@
 ### 前端
 
 - `frontend/src/pages/account-pool/index.jsx`：账号池页面
+- `frontend/src/pages/account-pool/components/SchedulerDrawer.jsx`：调度编排抽屉
+- `frontend/src/pages/account-pool/components/GroupBoardCard.jsx`：主组 / 备组 / 冷备运行态卡片
+- `frontend/src/pages/account-pool/utils/dashboardViewModel.js`：账号 inventory 与编排视图模型
+- `frontend/src/pages/requests/components/AccountPoolSwitcher.jsx`：请求页 Codex 账号切换器
 - `frontend/src/utils/api.js`：HTTP/Wails 统一 API 封装
 - `frontend/src/utils/wailsApi.js`：Wails 绑定适配层
 - `frontend/src/wailsjs/go/*`：Wails 生成的前端绑定
@@ -81,6 +93,13 @@
 4. 若为 OAuth 账号，成功后自动触发 `RefreshAccountProfile`
 5. `RefreshAccountProfile` 通过 `wham/usage` 更新 quota 字段
 
+### 启动连通性检查
+
+1. `App.startup` 完成初始化后调用 `scheduleStartupConnectivityChecks`
+2. 端点批量检查与账号池批量检查均异步执行，不阻塞桌面端启动
+3. 账号池仅检测“已启用且有凭据”的账号，默认并发数为 4
+4. 启动检测失败只进入日志与摘要，不回写持久化失败状态，也不改写当前编排运行态
+
 ### 账号池转发
 
 1. `internal/proxy/account_pipeline.go` 从 store 读取可调度账号
@@ -88,6 +107,16 @@
 3. `401/403` 标记鉴权失效
 4. `429` 或普通 `5xx` 标记瞬时失败并冷却
 5. `503 no_available_providers` 直接短路透传，不做整池 failover
+6. `/v1/responses/compact` 与 `/v1/responses` 共用账号池链路与请求追踪；OAuth 账号会透传到 `/backend-api/codex/responses/compact`
+
+### 编排与手动固定
+
+1. `group_key` 显式分为 `primary / backup / cold`
+2. 若 `group_key` 为空，按优先级推断：`<=10 => primary`、`<=20 => backup`、其余 => `cold`
+3. `SetGroupActiveAccount` 只会设置组内首选账号，仅在该组被命中时优先生效
+4. `PinUpstreamAccountSelection` 会全局固定具体账号，直到该账号严格不可用
+5. `EnableAutomaticAccountSelection` 清除全局固定账号，恢复按编排自动调度
+6. `GetLatestAccountScheduleSnapshot` 返回最近一次调度快照，供账号池页面与请求页展示候选决策和最终命中账号
 
 ### 流式完成语义
 
@@ -103,8 +132,12 @@
 - `api_key`：前端默认显示 `5h / d7 = 无限额`
 - `api_key`：允许配置 6 个成本倍率字段
 - 非 `api_key`：成本倍率固定 `1.0`，前端只读展示或隐藏编辑
+- 账号池 inventory 与调度抽屉共用 `group_key / is_group_preferred / is_active_selection / latest schedule snapshot`
+- 请求页切换具体账号等价于“固定账号”，不会提升账号层级或改写 `group_key / priority`
+- 组内首选账号与全局固定账号是两套语义：前者只影响命中该组后的组内排序，后者直接覆盖当前请求目标
 - 账号页进度条和数字统一展示“剩余”
 - `/v1/responses`：输入计费口径为 `billable_input = input_tokens - cache_read_tokens`
+- `/v1/responses/compact`：同样走 Codex 账号池与请求追踪链路，未就绪时返回 account-pool not ready 错误
 
 ## 常用命令
 
@@ -125,6 +158,9 @@ cd frontend && npm run build
 日常开发不要默认直接跑全量 `go test ./...`。优先跑修改相关模块。
 
 ```bash
+# App / Wails API / 启动连通性
+go test .
+
 # 账号池 / OAuth / quota
 go test ./internal/store
 go test ./internal/accountauth
@@ -143,6 +179,7 @@ cd frontend && npm run build
 如果修改了以下内容，建议至少补跑对应测试：
 
 - `internal/service/account_pool*.go`：`go test ./internal/service`
+- `app.go` / `app_startup_connectivity.go` / `app_api_account_pool.go`：`go test .`
 - `internal/proxy/account_pipeline.go`：`go test ./internal/proxy`
 - `internal/proxy/handlers/streaming.go` / `forwarder.go`：`go test ./internal/proxy ./internal/proxy/handlers`
 - `internal/accountauth/*`：`go test ./internal/accountauth`
@@ -153,6 +190,9 @@ cd frontend && npm run build
 
 - 请求追踪：用 `req-xxxxxxxx` 过滤日志
 - 账号池问题优先看：
+  - `group_key`
+  - `is_active_selection / is_group_preferred`
+  - 最近一次 `latest schedule snapshot`
   - `last_success_at`
   - `quota_status`
   - `quota_refreshed_at`
