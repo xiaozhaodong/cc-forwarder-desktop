@@ -424,71 +424,77 @@ export const parseNullableNumber = (value) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
-export const normalizeUpstreamAccount = (account = {}) => ({
-  id: parseEntityId(account.id ?? account.ID ?? account.Id ?? account.account_id ?? account.accountId ?? account.AccountID ?? null),
-  provider_type: account.provider_type || account.providerType || account.ProviderType || '',
-  providerType: account.provider_type || account.providerType || account.ProviderType || '',
-  account_name: account.account_name || account.accountName || account.AccountName || '',
-  accountName: account.account_name || account.accountName || account.AccountName || '',
-  is_active_selection: (account.is_active_selection ?? account.isActiveSelection ?? account.IsActiveSelection) === true,
-  isActiveSelection: (account.is_active_selection ?? account.isActiveSelection ?? account.IsActiveSelection) === true,
-  credential_raw: account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
-  credentialRaw: account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
-  credential_raw_masked: account.credential_raw_masked || account.credentialRawMasked || account.CredentialRawMasked || account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
-  credentialRawMasked: account.credential_raw_masked || account.credentialRawMasked || account.CredentialRawMasked || account.credential_raw || account.credentialRaw || account.CredentialRaw || '',
-  has_credential: (account.has_credential ?? account.hasCredential ?? account.HasCredential) === true || !!(account.credential_raw || account.credentialRaw || account.CredentialRaw),
-  hasCredential: (account.has_credential ?? account.hasCredential ?? account.HasCredential) === true || !!(account.credential_raw || account.credentialRaw || account.CredentialRaw),
-  base_url: account.base_url || account.baseURL || account.BaseURL || '',
-  baseURL: account.base_url || account.baseURL || account.BaseURL || '',
-  cost_multiplier: Number.parseFloat(account.cost_multiplier ?? account.costMultiplier ?? account.CostMultiplier) || 1.0,
-  costMultiplier: Number.parseFloat(account.cost_multiplier ?? account.costMultiplier ?? account.CostMultiplier) || 1.0,
-  input_cost_multiplier: Number.parseFloat(account.input_cost_multiplier ?? account.inputCostMultiplier ?? account.InputCostMultiplier) || 1.0,
-  inputCostMultiplier: Number.parseFloat(account.input_cost_multiplier ?? account.inputCostMultiplier ?? account.InputCostMultiplier) || 1.0,
-  output_cost_multiplier: Number.parseFloat(account.output_cost_multiplier ?? account.outputCostMultiplier ?? account.OutputCostMultiplier) || 1.0,
-  outputCostMultiplier: Number.parseFloat(account.output_cost_multiplier ?? account.outputCostMultiplier ?? account.OutputCostMultiplier) || 1.0,
-  cache_creation_cost_multiplier: Number.parseFloat(account.cache_creation_cost_multiplier ?? account.cacheCreationCostMultiplier ?? account.CacheCreationCostMultiplier) || 1.0,
-  cacheCreationCostMultiplier: Number.parseFloat(account.cache_creation_cost_multiplier ?? account.cacheCreationCostMultiplier ?? account.CacheCreationCostMultiplier) || 1.0,
-  cache_creation_cost_multiplier_1h: Number.parseFloat(account.cache_creation_cost_multiplier_1h ?? account.cacheCreationCostMultiplier1h ?? account.CacheCreationCostMultiplier1h) || 1.0,
-  cacheCreationCostMultiplier1h: Number.parseFloat(account.cache_creation_cost_multiplier_1h ?? account.cacheCreationCostMultiplier1h ?? account.CacheCreationCostMultiplier1h) || 1.0,
-  cache_read_cost_multiplier: Number.parseFloat(account.cache_read_cost_multiplier ?? account.cacheReadCostMultiplier ?? account.CacheReadCostMultiplier) || 1.0,
-  cacheReadCostMultiplier: Number.parseFloat(account.cache_read_cost_multiplier ?? account.cacheReadCostMultiplier ?? account.CacheReadCostMultiplier) || 1.0,
-  priority: Number.parseInt(account.priority ?? account.Priority, 10) || 1,
-  enabled: (account.enabled ?? account.Enabled) !== false,
-  state: account.state || account.State || 'active',
-  cooldown_until: account.cooldown_until || account.cooldownUntil || account.CooldownUntil || '',
-  cooldownUntil: account.cooldown_until || account.cooldownUntil || account.CooldownUntil || '',
-  fail_count: account.fail_count || account.failCount || account.FailCount || 0,
-  failCount: account.fail_count || account.failCount || account.FailCount || 0,
-  last_success_at: account.last_success_at || account.lastSuccessAt || account.LastSuccessAt || '',
-  lastSuccessAt: account.last_success_at || account.lastSuccessAt || account.LastSuccessAt || '',
-  last_error: account.last_error || account.lastError || account.LastError || '',
-  lastError: account.last_error || account.lastError || account.LastError || '',
-  plan_type: account.plan_type || account.planType || account.PlanType || '',
-  planType: account.plan_type || account.planType || account.PlanType || '',
-  chatgpt_account_id: account.chatgpt_account_id || account.chatgptAccountId || account.ChatGPTAccountID || '',
-  chatgptAccountId: account.chatgpt_account_id || account.chatgptAccountId || account.ChatGPTAccountID || '',
-  chatgpt_user_id: account.chatgpt_user_id || account.chatgptUserId || account.ChatGPTUserID || '',
-  chatgptUserId: account.chatgpt_user_id || account.chatgptUserId || account.ChatGPTUserID || '',
-  organization_id: account.organization_id || account.organizationId || account.OrganizationID || '',
-  organizationId: account.organization_id || account.organizationId || account.OrganizationID || '',
-  quota_5h_used_percent: parseNullableNumber(account.quota_5h_used_percent ?? account.quota5hUsedPercent ?? account.Quota5HUsedPercent ?? null),
-  quota5hUsedPercent: parseNullableNumber(account.quota_5h_used_percent ?? account.quota5hUsedPercent ?? account.Quota5HUsedPercent ?? null),
-  quota_5h_reset_at: account.quota_5h_reset_at || account.quota5hResetAt || account.Quota5HResetAt || '',
-  quota5hResetAt: account.quota_5h_reset_at || account.quota5hResetAt || account.Quota5HResetAt || '',
-  quota_weekly_used_percent: parseNullableNumber(account.quota_weekly_used_percent ?? account.quotaWeeklyUsedPercent ?? account.QuotaWeeklyUsedPercent ?? null),
-  quotaWeeklyUsedPercent: parseNullableNumber(account.quota_weekly_used_percent ?? account.quotaWeeklyUsedPercent ?? account.QuotaWeeklyUsedPercent ?? null),
-  quota_weekly_reset_at: account.quota_weekly_reset_at || account.quotaWeeklyResetAt || account.QuotaWeeklyResetAt || '',
-  quotaWeeklyResetAt: account.quota_weekly_reset_at || account.quotaWeeklyResetAt || account.QuotaWeeklyResetAt || '',
-  quota_status: account.quota_status || account.quotaStatus || account.QuotaStatus || '',
-  quotaStatus: account.quota_status || account.quotaStatus || account.QuotaStatus || '',
-  quota_refreshed_at: account.quota_refreshed_at || account.quotaRefreshedAt || account.QuotaRefreshedAt || '',
-  quotaRefreshedAt: account.quota_refreshed_at || account.quotaRefreshedAt || account.QuotaRefreshedAt || '',
-  fingerprint: account.fingerprint || account.Fingerprint || '',
-  created_at: account.created_at || account.createdAt || account.CreatedAt || '',
-  createdAt: account.created_at || account.createdAt || account.CreatedAt || '',
-  updated_at: account.updated_at || account.updatedAt || account.UpdatedAt || '',
-  updatedAt: account.updated_at || account.updatedAt || account.UpdatedAt || ''
-});
+const pickAccountValue = (account, keys, fallback = '') => {
+  if (!account || typeof account !== 'object') {
+    return fallback;
+  }
+
+  for (const key of keys) {
+    const value = account[key];
+    if (value !== undefined && value !== null && value !== '') {
+      return value;
+    }
+  }
+
+  return fallback;
+};
+
+const mirrorAliasedField = (target, snakeKey, camelKey, value) => {
+  target[snakeKey] = value;
+  target[camelKey] = value;
+  return target;
+};
+
+export const normalizeUpstreamAccount = (account = {}) => {
+  const normalized = {
+    id: parseEntityId(pickAccountValue(account, ['id', 'ID', 'Id', 'account_id', 'accountId', 'AccountID'], null)),
+    priority: Number.parseInt(pickAccountValue(account, ['priority', 'Priority'], 1), 10) || 1,
+    enabled: pickAccountValue(account, ['enabled', 'Enabled'], true) !== false,
+    state: pickAccountValue(account, ['state', 'State'], 'active'),
+    fingerprint: pickAccountValue(account, ['fingerprint', 'Fingerprint'], '')
+  };
+
+  const credentialRaw = pickAccountValue(account, ['credential_raw', 'credentialRaw', 'CredentialRaw'], '');
+  const hasCredential = pickAccountValue(account, ['has_credential', 'hasCredential', 'HasCredential'], false) === true || Boolean(credentialRaw);
+
+  [
+    ['provider_type', 'providerType', pickAccountValue(account, ['provider_type', 'providerType', 'ProviderType'], '')],
+    ['account_name', 'accountName', pickAccountValue(account, ['account_name', 'accountName', 'AccountName'], '')],
+    ['is_active_selection', 'isActiveSelection', pickAccountValue(account, ['is_active_selection', 'isActiveSelection', 'IsActiveSelection'], false) === true],
+    ['is_group_preferred', 'isGroupPreferred', pickAccountValue(account, ['is_group_preferred', 'isGroupPreferred', 'IsGroupPreferred'], false) === true],
+    ['credential_raw', 'credentialRaw', credentialRaw],
+    ['credential_raw_masked', 'credentialRawMasked', pickAccountValue(account, ['credential_raw_masked', 'credentialRawMasked', 'CredentialRawMasked'], credentialRaw)],
+    ['has_credential', 'hasCredential', hasCredential],
+    ['base_url', 'baseURL', pickAccountValue(account, ['base_url', 'baseURL', 'BaseURL'], '')],
+    ['cost_multiplier', 'costMultiplier', Number.parseFloat(pickAccountValue(account, ['cost_multiplier', 'costMultiplier', 'CostMultiplier'], 1.0)) || 1.0],
+    ['input_cost_multiplier', 'inputCostMultiplier', Number.parseFloat(pickAccountValue(account, ['input_cost_multiplier', 'inputCostMultiplier', 'InputCostMultiplier'], 1.0)) || 1.0],
+    ['output_cost_multiplier', 'outputCostMultiplier', Number.parseFloat(pickAccountValue(account, ['output_cost_multiplier', 'outputCostMultiplier', 'OutputCostMultiplier'], 1.0)) || 1.0],
+    ['cache_creation_cost_multiplier', 'cacheCreationCostMultiplier', Number.parseFloat(pickAccountValue(account, ['cache_creation_cost_multiplier', 'cacheCreationCostMultiplier', 'CacheCreationCostMultiplier'], 1.0)) || 1.0],
+    ['cache_creation_cost_multiplier_1h', 'cacheCreationCostMultiplier1h', Number.parseFloat(pickAccountValue(account, ['cache_creation_cost_multiplier_1h', 'cacheCreationCostMultiplier1h', 'CacheCreationCostMultiplier1h'], 1.0)) || 1.0],
+    ['cache_read_cost_multiplier', 'cacheReadCostMultiplier', Number.parseFloat(pickAccountValue(account, ['cache_read_cost_multiplier', 'cacheReadCostMultiplier', 'CacheReadCostMultiplier'], 1.0)) || 1.0],
+    ['group_key', 'groupKey', pickAccountValue(account, ['group_key', 'groupKey', 'GroupKey'], '')],
+    ['cooldown_until', 'cooldownUntil', pickAccountValue(account, ['cooldown_until', 'cooldownUntil', 'CooldownUntil'], '')],
+    ['fail_count', 'failCount', pickAccountValue(account, ['fail_count', 'failCount', 'FailCount'], 0)],
+    ['last_success_at', 'lastSuccessAt', pickAccountValue(account, ['last_success_at', 'lastSuccessAt', 'LastSuccessAt'], '')],
+    ['last_error', 'lastError', pickAccountValue(account, ['last_error', 'lastError', 'LastError'], '')],
+    ['plan_type', 'planType', pickAccountValue(account, ['plan_type', 'planType', 'PlanType'], '')],
+    ['chatgpt_account_id', 'chatgptAccountId', pickAccountValue(account, ['chatgpt_account_id', 'chatgptAccountId', 'ChatGPTAccountID'], '')],
+    ['chatgpt_user_id', 'chatgptUserId', pickAccountValue(account, ['chatgpt_user_id', 'chatgptUserId', 'ChatGPTUserID'], '')],
+    ['organization_id', 'organizationId', pickAccountValue(account, ['organization_id', 'organizationId', 'OrganizationID'], '')],
+    ['quota_5h_used_percent', 'quota5hUsedPercent', parseNullableNumber(pickAccountValue(account, ['quota_5h_used_percent', 'quota5hUsedPercent', 'Quota5HUsedPercent'], null))],
+    ['quota_5h_reset_at', 'quota5hResetAt', pickAccountValue(account, ['quota_5h_reset_at', 'quota5hResetAt', 'Quota5HResetAt'], '')],
+    ['quota_weekly_used_percent', 'quotaWeeklyUsedPercent', parseNullableNumber(pickAccountValue(account, ['quota_weekly_used_percent', 'quotaWeeklyUsedPercent', 'QuotaWeeklyUsedPercent'], null))],
+    ['quota_weekly_reset_at', 'quotaWeeklyResetAt', pickAccountValue(account, ['quota_weekly_reset_at', 'quotaWeeklyResetAt', 'QuotaWeeklyResetAt'], '')],
+    ['quota_status', 'quotaStatus', pickAccountValue(account, ['quota_status', 'quotaStatus', 'QuotaStatus'], '')],
+    ['quota_refreshed_at', 'quotaRefreshedAt', pickAccountValue(account, ['quota_refreshed_at', 'quotaRefreshedAt', 'QuotaRefreshedAt'], '')],
+    ['created_at', 'createdAt', pickAccountValue(account, ['created_at', 'createdAt', 'CreatedAt'], '')],
+    ['updated_at', 'updatedAt', pickAccountValue(account, ['updated_at', 'updatedAt', 'UpdatedAt'], '')]
+  ].forEach(([snakeKey, camelKey, value]) => {
+    mirrorAliasedField(normalized, snakeKey, camelKey, value);
+  });
+
+  return normalized;
+};
 
 export const buildUpstreamAccountPayload = (input = {}) => {
   const providerType = String(input.provider_type || input.providerType || '').trim().toLowerCase();
@@ -510,6 +516,7 @@ export const buildUpstreamAccountPayload = (input = {}) => {
     cache_creation_cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.cache_creation_cost_multiplier ?? input.cacheCreationCostMultiplier) : 1.0,
     cache_creation_cost_multiplier_1h: isAPIKeyAccount ? normalizeMultiplier(input.cache_creation_cost_multiplier_1h ?? input.cacheCreationCostMultiplier1h) : 1.0,
     cache_read_cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.cache_read_cost_multiplier ?? input.cacheReadCostMultiplier) : 1.0,
+    group_key: input.group_key || input.groupKey || '',
     priority: Number.parseInt(input.priority, 10) || 1,
     enabled: input.enabled !== false
   };
@@ -667,6 +674,78 @@ export const moveUpstreamAccountToTier = async (id, targetTier) => {
   }
 
   const result = await method(normalizeEntityId(id), String(targetTier || 'primary'));
+  return result ?? { success: true, changed: true };
+};
+
+export const swapUpstreamAccountGroups = async (sourceGroup, targetGroup) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('SwapUpstreamAccountGroups', { optional: true });
+  if (!method) {
+    return {
+      success: false,
+      unsupported: true,
+      changed: false,
+      message: '当前后端版本暂未提供 SwapUpstreamAccountGroups'
+    };
+  }
+
+  const result = await method(String(sourceGroup || ''), String(targetGroup || ''));
+  return result ?? { success: true, changed: true };
+};
+
+export const setGroupActiveAccount = async (groupKey, id) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('SetGroupActiveAccount', { optional: true });
+  if (!method) {
+    return {
+      success: false,
+      unsupported: true,
+      changed: false,
+      message: '当前后端版本暂未提供 SetGroupActiveAccount'
+    };
+  }
+
+  const result = await method(String(groupKey || ''), normalizeEntityId(id));
+  return result ?? { success: true, changed: true };
+};
+
+export const pinUpstreamAccountSelection = async (id) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('PinUpstreamAccountSelection', { optional: true });
+  if (!method) {
+    return {
+      success: false,
+      unsupported: true,
+      changed: false,
+      message: '当前后端版本暂未提供 PinUpstreamAccountSelection'
+    };
+  }
+
+  const result = await method(normalizeEntityId(id));
+  return result ?? { success: true, changed: true };
+};
+
+export const enableAutomaticAccountSelection = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('EnableAutomaticAccountSelection', { optional: true });
+  if (!method) {
+    return {
+      success: false,
+      unsupported: true,
+      changed: false,
+      message: '当前后端版本暂未提供 EnableAutomaticAccountSelection'
+    };
+  }
+
+  const result = await method();
   return result ?? { success: true, changed: true };
 };
 

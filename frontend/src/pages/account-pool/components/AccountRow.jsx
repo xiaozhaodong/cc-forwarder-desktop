@@ -56,15 +56,13 @@ const buildQuotaDisplayText = (remaining, resetAt) => {
 
 const AccountRow = ({
   account,
-  accountCount,
   busyKey,
   priorityTierMetaMap,
   onEdit,
   onRefreshProfile,
   onTest,
   onDelete,
-  onToggle,
-  onMoveTier
+  onToggle
 }) => {
   const accountId = resolveAccountId(account) ?? account.account_name ?? account.accountName;
   const accountName = account.account_name || account.accountName || '-';
@@ -86,11 +84,9 @@ const AccountRow = ({
   const planTypeLabel = toPlanTypeLabel(planType);
   const priority = normalizePriorityValue(account.priority ?? account.Priority);
   const tierMeta = Number.isFinite(priority) ? priorityTierMetaMap.get(priority) : null;
-  const priorityTierCount = priorityTierMetaMap?.size || 0;
-  const canSetAsPrimary = accountCount > 1 && (!tierMeta || tierMeta.order !== 1 || tierMeta.count > 1);
-  const canSetAsBackup = accountCount > 1 && priorityTierCount > 1 && (!tierMeta || tierMeta.order !== 2 || tierMeta.count > 1);
   const refreshedAt = account.quota_refreshed_at || account.quotaRefreshedAt;
-  const rowBusy = busyKey.startsWith('account-') && busyKey.includes(String(accountId));
+  const normalizedBusyKey = String(busyKey || '');
+  const rowBusy = normalizedBusyKey.startsWith('account-') && normalizedBusyKey.endsWith(`-${String(accountId)}`);
 
   const quota5hUsed = Number.parseFloat(account.quota_5h_used_percent ?? account.quota5hUsedPercent);
   const quotaWeeklyUsed = Number.parseFloat(account.quota_weekly_used_percent ?? account.quotaWeeklyUsedPercent);
@@ -138,20 +134,20 @@ const AccountRow = ({
           <Badge
             text={tierMeta.label}
             className={tierMeta.className}
-            title={`${tierMeta.description}${tierMeta.count > 1 ? `（当前同层共 ${tierMeta.count} 个账号）` : ''}`}
+            title={`${tierMeta.description}${tierMeta.count > 1 ? `（当前同组共 ${tierMeta.count} 个账号）` : ''}`}
           />
         )}
 
         <Badge
-          text={`优先级 ${Number.isFinite(priority) ? priority : '-'}`}
+          text={`组内顺序 ${Number.isFinite(priority) ? priority : '-'}`}
           className="bg-amber-50 text-amber-700 border-amber-100"
         />
 
         {tierMeta?.count > 1 && (
           <Badge
-            text={`同层 ${tierMeta.count} 个`}
+            text={`同组 ${tierMeta.count} 个`}
             className="bg-white text-slate-500 border-slate-200"
-            title="相同 priority 的账号属于同一层，按手动主备规则依次切换"
+            title="同组账号会先按组别命中，再在组内按顺序和健康度择优"
           />
         )}
 
@@ -165,40 +161,6 @@ const AccountRow = ({
         </div>
 
         <div className="hidden h-5 w-px shrink-0 bg-slate-200 md:block" />
-
-        <div className="flex items-center gap-1 shrink-0">
-          {canSetAsPrimary ? (
-            <button
-              type="button"
-              onClick={() => onMoveTier(account, 'primary')}
-              disabled={rowBusy}
-              className="inline-flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
-              title="将该账号所在层提升为新的主组；若已在主组，则切换当前活跃账号"
-            >
-              设为主组
-            </button>
-          ) : (
-            <Badge text="当前主组" className="bg-indigo-50 text-indigo-700 border-indigo-200" />
-          )}
-
-          {canSetAsBackup && (
-            <button
-              type="button"
-              onClick={() => onMoveTier(account, 'backup')}
-              disabled={rowBusy}
-              className="inline-flex items-center rounded-md border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs font-medium text-cyan-700 transition-colors hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
-              title={tierMeta?.order === 2
-                ? '保持当前备组层级，并切换这一层当前使用账号'
-                : '将该账号所在层切到备组，并切换这一层当前使用账号'}
-            >
-              设为备组
-            </button>
-          )}
-
-          {!canSetAsBackup && tierMeta?.order === 2 && tierMeta.count === 1 && (
-            <Badge text="当前备组" className="bg-cyan-50 text-cyan-700 border-cyan-200" />
-          )}
-        </div>
 
         <div className="flex items-center gap-0.5 shrink-0">
           <button

@@ -131,11 +131,12 @@ const toScheduleDecisionLabel = (decision = '') => {
 const toScheduleReasonLabel = (reason = '') => {
   const normalized = String(reason || '').trim().toLowerCase();
   const labels = {
-    highest_ranked_in_selected_tier: '当前层内排序第一，优先命中',
+    highest_ranked_in_selected_tier: '当前组内排序第一，优先命中',
     retained_active_account_in_selected_tier: '保持当前活跃账号，本轮继续优先命中',
-    same_tier_lower_rank: '同层排序靠后，本轮作为后续候选',
-    higher_priority_tier_selected: '更高优先级层已有可用账号',
-    higher_priority_tier_recovered_but_retained_degraded_tier: '更高优先级层已恢复，但当前仍保持降级层',
+    preferred_account_in_selected_group: '当前组已指定首选账号，本轮优先命中',
+    same_tier_lower_rank: '同组顺位靠后，本轮作为后续候选',
+    higher_priority_tier_selected: '更高优先组已有可用账号',
+    higher_priority_tier_recovered_but_retained_degraded_tier: '更高优先组已恢复，但当前仍保持降级组',
     quota_exhausted_until_reset: '额度已耗尽，等待窗口重置',
     invalid_account: '账号记录异常，未参与调度',
     not_selected: '本轮未被调度'
@@ -172,14 +173,22 @@ const resolveAccountId = (account = {}) => {
   );
 };
 
+const isValidAccountId = (value) => normalizeEntityId(value) !== null;
+
 const buildManualSwitchSuccessMessage = (accountName = '', targetTier = 'primary', { includeRequestPath = false } = {}) => {
   const safeAccountName = String(accountName || '').trim() || '目标账号';
   const normalizedTargetTier = String(targetTier || 'primary').trim().toLowerCase();
-  const tierLabel = normalizedTargetTier === 'backup' ? '备组目标账号' : '主组目标账号';
-  const usageHint = includeRequestPath
-    ? '后续 /v1/responses 会按当前可调度状态优先使用它；若暂时不可调度，恢复后会自动回切'
-    : '系统会按当前可调度状态优先使用它；若暂时不可调度，恢复后会自动回切';
-  return `已将「${safeAccountName}」设为${tierLabel}，${usageHint}`;
+  const groupLabel = normalizedTargetTier === 'cold'
+    ? '冷备'
+    : normalizedTargetTier === 'backup'
+      ? '备组'
+      : '主组';
+  const usageHint = normalizedTargetTier === 'cold'
+    ? '系统会在主组和备组都不可用时再使用它'
+    : includeRequestPath
+      ? '后续 /v1/responses 会按当前可调度状态优先使用它；若暂时不可调度，恢复后会自动回切'
+      : '系统会按当前可调度状态优先使用它；若暂时不可调度，恢复后会自动回切';
+  return `已将「${safeAccountName}」移到${groupLabel}，${usageHint}`;
 };
 
 const summarizeCallbackURL = (raw = '') => {
@@ -305,6 +314,7 @@ export {
   hasFutureQuotaReset,
   isAccountSchedulable,
   isAPIKeyProviderType,
+  isValidAccountId,
   maskSessionId,
   normalizeEntityId,
   normalizePlanType,

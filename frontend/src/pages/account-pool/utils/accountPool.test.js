@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildManualSwitchSuccessMessage } from './accountPool.js';
+import { buildManualSwitchSuccessMessage, isValidAccountId } from './accountPool.js';
 
 test('buildManualSwitchSuccessMessage avoids promising immediate effect', () => {
   const message = buildManualSwitchSuccessMessage('primary-a', 'primary');
@@ -16,4 +16,14 @@ test('buildManualSwitchSuccessMessage can include requests path hint', () => {
 
   assert.ok(message.includes('/v1/responses'));
   assert.ok(message.includes('当前可调度状态优先使用'));
+});
+
+test('isValidAccountId accepts normalized account ids and rejects empty values', () => {
+  assert.equal(isValidAccountId(1), true);
+  assert.equal(isValidAccountId('42'), true);
+  assert.equal(isValidAccountId('acct-primary'), true);
+  assert.equal(isValidAccountId('  '), false);
+  assert.equal(isValidAccountId(''), false);
+  assert.equal(isValidAccountId(null), false);
+  assert.equal(isValidAccountId(undefined), false);
 });

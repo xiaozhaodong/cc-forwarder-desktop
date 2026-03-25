@@ -9,8 +9,8 @@ import { ErrorMessage } from '@components/ui';
 import { NoticeToast } from '@pages/account-pool/components';
 import { useNotice } from '@pages/account-pool/hooks';
 import {
-  buildManualSwitchSuccessMessage,
   compareAccountsByManualPriority,
+  isValidAccountId,
   resolveAccountId,
 } from '@pages/account-pool/utils.js';
 import {
@@ -20,7 +20,8 @@ import {
   fetchEndpoints,
   fetchGroups,
   activateGroup,
-  moveUpstreamAccountToTier,
+  enableAutomaticAccountSelection,
+  pinUpstreamAccountSelection,
   fetchUpstreamAccounts,
   fetchLatestAccountScheduleSnapshot
 } from '@utils/api.js';
@@ -30,7 +31,7 @@ import { useTimeRange } from './hooks/useTimeRange.js';
 import { useAutoRefresh } from './hooks/useAutoRefresh.js';
 import { FiltersPanel, StatsOverview, RequestsTable, Toolbar, RequestDetailModal } from './components';
 import { PAGINATION_CONFIG } from './utils/constants.js';
-import { resolveDisplayedActiveAccount } from './utils/accountSwitcherState.js';
+import { isRuntimeActiveSelection, isSamePinnedAccount } from './utils/accountSwitcherState.js';
 import { buildTimeRangeSelectionState } from './utils/timeRangeSelection.js';
 
 // ============================================
@@ -150,11 +151,8 @@ const RequestsPage = () => {
   }, [latestScheduleSnapshot]);
 
   const activeAccount = useMemo(() => {
-    return resolveDisplayedActiveAccount({
-      accounts: sortedAccounts,
-      recentSelectedAccountId
-    });
-  }, [recentSelectedAccountId, sortedAccounts]);
+    return sortedAccounts.find(isRuntimeActiveSelection) || null;
+  }, [sortedAccounts]);
 
   // ==================== 数据加载 ====================
 
@@ -191,6 +189,7 @@ const RequestsPage = () => {
         fetchGroups(),
         fetchUpstreamAccounts().catch((err) => {
           console.error('❌ 加载账号池账号失败:', err);
+          showNotice('error', err?.message || '加载账号池账号失败，账号切换器暂不可用');
           return [];
         }),
         fetchLatestAccountScheduleSnapshot().catch((err) => {
@@ -249,7 +248,7 @@ const RequestsPage = () => {
         setLoading(false);
       }
     }
-  }, [appliedQueryParams, pagination.page, pagination.pageSize]);
+  }, [appliedQueryParams, pagination.page, pagination.pageSize, showNotice]);
 
   // 自动刷新 Hook (必须在 loadData 定义之后)
   const autoRefresh = useAutoRefresh(loadData);
@@ -339,39 +338,67 @@ const RequestsPage = () => {
 
   const handleAccountSwitch = useCallback(async (account) => {
     const accountId = resolveAccountId(account);
-    const currentActiveAccountId = resolveAccountId(activeAccount);
     const accountName = account?.account_name || account?.accountName || '目标账号';
 
-    if (accountId === undefined || accountId === null || accountId === '') {
+    if (!isValidAccountId(accountId)) {
       const err = new Error('账号缺少 ID，无法切换');
       showNotice('error', err.message);
       return;
     }
 
-    if (String(accountId) === String(currentActiveAccountId ?? '')) {
-      showNotice('info', `「${accountName}」已经是主组账号`);
+    if (isSamePinnedAccount({ displayedActiveAccount: activeAccount, targetAccount: account })) {
+      showNotice('info', `「${accountName}」已经固定为当前账号`);
       return;
     }
 
     setAccountSwitching(true);
     try {
-      const result = await moveUpstreamAccountToTier(accountId, 'primary');
+      const result = await pinUpstreamAccountSelection(accountId);
 
       if (result?.unsupported) {
-        showNotice('info', result.message || '当前后端版本暂不支持手动切主');
+        showNotice('info', result.message || '当前后端版本暂不支持固定账号');
         return;
       }
 
       if (result?.changed !== true) {
-        showNotice('info', `「${accountName}」已经是主组账号`);
+        showNotice('info', `「${accountName}」已经固定为当前账号`);
         return;
       }
 
-      showNotice('success', buildManualSwitchSuccessMessage(accountName, 'primary', { includeRequestPath: true }));
+      showNotice('success', result?.message || `已固定使用「${accountName}」，除非该账号严格不可用才会自动切走`);
       await loadData(true);
     } catch (err) {
-      showNotice('error', err.message || '切换账号失败');
+      showNotice('error', err.message || '固定账号失败');
       return;
+    } finally {
+      setAccountSwitching(false);
+    }
+  }, [activeAccount, loadData, showNotice]);
+
+  const handleEnableAutoSelection = useCallback(async () => {
+    if (activeAccount === null) {
+      showNotice('info', '当前已按编排自动调度');
+      return;
+    }
+
+    setAccountSwitching(true);
+    try {
+      const result = await enableAutomaticAccountSelection();
+
+      if (result?.unsupported) {
+        showNotice('info', result.message || '当前后端版本暂不支持启用编排');
+        return;
+      }
+
+      if (result?.changed !== true) {
+        showNotice('info', result?.message || '当前已按编排自动调度');
+        return;
+      }
+
+      showNotice('success', result?.message || '已启用编排自动调度');
+      await loadData(true);
+    } catch (err) {
+      showNotice('error', err.message || '启用编排失败');
     } finally {
       setAccountSwitching(false);
     }
@@ -431,6 +458,7 @@ const RequestsPage = () => {
             activeAccount={activeAccount}
             recentSelectedAccountId={recentSelectedAccountId}
             onAccountSwitch={handleAccountSwitch}
+            onEnableAutoSelection={handleEnableAutoSelection}
             accountSwitching={accountSwitching}
           />
         </div>
