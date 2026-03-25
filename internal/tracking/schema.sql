@@ -284,6 +284,7 @@ CREATE TABLE IF NOT EXISTS upstream_accounts (
     cache_read_cost_multiplier REAL DEFAULT 1.0,    -- 缓存读取成本倍率
 
     -- ========== 调度 ==========
+    group_key TEXT DEFAULT '',                     -- 显式组别 primary/backup/cold
     priority INTEGER DEFAULT 100,                   -- 优先级（数字越小越高）
     enabled INTEGER DEFAULT 1,                      -- 是否可参与调度
     state TEXT DEFAULT 'active',                    -- active/cooldown/disabled_auth

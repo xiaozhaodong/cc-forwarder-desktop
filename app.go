@@ -962,6 +962,9 @@ func (a *App) setupSettingsStore() {
 
 	// 创建 SettingsService
 	a.settingsService = service.NewSettingsService(a.settingsStore)
+	if a.accountPoolService != nil {
+		a.accountPoolService.SetSettingsService(a.settingsService)
+	}
 
 	// 设置配置变更回调 - 热更新
 	a.settingsService.SetOnChangeCallback(func() {
@@ -1056,6 +1059,9 @@ func (a *App) setupAccountPoolStore() {
 
 	a.accountPoolStore = store.NewSQLiteAccountPoolStore(db)
 	a.accountPoolService = service.NewAccountPoolService(a.accountPoolStore, a.config)
+	if a.settingsService != nil {
+		a.accountPoolService.SetSettingsService(a.settingsService)
+	}
 	a.logger.Info("✅ 账号池存储已启用 (SQLite)")
 }
 

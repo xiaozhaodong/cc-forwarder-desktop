@@ -376,13 +376,13 @@ func TestMoveAccountToTier_OverridesDegradedSelectionEvenWhenPriorityUnchanged(t
 		t.Fatalf("reloadAccountIntoCache primary failed: %v", err)
 	}
 
-	changed, err := svc.MoveAccountToTier(ctx, primary.ID, 0)
-	if err != nil {
-		t.Fatalf("MoveAccountToTier failed: %v", err)
-	}
-	if !changed {
-		t.Fatal("expected manual switch to count as effective change even when priority stays primary")
-	}
+		changed, err := svc.PinAccountSelection(ctx, primary.ID)
+		if err != nil {
+			t.Fatalf("PinAccountSelection failed: %v", err)
+		}
+		if !changed {
+			t.Fatal("expected pinning primary account to count as effective change")
+		}
 
 	snapshot, err := svc.GetLatestAccountScheduleSnapshot(ctx)
 	if err != nil {
@@ -396,9 +396,9 @@ func TestMoveAccountToTier_OverridesDegradedSelectionEvenWhenPriorityUnchanged(t
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts after manual switch failed: %v", err)
 	}
-	if got, want := collectAccountIDs(ordered), []int64{primary.ID}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected manual switch to force primary account selection, got %v want %v", got, want)
-	}
+		if got, want := collectAccountIDs(ordered), []int64{primary.ID}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected manual pin to force primary account selection, got %v want %v", got, want)
+		}
 }
 
 func TestPrepareSchedulableAccounts_FallsBackToRecoveredHigherPriorityTierWhenPinnedBackupBecomesUnavailable(t *testing.T) {
@@ -440,13 +440,13 @@ func TestPrepareSchedulableAccounts_FallsBackToRecoveredHigherPriorityTierWhenPi
 		t.Fatalf("create backup account failed: %v", err)
 	}
 
-	changed, err := svc.MoveAccountToTier(ctx, backup.ID, 1)
-	if err != nil {
-		t.Fatalf("MoveAccountToTier backup failed: %v", err)
-	}
-	if !changed {
-		t.Fatal("expected pinning backup account to change runtime selection")
-	}
+		changed, err := svc.PinAccountSelection(ctx, backup.ID)
+		if err != nil {
+			t.Fatalf("PinAccountSelection backup failed: %v", err)
+		}
+		if !changed {
+			t.Fatal("expected pinning backup account to change runtime selection")
+		}
 
 	updatedBackup, err := st.GetAccount(ctx, backup.ID)
 	if err != nil {
@@ -475,7 +475,7 @@ func TestPrepareSchedulableAccounts_FallsBackToRecoveredHigherPriorityTierWhenPi
 	}
 }
 
-func TestMoveAccountToTier_MovingTierToPrimaryPromotesWholeTierAndSelectsClickedAccount(t *testing.T) {
+func TestMoveAccountToTier_MovingAccountToPrimaryGroupPinsClickedAccountWithoutDemotingOtherGroups(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 
@@ -483,6 +483,7 @@ func TestMoveAccountToTier_MovingTierToPrimaryPromotesWholeTierAndSelectsClicked
 		ProviderType:  "api_key",
 		AccountName:   "primary-a",
 		CredentialRaw: "sk-primary-a",
+		GroupKey:      accountGroupPrimary,
 		Priority:      10,
 		Enabled:       true,
 		State:         "active",
@@ -494,6 +495,7 @@ func TestMoveAccountToTier_MovingTierToPrimaryPromotesWholeTierAndSelectsClicked
 		ProviderType:  "api_key",
 		AccountName:   "primary-b",
 		CredentialRaw: "sk-primary-b",
+		GroupKey:      accountGroupPrimary,
 		Priority:      10,
 		Enabled:       true,
 		State:         "active",
@@ -505,6 +507,7 @@ func TestMoveAccountToTier_MovingTierToPrimaryPromotesWholeTierAndSelectsClicked
 		ProviderType:  "api_key",
 		AccountName:   "backup-a",
 		CredentialRaw: "sk-backup-a",
+		GroupKey:      accountGroupBackup,
 		Priority:      20,
 		Enabled:       true,
 		State:         "active",
@@ -516,6 +519,7 @@ func TestMoveAccountToTier_MovingTierToPrimaryPromotesWholeTierAndSelectsClicked
 		ProviderType:  "api_key",
 		AccountName:   "backup-b",
 		CredentialRaw: "sk-backup-b",
+		GroupKey:      accountGroupBackup,
 		Priority:      20,
 		Enabled:       true,
 		State:         "active",
@@ -529,32 +533,41 @@ func TestMoveAccountToTier_MovingTierToPrimaryPromotesWholeTierAndSelectsClicked
 		t.Fatalf("MoveAccountToTier failed: %v", err)
 	}
 	if !changed {
-		t.Fatal("expected moving backup tier to primary to count as a change")
+		t.Fatal("expected moving backup account to primary group to count as a change")
 	}
 
-	for accountID, wantPriority := range map[int64]int{
-		backupA.ID:  10,
-		backupB.ID:  10,
-		primaryA.ID: 20,
-		primaryB.ID: 20,
-	} {
-		record, getErr := st.GetAccount(ctx, accountID)
-		if getErr != nil {
-			t.Fatalf("GetAccount %d failed: %v", accountID, getErr)
-		}
-		if record == nil || record.Priority != wantPriority {
-			t.Fatalf("unexpected priority for account %d: got %+v want priority %d", accountID, record, wantPriority)
-		}
+	updatedBackupB, err := st.GetAccount(ctx, backupB.ID)
+	if err != nil {
+		t.Fatalf("GetAccount backup-b failed: %v", err)
+	}
+	if updatedBackupB == nil || updatedBackupB.GroupKey != accountGroupPrimary || updatedBackupB.Priority != 10 {
+		t.Fatalf("expected clicked backup account to become first primary account, got %+v", updatedBackupB)
+	}
+
+	updatedPrimaryA, err := st.GetAccount(ctx, primaryA.ID)
+	if err != nil {
+		t.Fatalf("GetAccount primary-a failed: %v", err)
+	}
+	if updatedPrimaryA == nil || updatedPrimaryA.GroupKey != accountGroupPrimary || updatedPrimaryA.Priority != 20 {
+		t.Fatalf("expected existing primary account to remain in primary behind clicked account, got %+v", updatedPrimaryA)
+	}
+
+	updatedBackupA, err := st.GetAccount(ctx, backupA.ID)
+	if err != nil {
+		t.Fatalf("GetAccount backup-a failed: %v", err)
+	}
+	if updatedBackupA == nil || updatedBackupA.GroupKey != accountGroupBackup || updatedBackupA.Priority != 10 {
+		t.Fatalf("expected untouched backup account to remain backup, got %+v", updatedBackupA)
 	}
 
 	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-after-tier-promotion", "/v1/responses")
 	if err != nil {
-		t.Fatalf("PrepareSchedulableAccounts after tier promotion failed: %v", err)
+		t.Fatalf("PrepareSchedulableAccounts after primary group move failed: %v", err)
 	}
-	if got, want := collectAccountIDs(ordered), []int64{backupB.ID, backupA.ID}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected clicked backup account to lead promoted tier, got %v want %v", got, want)
+		if got, want := collectAccountIDs(ordered), []int64{primaryA.ID, primaryB.ID, backupB.ID}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected automatic scheduling to use primary-group auto ranking after group move, got %v want %v", got, want)
+		}
 	}
-}
 
 func TestPrepareSchedulableAccounts_RanksByUtilizationThenHealthWithinTier(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)

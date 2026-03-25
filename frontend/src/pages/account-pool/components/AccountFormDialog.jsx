@@ -5,11 +5,17 @@
 
 import { useEffect, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
-import { Button } from '@components/ui';
+import { Button, CustomSelect } from '@components/ui';
 import { maskSessionId } from '../utils.js';
 import OAuthHelperPanel from './OAuthHelperPanel.jsx';
 import { FormField } from './shared.jsx';
-import { AUTH_METHOD_OPTIONS, DEFAULT_BASE_URL, authMethodToProviderType, isAPIKeyProviderType } from '../utils.js';
+import {
+  ACCOUNT_GROUP_OPTIONS,
+  AUTH_METHOD_OPTIONS,
+  DEFAULT_BASE_URL,
+  authMethodToProviderType,
+  isAPIKeyProviderType
+} from '../utils.js';
 
 const AccountFormDialog = ({
   open,
@@ -161,20 +167,27 @@ const AccountFormDialog = ({
             <section className="space-y-4">
               <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">路由配置</h4>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <FormField label="优先级">
-                  <div className="space-y-1.5">
-                    <input
-                      type="number"
-                      min="1"
-                      value={accountForm.priority}
-                      onChange={(event) => setAccountForm(prev => ({ ...prev, priority: event.target.value }))}
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                    />
-                    <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
-                      priority 越小越优先；相同 priority 视为同一层。V1 会先按层选择，再在层内按额度与健康度自动择优。
-                    </div>
-                  </div>
+              <div className="grid grid-cols-[2fr_2fr_3fr] gap-4">
+                <FormField label="组别">
+                  <CustomSelect
+                    options={ACCOUNT_GROUP_OPTIONS}
+                    value={accountForm.group_key || 'primary'}
+                    onChange={(val) => setAccountForm(prev => ({ ...prev, group_key: val }))}
+                    size="md"
+                    className="w-full"
+                  />
+                </FormField>
+
+                <FormField label="组内顺序">
+                  <input
+                    type="number"
+                    min="10"
+                    step="10"
+                    value={accountForm.priority}
+                    onChange={(event) => setAccountForm(prev => ({ ...prev, priority: event.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    placeholder="10"
+                  />
                 </FormField>
 
                 <FormField label="Base URL（可选）">
@@ -186,6 +199,10 @@ const AccountFormDialog = ({
                     placeholder={DEFAULT_BASE_URL}
                   />
                 </FormField>
+              </div>
+
+              <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+                调度优先级：主组 → 备组 → 冷备，组内按顺序、额度和健康度择优。顺序建议 10、20、30。
               </div>
 
               <label className="inline-flex items-start gap-2 text-sm text-slate-700">

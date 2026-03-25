@@ -13,6 +13,103 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestListAccounts_AutoAddsMissingGroupKeyColumnForLegacyDatabase(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite failed: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	legacySchema := `
+	CREATE TABLE upstream_accounts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		provider_type TEXT NOT NULL DEFAULT 'api_key',
+		account_name TEXT NOT NULL,
+		credential_raw TEXT NOT NULL,
+		base_url TEXT NOT NULL DEFAULT 'https://api.openai.com',
+		cost_multiplier REAL DEFAULT 1.0,
+		input_cost_multiplier REAL DEFAULT 1.0,
+		output_cost_multiplier REAL DEFAULT 1.0,
+		cache_creation_cost_multiplier REAL DEFAULT 1.0,
+		cache_creation_cost_multiplier_1h REAL DEFAULT 1.0,
+		cache_read_cost_multiplier REAL DEFAULT 1.0,
+		priority INTEGER DEFAULT 100,
+		enabled INTEGER DEFAULT 1,
+		state TEXT DEFAULT 'active',
+		cooldown_until DATETIME,
+		fail_count INTEGER DEFAULT 0,
+		last_success_at DATETIME,
+		last_error TEXT DEFAULT '',
+		plan_type TEXT DEFAULT '',
+		chatgpt_account_id TEXT DEFAULT '',
+		chatgpt_user_id TEXT DEFAULT '',
+		organization_id TEXT DEFAULT '',
+		quota_5h_used_percent REAL,
+		quota_5h_reset_at DATETIME,
+		quota_weekly_used_percent REAL,
+		quota_weekly_reset_at DATETIME,
+		quota_status TEXT DEFAULT '',
+		quota_refreshed_at DATETIME,
+		fingerprint TEXT UNIQUE NOT NULL,
+		created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+		updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+	);
+	CREATE INDEX idx_upstream_accounts_priority ON upstream_accounts(priority);
+	`
+	if _, err := db.Exec(legacySchema); err != nil {
+		t.Fatalf("exec legacy schema failed: %v", err)
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO upstream_accounts (
+			provider_type, account_name, credential_raw, base_url,
+			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
+			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
+			priority, enabled, state, fail_count, last_error,
+			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
+			quota_status, fingerprint, created_at, updated_at
+		) VALUES (
+			'api_key', 'legacy-account', 'sk-legacy', 'https://api.openai.com',
+			1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+			10, 1, 'active', 0, '',
+			'', '', '', '',
+			'ok', 'legacy-fingerprint', '2026-03-22 12:00:00.000000+08:00', '2026-03-22 12:00:00.000000+08:00'
+		)
+	`); err != nil {
+		t.Fatalf("insert legacy account failed: %v", err)
+	}
+
+	st := NewSQLiteAccountPoolStore(db)
+	ctx := context.Background()
+
+	accounts, err := st.ListAccounts(ctx, true)
+	if err != nil {
+		t.Fatalf("ListAccounts failed: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accounts))
+	}
+	if accounts[0].GroupKey != "primary" {
+		t.Fatalf("expected legacy account to infer primary group, got %+v", accounts[0])
+	}
+
+	current, err := st.GetAccount(ctx, accounts[0].ID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if current == nil || current.GroupKey != "primary" {
+		t.Fatalf("expected GetAccount to work after auto-heal, got %+v", current)
+	}
+
+	var groupKeyCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('upstream_accounts') WHERE name = 'group_key'`).Scan(&groupKeyCount); err != nil {
+		t.Fatalf("query group_key existence failed: %v", err)
+	}
+	if groupKeyCount != 1 {
+		t.Fatalf("expected group_key column to be auto-added, got count=%d", groupKeyCount)
+	}
+}
+
 func TestFindAccountByFingerprint_ReturnsAccount(t *testing.T) {
 	st := newTestSQLiteAccountPoolStore(t)
 	ctx := context.Background()
@@ -83,6 +180,107 @@ func TestUpdateAccountPriorities_UpdatesAllRequestedAccounts(t *testing.T) {
 	}
 	if accounts[2].ID != first.ID || accounts[2].Priority != 30 {
 		t.Fatalf("expected first account to become priority 30, got %+v", accounts[2])
+	}
+}
+
+func TestCreateAccount_PersistsExplicitGroupKey(t *testing.T) {
+	st := newTestSQLiteAccountPoolStore(t)
+	ctx := context.Background()
+
+	record, err := st.CreateAccount(ctx, &UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "grouped-primary",
+		CredentialRaw: "sk-grouped-primary",
+		BaseURL:       "https://api.openai.com",
+		GroupKey:      "primary",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount failed: %v", err)
+	}
+
+	if record.GroupKey != "primary" {
+		t.Fatalf("expected group_key primary, got %+v", record)
+	}
+}
+
+func TestListAccounts_RebuildsMissingGroupKeysFromLegacyPriorityTiers(t *testing.T) {
+	st := newTestSQLiteAccountPoolStore(t)
+	ctx := context.Background()
+
+	first := mustCreateTestAccount(t, st, "legacy-primary", 10)
+	second := mustCreateTestAccount(t, st, "legacy-backup", 20)
+	third := mustCreateTestAccount(t, st, "legacy-cold-a", 30)
+	fourth := mustCreateTestAccount(t, st, "legacy-cold-b", 40)
+
+	if _, err := st.db.ExecContext(ctx, `UPDATE upstream_accounts SET group_key = '' WHERE id IN (?, ?, ?, ?)`, first.ID, second.ID, third.ID, fourth.ID); err != nil {
+		t.Fatalf("clear group_key failed: %v", err)
+	}
+
+	accounts, err := st.ListAccounts(ctx, true)
+	if err != nil {
+		t.Fatalf("ListAccounts failed: %v", err)
+	}
+
+	gotByID := make(map[int64]*UpstreamAccountRecord, len(accounts))
+	for _, account := range accounts {
+		gotByID[account.ID] = account
+	}
+
+	if gotByID[first.ID].GroupKey != "primary" {
+		t.Fatalf("expected first account group primary, got %+v", gotByID[first.ID])
+	}
+	if gotByID[second.ID].GroupKey != "backup" {
+		t.Fatalf("expected second account group backup, got %+v", gotByID[second.ID])
+	}
+	if gotByID[third.ID].GroupKey != "cold" {
+		t.Fatalf("expected third account group cold, got %+v", gotByID[third.ID])
+	}
+	if gotByID[fourth.ID].GroupKey != "cold" {
+		t.Fatalf("expected fourth account group cold, got %+v", gotByID[fourth.ID])
+	}
+}
+
+func TestListAccounts_ReindexesPriorityWithinEachExplicitGroup(t *testing.T) {
+	st := newTestSQLiteAccountPoolStore(t)
+	ctx := context.Background()
+
+	primaryA := mustCreateTestAccount(t, st, "primary-a", 90)
+	primaryB := mustCreateTestAccount(t, st, "primary-b", 10)
+	backupA := mustCreateTestAccount(t, st, "backup-a", 70)
+
+	if _, err := st.db.ExecContext(ctx, `
+		UPDATE upstream_accounts
+		SET group_key = CASE id
+			WHEN ? THEN 'primary'
+			WHEN ? THEN 'primary'
+			WHEN ? THEN 'backup'
+		END
+		WHERE id IN (?, ?, ?)
+	`, primaryA.ID, primaryB.ID, backupA.ID, primaryA.ID, primaryB.ID, backupA.ID); err != nil {
+		t.Fatalf("seed group_key failed: %v", err)
+	}
+
+	accounts, err := st.ListAccounts(ctx, true)
+	if err != nil {
+		t.Fatalf("ListAccounts failed: %v", err)
+	}
+
+	gotByID := make(map[int64]*UpstreamAccountRecord, len(accounts))
+	for _, account := range accounts {
+		gotByID[account.ID] = account
+	}
+
+	if gotByID[primaryB.ID].Priority != 10 {
+		t.Fatalf("expected primary-b to keep first group priority 10, got %+v", gotByID[primaryB.ID])
+	}
+	if gotByID[primaryA.ID].Priority != 20 {
+		t.Fatalf("expected primary-a to become second primary priority 20, got %+v", gotByID[primaryA.ID])
+	}
+	if gotByID[backupA.ID].Priority != 10 {
+		t.Fatalf("expected backup-a to become first backup priority 10, got %+v", gotByID[backupA.ID])
 	}
 }
 
@@ -248,6 +446,7 @@ func mustCreateTestAccount(t *testing.T, st *SQLiteAccountPoolStore, name string
 		AccountName:   name,
 		CredentialRaw: "sk-" + name,
 		BaseURL:       "https://api.openai.com",
+		GroupKey:      "",
 		Priority:      priority,
 		Enabled:       true,
 		State:         "active",

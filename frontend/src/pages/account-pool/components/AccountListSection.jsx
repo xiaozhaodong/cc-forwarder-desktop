@@ -36,9 +36,9 @@ const AccountListSection = ({
             <Info size={13} className="shrink-0 text-sky-600" />
             <p
               className="min-w-0 truncate leading-5"
-              title="priority 越小越优先；系统先选最高可用层，层内按额度、状态与健康度自动择优，当前层不可用时再降级。"
+              title="系统先按组别（主组 -> 备组 -> 冷备）选择，再在组内按顺序、额度、状态与健康度自动择优。"
             >
-              priority 越小越优先；系统先选最高可用层，层内自动择优，当前层不可用时再降级。
+              系统先按组别（主组 -&gt; 备组 -&gt; 冷备）选择，再在组内按顺序和健康度自动择优。
             </p>
           </div>
         </div>

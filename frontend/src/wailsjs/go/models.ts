@@ -298,6 +298,7 @@ export namespace main {
 	    cache_creation_cost_multiplier: number;
 	    cache_creation_cost_multiplier_1h: number;
 	    cache_read_cost_multiplier: number;
+	    group_key: string;
 	    priority: number;
 	    enabled: boolean;
 	
@@ -317,8 +318,25 @@ export namespace main {
 	        this.cache_creation_cost_multiplier = source["cache_creation_cost_multiplier"];
 	        this.cache_creation_cost_multiplier_1h = source["cache_creation_cost_multiplier_1h"];
 	        this.cache_read_cost_multiplier = source["cache_read_cost_multiplier"];
+	        this.group_key = source["group_key"];
 	        this.priority = source["priority"];
 	        this.enabled = source["enabled"];
+	    }
+	}
+	export class EnableAutomaticAccountSelectionResult {
+	    success: boolean;
+	    changed: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new EnableAutomaticAccountSelectionResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.changed = source["changed"];
+	        this.message = source["message"];
 	    }
 	}
 	export class EndpointCostItem {
@@ -778,6 +796,22 @@ export namespace main {
 	        this.message = source["message"];
 	    }
 	}
+	export class PinUpstreamAccountSelectionResult {
+	    success: boolean;
+	    changed: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PinUpstreamAccountSelectionResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.changed = source["changed"];
+	        this.message = source["message"];
+	    }
+	}
 	export class PortInfo {
 	    preferred_port: number;
 	    actual_port: number;
@@ -941,6 +975,22 @@ export namespace main {
 	    }
 	}
 	
+	export class SetGroupActiveAccountResult {
+	    success: boolean;
+	    changed: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SetGroupActiveAccountResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.changed = source["changed"];
+	        this.message = source["message"];
+	    }
+	}
 	export class SettingInfo {
 	    id: number;
 	    category: string;
@@ -989,6 +1039,22 @@ export namespace main {
 	        this.total_count = source["total_count"];
 	        this.category_count = source["category_count"];
 	        this.is_initialized = source["is_initialized"];
+	    }
+	}
+	export class SwapUpstreamAccountGroupsResult {
+	    success: boolean;
+	    changed: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SwapUpstreamAccountGroupsResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.changed = source["changed"];
+	        this.message = source["message"];
 	    }
 	}
 	export class SwitchKeyResult {
@@ -1104,6 +1170,7 @@ export namespace main {
 	    credential_raw_masked: string;
 	    has_credential: boolean;
 	    is_active_selection: boolean;
+	    is_group_preferred: boolean;
 	    base_url: string;
 	    cost_multiplier: number;
 	    input_cost_multiplier: number;
@@ -1111,6 +1178,7 @@ export namespace main {
 	    cache_creation_cost_multiplier: number;
 	    cache_creation_cost_multiplier_1h: number;
 	    cache_read_cost_multiplier: number;
+	    group_key: string;
 	    priority: number;
 	    enabled: boolean;
 	    state: string;
@@ -1145,6 +1213,7 @@ export namespace main {
 	        this.credential_raw_masked = source["credential_raw_masked"];
 	        this.has_credential = source["has_credential"];
 	        this.is_active_selection = source["is_active_selection"];
+	        this.is_group_preferred = source["is_group_preferred"];
 	        this.base_url = source["base_url"];
 	        this.cost_multiplier = source["cost_multiplier"];
 	        this.input_cost_multiplier = source["input_cost_multiplier"];
@@ -1152,6 +1221,7 @@ export namespace main {
 	        this.cache_creation_cost_multiplier = source["cache_creation_cost_multiplier"];
 	        this.cache_creation_cost_multiplier_1h = source["cache_creation_cost_multiplier_1h"];
 	        this.cache_read_cost_multiplier = source["cache_read_cost_multiplier"];
+	        this.group_key = source["group_key"];
 	        this.priority = source["priority"];
 	        this.enabled = source["enabled"];
 	        this.state = source["state"];

@@ -42,6 +42,10 @@ export function DeleteUpstreamAccount(arg1) {
   return window['go']['main']['App']['DeleteUpstreamAccount'](arg1);
 }
 
+export function EnableAutomaticAccountSelection() {
+  return window['go']['main']['App']['EnableAutomaticAccountSelection']();
+}
+
 export function ExchangeChatGPTOAuthCallback(arg1) {
   return window['go']['main']['App']['ExchangeChatGPTOAuthCallback'](arg1);
 }
@@ -198,6 +202,10 @@ export function PauseGroup(arg1) {
   return window['go']['main']['App']['PauseGroup'](arg1);
 }
 
+export function PinUpstreamAccountSelection(arg1) {
+  return window['go']['main']['App']['PinUpstreamAccountSelection'](arg1);
+}
+
 export function RefreshUpstreamAccountProfile(arg1) {
   return window['go']['main']['App']['RefreshUpstreamAccountProfile'](arg1);
 }
@@ -218,12 +226,20 @@ export function SetEndpointPriority(arg1, arg2) {
   return window['go']['main']['App']['SetEndpointPriority'](arg1, arg2);
 }
 
+export function SetGroupActiveAccount(arg1, arg2) {
+  return window['go']['main']['App']['SetGroupActiveAccount'](arg1, arg2);
+}
+
 export function StartLogStream() {
   return window['go']['main']['App']['StartLogStream']();
 }
 
 export function StopLogStream() {
   return window['go']['main']['App']['StopLogStream']();
+}
+
+export function SwapUpstreamAccountGroups(arg1, arg2) {
+  return window['go']['main']['App']['SwapUpstreamAccountGroups'](arg1, arg2);
 }
 
 export function SwitchKey(arg1, arg2, arg3) {

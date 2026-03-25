@@ -243,6 +243,12 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		},
 		{
 			table:       "upstream_accounts",
+			checkColumn: "group_key",
+			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN group_key TEXT DEFAULT ''",
+			description: "账号显式组别字段",
+		},
+		{
+			table:       "upstream_accounts",
 			checkColumn: "cost_multiplier",
 			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN cost_multiplier REAL DEFAULT 1.0",
 			description: "账号总成本倍率字段",
@@ -358,6 +364,7 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 	indexSQLs := []string{
 		"CREATE INDEX IF NOT EXISTS idx_request_logs_upstream_type ON request_logs(upstream_type)",
 		"CREATE INDEX IF NOT EXISTS idx_request_logs_upstream_name ON request_logs(upstream_name)",
+		"CREATE INDEX IF NOT EXISTS idx_upstream_accounts_group_key ON upstream_accounts(group_key)",
 	}
 	for _, sqlStmt := range indexSQLs {
 		if _, err := s.db.ExecContext(ctx, sqlStmt); err != nil {
@@ -443,6 +450,7 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 				cache_creation_cost_multiplier REAL DEFAULT 1.0,
 				cache_creation_cost_multiplier_1h REAL DEFAULT 1.0,
 				cache_read_cost_multiplier REAL DEFAULT 1.0,
+				group_key TEXT DEFAULT '',
 				priority INTEGER DEFAULT 100,
 				enabled INTEGER DEFAULT 1,
 				state TEXT DEFAULT 'active',
@@ -468,7 +476,7 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 				id, provider_type, account_name, credential_raw, base_url,
 				cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 				cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-				priority, enabled, state, cooldown_until, fail_count,
+				group_key, priority, enabled, state, cooldown_until, fail_count,
 				last_success_at, last_error, plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
 				quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
 				quota_status, quota_refreshed_at, fingerprint, created_at, updated_at
@@ -481,6 +489,7 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 				1.0 AS cache_creation_cost_multiplier,
 				1.0 AS cache_creation_cost_multiplier_1h,
 				1.0 AS cache_read_cost_multiplier,
+				'' AS group_key,
 				priority, enabled, state, cooldown_until, fail_count,
 				last_success_at, last_error,
 				'' AS plan_type,
@@ -498,6 +507,7 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 			"DROP TABLE upstream_accounts",
 			"ALTER TABLE upstream_accounts_new RENAME TO upstream_accounts",
 			"CREATE INDEX IF NOT EXISTS idx_upstream_accounts_priority ON upstream_accounts(priority)",
+			"CREATE INDEX IF NOT EXISTS idx_upstream_accounts_group_key ON upstream_accounts(group_key)",
 			"CREATE INDEX IF NOT EXISTS idx_upstream_accounts_enabled ON upstream_accounts(enabled)",
 			"CREATE INDEX IF NOT EXISTS idx_upstream_accounts_state ON upstream_accounts(state)",
 			"CREATE INDEX IF NOT EXISTS idx_upstream_accounts_cooldown_until ON upstream_accounts(cooldown_until)",

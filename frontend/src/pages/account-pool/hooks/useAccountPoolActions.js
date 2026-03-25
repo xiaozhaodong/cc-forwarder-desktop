@@ -11,7 +11,7 @@ import {
   testUpstreamAccount,
   toggleUpstreamAccount
 } from '@utils/api.js';
-import { buildManualSwitchSuccessMessage, resolveAccountId } from '../utils.js';
+import { buildManualSwitchSuccessMessage, isValidAccountId, resolveAccountId } from '../utils.js';
 
 const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotice }) => {
   const [busyKey, setBusyKey] = useState('');
@@ -47,7 +47,7 @@ const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotic
 
   const handleDeleteAccount = useCallback((account) => {
     const accountId = resolveAccountId(account);
-    if (accountId === undefined || accountId === null || accountId === '') {
+    if (!isValidAccountId(accountId)) {
       showNotice('error', '账号缺少 ID，无法删除');
       return;
     }
@@ -67,7 +67,7 @@ const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotic
     if (!deleteTarget) return;
 
     const accountId = resolveAccountId(deleteTarget);
-    if (accountId === undefined || accountId === null || accountId === '') {
+    if (!isValidAccountId(accountId)) {
       showNotice('error', '账号缺少 ID，无法删除');
       setDeleteTarget(null);
       return;
@@ -86,7 +86,7 @@ const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotic
 
   const handleToggleAccount = useCallback(async (account) => {
     const accountId = resolveAccountId(account);
-    if (accountId === undefined || accountId === null || accountId === '') {
+    if (!isValidAccountId(accountId)) {
       showNotice('error', '账号缺少 ID，无法切换状态');
       return;
     }
@@ -101,36 +101,47 @@ const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotic
 
   const handleMoveAccountToTier = useCallback(async (account, targetTier) => {
     const accountId = resolveAccountId(account);
-    if (accountId === undefined || accountId === null || accountId === '') {
-      showNotice('error', '账号缺少 ID，无法切换顺序');
+    if (!isValidAccountId(accountId)) {
+      showNotice('error', '账号缺少 ID，无法调整组别');
       return;
     }
 
     setBusyKey(`account-switch-${accountId}`);
     try {
-      const result = await moveUpstreamAccountToTier(accountId, targetTier === 'backup' ? 'backup' : 'primary');
+      const normalizedTargetTier = targetTier === 'cold'
+        ? 'cold'
+        : targetTier === 'backup'
+          ? 'backup'
+          : 'primary';
+      const result = await moveUpstreamAccountToTier(accountId, normalizedTargetTier);
 
       if (result?.unsupported) {
-        showNotice('info', result.message || '当前后端版本暂不支持手动切换层级');
+        showNotice('info', result.message || '当前后端版本暂不支持账号改组');
         return;
       }
 
       if (result?.changed !== true) {
-        showNotice('info', targetTier === 'backup' ? '该账号已在备组位置' : '该账号已在主组位置');
+        if (normalizedTargetTier === 'cold') {
+          showNotice('info', '该账号已在冷备');
+        } else if (normalizedTargetTier === 'backup') {
+          showNotice('info', '该账号已在备组');
+        } else {
+          showNotice('info', '该账号已在主组');
+        }
         return;
       }
 
       const accountName = account.account_name || account.accountName || `账号 ${accountId}`;
       showNotice(
         'success',
-        buildManualSwitchSuccessMessage(accountName, targetTier)
+        result?.message || buildManualSwitchSuccessMessage(accountName, normalizedTargetTier)
       );
       await Promise.all([
         loadData({ silent: true }),
         loadLatestScheduleSnapshot({ silent: true })
       ]);
     } catch (err) {
-      showNotice('error', err.message || '手动切换顺序失败');
+      showNotice('error', err.message || '账号改组失败');
     } finally {
       setBusyKey('');
     }
@@ -138,7 +149,7 @@ const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotic
 
   const handleTestAccount = useCallback(async (account) => {
     const accountId = resolveAccountId(account);
-    if (accountId === undefined || accountId === null || accountId === '') {
+    if (!isValidAccountId(accountId)) {
       showNotice('error', '账号缺少 ID，无法测试');
       return;
     }
@@ -152,7 +163,7 @@ const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotic
 
   const handleRefreshAccountProfile = useCallback(async (account) => {
     const accountId = resolveAccountId(account);
-    if (accountId === undefined || accountId === null || accountId === '') {
+    if (!isValidAccountId(accountId)) {
       showNotice('error', '账号缺少 ID，无法刷新账号信息');
       return;
     }

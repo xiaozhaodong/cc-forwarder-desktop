@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,9 @@ const (
 	defaultAccountBaseURL = "https://api.openai.com"
 	defaultAccountState   = "active"
 	defaultAccountPrio    = 100
+	accountGroupPrimary   = "primary"
+	accountGroupBackup    = "backup"
+	accountGroupCold      = "cold"
 )
 
 var accountDBTimeZone = time.FixedZone("UTC+8", 8*60*60)
@@ -33,6 +37,7 @@ type UpstreamAccountRecord struct {
 	CacheCreationCostMultiplier   float64    `json:"cache_creation_cost_multiplier"`
 	CacheCreationCostMultiplier1h float64    `json:"cache_creation_cost_multiplier_1h"`
 	CacheReadCostMultiplier       float64    `json:"cache_read_cost_multiplier"`
+	GroupKey                      string     `json:"group_key"`
 	Priority                      int        `json:"priority"`
 	Enabled                       bool       `json:"enabled"`
 	State                         string     `json:"state"`
@@ -55,11 +60,17 @@ type UpstreamAccountRecord struct {
 	UpdatedAt                     time.Time  `json:"updated_at"`
 }
 
+type AccountSchedulingUpdate struct {
+	GroupKey string `json:"group_key"`
+	Priority int    `json:"priority"`
+}
+
 // AccountPoolStore 账号池存储接口
 type AccountPoolStore interface {
 	CreateAccount(ctx context.Context, record *UpstreamAccountRecord) (*UpstreamAccountRecord, error)
 	UpdateAccount(ctx context.Context, record *UpstreamAccountRecord) error
 	UpdateAccountPriorities(ctx context.Context, updates map[int64]int) error
+	UpdateAccountScheduling(ctx context.Context, updates map[int64]AccountSchedulingUpdate) error
 	DeleteAccount(ctx context.Context, id int64) error
 	GetAccount(ctx context.Context, id int64) (*UpstreamAccountRecord, error)
 	ListAccounts(ctx context.Context, includeDisabled bool) ([]*UpstreamAccountRecord, error)
@@ -76,14 +87,70 @@ type AccountPoolStore interface {
 
 // SQLiteAccountPoolStore SQLite 账号池存储实现
 type SQLiteAccountPoolStore struct {
-	db *sql.DB
-	tx *sql.Tx
-	mu sync.RWMutex
+	db                *sql.DB
+	tx                *sql.Tx
+	mu                sync.RWMutex
+	schemaCompatOnce  sync.Once
+	schemaCompatError error
 }
 
 // NewSQLiteAccountPoolStore 创建账号池存储
 func NewSQLiteAccountPoolStore(db *sql.DB) *SQLiteAccountPoolStore {
 	return &SQLiteAccountPoolStore{db: db}
+}
+
+func (s *SQLiteAccountPoolStore) ensureSchemaCompatibility(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+
+	s.schemaCompatOnce.Do(func() {
+		exists, err := s.columnExists(ctx, "upstream_accounts", "group_key")
+		if err != nil {
+			s.schemaCompatError = err
+			return
+		}
+		if exists {
+			return
+		}
+
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE upstream_accounts ADD COLUMN group_key TEXT DEFAULT ''`); err != nil {
+			s.schemaCompatError = fmt.Errorf("补齐 group_key 字段失败: %w", err)
+			return
+		}
+		if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_upstream_accounts_group_key ON upstream_accounts(group_key)`); err != nil {
+			s.schemaCompatError = fmt.Errorf("补齐 group_key 索引失败: %w", err)
+			return
+		}
+	})
+
+	return s.schemaCompatError
+}
+
+func (s *SQLiteAccountPoolStore) columnExists(ctx context.Context, table, column string) (bool, error) {
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			dataType  string
+			notNull   int
+			dfltValue interface{}
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &dfltValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func (s *SQLiteAccountPoolStore) getQuerier() interface {
@@ -99,6 +166,9 @@ func (s *SQLiteAccountPoolStore) getQuerier() interface {
 
 // CreateAccount 创建账号
 func (s *SQLiteAccountPoolStore) CreateAccount(ctx context.Context, record *UpstreamAccountRecord) (*UpstreamAccountRecord, error) {
+	if err := s.ensureSchemaCompatibility(ctx); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -108,17 +178,17 @@ func (s *SQLiteAccountPoolStore) CreateAccount(ctx context.Context, record *Upst
 			provider_type, account_name, credential_raw, base_url,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
+			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
 			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
 			quota_status, quota_refreshed_at, fingerprint
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	res, err := s.getQuerier().ExecContext(ctx, query,
 		record.ProviderType, record.AccountName, record.CredentialRaw, record.BaseURL,
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
-		record.Priority, boolToInt(record.Enabled), record.State, nullableTime(record.CooldownUntil), record.FailCount,
+		record.GroupKey, record.Priority, boolToInt(record.Enabled), record.State, nullableTime(record.CooldownUntil), record.FailCount,
 		nullableTime(record.LastSuccessAt), record.LastError,
 		record.PlanType, record.ChatGPTAccountID, record.ChatGPTUserID, record.OrganizationID,
 		nullableFloat(record.Quota5HUsedPercent), nullableTime(record.Quota5HResetAt),
@@ -136,6 +206,9 @@ func (s *SQLiteAccountPoolStore) CreateAccount(ctx context.Context, record *Upst
 
 // UpdateAccount 更新账号
 func (s *SQLiteAccountPoolStore) UpdateAccount(ctx context.Context, record *UpstreamAccountRecord) error {
+	if err := s.ensureSchemaCompatibility(ctx); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -148,7 +221,7 @@ func (s *SQLiteAccountPoolStore) UpdateAccount(ctx context.Context, record *Upst
 		SET provider_type = ?, account_name = ?, credential_raw = ?, base_url = ?,
 			cost_multiplier = ?, input_cost_multiplier = ?, output_cost_multiplier = ?,
 			cache_creation_cost_multiplier = ?, cache_creation_cost_multiplier_1h = ?, cache_read_cost_multiplier = ?,
-			priority = ?, enabled = ?, state = ?, cooldown_until = ?, fail_count = ?, last_success_at = ?, last_error = ?,
+			group_key = ?, priority = ?, enabled = ?, state = ?, cooldown_until = ?, fail_count = ?, last_success_at = ?, last_error = ?,
 			plan_type = ?, chatgpt_account_id = ?, chatgpt_user_id = ?, organization_id = ?,
 			quota_5h_used_percent = ?, quota_5h_reset_at = ?, quota_weekly_used_percent = ?, quota_weekly_reset_at = ?,
 			quota_status = ?, quota_refreshed_at = ?, fingerprint = ?
@@ -158,7 +231,7 @@ func (s *SQLiteAccountPoolStore) UpdateAccount(ctx context.Context, record *Upst
 		record.ProviderType, record.AccountName, record.CredentialRaw, record.BaseURL,
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
-		record.Priority, boolToInt(record.Enabled), record.State, nullableTime(record.CooldownUntil), record.FailCount,
+		record.GroupKey, record.Priority, boolToInt(record.Enabled), record.State, nullableTime(record.CooldownUntil), record.FailCount,
 		nullableTime(record.LastSuccessAt), record.LastError,
 		record.PlanType, record.ChatGPTAccountID, record.ChatGPTUserID, record.OrganizationID,
 		nullableFloat(record.Quota5HUsedPercent), nullableTime(record.Quota5HResetAt),
@@ -179,6 +252,9 @@ func (s *SQLiteAccountPoolStore) UpdateAccount(ctx context.Context, record *Upst
 
 // UpdateAccountPriorities 批量更新账号优先级。
 func (s *SQLiteAccountPoolStore) UpdateAccountPriorities(ctx context.Context, updates map[int64]int) error {
+	if err := s.ensureSchemaCompatibility(ctx); err != nil {
+		return err
+	}
 	if len(updates) == 0 {
 		return nil
 	}
@@ -218,6 +294,49 @@ func (s *SQLiteAccountPoolStore) UpdateAccountPriorities(ctx context.Context, up
 	return nil
 }
 
+func (s *SQLiteAccountPoolStore) UpdateAccountScheduling(ctx context.Context, updates map[int64]AccountSchedulingUpdate) error {
+	if err := s.ensureSchemaCompatibility(ctx); err != nil {
+		return err
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开始账号调度事务失败: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `UPDATE upstream_accounts SET group_key = ?, priority = ? WHERE id = ?`)
+	if err != nil {
+		return fmt.Errorf("准备账号调度更新语句失败: %w", err)
+	}
+	defer stmt.Close()
+
+	for id, update := range updates {
+		res, execErr := stmt.ExecContext(ctx, normalizeAccountGroupKey(update.GroupKey), update.Priority, id)
+		if execErr != nil {
+			return fmt.Errorf("更新账号调度字段失败: %w", execErr)
+		}
+		affected, rowsErr := res.RowsAffected()
+		if rowsErr != nil {
+			return fmt.Errorf("获取账号调度更新影响行数失败: %w", rowsErr)
+		}
+		if affected == 0 {
+			return fmt.Errorf("账号不存在: %d", id)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交账号调度事务失败: %w", err)
+	}
+	return nil
+}
+
 // DeleteAccount 删除账号
 func (s *SQLiteAccountPoolStore) DeleteAccount(ctx context.Context, id int64) error {
 	s.mu.Lock()
@@ -239,6 +358,9 @@ func (s *SQLiteAccountPoolStore) DeleteAccount(ctx context.Context, id int64) er
 
 // GetAccount 获取单个账号
 func (s *SQLiteAccountPoolStore) GetAccount(ctx context.Context, id int64) (*UpstreamAccountRecord, error) {
+	if err := s.ensureSchemaCompatibility(ctx); err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -250,26 +372,57 @@ func (s *SQLiteAccountPoolStore) getAccountByID(ctx context.Context, id int64) (
 		SELECT id, provider_type, account_name, credential_raw, base_url,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
+			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
 			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
 			quota_status, quota_refreshed_at, fingerprint, created_at, updated_at
 		FROM upstream_accounts
 		WHERE id = ?
 	`
-	return scanAccountRow(s.getQuerier().QueryRowContext(ctx, query, id))
+	rec, err := scanAccountRow(s.getQuerier().QueryRowContext(ctx, query, id))
+	if err != nil {
+		return nil, err
+	}
+	if normalizeAccountGroupKey(rec.GroupKey) != rec.GroupKey {
+		rec.GroupKey = normalizeAccountGroupKey(rec.GroupKey)
+	}
+	if rec.GroupKey == "" {
+		records, listErr := s.listAccountsRaw(ctx, true)
+		if listErr != nil {
+			return nil, listErr
+		}
+		normalized := normalizeAccountGroupRecords(records)
+		for _, item := range normalized {
+			if item != nil && item.ID == id {
+				return item, nil
+			}
+		}
+	}
+	return normalizeSingleAccountRecord(rec), nil
 }
 
 // ListAccounts 列出账号
 func (s *SQLiteAccountPoolStore) ListAccounts(ctx context.Context, includeDisabled bool) ([]*UpstreamAccountRecord, error) {
+	if err := s.ensureSchemaCompatibility(ctx); err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	records, err := s.listAccountsRaw(ctx, includeDisabled)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeAccountGroupRecords(records), nil
+}
+
+func (s *SQLiteAccountPoolStore) listAccountsRaw(ctx context.Context, includeDisabled bool) ([]*UpstreamAccountRecord, error) {
 
 	query := `
 		SELECT id, provider_type, account_name, credential_raw, base_url,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
+			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
 			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
 			quota_status, quota_refreshed_at, fingerprint, created_at, updated_at
@@ -302,6 +455,9 @@ func (s *SQLiteAccountPoolStore) ListAccounts(ctx context.Context, includeDisabl
 
 // ListSchedulableAccounts 查询可调度账号
 func (s *SQLiteAccountPoolStore) ListSchedulableAccounts(ctx context.Context, now time.Time) ([]*UpstreamAccountRecord, error) {
+	if err := s.ensureSchemaCompatibility(ctx); err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -309,7 +465,7 @@ func (s *SQLiteAccountPoolStore) ListSchedulableAccounts(ctx context.Context, no
 		SELECT id, provider_type, account_name, credential_raw, base_url,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
+			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
 			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
 			quota_status, quota_refreshed_at, fingerprint, created_at, updated_at
@@ -336,11 +492,14 @@ func (s *SQLiteAccountPoolStore) ListSchedulableAccounts(ctx context.Context, no
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("遍历可调度账号失败: %w", err)
 	}
-	return out, nil
+	return normalizeAccountGroupRecords(out), nil
 }
 
 // FindAccountByFingerprint 按指纹查询账号
 func (s *SQLiteAccountPoolStore) FindAccountByFingerprint(ctx context.Context, fingerprint string) (*UpstreamAccountRecord, error) {
+	if err := s.ensureSchemaCompatibility(ctx); err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -348,7 +507,7 @@ func (s *SQLiteAccountPoolStore) FindAccountByFingerprint(ctx context.Context, f
 		SELECT id, provider_type, account_name, credential_raw, base_url,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
+			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
 			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
 			quota_status, quota_refreshed_at, fingerprint, created_at, updated_at
@@ -362,7 +521,7 @@ func (s *SQLiteAccountPoolStore) FindAccountByFingerprint(ctx context.Context, f
 		}
 		return nil, err
 	}
-	return rec, nil
+	return normalizeSingleAccountRecord(rec), nil
 }
 
 // ToggleAccount 启停账号
@@ -569,6 +728,7 @@ func normalizeAccountRecord(record *UpstreamAccountRecord) {
 	if record.Priority == 0 {
 		record.Priority = defaultAccountPrio
 	}
+	record.GroupKey = normalizeAccountGroupKey(record.GroupKey)
 	if record.State == "" {
 		record.State = defaultAccountState
 	}
@@ -631,7 +791,7 @@ func nullableFloat(v *float64) any {
 }
 
 func formatDBTime(t time.Time) string {
-	return t.In(accountDBTimeZone).Format("2006-01-02 15:04:05.999999-07:00")
+	return t.In(accountDBTimeZone).Format("2006-01-02 15:04:05.000000-07:00")
 }
 
 // FormatAccountDisplayTime 统一将账号池时间输出为展示时区字符串。
@@ -674,7 +834,7 @@ func scanAccountRow(scanner rowScanner) (*UpstreamAccountRecord, error) {
 		&rec.ID, &rec.ProviderType, &rec.AccountName, &rec.CredentialRaw, &rec.BaseURL,
 		&costMultiplier, &inputCostMultiplier, &outputCostMultiplier,
 		&cacheCreationMultiplier, &cacheCreationMultiplier1h, &cacheReadMultiplier,
-		&rec.Priority, &enabled, &rec.State, &cooldownUntilStr, &rec.FailCount, &lastSuccessAtStr, &rec.LastError,
+		&rec.GroupKey, &rec.Priority, &enabled, &rec.State, &cooldownUntilStr, &rec.FailCount, &lastSuccessAtStr, &rec.LastError,
 		&rec.PlanType, &rec.ChatGPTAccountID, &rec.ChatGPTUserID, &rec.OrganizationID,
 		&quota5HUsedPercent, &quota5HResetAtStr, &quotaWeeklyUsedPercent, &quotaWeeklyResetAtStr,
 		&rec.QuotaStatus, &quotaRefreshedAtStr, &rec.Fingerprint, &createdAtStr, &updatedAtStr,
@@ -698,6 +858,171 @@ func scanAccountRow(scanner rowScanner) (*UpstreamAccountRecord, error) {
 	rec.CreatedAt = parseDBTime(createdAtStr)
 	rec.UpdatedAt = parseDBTime(updatedAtStr)
 	return &rec, nil
+}
+
+func normalizeAccountGroupKey(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case accountGroupPrimary:
+		return accountGroupPrimary
+	case accountGroupBackup:
+		return accountGroupBackup
+	case accountGroupCold:
+		return accountGroupCold
+	default:
+		return ""
+	}
+}
+
+func inferLegacyGroupKeyFromPriority(priority int) string {
+	if priority <= 10 {
+		return accountGroupPrimary
+	}
+	if priority <= 20 {
+		return accountGroupBackup
+	}
+	return accountGroupCold
+}
+
+func accountGroupRank(groupKey string) int {
+	switch normalizeAccountGroupKey(groupKey) {
+	case accountGroupPrimary:
+		return 0
+	case accountGroupBackup:
+		return 1
+	case accountGroupCold:
+		return 2
+	default:
+		return 9
+	}
+}
+
+func normalizeSingleAccountRecord(record *UpstreamAccountRecord) *UpstreamAccountRecord {
+	if record == nil {
+		return nil
+	}
+	cloned := cloneAccountRecord(record)
+	cloned.GroupKey = normalizeAccountGroupKey(cloned.GroupKey)
+	if cloned.GroupKey == "" {
+		cloned.GroupKey = inferLegacyGroupKeyFromPriority(cloned.Priority)
+	}
+	return cloned
+}
+
+func normalizeAccountGroupRecords(records []*UpstreamAccountRecord) []*UpstreamAccountRecord {
+	if len(records) == 0 {
+		return nil
+	}
+
+	cloned := make([]*UpstreamAccountRecord, 0, len(records))
+	hasExplicitGroup := false
+	for _, record := range records {
+		if record == nil {
+			continue
+		}
+		item := cloneAccountRecord(record)
+		item.GroupKey = normalizeAccountGroupKey(item.GroupKey)
+		if item.GroupKey != "" {
+			hasExplicitGroup = true
+		}
+		cloned = append(cloned, item)
+	}
+
+	sort.SliceStable(cloned, func(i, j int) bool {
+		left := cloned[i]
+		right := cloned[j]
+		if left.Priority != right.Priority {
+			return left.Priority < right.Priority
+		}
+		return left.ID < right.ID
+	})
+
+	uniqueTiers := make([]int, 0)
+	seenTier := make(map[int]struct{})
+	for _, record := range cloned {
+		if record.GroupKey != "" {
+			continue
+		}
+		if _, ok := seenTier[record.Priority]; ok {
+			continue
+		}
+		seenTier[record.Priority] = struct{}{}
+		uniqueTiers = append(uniqueTiers, record.Priority)
+	}
+	sort.Ints(uniqueTiers)
+
+	legacyGroupByTier := make(map[int]string, len(uniqueTiers))
+	for index, tier := range uniqueTiers {
+		groupKey := accountGroupCold
+		if index == 0 {
+			groupKey = accountGroupPrimary
+		} else if index == 1 {
+			groupKey = accountGroupBackup
+		}
+		legacyGroupByTier[tier] = groupKey
+	}
+
+	for _, record := range cloned {
+		if record.GroupKey == "" {
+			if inferred := legacyGroupByTier[record.Priority]; inferred != "" {
+				record.GroupKey = inferred
+			} else {
+				record.GroupKey = inferLegacyGroupKeyFromPriority(record.Priority)
+			}
+		}
+	}
+
+	sort.SliceStable(cloned, func(i, j int) bool {
+		left := cloned[i]
+		right := cloned[j]
+		if accountGroupRank(left.GroupKey) != accountGroupRank(right.GroupKey) {
+			return accountGroupRank(left.GroupKey) < accountGroupRank(right.GroupKey)
+		}
+		if left.Priority != right.Priority {
+			return left.Priority < right.Priority
+		}
+		return left.ID < right.ID
+	})
+
+	if hasExplicitGroup {
+		groupCounters := map[string]int{}
+		for _, record := range cloned {
+			groupCounters[record.GroupKey]++
+			record.Priority = groupCounters[record.GroupKey] * 10
+		}
+	}
+
+	return cloned
+}
+
+func cloneAccountRecord(record *UpstreamAccountRecord) *UpstreamAccountRecord {
+	if record == nil {
+		return nil
+	}
+	cloned := *record
+	cloned.CooldownUntil = cloneTimePtr(record.CooldownUntil)
+	cloned.LastSuccessAt = cloneTimePtr(record.LastSuccessAt)
+	cloned.Quota5HUsedPercent = cloneFloatPtr(record.Quota5HUsedPercent)
+	cloned.Quota5HResetAt = cloneTimePtr(record.Quota5HResetAt)
+	cloned.QuotaWeeklyUsedPercent = cloneFloatPtr(record.QuotaWeeklyUsedPercent)
+	cloned.QuotaWeeklyResetAt = cloneTimePtr(record.QuotaWeeklyResetAt)
+	cloned.QuotaRefreshedAt = cloneTimePtr(record.QuotaRefreshedAt)
+	return &cloned
+}
+
+func cloneTimePtr(t *time.Time) *time.Time {
+	if t == nil || t.IsZero() {
+		return nil
+	}
+	value := *t
+	return &value
+}
+
+func cloneFloatPtr(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	value := *v
+	return &value
 }
 
 func parseMultiplierFloat(v sql.NullFloat64) float64 {

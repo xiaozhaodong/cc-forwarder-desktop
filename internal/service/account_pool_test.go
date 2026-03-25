@@ -241,6 +241,7 @@ func TestListSchedulableAccounts_V1FiltersDisabledAuthAndFutureCooldown(t *testi
 		ProviderType:  "api_key",
 		AccountName:   "main",
 		CredentialRaw: "sk-main",
+		GroupKey:      accountGroupPrimary,
 		Priority:      10,
 		Enabled:       true,
 		State:         "active",
@@ -253,6 +254,7 @@ func TestListSchedulableAccounts_V1FiltersDisabledAuthAndFutureCooldown(t *testi
 		ProviderType:  "api_key",
 		AccountName:   "disabled-auth",
 		CredentialRaw: "sk-disabled",
+		GroupKey:      accountGroupPrimary,
 		Priority:      5,
 		Enabled:       true,
 		State:         "disabled_auth",
@@ -265,6 +267,7 @@ func TestListSchedulableAccounts_V1FiltersDisabledAuthAndFutureCooldown(t *testi
 		ProviderType:  "api_key",
 		AccountName:   "cooldown-future",
 		CredentialRaw: "sk-future",
+		GroupKey:      accountGroupPrimary,
 		Priority:      1,
 		Enabled:       true,
 		State:         "cooldown",
@@ -278,6 +281,7 @@ func TestListSchedulableAccounts_V1FiltersDisabledAuthAndFutureCooldown(t *testi
 		ProviderType:  "api_key",
 		AccountName:   "cooldown-past",
 		CredentialRaw: "sk-past",
+		GroupKey:      accountGroupBackup,
 		Priority:      20,
 		Enabled:       true,
 		State:         "cooldown",
@@ -291,6 +295,7 @@ func TestListSchedulableAccounts_V1FiltersDisabledAuthAndFutureCooldown(t *testi
 		ProviderType:  "api_key",
 		AccountName:   "disabled",
 		CredentialRaw: "sk-disabled-manual",
+		GroupKey:      accountGroupBackup,
 		Priority:      2,
 		Enabled:       false,
 		State:         "disabled",
@@ -311,7 +316,7 @@ func TestListSchedulableAccounts_V1FiltersDisabledAuthAndFutureCooldown(t *testi
 	}
 }
 
-func TestMoveAccountToTier_ReordersPrioritiesAtomically(t *testing.T) {
+func TestMoveAccountToTier_MovesAccountToPrimaryGroupWithoutShufflingOtherGroups(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 
@@ -319,6 +324,7 @@ func TestMoveAccountToTier_ReordersPrioritiesAtomically(t *testing.T) {
 		ProviderType:  "api_key",
 		AccountName:   "first",
 		CredentialRaw: "sk-first",
+		GroupKey:      accountGroupPrimary,
 		Priority:      10,
 		Enabled:       true,
 		State:         "active",
@@ -330,6 +336,7 @@ func TestMoveAccountToTier_ReordersPrioritiesAtomically(t *testing.T) {
 		ProviderType:  "api_key",
 		AccountName:   "second",
 		CredentialRaw: "sk-second",
+		GroupKey:      accountGroupBackup,
 		Priority:      20,
 		Enabled:       true,
 		State:         "active",
@@ -341,6 +348,7 @@ func TestMoveAccountToTier_ReordersPrioritiesAtomically(t *testing.T) {
 		ProviderType:  "api_key",
 		AccountName:   "third",
 		CredentialRaw: "sk-third",
+		GroupKey:      accountGroupCold,
 		Priority:      30,
 		Enabled:       true,
 		State:         "active",
@@ -354,7 +362,7 @@ func TestMoveAccountToTier_ReordersPrioritiesAtomically(t *testing.T) {
 		t.Fatalf("MoveAccountToTier failed: %v", err)
 	}
 	if !changed {
-		t.Fatal("expected priorities to change")
+		t.Fatal("expected group move to change scheduling state")
 	}
 
 	accounts, err := st.ListAccounts(ctx, true)
@@ -367,12 +375,387 @@ func TestMoveAccountToTier_ReordersPrioritiesAtomically(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected reordered accounts: got %v want %v", got, want)
 	}
-	if accounts[0].Priority != 10 || accounts[1].Priority != 20 || accounts[2].Priority != 30 {
-		t.Fatalf("unexpected priorities after reorder: %+v", accounts)
+	if accounts[0].GroupKey != accountGroupPrimary || accounts[0].Priority != 10 {
+		t.Fatalf("expected moved account to become first primary candidate, got %+v", accounts[0])
+	}
+	if accounts[1].GroupKey != accountGroupPrimary || accounts[1].Priority != 20 {
+		t.Fatalf("expected existing primary account to remain in primary group behind moved account, got %+v", accounts[1])
+	}
+	if accounts[2].GroupKey != accountGroupBackup || accounts[2].Priority != 10 {
+		t.Fatalf("expected backup account to stay in backup group, got %+v", accounts[2])
 	}
 }
 
-func TestMoveAccountToTier_NoChangeWhenSelectionAlreadyApplied(t *testing.T) {
+func TestSwapAccountGroups_ExchangesPrimaryAndBackupGroups(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	primaryA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-a",
+		CredentialRaw: "sk-primary-a",
+		GroupKey:      accountGroupPrimary,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create primary-a failed: %v", err)
+	}
+	primaryB, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-b",
+		CredentialRaw: "sk-primary-b",
+		GroupKey:      accountGroupPrimary,
+		Priority:      20,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create primary-b failed: %v", err)
+	}
+	backupA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-a",
+		CredentialRaw: "sk-backup-a",
+		GroupKey:      accountGroupBackup,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup-a failed: %v", err)
+	}
+
+	changed, err := svc.SwapAccountGroups(ctx, accountGroupBackup, accountGroupPrimary)
+	if err != nil {
+		t.Fatalf("SwapAccountGroups failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected swapping primary and backup groups to report changed")
+	}
+
+	accounts, err := st.ListAccounts(ctx, true)
+	if err != nil {
+		t.Fatalf("ListAccounts failed: %v", err)
+	}
+	if got, want := collectAccountIDs(accounts), []int64{backupA.ID, primaryA.ID, primaryB.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected group order after swap: got %v want %v", got, want)
+	}
+	if accounts[0].GroupKey != accountGroupPrimary || accounts[0].Priority != 10 {
+		t.Fatalf("expected backup-a to become first primary account, got %+v", accounts[0])
+	}
+	if accounts[1].GroupKey != accountGroupBackup || accounts[1].Priority != 10 {
+		t.Fatalf("expected primary-a to become first backup account, got %+v", accounts[1])
+	}
+	if accounts[2].GroupKey != accountGroupBackup || accounts[2].Priority != 20 {
+		t.Fatalf("expected primary-b to remain second backup account, got %+v", accounts[2])
+	}
+
+	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-after-group-swap", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{backupA.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected promoted backup group to become primary selection, got %v want %v", got, want)
+	}
+}
+
+func TestSwapAccountGroups_BackupAndColdPreservesCurrentPrimarySelection(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	primaryA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-a",
+		CredentialRaw: "sk-primary-a",
+		GroupKey:      accountGroupPrimary,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create primary-a failed: %v", err)
+	}
+	backupA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-a",
+		CredentialRaw: "sk-backup-a",
+		GroupKey:      accountGroupBackup,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup-a failed: %v", err)
+	}
+	coldA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "cold-a",
+		CredentialRaw: "sk-cold-a",
+		GroupKey:      accountGroupCold,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create cold-a failed: %v", err)
+	}
+
+	if _, err := svc.PrepareSchedulableAccounts(ctx, "req-before-backup-cold-swap", "/v1/responses"); err != nil {
+		t.Fatalf("PrepareSchedulableAccounts before swap failed: %v", err)
+	}
+
+	changed, err := svc.SwapAccountGroups(ctx, accountGroupBackup, accountGroupCold)
+	if err != nil {
+		t.Fatalf("SwapAccountGroups backup/cold failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected swapping backup and cold groups to report changed")
+	}
+
+	accountID, ok, err := svc.GetActiveSelectionAccountID(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveSelectionAccountID failed: %v", err)
+	}
+	if !ok || accountID != primaryA.ID {
+		t.Fatalf("expected primary selection to be preserved, got ok=%v accountID=%d", ok, accountID)
+	}
+
+	accounts, err := st.ListAccounts(ctx, true)
+	if err != nil {
+		t.Fatalf("ListAccounts failed: %v", err)
+	}
+	if got, want := collectAccountIDs(accounts), []int64{primaryA.ID, coldA.ID, backupA.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected account order after backup/cold swap: got %v want %v", got, want)
+	}
+	if accounts[1].GroupKey != accountGroupBackup || accounts[2].GroupKey != accountGroupCold {
+		t.Fatalf("expected backup/cold groups to exchange in place, got %+v", accounts)
+	}
+}
+
+func TestSwapAccountGroups_BackupAndColdPreservesPreferredPrimaryAccount(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	primaryA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-a",
+		CredentialRaw: "sk-primary-a",
+		GroupKey:      accountGroupPrimary,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create primary-a failed: %v", err)
+	}
+	primaryB, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-b",
+		CredentialRaw: "sk-primary-b",
+		GroupKey:      accountGroupPrimary,
+		Priority:      20,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create primary-b failed: %v", err)
+	}
+	backupA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-a",
+		CredentialRaw: "sk-backup-a",
+		GroupKey:      accountGroupBackup,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup-a failed: %v", err)
+	}
+	coldA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "cold-a",
+		CredentialRaw: "sk-cold-a",
+		GroupKey:      accountGroupCold,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create cold-a failed: %v", err)
+	}
+
+	changed, err := svc.SetGroupActiveAccount(ctx, accountGroupPrimary, primaryB.ID)
+	if err != nil {
+		t.Fatalf("SetGroupActiveAccount primary failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected setting primary preferred account to report changed")
+	}
+
+	changed, err = svc.SwapAccountGroups(ctx, accountGroupBackup, accountGroupCold)
+	if err != nil {
+		t.Fatalf("SwapAccountGroups backup/cold failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected swapping backup and cold groups to report changed")
+	}
+
+	accountID, ok, err := svc.GetActiveSelectionAccountID(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveSelectionAccountID failed: %v", err)
+	}
+	if !ok || accountID != primaryB.ID {
+		t.Fatalf("expected preferred primary account to remain selected, got ok=%v accountID=%d", ok, accountID)
+	}
+
+	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-after-preserving-primary-preferred", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{primaryB.ID, primaryA.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected preferred primary account to stay ahead after swap, got %v want %v", got, want)
+	}
+
+	accounts, err := st.ListAccounts(ctx, true)
+	if err != nil {
+		t.Fatalf("ListAccounts failed: %v", err)
+	}
+	if got, want := collectAccountIDs(accounts), []int64{primaryA.ID, primaryB.ID, coldA.ID, backupA.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected account order after backup/cold swap with primary preference: got %v want %v", got, want)
+	}
+	if accounts[2].GroupKey != accountGroupBackup || accounts[3].GroupKey != accountGroupCold {
+		t.Fatalf("expected backup/cold groups to exchange in place, got %+v", accounts)
+	}
+}
+
+func TestSetGroupActiveAccount_PrefersChosenBackupAccountWithoutPinningRecoveredPrimary(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	primaryA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-a",
+		CredentialRaw: "sk-primary-a",
+		GroupKey:      accountGroupPrimary,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create primary-a failed: %v", err)
+	}
+	backupA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-a",
+		CredentialRaw: "sk-backup-a",
+		GroupKey:      accountGroupBackup,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup-a failed: %v", err)
+	}
+	backupB, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-b",
+		CredentialRaw: "sk-backup-b",
+		GroupKey:      accountGroupBackup,
+		Priority:      20,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup-b failed: %v", err)
+	}
+
+	if err := svc.ensureRuntimeCache(ctx); err != nil {
+		t.Fatalf("ensureRuntimeCache failed: %v", err)
+	}
+	if changed, _ := svc.runtimeCache.markTransientFailure(primaryA.ID, "primary cooldown", now.Add(30*time.Minute), now); !changed {
+		t.Fatal("expected primary account to enter cooldown for test setup")
+	}
+
+	changed, err := svc.SetGroupActiveAccount(ctx, accountGroupBackup, backupB.ID)
+	if err != nil {
+		t.Fatalf("SetGroupActiveAccount failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected setting backup preferred account to report changed")
+	}
+
+	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-backup-preferred", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts during primary cooldown failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{backupB.ID, backupA.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected chosen backup account to lead backup group, got %v want %v", got, want)
+	}
+
+	if changed, _ := svc.runtimeCache.markSuccess(primaryA.ID, now.Add(time.Minute)); !changed {
+		t.Fatal("expected primary account recovery to update runtime state")
+	}
+
+	ordered, err = svc.PrepareSchedulableAccounts(ctx, "req-primary-recovered", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts after primary recovery failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{primaryA.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected scheduler to return to primary group after recovery, got %v want %v", got, want)
+	}
+}
+
+func TestSetGroupActiveAccount_PrefersChosenPrimaryAccountWithinPrimaryGroup(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	primaryA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-a",
+		CredentialRaw: "sk-primary-a",
+		GroupKey:      accountGroupPrimary,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create primary-a failed: %v", err)
+	}
+	primaryB, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-b",
+		CredentialRaw: "sk-primary-b",
+		GroupKey:      accountGroupPrimary,
+		Priority:      20,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create primary-b failed: %v", err)
+	}
+
+	changed, err := svc.SetGroupActiveAccount(ctx, accountGroupPrimary, primaryB.ID)
+	if err != nil {
+		t.Fatalf("SetGroupActiveAccount primary failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected setting primary preferred account to report changed")
+	}
+
+	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-primary-preferred", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{primaryB.ID, primaryA.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected chosen primary account to lead primary group, got %v want %v", got, want)
+	}
+}
+
+func TestMoveAccountToTier_NoChangeWhenTargetAlreadyInSameGroupUnderAutoMode(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 
@@ -402,8 +785,8 @@ func TestMoveAccountToTier_NoChangeWhenSelectionAlreadyApplied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MoveAccountToTier failed: %v", err)
 	}
-	if !changed {
-		t.Fatal("expected first manual switch to apply runtime selection")
+	if changed {
+		t.Fatal("expected moving an already-primary account not to change auto-mode state")
 	}
 
 	changed, err = svc.MoveAccountToTier(ctx, first.ID, 0)
@@ -411,11 +794,11 @@ func TestMoveAccountToTier_NoChangeWhenSelectionAlreadyApplied(t *testing.T) {
 		t.Fatalf("second MoveAccountToTier failed: %v", err)
 	}
 	if changed {
-		t.Fatal("expected no change after the same manual selection is already applied")
+		t.Fatal("expected no change after repeating the same group move")
 	}
 }
 
-func TestMoveAccountToTier_ChangingPrimaryAccountWithinSameTierCountsAsChange(t *testing.T) {
+func TestMoveAccountToTier_ChangingPrimaryAccountWithinSameTierDoesNotCreateManualSelection(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 
@@ -446,24 +829,32 @@ func TestMoveAccountToTier_ChangingPrimaryAccountWithinSameTierCountsAsChange(t 
 	if err != nil {
 		t.Fatalf("MoveAccountToTier first failed: %v", err)
 	}
-	if !changed {
-		t.Fatal("expected first manual primary selection to change runtime state")
+	if changed {
+		t.Fatal("expected same-group move on first account not to create manual selection")
 	}
 
 	changed, err = svc.MoveAccountToTier(ctx, second.ID, 0)
 	if err != nil {
 		t.Fatalf("MoveAccountToTier second failed: %v", err)
 	}
-	if !changed {
-		t.Fatal("expected switching to another account in the same primary tier to count as change")
+	if changed {
+		t.Fatal("expected switching within the same primary group not to create manual selection")
 	}
 
 	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-same-tier-manual-switch", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
-	if got, want := collectAccountIDs(ordered), []int64{second.ID, first.ID}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected second account to become active selection, got %v want %v", got, want)
+	if got, want := collectAccountIDs(ordered), []int64{first.ID, second.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected automatic scheduling order to remain unchanged within the same primary group, got %v want %v", got, want)
+	}
+
+	accountID, ok, err := svc.GetActiveSelectionAccountID(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveSelectionAccountID failed: %v", err)
+	}
+	if ok || accountID != 0 {
+		t.Fatalf("expected no manual selection after same-group move, got ok=%v accountID=%d", ok, accountID)
 	}
 }
 
@@ -493,12 +884,12 @@ func TestUpdateAccount_PreservesPinnedSelectionWhenPinnedAccountPriorityChanges(
 		t.Fatalf("create second account failed: %v", err)
 	}
 
-	changed, err := svc.MoveAccountToTier(ctx, first.ID, 0)
+	changed, err := svc.PinAccountSelection(ctx, first.ID)
 	if err != nil {
-		t.Fatalf("MoveAccountToTier failed: %v", err)
+		t.Fatalf("PinAccountSelection failed: %v", err)
 	}
 	if !changed {
-		t.Fatal("expected manual primary selection to change runtime state")
+		t.Fatal("expected pinning first account to change runtime state")
 	}
 
 	updatedFirst, err := svc.GetAccount(ctx, first.ID)
@@ -530,7 +921,7 @@ func TestUpdateAccount_PreservesPinnedSelectionWhenPinnedAccountPriorityChanges(
 	}
 }
 
-func TestMoveAccountToTier_ManualSelectionPreservesPinnedTargetAcrossTransientCooldown(t *testing.T) {
+func TestPinAccountSelection_PreservesPinnedTargetAcrossTransientCooldown(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 
@@ -557,12 +948,12 @@ func TestMoveAccountToTier_ManualSelectionPreservesPinnedTargetAcrossTransientCo
 		t.Fatalf("create backup account failed: %v", err)
 	}
 
-	changed, err := svc.MoveAccountToTier(ctx, primary.ID, 0)
+	changed, err := svc.PinAccountSelection(ctx, primary.ID)
 	if err != nil {
-		t.Fatalf("MoveAccountToTier primary failed: %v", err)
+		t.Fatalf("PinAccountSelection primary failed: %v", err)
 	}
 	if !changed {
-		t.Fatal("expected manual primary selection to change runtime state")
+		t.Fatal("expected pinning primary account to change runtime state")
 	}
 
 	if err := svc.MarkAccountTransientFailure(ctx, primary.ID, "temporary upstream failure", 2*time.Minute); err != nil {
@@ -658,12 +1049,12 @@ func TestManualPinnedSelection_IsNotOverwrittenByLaterSuccessFromAnotherAccount(
 		t.Fatalf("create backup account failed: %v", err)
 	}
 
-	changed, err := svc.MoveAccountToTier(ctx, primary.ID, 0)
+	changed, err := svc.PinAccountSelection(ctx, primary.ID)
 	if err != nil {
-		t.Fatalf("MoveAccountToTier primary failed: %v", err)
+		t.Fatalf("PinAccountSelection primary failed: %v", err)
 	}
 	if !changed {
-		t.Fatal("expected manual primary selection to change runtime state")
+		t.Fatal("expected pinning primary account to change runtime state")
 	}
 
 	if err := svc.MarkAccountSuccess(ctx, backup.ID); err != nil {
@@ -687,7 +1078,7 @@ func TestManualPinnedSelection_IsNotOverwrittenByLaterSuccessFromAnotherAccount(
 	}
 }
 
-func TestMoveAccountToTier_BackupNoOpWithSingleTierPreservesSnapshotAndSelection(t *testing.T) {
+func TestMoveAccountToTier_MovingSinglePrimaryAccountToBackupKeepsAutoMode(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 
@@ -695,6 +1086,7 @@ func TestMoveAccountToTier_BackupNoOpWithSingleTierPreservesSnapshotAndSelection
 		ProviderType:  "api_key",
 		AccountName:   "first",
 		CredentialRaw: "sk-first",
+		GroupKey:      accountGroupPrimary,
 		Priority:      10,
 		Enabled:       true,
 		State:         "active",
@@ -706,6 +1098,7 @@ func TestMoveAccountToTier_BackupNoOpWithSingleTierPreservesSnapshotAndSelection
 		ProviderType:  "api_key",
 		AccountName:   "second",
 		CredentialRaw: "sk-second",
+		GroupKey:      accountGroupPrimary,
 		Priority:      10,
 		Enabled:       true,
 		State:         "active",
@@ -732,30 +1125,37 @@ func TestMoveAccountToTier_BackupNoOpWithSingleTierPreservesSnapshotAndSelection
 
 	changed, err := svc.MoveAccountToTier(ctx, second.ID, 1)
 	if err != nil {
-		t.Fatalf("MoveAccountToTier backup no-op failed: %v", err)
+		t.Fatalf("MoveAccountToTier backup move failed: %v", err)
 	}
-	if changed {
-		t.Fatal("expected moving a single tier into backup to be a no-op")
+	if !changed {
+		t.Fatal("expected moving one primary account into backup to change group assignment")
 	}
 
 	snapshotAfter, err := svc.GetLatestAccountScheduleSnapshot(ctx)
 	if err != nil {
 		t.Fatalf("GetLatestAccountScheduleSnapshot after backup no-op failed: %v", err)
 	}
-	if snapshotAfter == nil || snapshotAfter.RequestID != snapshotBefore.RequestID {
-		t.Fatalf("expected latest snapshot to be preserved after backup no-op, got before=%+v after=%+v", snapshotBefore, snapshotAfter)
+	if snapshotAfter != nil {
+		t.Fatalf("expected latest snapshot to be cleared after explicit backup move, got before=%+v after=%+v", snapshotBefore, snapshotAfter)
 	}
 
 	ordered, err = svc.PrepareSchedulableAccounts(ctx, "req-after-single-tier-backup", "/v1/responses")
 	if err != nil {
-		t.Fatalf("PrepareSchedulableAccounts after backup no-op failed: %v", err)
+		t.Fatalf("PrepareSchedulableAccounts after backup move failed: %v", err)
 	}
-	if got, want := collectAccountIDs(ordered), []int64{first.ID, second.ID}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected backup no-op to preserve active selection, got %v want %v", got, want)
+	if got, want := collectAccountIDs(ordered), []int64{first.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected auto scheduling to remain on primary group after moving another account to backup, got %v want %v", got, want)
+	}
+	accountID, ok, err := svc.GetActiveSelectionAccountID(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveSelectionAccountID failed: %v", err)
+	}
+	if ok || accountID != 0 {
+		t.Fatalf("expected backup move not to enter manual mode, got ok=%v accountID=%d", ok, accountID)
 	}
 }
 
-func TestMoveAccountToTier_MovingToBackupMovesWholeTierAndSelectsClickedAccount(t *testing.T) {
+func TestMoveAccountToTier_MovingToBackupKeepsOtherColdAccountsInPlaceWithoutLeavingAutoMode(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 
@@ -763,6 +1163,7 @@ func TestMoveAccountToTier_MovingToBackupMovesWholeTierAndSelectsClickedAccount(
 		ProviderType:  "api_key",
 		AccountName:   "first",
 		CredentialRaw: "sk-first",
+		GroupKey:      accountGroupPrimary,
 		Priority:      10,
 		Enabled:       true,
 		State:         "active",
@@ -774,6 +1175,7 @@ func TestMoveAccountToTier_MovingToBackupMovesWholeTierAndSelectsClickedAccount(
 		ProviderType:  "api_key",
 		AccountName:   "second",
 		CredentialRaw: "sk-second",
+		GroupKey:      accountGroupBackup,
 		Priority:      20,
 		Enabled:       true,
 		State:         "active",
@@ -785,6 +1187,7 @@ func TestMoveAccountToTier_MovingToBackupMovesWholeTierAndSelectsClickedAccount(
 		ProviderType:  "api_key",
 		AccountName:   "third",
 		CredentialRaw: "sk-third",
+		GroupKey:      accountGroupCold,
 		Priority:      30,
 		Enabled:       true,
 		State:         "active",
@@ -796,6 +1199,7 @@ func TestMoveAccountToTier_MovingToBackupMovesWholeTierAndSelectsClickedAccount(
 		ProviderType:  "api_key",
 		AccountName:   "third-peer",
 		CredentialRaw: "sk-third-peer",
+		GroupKey:      accountGroupCold,
 		Priority:      30,
 		Enabled:       true,
 		State:         "active",
@@ -809,53 +1213,68 @@ func TestMoveAccountToTier_MovingToBackupMovesWholeTierAndSelectsClickedAccount(
 		t.Fatalf("MoveAccountToTier failed: %v", err)
 	}
 	if !changed {
-		t.Fatal("expected moving third account into backup tier to change priorities")
+		t.Fatal("expected moving third account into backup group to change scheduling state")
 	}
 
 	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-after-backup-move", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
-	if got, want := collectAccountIDs(ordered), []int64{third.ID, thirdPeer.ID}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected clicked backup tier account to become active selection, got %v want %v", got, want)
+	if got, want := collectAccountIDs(ordered), []int64{first.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected auto scheduling to remain on primary group after moving a cold account to backup, got %v want %v", got, want)
+	}
+	accountID, ok, err := svc.GetActiveSelectionAccountID(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveSelectionAccountID failed: %v", err)
+	}
+	if ok || accountID != 0 {
+		t.Fatalf("expected backup move not to create manual selection, got ok=%v accountID=%d", ok, accountID)
 	}
 
-	for accountID, wantPriority := range map[int64]int{
-		first.ID:     10,
-		third.ID:     20,
-		thirdPeer.ID: 20,
-		second.ID:    30,
-	} {
-		record, getErr := st.GetAccount(ctx, accountID)
-		if getErr != nil {
-			t.Fatalf("GetAccount %d failed: %v", accountID, getErr)
-		}
-		if record == nil || record.Priority != wantPriority {
-			t.Fatalf("unexpected priority for account %d: got %+v want priority %d", accountID, record, wantPriority)
-		}
+	recordThird, err := st.GetAccount(ctx, third.ID)
+	if err != nil {
+		t.Fatalf("GetAccount third failed: %v", err)
+	}
+	if recordThird == nil || recordThird.GroupKey != accountGroupBackup || recordThird.Priority != 10 {
+		t.Fatalf("expected third account to become first backup account, got %+v", recordThird)
+	}
+	recordSecond, err := st.GetAccount(ctx, second.ID)
+	if err != nil {
+		t.Fatalf("GetAccount second failed: %v", err)
+	}
+	if recordSecond == nil || recordSecond.GroupKey != accountGroupBackup || recordSecond.Priority != 20 {
+		t.Fatalf("expected second account to remain backup behind moved account, got %+v", recordSecond)
+	}
+	recordThirdPeer, err := st.GetAccount(ctx, thirdPeer.ID)
+	if err != nil {
+		t.Fatalf("GetAccount third peer failed: %v", err)
+	}
+	if recordThirdPeer == nil || recordThirdPeer.GroupKey != accountGroupCold {
+		t.Fatalf("expected untouched cold account to stay cold, got %+v", recordThirdPeer)
 	}
 
 	accounts, err := st.ListAccounts(ctx, true)
 	if err != nil {
 		t.Fatalf("ListAccounts failed: %v", err)
 	}
-	if got, want := collectAccountIDs(accounts), []int64{first.ID, third.ID, thirdPeer.ID, second.ID}; !reflect.DeepEqual(got, want) {
+	if got, want := collectAccountIDs(accounts), []int64{first.ID, third.ID, second.ID, thirdPeer.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected reordered accounts after moving to backup: got %v want %v", got, want)
 	}
 }
 
-func TestMoveAccountToTier_ChangingBackupAccountWithinSameTierCountsAsChange(t *testing.T) {
+func TestMoveAccountToTier_ChangingBackupAccountWithinSameTierDoesNotCreateManualSelection(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 
-	if _, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+	primary, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
 		ProviderType:  "api_key",
 		AccountName:   "primary",
 		CredentialRaw: "sk-primary",
 		Priority:      10,
 		Enabled:       true,
 		State:         "active",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("create primary account failed: %v", err)
 	}
 	backupA, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
@@ -885,24 +1304,380 @@ func TestMoveAccountToTier_ChangingBackupAccountWithinSameTierCountsAsChange(t *
 	if err != nil {
 		t.Fatalf("MoveAccountToTier backup-a failed: %v", err)
 	}
-	if !changed {
-		t.Fatal("expected first backup selection to change runtime state")
+	if changed {
+		t.Fatal("expected moving an already-backup account within the same group not to create manual selection")
 	}
 
 	changed, err = svc.MoveAccountToTier(ctx, backupB.ID, 1)
 	if err != nil {
 		t.Fatalf("MoveAccountToTier backup-b failed: %v", err)
 	}
-	if !changed {
-		t.Fatal("expected switching to another account in the same backup tier to count as change")
+	if changed {
+		t.Fatal("expected switching within the same backup group not to create manual selection")
 	}
 
 	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-same-tier-backup-switch", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
-	if got, want := collectAccountIDs(ordered), []int64{backupB.ID, backupA.ID}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected second backup account to become active selection, got %v want %v", got, want)
+	if got, want := collectAccountIDs(ordered), []int64{primary.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected auto mode to keep selecting the primary group, got %v want %v", got, want)
+	}
+	accountID, ok, err := svc.GetActiveSelectionAccountID(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveSelectionAccountID failed: %v", err)
+	}
+	if ok || accountID != 0 {
+		t.Fatalf("expected no manual selection after backup group move, got ok=%v accountID=%d", ok, accountID)
+	}
+}
+
+func TestMoveAccountToTier_PreservesExistingManualPinnedSelectionWhenReorderingGroups(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	primary, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-a",
+		CredentialRaw: "sk-primary-a",
+		GroupKey:      accountGroupPrimary,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create primary failed: %v", err)
+	}
+	backup, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-a",
+		CredentialRaw: "sk-backup-a",
+		GroupKey:      accountGroupBackup,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup failed: %v", err)
+	}
+	cold, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "cold-a",
+		CredentialRaw: "sk-cold-a",
+		GroupKey:      accountGroupCold,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create cold failed: %v", err)
+	}
+
+	if _, err := svc.PinAccountSelection(ctx, backup.ID); err != nil {
+		t.Fatalf("PinAccountSelection backup failed: %v", err)
+	}
+	changed, err := svc.MoveAccountToTier(ctx, cold.ID, 1)
+	if err != nil {
+		t.Fatalf("MoveAccountToTier cold->backup failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected moving cold account into backup group to change scheduling state")
+	}
+
+	accountID, ok, err := svc.GetActiveSelectionAccountID(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveSelectionAccountID failed: %v", err)
+	}
+	if !ok || accountID != backup.ID {
+		t.Fatalf("expected existing manual pin to be preserved, got ok=%v accountID=%d", ok, accountID)
+	}
+
+	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-preserve-existing-manual-pin", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{backup.ID, cold.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected existing manual pin to remain effective after group move while still exposing same-group fallbacks, got %v want %v", got, want)
+	}
+
+	_ = primary
+}
+
+func TestPinAccountSelection_PinsSpecificAccountWithoutChangingTierPriorities(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	primary, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary",
+		CredentialRaw: "sk-primary",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create primary account failed: %v", err)
+	}
+	backup, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup",
+		CredentialRaw: "sk-backup",
+		Priority:      20,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup account failed: %v", err)
+	}
+
+	changed, err := svc.PinAccountSelection(ctx, backup.ID)
+	if err != nil {
+		t.Fatalf("PinAccountSelection failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected pinning backup account to change runtime selection")
+	}
+
+	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-pinned-backup", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
+	}
+	if got, want := collectAccountIDs(ordered), []int64{backup.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected pinned backup account to be selected before higher priority tier, got %v want %v", got, want)
+	}
+
+	for accountID, wantPriority := range map[int64]int{
+		primary.ID: 10,
+		backup.ID:  20,
+	} {
+		record, getErr := st.GetAccount(ctx, accountID)
+		if getErr != nil {
+			t.Fatalf("GetAccount %d failed: %v", accountID, getErr)
+		}
+		if record == nil || record.Priority != wantPriority {
+			t.Fatalf("expected priority %d for account %d, got %+v", wantPriority, accountID, record)
+		}
+	}
+}
+
+func TestPinAccountSelection_RestoresPinnedAccountAfterServiceRestart(t *testing.T) {
+	svc, st, settingsSvc := newTestAccountPoolServiceWithSettings(t)
+	ctx := context.Background()
+
+	if _, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-a",
+		CredentialRaw: "sk-primary-a",
+		GroupKey:      accountGroupPrimary,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	}); err != nil {
+		t.Fatalf("create primary failed: %v", err)
+	}
+	backup, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-a",
+		CredentialRaw: "sk-backup-a",
+		GroupKey:      accountGroupBackup,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup failed: %v", err)
+	}
+
+	if _, err := svc.PinAccountSelection(ctx, backup.ID); err != nil {
+		t.Fatalf("PinAccountSelection failed: %v", err)
+	}
+	value, err := settingsSvc.GetValue(ctx, accountPoolSettingsCategory, accountPoolPinnedAccountIDSettingKey)
+	if err != nil {
+		t.Fatalf("GetValue failed: %v", err)
+	}
+	if value != "2" {
+		t.Fatalf("expected pinned account setting to be persisted as 2, got %q", value)
+	}
+
+	restarted := NewAccountPoolService(st, nil)
+	restarted.SetSettingsService(settingsSvc)
+	t.Cleanup(func() { _ = restarted.Close() })
+
+	accountID, ok, err := restarted.GetActiveSelectionAccountID(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveSelectionAccountID after restart failed: %v", err)
+	}
+	if !ok || accountID != backup.ID {
+		t.Fatalf("expected restarted service to restore pinned backup, got ok=%v accountID=%d", ok, accountID)
+	}
+}
+
+func TestPinAccountSelection_DoesNotRestoreUnavailablePinnedAccountAfterServiceRestart(t *testing.T) {
+	svc, st, settingsSvc := newTestAccountPoolServiceWithSettings(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if _, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-a",
+		CredentialRaw: "sk-primary-a",
+		GroupKey:      accountGroupPrimary,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	}); err != nil {
+		t.Fatalf("create primary failed: %v", err)
+	}
+	backup, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-a",
+		CredentialRaw: "sk-backup-a",
+		GroupKey:      accountGroupBackup,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup failed: %v", err)
+	}
+
+	if _, err := svc.PinAccountSelection(ctx, backup.ID); err != nil {
+		t.Fatalf("PinAccountSelection failed: %v", err)
+	}
+	if err := st.MarkAccountTransientFailure(ctx, backup.ID, "temporary cooldown", now.Add(5*time.Minute)); err != nil {
+		t.Fatalf("MarkAccountTransientFailure failed: %v", err)
+	}
+
+	restarted := NewAccountPoolService(st, nil)
+	restarted.SetSettingsService(settingsSvc)
+	t.Cleanup(func() { _ = restarted.Close() })
+
+	accountID, ok, err := restarted.GetActiveSelectionAccountID(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveSelectionAccountID after restart failed: %v", err)
+	}
+	if ok || accountID != 0 {
+		t.Fatalf("expected unavailable pinned account not to be restored, got ok=%v accountID=%d", ok, accountID)
+	}
+	value, err := settingsSvc.GetValue(ctx, accountPoolSettingsCategory, accountPoolPinnedAccountIDSettingKey)
+	if err != nil {
+		t.Fatalf("GetValue failed: %v", err)
+	}
+	if value != "" {
+		t.Fatalf("expected unavailable pinned account setting to be cleared, got %q", value)
+	}
+}
+
+func TestPinAccountSelection_ClearsPersistedPinnedAccountWhenTargetDeletedAfterServiceRestart(t *testing.T) {
+	svc, st, settingsSvc := newTestAccountPoolServiceWithSettings(t)
+	ctx := context.Background()
+
+	if _, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-a",
+		CredentialRaw: "sk-primary-a",
+		GroupKey:      accountGroupPrimary,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	}); err != nil {
+		t.Fatalf("create primary failed: %v", err)
+	}
+	backup, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-a",
+		CredentialRaw: "sk-backup-a",
+		GroupKey:      accountGroupBackup,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup failed: %v", err)
+	}
+
+	if _, err := svc.PinAccountSelection(ctx, backup.ID); err != nil {
+		t.Fatalf("PinAccountSelection failed: %v", err)
+	}
+	if err := st.DeleteAccount(ctx, backup.ID); err != nil {
+		t.Fatalf("DeleteAccount failed: %v", err)
+	}
+
+	restarted := NewAccountPoolService(st, nil)
+	restarted.SetSettingsService(settingsSvc)
+	t.Cleanup(func() { _ = restarted.Close() })
+
+	accountID, ok, err := restarted.GetActiveSelectionAccountID(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveSelectionAccountID after restart failed: %v", err)
+	}
+	if ok || accountID != 0 {
+		t.Fatalf("expected deleted pinned account not to be restored, got ok=%v accountID=%d", ok, accountID)
+	}
+	value, err := settingsSvc.GetValue(ctx, accountPoolSettingsCategory, accountPoolPinnedAccountIDSettingKey)
+	if err != nil {
+		t.Fatalf("GetValue failed: %v", err)
+	}
+	if value != "" {
+		t.Fatalf("expected deleted pinned account setting to be cleared, got %q", value)
+	}
+}
+
+func TestEnableAutomaticAccountSelection_ClearsPinnedSelectionAndPersistedSetting(t *testing.T) {
+	svc, st, settingsSvc := newTestAccountPoolServiceWithSettings(t)
+	ctx := context.Background()
+
+	_, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "primary-a",
+		CredentialRaw: "sk-primary-a",
+		GroupKey:      accountGroupPrimary,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create primary failed: %v", err)
+	}
+	backup, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "backup-a",
+		CredentialRaw: "sk-backup-a",
+		GroupKey:      accountGroupBackup,
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create backup failed: %v", err)
+	}
+
+	if _, err := svc.PinAccountSelection(ctx, backup.ID); err != nil {
+		t.Fatalf("PinAccountSelection failed: %v", err)
+	}
+
+	changed, err := svc.EnableAutomaticAccountSelection(ctx)
+	if err != nil {
+		t.Fatalf("EnableAutomaticAccountSelection failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected enabling automatic account selection to report changed")
+	}
+
+	accountID, ok, err := svc.GetActiveSelectionAccountID(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveSelectionAccountID failed: %v", err)
+	}
+	if ok || accountID != 0 {
+		t.Fatalf("expected manual pin to be cleared, got ok=%v accountID=%d", ok, accountID)
+	}
+
+	value, err := settingsSvc.GetValue(ctx, accountPoolSettingsCategory, accountPoolPinnedAccountIDSettingKey)
+	if err != nil {
+		t.Fatalf("GetValue failed: %v", err)
+	}
+	if value != "" {
+		t.Fatalf("expected pinned account setting to be cleared, got %q", value)
 	}
 }
 
@@ -984,4 +1759,31 @@ func newTestAccountPoolServiceWithStore(t *testing.T) (*AccountPoolService, *sto
 	svc := NewAccountPoolService(st, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	return svc, st
+}
+
+func newTestAccountPoolServiceWithSettings(t *testing.T) (*AccountPoolService, *store.SQLiteAccountPoolStore, *SettingsService) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite failed: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	schemaPath := filepath.Join("..", "tracking", "schema.sql")
+	schemaSQL, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("read schema failed: %v", err)
+	}
+	if _, err := db.Exec(string(schemaSQL)); err != nil {
+		t.Fatalf("exec schema failed: %v", err)
+	}
+
+	accountStore := store.NewSQLiteAccountPoolStore(db)
+	settingsStore := store.NewSQLiteSettingsStore(db)
+	settingsSvc := NewSettingsService(settingsStore)
+	svc := NewAccountPoolService(accountStore, nil)
+	svc.SetSettingsService(settingsSvc)
+	t.Cleanup(func() { _ = svc.Close() })
+	return svc, accountStore, settingsSvc
 }

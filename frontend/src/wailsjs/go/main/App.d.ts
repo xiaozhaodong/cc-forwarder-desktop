@@ -23,6 +23,8 @@ export function DeleteModelPricing(arg1:string):Promise<void>;
 
 export function DeleteUpstreamAccount(arg1:number):Promise<void>;
 
+export function EnableAutomaticAccountSelection():Promise<main.EnableAutomaticAccountSelectionResult>;
+
 export function ExchangeChatGPTOAuthCallback(arg1:main.ExchangeChatGPTOAuthCallbackInput):Promise<main.ExchangeChatGPTOAuthCallbackResult>;
 
 export function GenerateChatGPTOAuthLink():Promise<main.GenerateChatGPTOAuthLinkResult>;
@@ -101,6 +103,8 @@ export function MoveUpstreamAccountToTier(arg1:number,arg2:string):Promise<main.
 
 export function PauseGroup(arg1:string):Promise<void>;
 
+export function PinUpstreamAccountSelection(arg1:number):Promise<main.PinUpstreamAccountSelectionResult>;
+
 export function RefreshUpstreamAccountProfile(arg1:number):Promise<main.RefreshUpstreamAccountProfileResult>;
 
 export function ResetCategorySettings(arg1:string):Promise<void>;
@@ -111,9 +115,13 @@ export function SetDefaultModelPricing(arg1:string):Promise<void>;
 
 export function SetEndpointPriority(arg1:string,arg2:number):Promise<void>;
 
+export function SetGroupActiveAccount(arg1:string,arg2:number):Promise<main.SetGroupActiveAccountResult>;
+
 export function StartLogStream():Promise<void>;
 
 export function StopLogStream():Promise<void>;
+
+export function SwapUpstreamAccountGroups(arg1:string,arg2:string):Promise<main.SwapUpstreamAccountGroupsResult>;
 
 export function SwitchKey(arg1:string,arg2:string,arg3:number):Promise<main.SwitchKeyResult>;
 

@@ -231,6 +231,15 @@ func (s *SettingsService) Set(ctx context.Context, category, key, value string) 
 	return nil
 }
 
+// Delete 删除单个设置
+func (s *SettingsService) Delete(ctx context.Context, category, key string) error {
+	if err := s.store.Delete(ctx, category, key); err != nil {
+		return err
+	}
+	s.triggerOnChange(category, key)
+	return nil
+}
+
 // BatchSet 批量设置（不触发回调，需手动触发）
 func (s *SettingsService) BatchSet(ctx context.Context, records []*store.SettingRecord) error {
 	return s.store.BatchSet(ctx, records)

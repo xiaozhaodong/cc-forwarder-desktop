@@ -4,6 +4,26 @@ const isRuntimeActiveSelection = (account = {}) => {
   return (account?.is_active_selection ?? account?.isActiveSelection) === true;
 };
 
+const isSamePinnedAccount = ({
+  displayedActiveAccount = null,
+  targetAccount = null
+} = {}) => {
+  if (!isRuntimeActiveSelection(displayedActiveAccount)) {
+    return false;
+  }
+
+  return String(resolveAccountId(displayedActiveAccount) ?? '') === String(resolveAccountId(targetAccount) ?? '');
+};
+
+const canPinAccountSelection = (account = {}) => {
+  if (!account || account.enabled === false) {
+    return false;
+  }
+
+  const state = String(account.state || '').trim().toLowerCase();
+  return state !== 'disabled_auth';
+};
+
 const resolveDisplayedActiveAccount = ({
   accounts = [],
   recentSelectedAccountId = null
@@ -28,6 +48,8 @@ const resolveDisplayedActiveAccount = ({
 };
 
 export {
+  canPinAccountSelection,
+  isSamePinnedAccount,
   isRuntimeActiveSelection,
   resolveDisplayedActiveAccount
 };

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,11 +19,13 @@ import (
 )
 
 const (
-	defaultOpenAIResponsesURL   = "https://api.openai.com/v1/responses"
-	defaultChatGPTCodexTestURL  = "https://chatgpt.com/backend-api/codex/responses"
-	defaultOpenAIBetaHeader     = "responses=experimental"
-	defaultOAuthOriginatorValue = "codex_cli_rs"
-	usageLimitResetMatchWindow  = 15 * time.Minute
+	defaultOpenAIResponsesURL            = "https://api.openai.com/v1/responses"
+	defaultChatGPTCodexTestURL           = "https://chatgpt.com/backend-api/codex/responses"
+	defaultOpenAIBetaHeader              = "responses=experimental"
+	defaultOAuthOriginatorValue          = "codex_cli_rs"
+	usageLimitResetMatchWindow           = 15 * time.Minute
+	accountPoolSettingsCategory          = "account_pool"
+	accountPoolPinnedAccountIDSettingKey = "pinned_account_id"
 )
 
 type usageLimitQuotaWindow string
@@ -39,6 +42,7 @@ var chatGPTCodexTestURL = defaultChatGPTCodexTestURL
 type AccountPoolService struct {
 	store                         store.AccountPoolStore
 	config                        *config.Config
+	settingsService               *SettingsService
 	refreshTokenManager           *accountauth.OpenAIRefreshTokenManager
 	scheduleSnapshots             *latestAccountScheduleSnapshotStore
 	softFailureTracker            *accountSoftFailureTracker
@@ -71,6 +75,13 @@ func NewAccountPoolService(st store.AccountPoolStore, cfg *config.Config) *Accou
 	return svc
 }
 
+func (s *AccountPoolService) SetSettingsService(settingsSvc *SettingsService) {
+	if s == nil {
+		return
+	}
+	s.settingsService = settingsSvc
+}
+
 // ===== 账号 =====
 
 func (s *AccountPoolService) ListAccounts(ctx context.Context, includeDisabled bool) ([]*store.UpstreamAccountRecord, error) {
@@ -100,6 +111,86 @@ func (s *AccountPoolService) GetActiveSelectionAccountID(ctx context.Context) (i
 	}
 	accountID, ok := s.runtimeCache.activeSelectionAccountID()
 	return accountID, ok, nil
+}
+
+func (s *AccountPoolService) GetGroupPreferredAccountIDs(ctx context.Context) (map[string]int64, error) {
+	if err := s.ensureRuntimeCache(ctx); err != nil {
+		return nil, err
+	}
+	if s.runtimeCache == nil {
+		return nil, nil
+	}
+	return s.runtimeCache.groupPreferredAccountIDs(), nil
+}
+
+func (s *AccountPoolService) PinAccountSelection(ctx context.Context, id int64) (bool, error) {
+	if err := s.ensureRuntimeCache(ctx); err != nil {
+		return false, err
+	}
+	if id <= 0 {
+		return false, fmt.Errorf("无效的账号 ID: %d", id)
+	}
+
+	record, ok := s.runtimeCache.get(id)
+	if !ok || record == nil {
+		return false, fmt.Errorf("账号不存在: %d", id)
+	}
+
+	changed := s.runtimeCache.selectAccount(id)
+	_ = s.persistPinnedAccountSelection(ctx, id)
+	if changed && s.softFailureTracker != nil {
+		s.softFailureTracker.Clear(id)
+	}
+	if changed && s.scheduleSnapshots != nil {
+		s.scheduleSnapshots.clear()
+	}
+	return changed, nil
+}
+
+func (s *AccountPoolService) EnableAutomaticAccountSelection(ctx context.Context) (bool, error) {
+	if err := s.ensureRuntimeCache(ctx); err != nil {
+		return false, err
+	}
+
+	changed := false
+	if s.runtimeCache != nil {
+		changed = s.runtimeCache.clearPinnedSelection()
+	}
+	if err := s.clearPersistedPinnedAccountSelection(ctx); err != nil {
+		return false, err
+	}
+	if changed && s.scheduleSnapshots != nil {
+		s.scheduleSnapshots.clear()
+	}
+	return changed, nil
+}
+
+func (s *AccountPoolService) SetGroupActiveAccount(ctx context.Context, groupKey string, id int64) (bool, error) {
+	if err := s.ensureRuntimeCache(ctx); err != nil {
+		return false, err
+	}
+	if id <= 0 {
+		return false, fmt.Errorf("无效的账号 ID: %d", id)
+	}
+
+	record, ok := s.runtimeCache.get(id)
+	if !ok || record == nil {
+		return false, fmt.Errorf("账号不存在: %d", id)
+	}
+
+	groupKey = normalizeAccountGroupKey(groupKey)
+	if groupKey == "" {
+		return false, fmt.Errorf("无效的组别: %s", groupKey)
+	}
+	if inferAccountGroupKey(record) != groupKey {
+		return false, fmt.Errorf("账号 %d 不属于%s", id, accountGroupLabel(groupKey))
+	}
+
+	changed := s.runtimeCache.setPreferredAccountInGroup(groupKey, id)
+	if changed && s.scheduleSnapshots != nil {
+		s.scheduleSnapshots.clear()
+	}
+	return changed, nil
 }
 
 func (s *AccountPoolService) CreateAccount(ctx context.Context, rec *store.UpstreamAccountRecord) (*store.UpstreamAccountRecord, error) {
@@ -201,6 +292,7 @@ func (s *AccountPoolService) DeleteAccount(ctx context.Context, id int64) error 
 	if err := s.store.DeleteAccount(ctx, id); err != nil {
 		return err
 	}
+	_ = s.clearPersistedPinnedAccountSelectionIfMatches(ctx, id)
 	if s.runtimeWriter != nil {
 		s.runtimeWriter.Drop(id)
 	}
@@ -631,8 +723,97 @@ func (s *AccountPoolService) reloadRuntimeCacheLocked(ctx context.Context) error
 		s.runtimeCache = newAccountRuntimeCache()
 	}
 	s.runtimeCache.replaceAll(records)
+	if err := s.restorePersistedPinnedAccountSelection(ctx); err != nil {
+		return err
+	}
 	s.runtimeInitialized.Store(true)
 	return nil
+}
+
+func (s *AccountPoolService) persistPinnedAccountSelection(ctx context.Context, id int64) error {
+	if s == nil || s.settingsService == nil || id <= 0 {
+		return nil
+	}
+	return s.settingsService.Set(ctx, accountPoolSettingsCategory, accountPoolPinnedAccountIDSettingKey, strconv.FormatInt(id, 10))
+}
+
+func (s *AccountPoolService) clearPersistedPinnedAccountSelection(ctx context.Context) error {
+	if s == nil || s.settingsService == nil {
+		return nil
+	}
+	err := s.settingsService.Delete(ctx, accountPoolSettingsCategory, accountPoolPinnedAccountIDSettingKey)
+	if err != nil && !strings.Contains(err.Error(), "设置不存在") {
+		return err
+	}
+	return nil
+}
+
+func (s *AccountPoolService) clearPersistedPinnedAccountSelectionIfMatches(ctx context.Context, id int64) error {
+	if s == nil || s.settingsService == nil || id <= 0 {
+		return nil
+	}
+	persistedID, ok, err := s.readPersistedPinnedAccountSelectionID(ctx)
+	if err != nil || !ok || persistedID != id {
+		return err
+	}
+	return s.clearPersistedPinnedAccountSelection(ctx)
+}
+
+func (s *AccountPoolService) readPersistedPinnedAccountSelectionID(ctx context.Context) (int64, bool, error) {
+	if s == nil || s.settingsService == nil {
+		return 0, false, nil
+	}
+	value, err := s.settingsService.GetValue(ctx, accountPoolSettingsCategory, accountPoolPinnedAccountIDSettingKey)
+	if err != nil {
+		return 0, false, err
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false, nil
+	}
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, true, s.clearPersistedPinnedAccountSelection(ctx)
+	}
+	return id, true, nil
+}
+
+func (s *AccountPoolService) restorePersistedPinnedAccountSelection(ctx context.Context) error {
+	persistedID, ok, err := s.readPersistedPinnedAccountSelectionID(ctx)
+	if err != nil || !ok {
+		return err
+	}
+	account, exists := s.runtimeCache.get(persistedID)
+	now := time.Now()
+	if !exists || !isPinnedAccountRestorable(account, now) {
+		return s.clearPersistedPinnedAccountSelection(ctx)
+	}
+	s.runtimeCache.selectAccount(persistedID)
+	if s.softFailureTracker != nil {
+		s.softFailureTracker.Clear(persistedID)
+	}
+	return nil
+}
+
+func isPinnedAccountRestorable(account *store.UpstreamAccountRecord, now time.Time) bool {
+	if account == nil || !account.Enabled {
+		return false
+	}
+
+	state := strings.TrimSpace(strings.ToLower(account.State))
+	if state == "disabled_auth" || state == "disabled" {
+		return false
+	}
+	if state == "cooldown" {
+		return false
+	}
+	if account.CooldownUntil != nil && account.CooldownUntil.After(now) {
+		return false
+	}
+	if normalizeQuotaStatus(account.QuotaStatus) == quotaStatusExhausted && hasExhaustedQuotaReset(account, now) {
+		return false
+	}
+	return true
 }
 
 func (s *AccountPoolService) reloadAccountIntoCache(ctx context.Context, id int64) error {
@@ -670,6 +851,7 @@ func mergeEditableAccountRecord(current, incoming *store.UpstreamAccountRecord) 
 	merged.CacheCreationCostMultiplier = incoming.CacheCreationCostMultiplier
 	merged.CacheCreationCostMultiplier1h = incoming.CacheCreationCostMultiplier1h
 	merged.CacheReadCostMultiplier = incoming.CacheReadCostMultiplier
+	merged.GroupKey = incoming.GroupKey
 	merged.Priority = incoming.Priority
 	return merged
 }

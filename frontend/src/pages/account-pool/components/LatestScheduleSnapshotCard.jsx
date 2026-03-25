@@ -87,7 +87,7 @@ const LatestScheduleSnapshotCard = ({ snapshot = {}, snapshotUnsupported = false
           <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-5">
             <div className="text-sm font-medium text-slate-900">暂无最近一次调度结果</div>
             <div className="mt-1 text-xs leading-5 text-slate-500">
-              发起一次 `/v1/responses` 请求后，这里会显示命中账号、命中层级、是否降级以及候选账号的跳过原因。
+              发起一次 `/v1/responses` 请求后，这里会显示命中账号、命中组别、组内顺序、是否降级以及候选账号的跳过原因。
             </div>
           </div>
         </div>
@@ -103,7 +103,7 @@ const LatestScheduleSnapshotCard = ({ snapshot = {}, snapshotUnsupported = false
                   </span>
                   <span className="text-slate-500">
                     {selectedTierLabel}
-                    {Number.isFinite(selectedPriority) ? ` (P${selectedPriority})` : ''}
+                    {Number.isFinite(selectedPriority) ? ` · 组内顺序 ${selectedPriority}` : ''}
                   </span>
                   <Badge
                     text={degraded ? '已降级' : '未降级'}

@@ -85,6 +85,7 @@ type rankedSchedulableAccount struct {
 }
 
 type rankedPriorityTier struct {
+	groupKey string
 	priority int
 	index    int
 	eligible []*rankedSchedulableAccount
@@ -258,8 +259,10 @@ func (s *AccountPoolService) rankSchedulableAccounts(accounts []*store.UpstreamA
 
 	selectedTier := (*rankedPriorityTier)(nil)
 	selectedIndex := 0
+	selectionPinned := false
 	if s != nil && s.runtimeCache != nil {
 		selectedTier, selectedIndex = s.runtimeCache.resolveActiveSelection(preparedTiers)
+		selectionPinned = s.runtimeCache.hasPinnedSelection()
 	} else {
 		selectedTier = selectFirstEligibleTier(preparedTiers)
 	}
@@ -296,14 +299,16 @@ func (s *AccountPoolService) rankSchedulableAccounts(accounts []*store.UpstreamA
 			for idx, candidate := range selectedTierEligibleOrder(tier.eligible, selectedIndex) {
 				decision := accountScheduleDecisionEligible
 				reason := "same_tier_lower_rank"
-				detail := buildRankingReasonDetail(candidate, idx+1, false, false)
+				detail := buildRankingReasonDetail(candidate, idx+1, false, false, false)
 				if idx == 0 {
 					decision = accountScheduleDecisionSelected
 					reason = "highest_ranked_in_selected_tier"
-					if selectedIndex > 0 {
+					if selectedIndex > 0 && selectionPinned {
 						reason = "retained_active_account_in_selected_tier"
+					} else if selectedIndex > 0 {
+						reason = "preferred_account_in_selected_group"
 					}
-					detail = buildRankingReasonDetail(candidate, idx+1, true, selectedIndex > 0)
+					detail = buildRankingReasonDetail(candidate, idx+1, true, selectionPinned && selectedIndex > 0, !selectionPinned && selectedIndex > 0)
 				}
 				snapshot.Candidates = append(snapshot.Candidates, buildCandidateDecision(candidate, tier, decision, reason, detail))
 				ordered = append(ordered, candidate.account)
@@ -336,11 +341,12 @@ func selectedTierEligibleOrder(eligible []*rankedSchedulableAccount, selectedInd
 func preparePriorityTiers(accounts []*store.UpstreamAccountRecord, now time.Time) []*rankedPriorityTier {
 	grouped := groupAccountsByPriority(accounts)
 	prepared := make([]*rankedPriorityTier, 0, len(grouped))
-	for index, tier := range grouped {
+	for _, tier := range grouped {
 		eligible, skipped := rankPriorityTier(tier.accounts, now)
 		prepared = append(prepared, &rankedPriorityTier{
+			groupKey: tier.groupKey,
 			priority: tier.priority,
-			index:    index + 1,
+			index:    tier.index,
 			eligible: eligible,
 			skipped:  skipped,
 		})
@@ -349,7 +355,9 @@ func preparePriorityTiers(accounts []*store.UpstreamAccountRecord, now time.Time
 }
 
 type groupedPriorityTier struct {
+	groupKey string
 	priority int
+	index    int
 	accounts []*store.UpstreamAccountRecord
 }
 
@@ -371,33 +379,35 @@ const (
 )
 
 func groupAccountsByPriority(accounts []*store.UpstreamAccountRecord) []groupedPriorityTier {
-	sorted := append([]*store.UpstreamAccountRecord(nil), accounts...)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		left := sorted[i]
-		right := sorted[j]
-		if left == nil {
-			return false
-		}
-		if right == nil {
-			return true
-		}
-		if left.Priority != right.Priority {
-			return left.Priority < right.Priority
-		}
-		return left.ID < right.ID
-	})
+	buckets := map[string][]*store.UpstreamAccountRecord{
+		accountGroupPrimary: {},
+		accountGroupBackup:  {},
+		accountGroupCold:    {},
+	}
 
-	result := make([]groupedPriorityTier, 0)
-	for _, account := range sorted {
+	for _, account := range accounts {
 		if account == nil {
 			continue
 		}
-		if len(result) == 0 || result[len(result)-1].priority != account.Priority {
-			result = append(result, groupedPriorityTier{priority: account.Priority, accounts: []*store.UpstreamAccountRecord{account}})
+		groupKey := inferAccountGroupKey(account)
+		buckets[groupKey] = append(buckets[groupKey], account)
+	}
+
+	result := make([]groupedPriorityTier, 0, 3)
+	for _, groupKey := range []string{accountGroupPrimary, accountGroupBackup, accountGroupCold} {
+		groupAccounts := buckets[groupKey]
+		if len(groupAccounts) == 0 {
 			continue
 		}
-		result[len(result)-1].accounts = append(result[len(result)-1].accounts, account)
+		sortAccountsWithinGroup(groupAccounts)
+		result = append(result, groupedPriorityTier{
+			groupKey: groupKey,
+			priority: groupAccounts[0].Priority,
+			index:    accountGroupRank(groupKey),
+			accounts: groupAccounts,
+		})
 	}
+
 	return result
 }
 
@@ -640,7 +650,7 @@ func accountPriorityTierLabel(index int) string {
 	case 2:
 		return "备组"
 	case 3:
-		return "兜底组"
+		return "冷备"
 	default:
 		if index <= 0 {
 			return "未分层"
@@ -681,7 +691,7 @@ func buildCandidateDecision(candidate *rankedSchedulableAccount, tier *rankedPri
 	return item
 }
 
-func buildRankingReasonDetail(candidate *rankedSchedulableAccount, rank int, selected, retainedActive bool) string {
+func buildRankingReasonDetail(candidate *rankedSchedulableAccount, rank int, selected, retainedActive, preferredGroup bool) string {
 	if candidate == nil || candidate.account == nil {
 		if selected {
 			return "当前优先级组内排序第一"
@@ -696,15 +706,21 @@ func buildRankingReasonDetail(candidate *rankedSchedulableAccount, rank int, sel
 
 	switch candidate.bucket {
 	case utilizationBucketKnownOAuth:
-		return buildKnownQuotaReasonDetail(candidate, rankDetail, retainedActive)
+		return buildKnownQuotaReasonDetail(candidate, rankDetail, retainedActive, preferredGroup)
 	case utilizationBucketUnknownOAuth:
 		if retainedActive {
 			return fmt.Sprintf("保持当前活跃账号，未因同组分数变化切换；quota 信息未知，保留候选但劣后于已知 OAuth；%s", rankDetail)
+		}
+		if preferredGroup {
+			return fmt.Sprintf("当前组已指定首选账号，本轮优先命中；quota 信息未知，保留候选但劣后于已知 OAuth；%s", rankDetail)
 		}
 		return fmt.Sprintf("quota 信息未知，保留候选但劣后于已知 OAuth；%s", rankDetail)
 	case utilizationBucketAPIKey:
 		if retainedActive {
 			return fmt.Sprintf("保持当前活跃账号，未因同组分数变化切换；api_key 账号作为不重置兜底，排在 OAuth 后；%s", rankDetail)
+		}
+		if preferredGroup {
+			return fmt.Sprintf("当前组已指定首选账号，本轮优先命中；api_key 账号作为不重置兜底，排在 OAuth 后；%s", rankDetail)
 		}
 		return fmt.Sprintf("api_key 账号作为不重置兜底，排在 OAuth 后；%s", rankDetail)
 	default:
@@ -712,7 +728,7 @@ func buildRankingReasonDetail(candidate *rankedSchedulableAccount, rank int, sel
 	}
 }
 
-func buildKnownQuotaReasonDetail(candidate *rankedSchedulableAccount, rankDetail string, retainedActive bool) string {
+func buildKnownQuotaReasonDetail(candidate *rankedSchedulableAccount, rankDetail string, retainedActive, preferredGroup bool) string {
 	parts := make([]string, 0, 4)
 	if candidate.remaining5H != nil && candidate.hoursToReset5H != nil {
 		parts = append(parts, fmt.Sprintf("5h 窗口 %.1f 小时后重置，剩余 %.0f%%", *candidate.hoursToReset5H, *candidate.remaining5H))
@@ -724,6 +740,8 @@ func buildKnownQuotaReasonDetail(candidate *rankedSchedulableAccount, rankDetail
 	}
 	if retainedActive {
 		parts = append(parts, "保持当前活跃账号，未因同组分数变化切换")
+	} else if preferredGroup {
+		parts = append(parts, "当前组已指定首选账号，本轮优先命中")
 	}
 	parts = append(parts, rankDetail)
 	return strings.Join(parts, "；")

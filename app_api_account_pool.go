@@ -20,6 +20,7 @@ type UpstreamAccountInfo struct {
 	CredentialRawMasked           string   `json:"credential_raw_masked"`
 	HasCredential                 bool     `json:"has_credential"`
 	IsActiveSelection             bool     `json:"is_active_selection"`
+	IsGroupPreferred              bool     `json:"is_group_preferred"`
 	BaseURL                       string   `json:"base_url"`
 	CostMultiplier                float64  `json:"cost_multiplier"`
 	InputCostMultiplier           float64  `json:"input_cost_multiplier"`
@@ -27,6 +28,7 @@ type UpstreamAccountInfo struct {
 	CacheCreationCostMultiplier   float64  `json:"cache_creation_cost_multiplier"`
 	CacheCreationCostMultiplier1h float64  `json:"cache_creation_cost_multiplier_1h"`
 	CacheReadCostMultiplier       float64  `json:"cache_read_cost_multiplier"`
+	GroupKey                      string   `json:"group_key"`
 	Priority                      int      `json:"priority"`
 	Enabled                       bool     `json:"enabled"`
 	State                         string   `json:"state"`
@@ -61,6 +63,7 @@ type CreateUpstreamAccountInput struct {
 	CacheCreationCostMultiplier   float64 `json:"cache_creation_cost_multiplier"`
 	CacheCreationCostMultiplier1h float64 `json:"cache_creation_cost_multiplier_1h"`
 	CacheReadCostMultiplier       float64 `json:"cache_read_cost_multiplier"`
+	GroupKey                      string  `json:"group_key"`
 	Priority                      int     `json:"priority"`
 	Enabled                       bool    `json:"enabled"`
 }
@@ -88,6 +91,34 @@ type RefreshUpstreamAccountProfileResult struct {
 
 // MoveUpstreamAccountToTierResult 手动主备切换结果。
 type MoveUpstreamAccountToTierResult struct {
+	Success bool   `json:"success"`
+	Changed bool   `json:"changed"`
+	Message string `json:"message"`
+}
+
+// SwapUpstreamAccountGroupsResult 调度编排整组交换结果。
+type SwapUpstreamAccountGroupsResult struct {
+	Success bool   `json:"success"`
+	Changed bool   `json:"changed"`
+	Message string `json:"message"`
+}
+
+// SetGroupActiveAccountResult 调度编排中的组内首选账号设置结果。
+type SetGroupActiveAccountResult struct {
+	Success bool   `json:"success"`
+	Changed bool   `json:"changed"`
+	Message string `json:"message"`
+}
+
+// PinUpstreamAccountSelectionResult 固定具体账号选择结果。
+type PinUpstreamAccountSelectionResult struct {
+	Success bool   `json:"success"`
+	Changed bool   `json:"changed"`
+	Message string `json:"message"`
+}
+
+// EnableAutomaticAccountSelectionResult 启用编排自动选择结果。
+type EnableAutomaticAccountSelectionResult struct {
 	Success bool   `json:"success"`
 	Changed bool   `json:"changed"`
 	Message string `json:"message"`
@@ -151,9 +182,18 @@ func (a *App) GetUpstreamAccounts() ([]UpstreamAccountInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("获取当前选中账号失败: %w", err)
 	}
+	groupPreferredAccountIDs, err := a.accountPoolService.GetGroupPreferredAccountIDs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("获取组内首选账号失败: %w", err)
+	}
 
 	out := make([]UpstreamAccountInfo, 0, len(records))
 	for _, rec := range records {
+		groupKey := strings.TrimSpace(strings.ToLower(rec.GroupKey))
+		isGroupPreferred := false
+		if preferredID, ok := groupPreferredAccountIDs[groupKey]; ok && preferredID > 0 && preferredID == rec.ID {
+			isGroupPreferred = true
+		}
 		out = append(out, UpstreamAccountInfo{
 			ID:                            rec.ID,
 			ProviderType:                  rec.ProviderType,
@@ -162,6 +202,7 @@ func (a *App) GetUpstreamAccounts() ([]UpstreamAccountInfo, error) {
 			CredentialRawMasked:           maskCredentialRaw(rec.ProviderType, rec.CredentialRaw),
 			HasCredential:                 strings.TrimSpace(rec.CredentialRaw) != "",
 			IsActiveSelection:             hasActiveSelection && rec.ID == activeSelectionAccountID,
+			IsGroupPreferred:              isGroupPreferred,
 			BaseURL:                       rec.BaseURL,
 			CostMultiplier:                rec.CostMultiplier,
 			InputCostMultiplier:           rec.InputCostMultiplier,
@@ -169,6 +210,7 @@ func (a *App) GetUpstreamAccounts() ([]UpstreamAccountInfo, error) {
 			CacheCreationCostMultiplier:   rec.CacheCreationCostMultiplier,
 			CacheCreationCostMultiplier1h: rec.CacheCreationCostMultiplier1h,
 			CacheReadCostMultiplier:       rec.CacheReadCostMultiplier,
+			GroupKey:                      rec.GroupKey,
 			Priority:                      rec.Priority,
 			Enabled:                       rec.Enabled,
 			State:                         rec.State,
@@ -297,6 +339,8 @@ func (a *App) MoveUpstreamAccountToTier(id int64, targetTier string) (MoveUpstre
 	switch strings.TrimSpace(strings.ToLower(targetTier)) {
 	case "backup":
 		targetTierIndex = 1
+	case "cold":
+		targetTierIndex = 2
 	case "", "primary":
 		targetTierIndex = 0
 	default:
@@ -312,11 +356,142 @@ func (a *App) MoveUpstreamAccountToTier(id int64, targetTier string) (MoveUpstre
 	if changed {
 		if targetTierIndex == 0 {
 			message = "账号已设为主组目标账号，系统将按当前可调度状态优先使用；若暂时不可调度，恢复后会自动回切"
+		} else if targetTierIndex == 2 {
+			message = "账号已设为冷备目标账号，系统会在主组和备组都不可用时再使用该层"
 		} else {
 			message = "账号已设为备组目标账号，系统将按当前可调度状态优先使用；若暂时不可调度，恢复后会自动回切"
 		}
 	}
 	return MoveUpstreamAccountToTierResult{
+		Success: true,
+		Changed: changed,
+		Message: message,
+	}, nil
+}
+
+func accountGroupLabelForDisplay(groupKey string) string {
+	switch strings.TrimSpace(strings.ToLower(groupKey)) {
+	case "primary":
+		return "主组"
+	case "backup":
+		return "备组"
+	case "cold":
+		return "冷备"
+	default:
+		return "未知组"
+	}
+}
+
+// SwapUpstreamAccountGroups 调度编排中的整组交换。
+func (a *App) SwapUpstreamAccountGroups(sourceGroup, targetGroup string) (SwapUpstreamAccountGroupsResult, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if a.accountPoolService == nil {
+		return SwapUpstreamAccountGroupsResult{}, fmt.Errorf("账号池服务未启用")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	changed, err := a.accountPoolService.SwapAccountGroups(ctx, sourceGroup, targetGroup)
+	if err != nil {
+		return SwapUpstreamAccountGroupsResult{}, fmt.Errorf("整组交换失败: %w", err)
+	}
+
+	message := "分组未发生变化"
+	if changed {
+		message = fmt.Sprintf("已完成%s与%s的整组交换", accountGroupLabelForDisplay(sourceGroup), accountGroupLabelForDisplay(targetGroup))
+	}
+
+	return SwapUpstreamAccountGroupsResult{
+		Success: true,
+		Changed: changed,
+		Message: message,
+	}, nil
+}
+
+// SetGroupActiveAccount 设置某个组的首选活跃账号，仅在该组被命中时优先生效。
+func (a *App) SetGroupActiveAccount(groupKey string, id int64) (SetGroupActiveAccountResult, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if a.accountPoolService == nil {
+		return SetGroupActiveAccountResult{}, fmt.Errorf("账号池服务未启用")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	changed, err := a.accountPoolService.SetGroupActiveAccount(ctx, groupKey, id)
+	if err != nil {
+		return SetGroupActiveAccountResult{}, fmt.Errorf("设置组内首选账号失败: %w", err)
+	}
+
+	message := "当前组首选账号未发生变化"
+	if changed {
+		message = fmt.Sprintf("已将%s的首选账号设置为指定账号，仅在该组被命中时优先生效", accountGroupLabelForDisplay(groupKey))
+	}
+
+	return SetGroupActiveAccountResult{
+		Success: true,
+		Changed: changed,
+		Message: message,
+	}, nil
+}
+
+// PinUpstreamAccountSelection 固定具体账号，直到其严格不可用。
+func (a *App) PinUpstreamAccountSelection(id int64) (PinUpstreamAccountSelectionResult, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if a.accountPoolService == nil {
+		return PinUpstreamAccountSelectionResult{}, fmt.Errorf("账号池服务未启用")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	changed, err := a.accountPoolService.PinAccountSelection(ctx, id)
+	if err != nil {
+		return PinUpstreamAccountSelectionResult{}, fmt.Errorf("固定账号失败: %w", err)
+	}
+
+	message := "账号固定目标未发生变化"
+	if changed {
+		message = "账号已固定为当前请求目标；仅在该账号严格不可用时才会自动切走"
+	}
+
+	return PinUpstreamAccountSelectionResult{
+		Success: true,
+		Changed: changed,
+		Message: message,
+	}, nil
+}
+
+// EnableAutomaticAccountSelection 清除全局固定账号，恢复按编排自动调度。
+func (a *App) EnableAutomaticAccountSelection() (EnableAutomaticAccountSelectionResult, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if a.accountPoolService == nil {
+		return EnableAutomaticAccountSelectionResult{}, fmt.Errorf("账号池服务未启用")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	changed, err := a.accountPoolService.EnableAutomaticAccountSelection(ctx)
+	if err != nil {
+		return EnableAutomaticAccountSelectionResult{}, fmt.Errorf("启用编排失败: %w", err)
+	}
+
+	message := "当前已处于按编排自动调度"
+	if changed {
+		message = "已启用编排自动调度，后续请求将按当前编排规则选择账号"
+	}
+
+	return EnableAutomaticAccountSelectionResult{
 		Success: true,
 		Changed: changed,
 		Message: message,
@@ -369,6 +544,7 @@ func (a *App) CreateUpstreamAccount(input CreateUpstreamAccountInput) error {
 		CacheCreationCostMultiplier:   input.CacheCreationCostMultiplier,
 		CacheCreationCostMultiplier1h: input.CacheCreationCostMultiplier1h,
 		CacheReadCostMultiplier:       input.CacheReadCostMultiplier,
+		GroupKey:                      strings.TrimSpace(input.GroupKey),
 		Priority:                      input.Priority,
 		Enabled:                       input.Enabled,
 		State:                         "active",
@@ -410,6 +586,7 @@ func (a *App) UpdateUpstreamAccount(id int64, input CreateUpstreamAccountInput) 
 	existing.CacheCreationCostMultiplier = input.CacheCreationCostMultiplier
 	existing.CacheCreationCostMultiplier1h = input.CacheCreationCostMultiplier1h
 	existing.CacheReadCostMultiplier = input.CacheReadCostMultiplier
+	existing.GroupKey = strings.TrimSpace(input.GroupKey)
 	existing.Priority = input.Priority
 	existing.Enabled = input.Enabled
 	if existing.Enabled && existing.State == "disabled_auth" {

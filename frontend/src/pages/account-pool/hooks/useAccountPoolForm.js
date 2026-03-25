@@ -17,11 +17,31 @@ import {
   authMethodToProviderType,
   buildOAuthCredentialRaw,
   isAPIKeyProviderType,
+  isValidAccountId,
   maskSessionId,
   providerTypeToAuthMethod,
   resolveAccountId,
   summarizeCallbackURL
 } from '../utils.js';
+
+const inferAccountGroupKey = (account = {}) => {
+  const explicitGroupKey = String(account.group_key || account.groupKey || '').trim().toLowerCase();
+  if (explicitGroupKey === 'primary' || explicitGroupKey === 'backup' || explicitGroupKey === 'cold') {
+    return explicitGroupKey;
+  }
+
+  const priority = Number.parseInt(account.priority ?? account.Priority, 10);
+  if (!Number.isFinite(priority)) {
+    return 'primary';
+  }
+  if (priority <= 10) {
+    return 'primary';
+  }
+  if (priority <= 20) {
+    return 'backup';
+  }
+  return 'cold';
+};
 
 const useAccountPoolForm = ({ loadData, showNotice }) => {
   const [accountModalOpen, setAccountModalOpen] = useState(false);
@@ -159,13 +179,14 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
       account_name: account.account_name || account.accountName || '',
       auth_method: providerTypeToAuthMethod(providerType),
       provider_type: providerType,
+      group_key: account.group_key || account.groupKey || inferAccountGroupKey(account),
       costMultiplier: String(account.cost_multiplier ?? account.costMultiplier ?? (isAPIKeyAccount ? 1.0 : 1.0)),
       inputCostMultiplier: String(account.input_cost_multiplier ?? account.inputCostMultiplier ?? 1.0),
       outputCostMultiplier: String(account.output_cost_multiplier ?? account.outputCostMultiplier ?? 1.0),
       cacheCreationCostMultiplier: String(account.cache_creation_cost_multiplier ?? account.cacheCreationCostMultiplier ?? 1.0),
       cacheCreationCostMultiplier1h: String(account.cache_creation_cost_multiplier_1h ?? account.cacheCreationCostMultiplier1h ?? 1.0),
       cacheReadCostMultiplier: String(account.cache_read_cost_multiplier ?? account.cacheReadCostMultiplier ?? 1.0),
-      priority: String(account.priority || 1),
+      priority: String(account.priority || 10),
       enabled: account.enabled !== false,
       credential_raw: account.credential_raw || account.credentialRaw || '',
       base_url: account.base_url || account.baseURL || DEFAULT_BASE_URL
@@ -174,7 +195,7 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
     const accountId = resolveAccountId(account);
     setAccountCredentialLoading(true);
     try {
-      if (accountId !== undefined && accountId !== null && accountId !== '' && !nextForm.credential_raw) {
+      if (isValidAccountId(accountId) && !nextForm.credential_raw) {
         const credentialResult = await fetchUpstreamAccountCredential(accountId);
         if (credentialResult?.unsupported) {
           showNotice('info', credentialResult.message || '当前后端版本暂不支持读取已保存凭据');
@@ -213,6 +234,7 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
     }
 
     const priorityValue = Number.parseInt(accountForm.priority, 10);
+    const groupKey = String(accountForm.group_key || '').trim().toLowerCase() || 'primary';
     const baseURL = (accountForm.base_url || DEFAULT_BASE_URL).trim() || DEFAULT_BASE_URL;
 
     setAccountSubmitting(true);
@@ -229,7 +251,8 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
         cacheCreationCostMultiplier: isAPIKeyAccount ? accountForm.cacheCreationCostMultiplier : '1.0',
         cacheCreationCostMultiplier1h: isAPIKeyAccount ? accountForm.cacheCreationCostMultiplier1h : '1.0',
         cacheReadCostMultiplier: isAPIKeyAccount ? accountForm.cacheReadCostMultiplier : '1.0',
-        priority: Number.isNaN(priorityValue) ? 1 : priorityValue,
+        group_key: accountForm.group_key || groupKey,
+        priority: Number.isNaN(priorityValue) ? 10 : priorityValue,
         enabled: accountForm.enabled !== false,
         credential_raw: credentialRaw,
         base_url: baseURL
@@ -237,7 +260,7 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
 
       if (editingAccount) {
         const accountId = resolveAccountId(editingAccount);
-        if (accountId === undefined || accountId === null || accountId === '') {
+        if (!isValidAccountId(accountId)) {
           throw new Error('账号缺少 ID，无法更新');
         }
         await updateUpstreamAccount(accountId, payload);

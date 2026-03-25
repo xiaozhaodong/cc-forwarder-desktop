@@ -822,6 +822,106 @@ export const moveUpstreamAccountToTier = async (id, targetTier) => {
   });
 };
 
+export const swapUpstreamAccountGroups = async (sourceGroup, targetGroup) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.swapUpstreamAccountGroups(sourceGroup, targetGroup);
+  }
+
+  try {
+    return await fetchWithTimeout('/api/v1/upstream-accounts/groups/swap', {
+      method: 'POST',
+      body: JSON.stringify({
+        source_group: sourceGroup || '',
+        target_group: targetGroup || ''
+      })
+    });
+  } catch (error) {
+    const errorText = error?.message || String(error || '');
+    if (/404|not found/i.test(errorText)) {
+      return {
+        success: false,
+        unsupported: true,
+        changed: false,
+        message: '当前后端版本暂未提供 SwapUpstreamAccountGroups'
+      };
+    }
+    throw error;
+  }
+};
+
+export const setGroupActiveAccount = async (groupKey, id) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.setGroupActiveAccount(groupKey, id);
+  }
+
+  try {
+    return await fetchWithTimeout('/api/v1/upstream-accounts/groups/active-account', {
+      method: 'POST',
+      body: JSON.stringify({
+        group_key: groupKey || '',
+        account_id: normalizeEntityIdForUrl(id)
+      })
+    });
+  } catch (error) {
+    const errorText = error?.message || String(error || '');
+    if (/404|not found/i.test(errorText)) {
+      return {
+        success: false,
+        unsupported: true,
+        changed: false,
+        message: '当前后端版本暂未提供 SetGroupActiveAccount'
+      };
+    }
+    throw error;
+  }
+};
+
+export const pinUpstreamAccountSelection = async (id) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.pinUpstreamAccountSelection(id);
+  }
+
+  try {
+    return await fetchWithTimeout(`/api/v1/upstream-accounts/${normalizeEntityIdForUrl(id)}/pin`, {
+      method: 'POST'
+    });
+  } catch (error) {
+    const errorText = error?.message || String(error || '');
+    if (/404|not found/i.test(errorText)) {
+      return {
+        success: false,
+        unsupported: true,
+        changed: false,
+        message: '当前后端版本暂未提供 PinUpstreamAccountSelection'
+      };
+    }
+    throw error;
+  }
+};
+
+export const enableAutomaticAccountSelection = async () => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.enableAutomaticAccountSelection();
+  }
+
+  try {
+    return await fetchWithTimeout('/api/v1/upstream-accounts/auto', {
+      method: 'POST'
+    });
+  } catch (error) {
+    const errorText = error?.message || String(error || '');
+    if (/404|not found/i.test(errorText)) {
+      return {
+        success: false,
+        unsupported: true,
+        changed: false,
+        message: '当前后端版本暂未提供 EnableAutomaticAccountSelection'
+      };
+    }
+    throw error;
+  }
+};
+
 export const toggleUpstreamAccount = async (id, enabled) => {
   if (isWailsEnvironment()) {
     return await WailsApi.toggleUpstreamAccount(id, enabled);

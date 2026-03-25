@@ -50,7 +50,7 @@ const ScheduleCandidateCard = ({ candidate, index }) => {
               className="bg-indigo-50 text-indigo-600 border-indigo-100"
             />
             <Badge
-              text={`${candidate.tier_label || candidate.tierLabel || '未分层'}${Number.isFinite(candidatePriority) ? ` · P${candidatePriority}` : ''}`}
+              text={`${candidate.tier_label || candidate.tierLabel || '未分组'}${Number.isFinite(candidatePriority) ? ` · 组内顺序 ${candidatePriority}` : ''}`}
               className={candidateTierClass}
             />
             <Badge text={toScheduleDecisionLabel(decision)} className={decisionClass} />

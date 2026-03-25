@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveDisplayedActiveAccount } from './accountSwitcherState.js';
+import {
+  canPinAccountSelection,
+  isSamePinnedAccount,
+  resolveDisplayedActiveAccount
+} from './accountSwitcherState.js';
 
 test('resolveDisplayedActiveAccount prefers runtime active selection over primary tier first account', () => {
   const accounts = [
@@ -43,4 +47,41 @@ test('resolveDisplayedActiveAccount keeps runtime pinned target even when latest
   });
 
   assert.equal(resolved?.id, 1);
+});
+
+test('isSamePinnedAccount only short-circuits when the displayed account is an actual runtime pin', () => {
+  assert.equal(
+    isSamePinnedAccount({
+      displayedActiveAccount: { id: 2, account_name: 'backup-a' },
+      targetAccount: { id: 2, account_name: 'backup-a' }
+    }),
+    false
+  );
+
+  assert.equal(
+    isSamePinnedAccount({
+      displayedActiveAccount: { id: 2, account_name: 'backup-a', is_active_selection: true },
+      targetAccount: { id: 2, account_name: 'backup-a' }
+    }),
+    true
+  );
+});
+
+test('canPinAccountSelection still allows temporarily unavailable accounts to be pinned', () => {
+  assert.equal(
+    canPinAccountSelection({ id: 3, account_name: 'cooldown-a', enabled: true, state: 'cooldown' }),
+    true
+  );
+  assert.equal(
+    canPinAccountSelection({ id: 4, account_name: 'quota-a', enabled: true, state: 'active', quota_status: 'exhausted' }),
+    true
+  );
+  assert.equal(
+    canPinAccountSelection({ id: 5, account_name: 'disabled-auth', enabled: true, state: 'disabled_auth' }),
+    false
+  );
+  assert.equal(
+    canPinAccountSelection({ id: 6, account_name: 'manual-disabled', enabled: false, state: 'active' }),
+    false
+  );
 });

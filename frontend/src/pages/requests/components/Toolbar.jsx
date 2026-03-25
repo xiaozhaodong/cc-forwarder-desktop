@@ -29,9 +29,10 @@ import AccountPoolSwitcher from './AccountPoolSwitcher.jsx';
  * @param {string} props.activeGroup - 当前活跃端点名称
  * @param {Function} props.onGroupSwitch - 端点切换回调 (endpointName) => void
  * @param {Array} props.accounts - 账号池账号列表
- * @param {Object|null} props.activeAccount - 当前主组账号
+ * @param {Object|null} props.activeAccount - 当前手动固定账号
  * @param {string|number|null} props.recentSelectedAccountId - 最近一次调度命中的账号 ID
  * @param {Function} props.onAccountSwitch - 账号池切换回调 (account) => void
+ * @param {Function} props.onEnableAutoSelection - 切回按编排自动调度
  * @param {boolean} props.accountSwitching - 是否正在切换账号
  */
 const Toolbar = ({
@@ -54,6 +55,7 @@ const Toolbar = ({
   activeAccount = null,
   recentSelectedAccountId = null,
   onAccountSwitch,
+  onEnableAutoSelection,
   accountSwitching = false
 }) => {
   return (
@@ -70,6 +72,7 @@ const Toolbar = ({
         activeAccount={activeAccount}
         recentSelectedAccountId={recentSelectedAccountId}
         onSwitch={onAccountSwitch}
+        onSwitchAuto={onEnableAutoSelection}
         loading={accountSwitching}
       />
 

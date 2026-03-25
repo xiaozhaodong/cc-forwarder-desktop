@@ -46,6 +46,10 @@ func (s *countingAccountPoolStore) UpdateAccountPriorities(ctx context.Context, 
 	return s.inner.UpdateAccountPriorities(ctx, updates)
 }
 
+func (s *countingAccountPoolStore) UpdateAccountScheduling(ctx context.Context, updates map[int64]store.AccountSchedulingUpdate) error {
+	return s.inner.UpdateAccountScheduling(ctx, updates)
+}
+
 func (s *countingAccountPoolStore) DeleteAccount(ctx context.Context, id int64) error {
 	return s.inner.DeleteAccount(ctx, id)
 }
@@ -110,6 +114,10 @@ func (s *flakyTransientFailureStore) UpdateAccount(ctx context.Context, record *
 
 func (s *flakyTransientFailureStore) UpdateAccountPriorities(ctx context.Context, updates map[int64]int) error {
 	return s.inner.UpdateAccountPriorities(ctx, updates)
+}
+
+func (s *flakyTransientFailureStore) UpdateAccountScheduling(ctx context.Context, updates map[int64]store.AccountSchedulingUpdate) error {
+	return s.inner.UpdateAccountScheduling(ctx, updates)
 }
 
 func (s *flakyTransientFailureStore) DeleteAccount(ctx context.Context, id int64) error {
@@ -179,6 +187,13 @@ func (s *failingUpdateStore) UpdateAccount(ctx context.Context, record *store.Up
 
 func (s *failingUpdateStore) UpdateAccountPriorities(ctx context.Context, updates map[int64]int) error {
 	return s.inner.UpdateAccountPriorities(ctx, updates)
+}
+
+func (s *failingUpdateStore) UpdateAccountScheduling(ctx context.Context, updates map[int64]store.AccountSchedulingUpdate) error {
+	if s.failUpdate {
+		return context.DeadlineExceeded
+	}
+	return s.inner.UpdateAccountScheduling(ctx, updates)
 }
 
 func (s *failingUpdateStore) DeleteAccount(ctx context.Context, id int64) error {
@@ -927,13 +942,13 @@ func TestToggleAccount_FailedPersistRestoresPinnedSelectionState(t *testing.T) {
 		t.Fatalf("create second account failed: %v", err)
 	}
 
-	changed, err := svc.MoveAccountToTier(ctx, second.ID, 0)
-	if err != nil {
-		t.Fatalf("MoveAccountToTier failed: %v", err)
-	}
-	if !changed {
-		t.Fatal("expected manual switch to pin second account")
-	}
+		changed, err := svc.PinAccountSelection(ctx, second.ID)
+		if err != nil {
+			t.Fatalf("PinAccountSelection failed: %v", err)
+		}
+		if !changed {
+			t.Fatal("expected pinning second account to change runtime selection")
+		}
 
 	failingStore := &failingUpdateStore{inner: st, failToggle: true}
 	svc.store = failingStore

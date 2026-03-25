@@ -18,6 +18,24 @@ const AUTH_METHOD_OPTIONS = [
   }
 ];
 
+const ACCOUNT_GROUP_OPTIONS = [
+  {
+    value: 'primary',
+    label: '主组',
+    description: '默认优先尝试这组账号'
+  },
+  {
+    value: 'backup',
+    label: '备组',
+    description: '主组不可用时，再尝试这组账号'
+  },
+  {
+    value: 'cold',
+    label: '冷备',
+    description: '主组和备组都不可用时，最后尝试'
+  }
+];
+
 const ACCOUNT_STATE_STYLE = {
   active: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   cooldown: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -55,6 +73,7 @@ const PLAN_TYPE_LABELS = {
   plus: 'Plus',
   team: 'Team',
   enterprise: 'Enterprise',
+  prepaid: 'Prepaid',
   unknown: 'Unknown'
 };
 
@@ -62,13 +81,14 @@ const EMPTY_ACCOUNT_FORM = {
   account_name: '',
   auth_method: 'chatgpt_refresh_token',
   provider_type: 'chatgpt_refresh_token',
+  group_key: 'primary',
   costMultiplier: '1.0',
   inputCostMultiplier: '1.0',
   outputCostMultiplier: '1.0',
   cacheCreationCostMultiplier: '1.0',
   cacheCreationCostMultiplier1h: '1.0',
   cacheReadCostMultiplier: '1.0',
-  priority: '1',
+  priority: '10',
   enabled: true,
   credential_raw: '',
   base_url: DEFAULT_BASE_URL
@@ -86,13 +106,14 @@ const MANUAL_FAILOVER_TIER_PRESETS = [
     description: '主组全部失败后切到这一层'
   },
   {
-    label: '兜底组',
+    label: '冷备',
     className: 'bg-violet-50 text-violet-700 border-violet-200',
-    description: '前两层都不可用时，再切到这一层'
+    description: '主组和备组都不可用时，再切到这一组'
   }
 ];
 
 export {
+  ACCOUNT_GROUP_OPTIONS,
   ACCOUNT_STATE_STYLE,
   AUTH_METHOD_OPTIONS,
   DEFAULT_BASE_URL,
