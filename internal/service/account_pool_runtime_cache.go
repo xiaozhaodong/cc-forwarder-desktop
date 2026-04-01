@@ -9,14 +9,15 @@ import (
 )
 
 type accountRuntimeCache struct {
-	mu               sync.RWMutex
-	byID             map[int64]*store.UpstreamAccountRecord
-	stateVersions    map[int64]uint64
-	ordered          []*store.UpstreamAccountRecord
-	preferredByGroup map[string]int64
-	activeTier       int
-	activeAccount    int64
-	selectionPinned  bool
+	mu                  sync.RWMutex
+	byID                map[int64]*store.UpstreamAccountRecord
+	stateVersions       map[int64]uint64
+	ordered             []*store.UpstreamAccountRecord
+	preferredByGroup    map[string]int64
+	autoRetainedByGroup map[string]int64
+	activeTier          int
+	activeAccount       int64
+	selectionPinned     bool
 }
 
 type accountRuntimeStateSnapshot struct {
@@ -35,9 +36,10 @@ type accountRuntimeStateSnapshot struct {
 
 func newAccountRuntimeCache() *accountRuntimeCache {
 	return &accountRuntimeCache{
-		byID:             make(map[int64]*store.UpstreamAccountRecord),
-		stateVersions:    make(map[int64]uint64),
-		preferredByGroup: make(map[string]int64),
+		byID:                make(map[int64]*store.UpstreamAccountRecord),
+		stateVersions:       make(map[int64]uint64),
+		preferredByGroup:    make(map[string]int64),
+		autoRetainedByGroup: make(map[string]int64),
 	}
 }
 
@@ -69,6 +71,7 @@ func (c *accountRuntimeCache) replaceAll(records []*store.UpstreamAccountRecord)
 		}
 	}
 	c.syncPreferredAccountsLocked()
+	c.syncAutoRetainedAccountsLocked()
 	c.syncPinnedSelectionLocked()
 	if c.activeTier > 0 && !c.hasPriorityLocked(c.activeTier) {
 		c.clearSelectionLocked()
@@ -90,6 +93,7 @@ func (c *accountRuntimeCache) upsert(record *store.UpstreamAccountRecord) {
 		c.stateVersions[record.ID] = 1
 	}
 	c.syncPreferredAccountsLocked()
+	c.syncAutoRetainedAccountsLocked()
 	c.syncPinnedSelectionLocked()
 	c.rebuildOrderedLocked()
 }
@@ -126,6 +130,7 @@ func (c *accountRuntimeCache) mergeRecordPreservingRuntimeState(record *store.Up
 
 	c.byID[record.ID] = merged
 	c.syncPreferredAccountsLocked()
+	c.syncAutoRetainedAccountsLocked()
 	c.syncPinnedSelectionLocked()
 	c.rebuildOrderedLocked()
 	return true
@@ -144,6 +149,7 @@ func (c *accountRuntimeCache) remove(id int64) {
 		c.activeAccount = 0
 	}
 	c.syncPreferredAccountsLocked()
+	c.syncAutoRetainedAccountsLocked()
 	if c.activeTier > 0 && !c.hasPriorityLocked(c.activeTier) {
 		c.clearSelectionLocked()
 	} else if !c.selectionPinned {
@@ -167,6 +173,7 @@ func (c *accountRuntimeCache) applyPriorityUpdates(updates map[int64]int) {
 		record.Priority = priority
 	}
 	c.syncPreferredAccountsLocked()
+	c.syncAutoRetainedAccountsLocked()
 	c.clearSelectionLocked()
 	c.rebuildOrderedLocked()
 }
@@ -187,6 +194,7 @@ func (c *accountRuntimeCache) applySchedulingUpdates(updates map[int64]store.Acc
 		record.Priority = update.Priority
 	}
 	c.syncPreferredAccountsLocked()
+	c.syncAutoRetainedAccountsLocked()
 	c.clearSelectionLocked()
 	c.rebuildOrderedLocked()
 }
@@ -311,14 +319,24 @@ func (c *accountRuntimeCache) preferredAccountID(groupKey string) int64 {
 	return accountID
 }
 
-func (c *accountRuntimeCache) preferredSelectionIndex(groupKey string, eligible []*rankedSchedulableAccount) int {
+func (c *accountRuntimeCache) preferredSelectionIndex(groupKey string, eligible []*rankedSchedulableAccount) (int, bool) {
 	if c == nil || len(eligible) == 0 {
-		return 0
+		return 0, false
 	}
 
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.preferredSelectionIndexLocked(groupKey, eligible)
+}
+
+func (c *accountRuntimeCache) retainedSelectionIndex(groupKey string, eligible []*rankedSchedulableAccount) (int, bool) {
+	if c == nil || len(eligible) == 0 {
+		return 0, false
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.retainedSelectionIndexLocked(groupKey, eligible)
 }
 
 func (c *accountRuntimeCache) hasPinnedSelection() bool {
@@ -367,39 +385,47 @@ func (c *accountRuntimeCache) clearPinnedSelection() bool {
 	return true
 }
 
-func (c *accountRuntimeCache) resolveActiveSelection(prepared []*rankedPriorityTier) (*rankedPriorityTier, int) {
+func (c *accountRuntimeCache) resolveActiveSelection(prepared []*rankedPriorityTier) (*rankedPriorityTier, int, accountSelectionSource) {
 	if c == nil {
-		return selectFirstEligibleTier(prepared), 0
+		return selectFirstEligibleTier(prepared), 0, accountSelectionSourceRanked
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	selectedTier, selectedIndex := c.resolveActiveSelectionLocked(prepared)
+	selectedTier, selectedIndex, selectedSource := c.resolveActiveSelectionLocked(prepared)
 	if selectedTier == nil {
 		if !c.selectionPinned {
 			c.clearSelectionLocked()
 		}
-		return nil, -1
+		return nil, -1, accountSelectionSourceRanked
 	}
 
 	if selectedIndex < 0 || selectedIndex >= len(selectedTier.eligible) {
 		selectedIndex = 0
 	}
-	return selectedTier, selectedIndex
+	return selectedTier, selectedIndex, selectedSource
 }
 
-func (c *accountRuntimeCache) resolveActiveSelectionLocked(prepared []*rankedPriorityTier) (*rankedPriorityTier, int) {
+func (c *accountRuntimeCache) resolveActiveSelectionLocked(prepared []*rankedPriorityTier) (*rankedPriorityTier, int, accountSelectionSource) {
 	if len(prepared) == 0 {
-		return nil, -1
+		return nil, -1, accountSelectionSourceRanked
 	}
 
 	if !c.selectionPinned {
 		selectedTier := selectFirstEligibleTier(prepared)
 		if selectedTier == nil {
-			return nil, -1
+			return nil, -1, accountSelectionSourceRanked
 		}
-		return selectedTier, c.preferredSelectionIndexLocked(selectedTier.groupKey, selectedTier.eligible)
+		if preferredIndex, ok := c.preferredSelectionIndexLocked(selectedTier.groupKey, selectedTier.eligible); ok {
+			return selectedTier, preferredIndex, accountSelectionSourcePreferred
+		}
+		if activeIndex, ok := c.retainedSelectionIndexLocked(selectedTier.groupKey, selectedTier.eligible); ok {
+			if activeIndex > 0 && shouldRetainAutoActiveSelection(selectedTier.eligible[0], selectedTier.eligible[activeIndex]) {
+				return selectedTier, activeIndex, accountSelectionSourceRetainedActive
+			}
+		}
+		return selectedTier, 0, accountSelectionSourceRanked
 	}
 
 	if c.activeTier > 0 {
@@ -411,28 +437,28 @@ func (c *accountRuntimeCache) resolveActiveSelectionLocked(prepared []*rankedPri
 				if c.activeAccount > 0 {
 					for idx, candidate := range tier.eligible {
 						if candidate != nil && candidate.account != nil && candidate.account.ID == c.activeAccount {
-							return tier, idx
+							return tier, idx, accountSelectionSourcePinned
 						}
 					}
 				}
-				return tier, 0
+				return tier, 0, accountSelectionSourceRanked
 			}
 			break
 		}
 
 		for _, tier := range prepared {
 			if tier != nil && len(tier.eligible) > 0 {
-				return tier, 0
+				return tier, 0, accountSelectionSourceRanked
 			}
 		}
-		return nil, -1
+		return nil, -1, accountSelectionSourceRanked
 	}
 
 	selectedTier := selectFirstEligibleTier(prepared)
 	if selectedTier == nil {
-		return nil, -1
+		return nil, -1, accountSelectionSourceRanked
 	}
-	return selectedTier, 0
+	return selectedTier, 0, accountSelectionSourceRanked
 }
 
 func selectFirstEligibleTier(prepared []*rankedPriorityTier) *rankedPriorityTier {
@@ -566,9 +592,13 @@ func (c *accountRuntimeCache) markSuccessIfNoNewerFailure(id int64, successAt, a
 	record.LastSuccessAt = cloneTimePtr(&successAt)
 	record.LastError = ""
 	record.UpdatedAt = successAt
-	if c.selectionPinned && c.activeAccount == id {
-		c.activeTier = accountGroupRank(inferAccountGroupKey(record))
-		c.activeAccount = id
+	if c.selectionPinned {
+		if c.activeAccount == id {
+			c.activeTier = accountGroupRank(inferAccountGroupKey(record))
+			c.activeAccount = id
+		}
+	} else if groupKey := inferAccountGroupKey(record); groupKey != "" {
+		c.autoRetainedByGroup[groupKey] = id
 	}
 	return true, c.bumpStateVersionLocked(id)
 }
@@ -592,9 +622,11 @@ func (c *accountRuntimeCache) markSuccess(id int64, successAt time.Time) (bool, 
 	record.LastSuccessAt = cloneTimePtr(&successAt)
 	record.LastError = ""
 	record.UpdatedAt = successAt
-	if c.selectionPinned && c.activeAccount == id {
-		c.activeTier = accountGroupRank(inferAccountGroupKey(record))
-		c.activeAccount = id
+	if c.selectionPinned {
+		if c.activeAccount == id {
+			c.activeTier = accountGroupRank(inferAccountGroupKey(record))
+			c.activeAccount = id
+		}
 	}
 	return true, c.bumpStateVersionLocked(id)
 }
@@ -617,6 +649,7 @@ func (c *accountRuntimeCache) markAuthFailed(id int64, reason string, failedAt t
 	record.CooldownUntil = nil
 	record.LastError = reason
 	record.UpdatedAt = failedAt
+	c.clearAutoRetainedAccountLocked(id)
 	if c.activeAccount == id {
 		// 保留当前层级 pin，但释放具体账号，让调度器在同层其他可用账号中继续选择。
 		c.activeAccount = 0
@@ -645,6 +678,7 @@ func (c *accountRuntimeCache) markTransientFailure(id int64, reason string, cool
 	record.CooldownUntil = cloneTimePtr(&cooldownUntil)
 	record.LastError = reason
 	record.UpdatedAt = failedAt
+	c.clearAutoRetainedAccountLocked(id)
 	if c.activeAccount == id {
 		// 手动 pin 的目标进入 cooldown 时，当前请求可以降级，但目标账号本身不能丢；
 		// 等 cooldown 结束后，调度器应自动回到该账号。
@@ -691,10 +725,14 @@ func (c *accountRuntimeCache) applyToggle(id int64, enabled bool, changedAt time
 		record.FailCount = 0
 		record.CooldownUntil = nil
 		record.LastError = ""
-	} else if c.activeAccount == id {
-		c.activeAccount = 0
+	} else {
+		c.clearAutoRetainedAccountLocked(id)
+		if c.activeAccount == id {
+			c.activeAccount = 0
+		}
 	}
 	record.UpdatedAt = changedAt
+	c.syncAutoRetainedAccountsLocked()
 	if c.activeTier > 0 && !c.hasPriorityLocked(c.activeTier) {
 		c.clearSelectionLocked()
 	} else if !c.selectionPinned {
@@ -752,22 +790,71 @@ func (c *accountRuntimeCache) clearSelectionLocked() {
 	c.selectionPinned = false
 }
 
-func (c *accountRuntimeCache) preferredSelectionIndexLocked(groupKey string, eligible []*rankedSchedulableAccount) int {
+func (c *accountRuntimeCache) preferredSelectionIndexLocked(groupKey string, eligible []*rankedSchedulableAccount) (int, bool) {
 	groupKey = normalizeAccountGroupKey(groupKey)
 	if groupKey == "" || len(eligible) == 0 {
-		return 0
+		return 0, false
 	}
 
 	preferredID := c.preferredByGroup[groupKey]
 	if preferredID <= 0 {
-		return 0
+		return 0, false
 	}
 	for idx, candidate := range eligible {
 		if candidate != nil && candidate.account != nil && candidate.account.ID == preferredID {
+			return idx, true
+		}
+	}
+	return 0, false
+}
+
+func (c *accountRuntimeCache) retainedSelectionIndexLocked(groupKey string, eligible []*rankedSchedulableAccount) (int, bool) {
+	groupKey = normalizeAccountGroupKey(groupKey)
+	if groupKey == "" || len(eligible) == 0 {
+		return 0, false
+	}
+
+	retainedID := c.autoRetainedByGroup[groupKey]
+	if retainedID <= 0 {
+		return 0, false
+	}
+	for idx, candidate := range eligible {
+		if candidate != nil && candidate.account != nil && candidate.account.ID == retainedID {
+			return idx, true
+		}
+	}
+	return 0, false
+}
+
+func eligibleAccountIndex(eligible []*rankedSchedulableAccount, accountID int64) int {
+	if accountID <= 0 {
+		return -1
+	}
+	for idx, candidate := range eligible {
+		if candidate != nil && candidate.account != nil && candidate.account.ID == accountID {
 			return idx
 		}
 	}
-	return 0
+	return -1
+}
+
+func shouldRetainAutoActiveSelection(best, active *rankedSchedulableAccount) bool {
+	if active == nil || active.account == nil {
+		return false
+	}
+	if best == nil || best.account == nil || best.account.ID == active.account.ID {
+		return true
+	}
+	if best.bucket != active.bucket {
+		return false
+	}
+	if active.bucket != utilizationBucketKnownOAuth {
+		return true
+	}
+	if active.finalScore <= 0 {
+		return best.finalScore <= 0
+	}
+	return best.finalScore < active.finalScore*sameTierAutoSwitchScoreFactor
 }
 
 func (c *accountRuntimeCache) syncPreferredAccountsLocked() {
@@ -779,6 +866,31 @@ func (c *accountRuntimeCache) syncPreferredAccountsLocked() {
 		record := c.byID[accountID]
 		if record == nil || inferAccountGroupKey(record) != groupKey {
 			delete(c.preferredByGroup, groupKey)
+		}
+	}
+}
+
+func (c *accountRuntimeCache) syncAutoRetainedAccountsLocked() {
+	if c == nil || len(c.autoRetainedByGroup) == 0 {
+		return
+	}
+
+	for groupKey, accountID := range c.autoRetainedByGroup {
+		record := c.byID[accountID]
+		if record == nil || inferAccountGroupKey(record) != groupKey || !record.Enabled {
+			delete(c.autoRetainedByGroup, groupKey)
+		}
+	}
+}
+
+func (c *accountRuntimeCache) clearAutoRetainedAccountLocked(id int64) {
+	if c == nil || id <= 0 || len(c.autoRetainedByGroup) == 0 {
+		return
+	}
+
+	for groupKey, accountID := range c.autoRetainedByGroup {
+		if accountID == id {
+			delete(c.autoRetainedByGroup, groupKey)
 		}
 	}
 }

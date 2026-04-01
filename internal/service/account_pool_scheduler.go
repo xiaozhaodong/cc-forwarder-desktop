@@ -92,6 +92,15 @@ type rankedPriorityTier struct {
 	skipped  []*rankedSchedulableAccount
 }
 
+type accountSelectionSource int
+
+const (
+	accountSelectionSourceRanked accountSelectionSource = iota
+	accountSelectionSourcePreferred
+	accountSelectionSourceRetainedActive
+	accountSelectionSourcePinned
+)
+
 type latestAccountScheduleSnapshotStore struct {
 	mu      sync.RWMutex
 	latest  *LatestAccountScheduleSnapshot
@@ -259,10 +268,9 @@ func (s *AccountPoolService) rankSchedulableAccounts(accounts []*store.UpstreamA
 
 	selectedTier := (*rankedPriorityTier)(nil)
 	selectedIndex := 0
-	selectionPinned := false
+	selectedSource := accountSelectionSourceRanked
 	if s != nil && s.runtimeCache != nil {
-		selectedTier, selectedIndex = s.runtimeCache.resolveActiveSelection(preparedTiers)
-		selectionPinned = s.runtimeCache.hasPinnedSelection()
+		selectedTier, selectedIndex, selectedSource = s.runtimeCache.resolveActiveSelection(preparedTiers)
 	} else {
 		selectedTier = selectFirstEligibleTier(preparedTiers)
 	}
@@ -301,14 +309,16 @@ func (s *AccountPoolService) rankSchedulableAccounts(accounts []*store.UpstreamA
 				reason := "same_tier_lower_rank"
 				detail := buildRankingReasonDetail(candidate, idx+1, false, false, false)
 				if idx == 0 {
+					retainedActive := selectedSource == accountSelectionSourceRetainedActive || selectedSource == accountSelectionSourcePinned
+					preferredGroup := selectedSource == accountSelectionSourcePreferred
 					decision = accountScheduleDecisionSelected
 					reason = "highest_ranked_in_selected_tier"
-					if selectedIndex > 0 && selectionPinned {
+					if selectedIndex > 0 && retainedActive {
 						reason = "retained_active_account_in_selected_tier"
-					} else if selectedIndex > 0 {
+					} else if selectedIndex > 0 && preferredGroup {
 						reason = "preferred_account_in_selected_group"
 					}
-					detail = buildRankingReasonDetail(candidate, idx+1, true, selectionPinned && selectedIndex > 0, !selectionPinned && selectedIndex > 0)
+					detail = buildRankingReasonDetail(candidate, idx+1, true, retainedActive && selectedIndex > 0, preferredGroup && selectedIndex > 0)
 				}
 				snapshot.Candidates = append(snapshot.Candidates, buildCandidateDecision(candidate, tier, decision, reason, detail))
 				ordered = append(ordered, candidate.account)
@@ -376,6 +386,7 @@ const (
 	recentSuccessSuppressionFactor   = 0.85
 	minResetHours5H                  = 0.25
 	minResetHoursWeekly              = 6.0
+	sameTierAutoSwitchScoreFactor    = 1.25
 )
 
 func groupAccountsByPriority(accounts []*store.UpstreamAccountRecord) []groupedPriorityTier {
