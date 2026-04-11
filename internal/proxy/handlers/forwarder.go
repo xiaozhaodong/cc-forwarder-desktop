@@ -68,8 +68,12 @@ func (f *Forwarder) ForwardRequestToEndpoint(ctx context.Context, r *http.Reques
 
 	// 检查响应状态
 	if resp.StatusCode >= 400 {
+		detail := BuildUpstreamErrorDetail(resp, ep.Config.Name, defaultUpstreamErrorPreviewLimit)
 		resp.Body.Close()
-		return nil, fmt.Errorf("endpoint returned error: %d", resp.StatusCode)
+		if detail == "" {
+			return nil, fmt.Errorf("endpoint returned error: %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("endpoint returned error: %d %s", resp.StatusCode, detail)
 	}
 
 	return resp, nil
@@ -113,9 +117,13 @@ func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes
 	}
 
 	if resp.StatusCode >= 400 {
+		detail := BuildUpstreamErrorDetail(resp, ep.Config.Name, defaultUpstreamErrorPreviewLimit)
 		resp.Body.Close()
 		release()
-		return nil, nil, fmt.Errorf("endpoint returned error: %d", resp.StatusCode)
+		if detail == "" {
+			return nil, nil, fmt.Errorf("endpoint returned error: %d", resp.StatusCode)
+		}
+		return nil, nil, fmt.Errorf("endpoint returned error: %d %s", resp.StatusCode, detail)
 	}
 
 	return resp, release, nil

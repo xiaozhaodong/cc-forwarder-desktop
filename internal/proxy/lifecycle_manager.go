@@ -861,8 +861,12 @@ func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail strin
 		rlm.usageTracker.RecordRequestFinalFailure(rlm.requestID, modelName, "failed", failureReason, errorDetail, duration, httpStatus, nil)
 	}
 
-	slog.Error(fmt.Sprintf("❌ [请求最终失败] [%s] 端点: %s, 原因: %s, 状态码: %d, 耗时: %dms",
-		rlm.requestID, state.endpointName, failureReason, httpStatus, duration.Milliseconds()))
+	logMessage := fmt.Sprintf("❌ [请求最终失败] [%s] 端点: %s, 原因: %s, 状态码: %d, 耗时: %dms",
+		rlm.requestID, state.endpointName, failureReason, httpStatus, duration.Milliseconds())
+	if detail := strings.TrimSpace(errorDetail); detail != "" {
+		logMessage += fmt.Sprintf(", 详情: %s", detail)
+	}
+	slog.Error(logMessage)
 
 	// 调用统一的状态通知方法
 	rlm.notifyStatusChange("failed", state.retryCount, httpStatus)

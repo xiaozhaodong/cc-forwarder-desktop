@@ -1,10 +1,15 @@
 package handlers
 
 import (
+	"bufio"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 )
+
+const defaultUpstreamErrorPreviewLimit int64 = 1024
 
 // IsSuccessStatus 判断是否为成功状态码
 // 成功状态码范围：200-399 (2xx-3xx)
@@ -82,4 +87,110 @@ func GetStatusCodeFromError(err error, resp *http.Response) int {
 
 	// 无法提取状态码，返回0表示网络错误或其他未知错误
 	return 0
+}
+
+// BuildUpstreamErrorDetail 构建上游错误摘要，尽量保留端点、状态码、请求ID和响应体预览。
+func BuildUpstreamErrorDetail(resp *http.Response, endpointName string, limit int64) string {
+	if resp == nil {
+		return ""
+	}
+
+	if limit <= 0 {
+		limit = defaultUpstreamErrorPreviewLimit
+	}
+
+	parts := make([]string, 0, 6)
+	if endpointName = strings.TrimSpace(endpointName); endpointName != "" {
+		parts = append(parts, "endpoint="+endpointName)
+	}
+	parts = append(parts, "status="+strconv.Itoa(resp.StatusCode))
+
+	if requestID := extractUpstreamRequestID(resp.Header); requestID != "" {
+		parts = append(parts, "request_id="+requestID)
+	}
+	if retryAfter := strings.TrimSpace(resp.Header.Get("Retry-After")); retryAfter != "" {
+		parts = append(parts, "retry_after="+retryAfter)
+	}
+	if contentType := strings.TrimSpace(resp.Header.Get("Content-Type")); contentType != "" {
+		parts = append(parts, "content_type="+contentType)
+	}
+
+	bodyPreview := normalizeUpstreamErrorPreview(readAndRestoreResponseBody(resp, limit))
+	if bodyPreview != "" {
+		parts = append(parts, "body="+bodyPreview)
+	}
+
+	return strings.Join(parts, " ")
+}
+
+func readAndRestoreResponseBody(resp *http.Response, limit int64) string {
+	if resp == nil || resp.Body == nil {
+		return ""
+	}
+
+	peekSize := int(limit)
+	if peekSize <= 0 {
+		peekSize = int(defaultUpstreamErrorPreviewLimit)
+	}
+
+	readerSize := peekSize
+	if readerSize < 256 {
+		readerSize = 256
+	}
+
+	originalBody := resp.Body
+	bufferedReader := bufio.NewReaderSize(originalBody, readerSize)
+	visibleBody, _ := bufferedReader.Peek(peekSize)
+	resp.Body = &bufferedBodyReadCloser{
+		Reader: bufferedReader,
+		Closer: originalBody,
+	}
+
+	return string(visibleBody)
+}
+
+func extractUpstreamRequestID(header http.Header) string {
+	if header == nil {
+		return ""
+	}
+
+	candidates := []string{
+		"request-id",
+		"anthropic-request-id",
+		"x-request-id",
+	}
+
+	for _, key := range candidates {
+		if value := strings.TrimSpace(header.Get(key)); value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
+func normalizeUpstreamErrorPreview(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(trimmed), " ")
+}
+
+type bufferedBodyReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
+func BuildUpstreamHTTPError(resp *http.Response, endpointName string, limit int64) error {
+	if resp == nil {
+		return fmt.Errorf("upstream returned invalid nil response")
+	}
+
+	detail := BuildUpstreamErrorDetail(resp, endpointName, limit)
+	if detail == "" {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+	}
+
+	return fmt.Errorf("HTTP %d: %s", resp.StatusCode, detail)
 }

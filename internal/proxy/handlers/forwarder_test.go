@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,6 +142,47 @@ func TestForwarder_ForwardStreamingRequestToEndpoint_UsesIndependentContext(t *t
 
 	close(releaseServer)
 	_ = resp.Body.Close()
+}
+
+func TestForwarder_ForwardRequestToEndpoint_IncludesUpstreamErrorDetail(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("request-id", "req_upstream_123")
+		w.Header().Set("Retry-After", "7")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"quota exceeded"}}`))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{}
+	endpointManager := endpoint.NewManager(cfg)
+	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "test-endpoint", URL: server.URL, Timeout: 30 * time.Second, Priority: 1}}
+	forwarder := NewForwarder(cfg, endpointManager)
+
+	bodyBytes := []byte(`{"message":"test"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", bytes.NewReader(bodyBytes))
+
+	resp, err := forwarder.ForwardRequestToEndpoint(context.Background(), req, bodyBytes, ep)
+	if err == nil {
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		t.Fatal("expected upstream error, got nil")
+	}
+
+	errorText := err.Error()
+	expectedParts := []string{
+		"endpoint=test-endpoint",
+		"status=429",
+		"request_id=req_upstream_123",
+		"retry_after=7",
+		"quota exceeded",
+	}
+	for _, part := range expectedParts {
+		if !strings.Contains(errorText, part) {
+			t.Fatalf("expected error to contain %q, got %q", part, errorText)
+		}
+	}
 }
 
 func TestForwarder_BuildStreamingTransport_ReusesTransport(t *testing.T) {

@@ -1,7 +1,11 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -281,6 +285,39 @@ func TestRequestLifecycleManager_GetStats(t *testing.T) {
 	}
 	if stats["retry_count"] != 2 {
 		t.Errorf("Expected retry_count 2, got %v", stats["retry_count"])
+	}
+}
+
+func TestRequestLifecycleManager_FailRequest_LogsErrorDetail(t *testing.T) {
+	var logBuffer bytes.Buffer
+	originalLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuffer, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	})))
+	defer slog.SetDefault(originalLogger)
+
+	rlm := NewRequestLifecycleManager(nil, nil, "req-fail-log", nil)
+	rlm.SetEndpoint("claude-endpoint", "claude-group", "")
+
+	errorDetail := `status=429 endpoint=claude-endpoint request_id=req_upstream_123 body={"error":{"message":"quota exceeded"}}`
+	rlm.FailRequest("rate_limited", errorDetail, http.StatusTooManyRequests)
+
+	logs := logBuffer.String()
+	if !strings.Contains(logs, "请求最终失败") {
+		t.Fatalf("expected failure log to be written, got %q", logs)
+	}
+
+	expectedFragments := []string{
+		"详情:",
+		"status=429",
+		"endpoint=claude-endpoint",
+		"request_id=req_upstream_123",
+		"quota exceeded",
+	}
+	for _, fragment := range expectedFragments {
+		if !strings.Contains(logs, fragment) {
+			t.Fatalf("expected failure log to contain fragment %q, got %q", fragment, logs)
+		}
 	}
 }
 

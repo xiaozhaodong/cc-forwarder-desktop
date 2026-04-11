@@ -555,12 +555,13 @@ restartLoop:
 
 				// 错误处理 - 先构造HTTP状态码错误（保持现有逻辑）
 				if err == nil && resp != nil && !IsSuccessStatus(resp.StatusCode) {
+					upstreamErr := BuildUpstreamHTTPError(resp, ep.Config.Name, defaultUpstreamErrorPreviewLimit)
 					closeErr := resp.Body.Close() // 立即关闭非成功响应体
 					if closeErr != nil {
 						slog.Warn(fmt.Sprintf("⚠️ [响应体关闭失败] [%s] 端点: %s, Close错误: %v", connID, ep.Config.Name, closeErr))
 					}
-					// 构造HTTP状态码错误，确保RetryManager能正确分类429等状态
-					lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+					// 构造带上游摘要的HTTP错误，确保RetryManager能正确分类429等状态
+					lastErr = upstreamErr
 				} else if err != nil && resp != nil {
 					closeErr := resp.Body.Close()
 					if closeErr != nil {

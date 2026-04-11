@@ -204,6 +204,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 
 				// 构造HTTP状态码错误（保持现有逻辑）
 				if err == nil && resp != nil && !IsSuccessStatus(resp.StatusCode) {
+					upstreamErr := BuildUpstreamHTTPError(resp, endpoint.Config.Name, defaultUpstreamErrorPreviewLimit)
 					// 先尝试从HTTP错误中提取Token信息（如果可能）
 					rh.tryExtractTokensFromHttpError(resp, lifecycleManager, endpoint.Config.Name)
 
@@ -212,7 +213,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 						slog.Warn(fmt.Sprintf("⚠️ [响应体关闭失败] [%s] 端点: %s, Close错误: %v",
 							connID, endpoint.Config.Name, closeErr))
 					}
-					err = fmt.Errorf("HTTP %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+					err = upstreamErr
 				} else if err != nil && resp != nil {
 					closeErr := resp.Body.Close()
 					if closeErr != nil {
