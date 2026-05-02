@@ -278,3 +278,46 @@ func TestForwarder_CopyHeaders(t *testing.T) {
 		t.Errorf("Expected client X-API-Key to be removed")
 	}
 }
+
+func TestForwarder_CopyHeaders_AddsAnyrouteBetaHeader(t *testing.T) {
+	cfg := &config.Config{}
+	endpointManager := endpoint.NewManager(cfg)
+	forwarder := NewForwarder(cfg, endpointManager)
+
+	ep := &endpoint.Endpoint{Config: config.EndpointConfig{
+		Name:    "anyroute-endpoint",
+		URL:     "https://anyrouter.top",
+		Channel: "anyroute",
+	}}
+	srcReq := httptest.NewRequest("POST", "/v1/messages", nil)
+	dstReq := httptest.NewRequest("POST", "https://anyrouter.top/v1/messages", nil)
+
+	forwarder.CopyHeaders(srcReq, dstReq, ep)
+
+	if got := dstReq.Header.Get("anthropic-beta"); got != "context-1m-2025-08-07" {
+		t.Fatalf("Expected anyroute anthropic-beta header, got %q", got)
+	}
+}
+
+func TestForwarder_CopyHeaders_PreservesConfiguredAnthropicBetaHeader(t *testing.T) {
+	cfg := &config.Config{}
+	endpointManager := endpoint.NewManager(cfg)
+	forwarder := NewForwarder(cfg, endpointManager)
+
+	ep := &endpoint.Endpoint{Config: config.EndpointConfig{
+		Name:    "anyroute-endpoint",
+		URL:     "https://anyrouter.top",
+		Channel: "anyroute",
+		Headers: map[string]string{
+			"anthropic-beta": "custom-beta",
+		},
+	}}
+	srcReq := httptest.NewRequest("POST", "/v1/messages", nil)
+	dstReq := httptest.NewRequest("POST", "https://anyrouter.top/v1/messages", nil)
+
+	forwarder.CopyHeaders(srcReq, dstReq, ep)
+
+	if got := dstReq.Header.Get("anthropic-beta"); got != "custom-beta" {
+		t.Fatalf("Expected configured anthropic-beta header to be preserved, got %q", got)
+	}
+}

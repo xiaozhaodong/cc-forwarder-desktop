@@ -32,6 +32,9 @@ import {
   setDefaultModelPricing
 } from '@utils/wailsApi.js';
 
+const PRICE_INPUT_STEP = '0.001';
+const CACHE_PRICE_DECIMALS = 3;
+
 // ============================================
 // 定价表单弹窗
 // ============================================
@@ -91,9 +94,9 @@ const PricingForm = ({ pricing, onSave, onCancel, loading }) => {
     const input = parseFloat(formData.inputPrice) || 0;
     setFormData(prev => ({
       ...prev,
-      cacheCreationPrice5m: parseFloat((input * 1.25).toFixed(2)),
-      cacheCreationPrice1h: parseFloat((input * 2.0).toFixed(2)),
-      cacheReadPrice: parseFloat((input * 0.1).toFixed(2))
+      cacheCreationPrice5m: parseFloat((input * 1.25).toFixed(CACHE_PRICE_DECIMALS)),
+      cacheCreationPrice1h: parseFloat((input * 2.0).toFixed(CACHE_PRICE_DECIMALS)),
+      cacheReadPrice: parseFloat((input * 0.1).toFixed(CACHE_PRICE_DECIMALS))
     }));
   };
 
@@ -190,7 +193,7 @@ const PricingForm = ({ pricing, onSave, onCancel, loading }) => {
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
                     <input
                       type="number"
-                      step="0.01"
+                      step={PRICE_INPUT_STEP}
                       min="0"
                       value={formData.inputPrice}
                       onChange={(e) => handleChange('inputPrice', parseFloat(e.target.value) || 0)}
@@ -210,7 +213,7 @@ const PricingForm = ({ pricing, onSave, onCancel, loading }) => {
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
                     <input
                       type="number"
-                      step="0.01"
+                      step={PRICE_INPUT_STEP}
                       min="0"
                       value={formData.outputPrice}
                       onChange={(e) => handleChange('outputPrice', parseFloat(e.target.value) || 0)}
@@ -230,7 +233,7 @@ const PricingForm = ({ pricing, onSave, onCancel, loading }) => {
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
                     <input
                       type="number"
-                      step="0.01"
+                      step={PRICE_INPUT_STEP}
                       min="0"
                       value={formData.cacheCreationPrice5m}
                       onChange={(e) => handleChange('cacheCreationPrice5m', parseFloat(e.target.value) || 0)}
@@ -249,7 +252,7 @@ const PricingForm = ({ pricing, onSave, onCancel, loading }) => {
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
                     <input
                       type="number"
-                      step="0.01"
+                      step={PRICE_INPUT_STEP}
                       min="0"
                       value={formData.cacheCreationPrice1h}
                       onChange={(e) => handleChange('cacheCreationPrice1h', parseFloat(e.target.value) || 0)}
@@ -268,7 +271,7 @@ const PricingForm = ({ pricing, onSave, onCancel, loading }) => {
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
                     <input
                       type="number"
-                      step="0.01"
+                      step={PRICE_INPUT_STEP}
                       min="0"
                       value={formData.cacheReadPrice}
                       onChange={(e) => handleChange('cacheReadPrice', parseFloat(e.target.value) || 0)}
