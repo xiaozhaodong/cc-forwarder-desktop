@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -17,8 +18,11 @@ import (
 
 const (
 	anyrouteChannel         = "anyroute"
+	coderelayChannel        = "coderelay"
 	anthropicBetaHeader     = "anthropic-beta"
 	anyrouteContextBetaFlag = "context-1m-2025-08-07"
+	cacheControlKey         = "cache_control"
+	cacheControlScopeKey    = "scope"
 )
 
 // Forwarder 负责HTTP请求转发和头部处理
@@ -40,6 +44,8 @@ func NewForwarder(cfg *config.Config, endpointManager *endpoint.Manager) *Forwar
 
 // ForwardRequestToEndpoint 转发请求到指定端点
 func (f *Forwarder) ForwardRequestToEndpoint(ctx context.Context, r *http.Request, bodyBytes []byte, ep *endpoint.Endpoint) (*http.Response, error) {
+	bodyBytes = prepareBodyForEndpoint(bodyBytes, ep)
+
 	// 创建目标URL
 	targetURL := ep.Config.URL + r.URL.Path
 	if r.URL.RawQuery != "" {
@@ -89,6 +95,7 @@ func (f *Forwarder) ForwardRequestToEndpoint(ctx context.Context, r *http.Reques
 // 这样下游客户端断开后，调用方仍可短时继续 drain 上游尾部，以补齐终止事件和 usage。
 func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes []byte, ep *endpoint.Endpoint) (*http.Response, context.CancelFunc, error) {
 	upstreamCtx, release := context.WithCancel(context.Background())
+	bodyBytes = prepareBodyForEndpoint(bodyBytes, ep)
 
 	// 创建目标URL
 	targetURL := ep.Config.URL + r.URL.Path
@@ -133,6 +140,74 @@ func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes
 	}
 
 	return resp, release, nil
+}
+
+func prepareBodyForEndpoint(bodyBytes []byte, ep *endpoint.Endpoint) []byte {
+	if !isCoderelayChannel(ep) {
+		return bodyBytes
+	}
+
+	return stripCacheControlScope(bodyBytes)
+}
+
+func isCoderelayChannel(ep *endpoint.Endpoint) bool {
+	if ep == nil {
+		return false
+	}
+
+	return strings.EqualFold(strings.TrimSpace(ep.Config.Channel), coderelayChannel)
+}
+
+func stripCacheControlScope(bodyBytes []byte) []byte {
+	if len(bytes.TrimSpace(bodyBytes)) == 0 {
+		return bodyBytes
+	}
+
+	var payload any
+	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		return bodyBytes
+	}
+
+	if !deleteCacheControlScope(payload) {
+		return bodyBytes
+	}
+
+	sanitizedBodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return bodyBytes
+	}
+	return sanitizedBodyBytes
+}
+
+func deleteCacheControlScope(value any) bool {
+	changed := false
+
+	switch node := value.(type) {
+	case map[string]any:
+		for key, child := range node {
+			if key == cacheControlKey {
+				if cacheControl, ok := child.(map[string]any); ok {
+					if _, exists := cacheControl[cacheControlScopeKey]; exists {
+						delete(cacheControl, cacheControlScopeKey)
+						changed = true
+					}
+				}
+			}
+			if deleteCacheControlScope(child) {
+				changed = true
+			}
+		}
+	case []any:
+		for _, child := range node {
+			if deleteCacheControlScope(child) {
+				changed = true
+			}
+		}
+	}
+
+	return changed
 }
 
 func (f *Forwarder) buildStreamingTransport() (*http.Transport, error) {

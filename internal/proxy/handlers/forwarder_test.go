@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -183,6 +184,123 @@ func TestForwarder_ForwardRequestToEndpoint_IncludesUpstreamErrorDetail(t *testi
 			t.Fatalf("expected error to contain %q, got %q", part, errorText)
 		}
 	}
+}
+
+func TestForwarder_PrepareBodyForEndpoint_StripsCoderelayCacheControlScope(t *testing.T) {
+	bodyBytes := []byte(`{
+		"system": [
+			{
+				"type": "text",
+				"text": "system prompt",
+				"cache_control": {
+					"type": "ephemeral",
+					"ttl": "1h",
+					"scope": "conversation"
+				}
+			}
+		],
+		"messages": [
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "text",
+						"text": "hello",
+						"cache_control": {
+							"type": "ephemeral",
+							"scope": "conversation"
+						}
+					}
+				]
+			}
+		],
+		"metadata": {
+			"scope": "keep"
+		}
+	}`)
+
+	tests := []struct {
+		name string
+		ep   *endpoint.Endpoint
+	}{
+		{
+			name: "channel",
+			ep:   &endpoint.Endpoint{Config: config.EndpointConfig{Name: "relay-proxy", Channel: "coderelay"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := prepareBodyForEndpoint(bodyBytes, tt.ep)
+
+			var payload any
+			if err := json.Unmarshal(got, &payload); err != nil {
+				t.Fatalf("sanitized body should still be JSON: %v", err)
+			}
+
+			cacheControlCount, scopeCount := countCacheControlScopes(payload)
+			if cacheControlCount != 2 {
+				t.Fatalf("expected 2 cache_control objects, got %d", cacheControlCount)
+			}
+			if scopeCount != 0 {
+				t.Fatalf("expected cache_control.scope to be stripped, got %d remaining", scopeCount)
+			}
+
+			root, ok := payload.(map[string]any)
+			if !ok {
+				t.Fatal("expected root object")
+			}
+			metadata, ok := root["metadata"].(map[string]any)
+			if !ok {
+				t.Fatal("expected metadata object")
+			}
+			if metadata["scope"] != "keep" {
+				t.Fatalf("expected non-cache_control scope to be preserved, got %v", metadata["scope"])
+			}
+		})
+	}
+}
+
+func TestForwarder_PrepareBodyForEndpoint_KeepsOtherChannelsUntouched(t *testing.T) {
+	bodyBytes := []byte(`{"system":[{"cache_control":{"type":"ephemeral","scope":"conversation"}}]}`)
+	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "coderelay", Channel: "custom"}}
+
+	got := prepareBodyForEndpoint(bodyBytes, ep)
+
+	if !bytes.Equal(got, bodyBytes) {
+		t.Fatalf("expected non-coderelay channel body to stay untouched, got %s", string(got))
+	}
+}
+
+func countCacheControlScopes(value any) (int, int) {
+	cacheControlCount := 0
+	scopeCount := 0
+
+	switch node := value.(type) {
+	case map[string]any:
+		for key, child := range node {
+			if key == cacheControlKey {
+				if cacheControl, ok := child.(map[string]any); ok {
+					cacheControlCount++
+					if _, exists := cacheControl[cacheControlScopeKey]; exists {
+						scopeCount++
+					}
+				}
+			}
+
+			childCacheControlCount, childScopeCount := countCacheControlScopes(child)
+			cacheControlCount += childCacheControlCount
+			scopeCount += childScopeCount
+		}
+	case []any:
+		for _, child := range node {
+			childCacheControlCount, childScopeCount := countCacheControlScopes(child)
+			cacheControlCount += childCacheControlCount
+			scopeCount += childScopeCount
+		}
+	}
+
+	return cacheControlCount, scopeCount
 }
 
 func TestForwarder_BuildStreamingTransport_ReusesTransport(t *testing.T) {
