@@ -17,12 +17,9 @@ import (
 )
 
 const (
-	anyrouteChannel         = "anyroute"
-	coderelayChannel        = "coderelay"
-	anthropicBetaHeader     = "anthropic-beta"
-	anyrouteContextBetaFlag = "context-1m-2025-08-07"
-	cacheControlKey         = "cache_control"
-	cacheControlScopeKey    = "scope"
+	coderelayChannel     = "coderelay"
+	cacheControlKey      = "cache_control"
+	cacheControlScopeKey = "scope"
 )
 
 // Forwarder 负责HTTP请求转发和头部处理
@@ -289,9 +286,6 @@ func (f *Forwarder) CopyHeaders(src *http.Request, dst *http.Request, ep *endpoi
 	// Add custom headers from endpoint configuration
 	for key, value := range ep.Config.Headers {
 		dst.Header.Set(key, value)
-	}
-	if strings.EqualFold(strings.TrimSpace(ep.Config.Channel), anyrouteChannel) && dst.Header.Get(anthropicBetaHeader) == "" {
-		dst.Header.Set(anthropicBetaHeader, anyrouteContextBetaFlag)
 	}
 
 	// Remove hop-by-hop headers

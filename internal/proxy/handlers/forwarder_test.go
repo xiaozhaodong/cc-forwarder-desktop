@@ -397,7 +397,7 @@ func TestForwarder_CopyHeaders(t *testing.T) {
 	}
 }
 
-func TestForwarder_CopyHeaders_AddsAnyrouteBetaHeader(t *testing.T) {
+func TestForwarder_CopyHeaders_DoesNotAddAnyrouteBetaHeaderByDefault(t *testing.T) {
 	cfg := &config.Config{}
 	endpointManager := endpoint.NewManager(cfg)
 	forwarder := NewForwarder(cfg, endpointManager)
@@ -412,12 +412,12 @@ func TestForwarder_CopyHeaders_AddsAnyrouteBetaHeader(t *testing.T) {
 
 	forwarder.CopyHeaders(srcReq, dstReq, ep)
 
-	if got := dstReq.Header.Get("anthropic-beta"); got != "context-1m-2025-08-07" {
-		t.Fatalf("Expected anyroute anthropic-beta header, got %q", got)
+	if got := dstReq.Header.Get("anthropic-beta"); got != "" {
+		t.Fatalf("Expected anyroute anthropic-beta header to be empty by default, got %q", got)
 	}
 }
 
-func TestForwarder_CopyHeaders_PreservesConfiguredAnthropicBetaHeader(t *testing.T) {
+func TestForwarder_CopyHeaders_CopiesConfiguredAnthropicBetaHeader(t *testing.T) {
 	cfg := &config.Config{}
 	endpointManager := endpoint.NewManager(cfg)
 	forwarder := NewForwarder(cfg, endpointManager)
