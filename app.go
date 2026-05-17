@@ -718,6 +718,7 @@ func (a *App) setupProxyHandler() {
 	if a.accountPoolService != nil {
 		a.proxyHandler.SetAccountPoolService(a.accountPoolService)
 	}
+	a.proxyHandler.SetCodexModelListProvider(&codexModelListProvider{app: a})
 }
 
 // startProxyServer 启动 HTTP 代理服务器

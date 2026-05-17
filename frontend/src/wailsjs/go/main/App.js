@@ -62,6 +62,10 @@ export function GetChannels() {
   return window['go']['main']['App']['GetChannels']();
 }
 
+export function GetCodexModelCatalog() {
+  return window['go']['main']['App']['GetCodexModelCatalog']();
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
@@ -194,6 +198,10 @@ export function IsProxyRunning() {
   return window['go']['main']['App']['IsProxyRunning']();
 }
 
+export function MergeDefaultCodexModelCatalog() {
+  return window['go']['main']['App']['MergeDefaultCodexModelCatalog']();
+}
+
 export function MoveUpstreamAccountToTier(arg1, arg2) {
   return window['go']['main']['App']['MoveUpstreamAccountToTier'](arg1, arg2);
 }
@@ -214,8 +222,16 @@ export function ResetCategorySettings(arg1) {
   return window['go']['main']['App']['ResetCategorySettings'](arg1);
 }
 
+export function ResetCodexModelCatalog() {
+  return window['go']['main']['App']['ResetCodexModelCatalog']();
+}
+
 export function ResumeGroup(arg1) {
   return window['go']['main']['App']['ResumeGroup'](arg1);
+}
+
+export function SaveCodexModelCatalog(arg1) {
+  return window['go']['main']['App']['SaveCodexModelCatalog'](arg1);
 }
 
 export function SetDefaultModelPricing(arg1) {

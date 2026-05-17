@@ -76,6 +76,7 @@ type mockAccountPoolService struct {
 	listErr  error
 
 	mu                sync.Mutex
+	previewCalls      []string
 	prepareCalls      []accountSchedulePrepareCall
 	completeCalls     []accountScheduleCompleteCall
 	completeCtxErrs   []error
@@ -94,6 +95,13 @@ type mockAccountPoolService struct {
 func (m *mockAccountPoolService) PrepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) ([]*store.UpstreamAccountRecord, error) {
 	m.mu.Lock()
 	m.prepareCalls = append(m.prepareCalls, accountSchedulePrepareCall{requestID: requestID, requestPath: requestPath})
+	m.mu.Unlock()
+	return m.ListSchedulableAccounts(ctx)
+}
+
+func (m *mockAccountPoolService) PreviewSchedulableAccounts(ctx context.Context, requestPath string) ([]*store.UpstreamAccountRecord, error) {
+	m.mu.Lock()
+	m.previewCalls = append(m.previewCalls, requestPath)
 	m.mu.Unlock()
 	return m.ListSchedulableAccounts(ctx)
 }
@@ -1230,6 +1238,32 @@ func TestResolveAccountTargetURL_OAuthUsesChatGPTCodexCompactEndpoint(t *testing
 	}
 }
 
+func TestResolveAccountTargetURL_OAuthUsesChatGPTCodexModelsEndpoint(t *testing.T) {
+	acc := &store.UpstreamAccountRecord{
+		ProviderType: "chatgpt_refresh_token",
+		BaseURL:      "https://api.openai.com",
+	}
+
+	targetURL, err := resolveAccountTargetURL(acc, "/v1/models", "client_version=0.131.0")
+	if err != nil {
+		t.Fatalf("resolveAccountTargetURL returned error: %v", err)
+	}
+
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		t.Fatalf("parse target url failed: %v", err)
+	}
+	if parsed.Scheme != "https" || parsed.Host != "chatgpt.com" {
+		t.Fatalf("expected chatgpt host, got %s://%s", parsed.Scheme, parsed.Host)
+	}
+	if parsed.Path != "/backend-api/codex/models" {
+		t.Fatalf("unexpected path: %s", parsed.Path)
+	}
+	if parsed.RawQuery != "client_version=0.131.0" {
+		t.Fatalf("unexpected query: %s", parsed.RawQuery)
+	}
+}
+
 func TestApplyOpenAIChatGPTOAuthHeaders_SetsRequiredHeaders(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "https://chatgpt.com/backend-api/codex/responses", strings.NewReader(`{}`))
 	credential := `{"refresh_token":"rt-1","chatgpt_account_id":"acc-1"}`
@@ -1250,6 +1284,26 @@ func TestApplyOpenAIChatGPTOAuthHeaders_SetsRequiredHeaders(t *testing.T) {
 	}
 	if req.Header.Get("chatgpt-account-id") != "acc-1" {
 		t.Fatalf("unexpected chatgpt-account-id header: %s", req.Header.Get("chatgpt-account-id"))
+	}
+}
+
+func TestApplyOpenAIChatGPTModelsHeaders_SkipsResponsesOnlyHeaders(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "https://chatgpt.com/backend-api/codex/models", nil)
+	credential := `{"refresh_token":"rt-1","chatgpt_account_id":"acc-1"}`
+
+	applyOpenAIChatGPTModelsHeaders(req, credential)
+
+	if req.Host != "chatgpt.com" {
+		t.Fatalf("expected host=chatgpt.com, got %s", req.Host)
+	}
+	if req.Header.Get("chatgpt-account-id") != "acc-1" {
+		t.Fatalf("unexpected chatgpt-account-id header: %s", req.Header.Get("chatgpt-account-id"))
+	}
+	if req.Header.Get("OpenAI-Beta") != "" {
+		t.Fatalf("expected models request not to set OpenAI-Beta, got %s", req.Header.Get("OpenAI-Beta"))
+	}
+	if req.Header.Get("Accept") == "text/event-stream" {
+		t.Fatal("expected models request not to force text/event-stream")
 	}
 }
 

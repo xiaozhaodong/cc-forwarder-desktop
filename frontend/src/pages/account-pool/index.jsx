@@ -25,6 +25,7 @@ import {
   PageHeader,
   SchedulerDrawer
 } from './components';
+import CodexModelsPanel from './components/CodexModelsPanel.jsx';
 import {
   buildAccountPoolDashboardModel,
   isValidAccountId,
@@ -126,6 +127,7 @@ const AccountPoolPage = () => {
 
   const [sharedDrawerRowId, setSharedDrawerRowId] = useState(null);
   const [schedulerDrawerOpen, setSchedulerDrawerOpen] = useState(false);
+  const [codexModelsOpen, setCodexModelsOpen] = useState(false);
   const [inventoryViewRequest, setInventoryViewRequest] = useState(null);
   const [schedulerBusyKey, setSchedulerBusyKey] = useState('');
 
@@ -414,6 +416,7 @@ const AccountPoolPage = () => {
         onCreate={openCreateAccount}
         onRefresh={handleRefreshAll}
         onOpenScheduler={() => setSchedulerDrawerOpen(true)}
+        onOpenCodexModels={() => setCodexModelsOpen(true)}
       />
 
       <NoticeToast notice={notice} onClose={closeNotice} />
@@ -457,6 +460,12 @@ const AccountPoolPage = () => {
         onEnableAutoSelection={handleSchedulerEnableAutoSelection}
         onViewInInventory={handleViewGroupInInventory}
         busyKey={schedulerBusyKey}
+      />
+
+      <CodexModelsPanel
+        open={codexModelsOpen}
+        onClose={() => setCodexModelsOpen(false)}
+        showNotice={showNotice}
       />
 
       <AccountFormDialog

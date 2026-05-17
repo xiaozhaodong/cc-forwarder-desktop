@@ -34,6 +34,7 @@ const (
 
 	chatGPTCodexResponsesURL = "https://chatgpt.com/backend-api/codex/responses"
 	chatGPTCodexCompactURL   = "https://chatgpt.com/backend-api/codex/responses/compact"
+	chatGPTCodexModelsURL    = "https://chatgpt.com/backend-api/codex/models"
 	openAIBetaResponsesValue = "responses=experimental"
 	defaultOAuthOriginator   = "codex_cli_rs"
 )
@@ -385,7 +386,11 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 			}
 			return nil, nil, fmt.Errorf("chatgpt_account_id is missing from credential")
 		}
-		applyOpenAIChatGPTOAuthHeaders(req, acc.CredentialRaw)
+		if r.URL.Path == "/v1/models" {
+			applyOpenAIChatGPTModelsHeaders(req, acc.CredentialRaw)
+		} else {
+			applyOpenAIChatGPTOAuthHeaders(req, acc.CredentialRaw)
+		}
 	}
 
 	client, err := h.getAccountHTTPClient(isSSE)
@@ -603,9 +608,14 @@ func (h *Handler) getAccountHTTPClient(isSSE bool) (*http.Client, error) {
 
 func resolveAccountTargetURL(acc *store.UpstreamAccountRecord, path, rawQuery string) (string, error) {
 	if acc != nil && accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
-		targetURL := chatGPTCodexResponsesURL
-		if strings.HasSuffix(path, "/compact") {
+		targetURL := ""
+		switch {
+		case path == "/v1/responses/compact" || strings.HasSuffix(path, "/compact"):
 			targetURL = chatGPTCodexCompactURL
+		case path == "/v1/models":
+			targetURL = chatGPTCodexModelsURL
+		default:
+			targetURL = chatGPTCodexResponsesURL
 		}
 		upstreamURL, err := url.Parse(targetURL)
 		if err != nil {
@@ -756,14 +766,25 @@ func copyRequestHeadersForAccount(src *http.Request, dst *http.Request) {
 }
 
 func applyOpenAIChatGPTOAuthHeaders(req *http.Request, credentialRaw string) {
+	applyOpenAIChatGPTCommonHeaders(req, credentialRaw)
+	if req == nil {
+		return
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("OpenAI-Beta", openAIBetaResponsesValue)
+	req.Header.Set("originator", defaultOAuthOriginator)
+}
+
+func applyOpenAIChatGPTModelsHeaders(req *http.Request, credentialRaw string) {
+	applyOpenAIChatGPTCommonHeaders(req, credentialRaw)
+}
+
+func applyOpenAIChatGPTCommonHeaders(req *http.Request, credentialRaw string) {
 	if req == nil {
 		return
 	}
 	req.Host = "chatgpt.com"
 	req.Header.Set("Host", "chatgpt.com")
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("OpenAI-Beta", openAIBetaResponsesValue)
-	req.Header.Set("originator", defaultOAuthOriginator)
 	if accountID := accountauth.ExtractChatGPTAccountID(credentialRaw); accountID != "" {
 		req.Header.Set("chatgpt-account-id", accountID)
 	}

@@ -227,6 +227,16 @@ func (s *AccountPoolService) PrepareSchedulableAccounts(ctx context.Context, req
 	return s.prepareSchedulableAccounts(ctx, requestID, requestPath)
 }
 
+func (s *AccountPoolService) PreviewSchedulableAccounts(ctx context.Context, requestPath string) ([]*store.UpstreamAccountRecord, error) {
+	if err := s.ensureRuntimeCache(ctx); err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	accounts := s.runtimeCache.listSchedulable(now)
+	ordered, _ := s.rankSchedulableAccounts(accounts, now, "", requestPath)
+	return ordered, nil
+}
+
 func (s *AccountPoolService) GetLatestAccountScheduleSnapshot(ctx context.Context) (*LatestAccountScheduleSnapshot, error) {
 	_ = ctx
 	if s.scheduleSnapshots == nil {

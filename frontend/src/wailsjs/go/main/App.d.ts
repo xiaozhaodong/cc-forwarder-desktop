@@ -33,6 +33,8 @@ export function GetAllSettings():Promise<Array<main.SettingInfo>>;
 
 export function GetChannels():Promise<Array<main.ChannelInfo>>;
 
+export function GetCodexModelCatalog():Promise<main.CodexModelCatalogInfo>;
+
 export function GetConfig():Promise<main.ConfigInfo>;
 
 export function GetConnectionActivityChart(arg1:number):Promise<Array<main.ChartDataPoint>>;
@@ -99,6 +101,8 @@ export function GetUsageSummary(arg1:string,arg2:string):Promise<main.UsageSumma
 
 export function IsProxyRunning():Promise<boolean>;
 
+export function MergeDefaultCodexModelCatalog():Promise<main.CodexModelCatalogInfo>;
+
 export function MoveUpstreamAccountToTier(arg1:number,arg2:string):Promise<main.MoveUpstreamAccountToTierResult>;
 
 export function PauseGroup(arg1:string):Promise<void>;
@@ -109,7 +113,11 @@ export function RefreshUpstreamAccountProfile(arg1:number):Promise<main.RefreshU
 
 export function ResetCategorySettings(arg1:string):Promise<void>;
 
+export function ResetCodexModelCatalog():Promise<main.CodexModelCatalogInfo>;
+
 export function ResumeGroup(arg1:string):Promise<void>;
+
+export function SaveCodexModelCatalog(arg1:main.SaveCodexModelCatalogInput):Promise<main.CodexModelCatalogInfo>;
 
 export function SetDefaultModelPricing(arg1:string):Promise<void>;
 

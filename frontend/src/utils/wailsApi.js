@@ -1705,6 +1705,57 @@ export const resetCategorySettings = async (category) => {
   return { success: true };
 };
 
+const normalizeCodexModel = (model = {}) => ({
+  id: model.id || model.ID || '',
+  object: model.object || model.Object || 'model',
+  owned_by: model.owned_by || model.ownedBy || model.OwnedBy || 'openai',
+  source: model.source || model.Source || 'custom',
+  enabled: model.enabled !== undefined ? Boolean(model.enabled) : Boolean(model.Enabled),
+  deprecated: model.deprecated !== undefined ? Boolean(model.deprecated) : Boolean(model.Deprecated),
+  display_name: model.display_name || model.displayName || model.DisplayName || model.id || model.ID || '',
+  description: model.description || model.Description || ''
+});
+
+const normalizeCodexModelCatalog = (catalog = {}) => {
+  const models = Array.isArray(catalog.models || catalog.Models)
+    ? (catalog.models || catalog.Models).map(normalizeCodexModel)
+    : [];
+  return {
+    enabled: catalog.enabled !== undefined ? Boolean(catalog.enabled) : Boolean(catalog.Enabled),
+    mode: catalog.mode || catalog.Mode || 'local',
+    models,
+    effective_count: catalog.effective_count ?? catalog.effectiveCount ?? catalog.EffectiveCount ?? models.filter(model => model.enabled).length
+  };
+};
+
+export const getCodexModelCatalog = async () => {
+  await initWails();
+  const method = getWailsMethod('GetCodexModelCatalog');
+  return normalizeCodexModelCatalog(await method());
+};
+
+export const saveCodexModelCatalog = async (catalog) => {
+  await initWails();
+  const method = getWailsMethod('SaveCodexModelCatalog');
+  return normalizeCodexModelCatalog(await method({
+    enabled: catalog?.enabled === true,
+    mode: catalog?.mode || 'local',
+    models: (catalog?.models || []).map(normalizeCodexModel)
+  }));
+};
+
+export const mergeDefaultCodexModelCatalog = async () => {
+  await initWails();
+  const method = getWailsMethod('MergeDefaultCodexModelCatalog');
+  return normalizeCodexModelCatalog(await method());
+};
+
+export const resetCodexModelCatalog = async () => {
+  await initWails();
+  const method = getWailsMethod('ResetCodexModelCatalog');
+  return normalizeCodexModelCatalog(await method());
+};
+
 /**
  * 获取端口信息
  * @returns {Promise<Object>} - {preferred_port, actual_port, is_default, was_occupied}

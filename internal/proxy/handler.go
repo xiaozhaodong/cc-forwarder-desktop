@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ type Handler struct {
 	retryHandler         *RetryHandler
 	usageTracker         *tracking.UsageTracker
 	accountPoolService   AccountPoolService
+	codexModelsProvider  CodexModelListProvider
 	monitoringMiddleware *middleware.MonitoringMiddleware
 	responseProcessor    *response.Processor
 	tokenAnalyzer        *response.TokenAnalyzer
@@ -50,6 +52,10 @@ type Handler struct {
 	sharedSuspensionManager handlers.SuspensionManager
 	// 🚀 [端点自愈] 端点恢复信号管理器
 	recoverySignalManager *EndpointRecoverySignalManager
+}
+
+type CodexModelListProvider interface {
+	GetCodexModelListResponse(ctx context.Context) ([]byte, bool, error)
 }
 
 // TokenParserProviderImpl 实现TokenParserProvider接口
@@ -436,6 +442,11 @@ func (h *Handler) SetAccountPoolService(service AccountPoolService) {
 	h.accountPoolService = service
 }
 
+// SetCodexModelListProvider 设置本地 Codex 模型目录提供器。
+func (h *Handler) SetCodexModelListProvider(provider CodexModelListProvider) {
+	h.codexModelsProvider = provider
+}
+
 // extractModelFromRequestBody 从请求体中提取模型名称
 // 仅对已知会携带 model 字段的路径进行解析，避免不必要的JSON解析开销
 func (h *Handler) extractModelFromRequestBody(bodyBytes []byte, path string) string {
@@ -502,9 +513,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		connID = connIDValue
 	}
 
+	if h.isCodexModelsRequest(r) {
+		h.handleCodexModelsRequest(ctx, w, r)
+		return
+	}
+
 	// 创建统一的请求生命周期管理器
 	lifecycleManager := NewRequestLifecycleManagerWithRecoverySignal(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus, h.recoverySignalManager)
-	// Codex /v1/responses 与 Claude endpoint 链路分离，不挂载 endpoint 失败追踪语义
+	// Codex /v1/responses 链路分离，不挂载 endpoint 失败追踪语义
 	if !h.isAccountPipelinePath(r.URL.Path) {
 		// 📊 [失败追踪] 设置端点管理器，用于记录成功/失败
 		lifecycleManager.SetEndpointManager(h.endpointManager)
@@ -581,6 +597,319 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// 常规请求处理 - 使用RegularHandler
 		h.regularHandler.HandleRegularRequestUnified(ctx, w, r, bodyBytes, lifecycleManager)
 	}
+}
+
+func (h *Handler) isCodexModelsRequest(r *http.Request) bool {
+	return r != nil && r.Method == http.MethodGet && r.URL.Path == "/v1/models"
+}
+
+func (h *Handler) handleCodexModelsRequest(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if h.tryWriteLocalCodexModels(ctx, w, r) {
+		return
+	}
+
+	// /v1/models 是模型目录查询，不属于 token 消耗请求；穿透上游时也不写请求追踪表。
+	if h.handleCodexModelsAccountPassthrough(ctx, w, r) {
+		return
+	}
+	h.handleCodexModelsPassthrough(ctx, w, r)
+}
+
+func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w http.ResponseWriter, r *http.Request) bool {
+	if h == nil || h.config == nil || !h.config.AccountPool.Enabled {
+		return false
+	}
+	if h.accountPoolService == nil {
+		writeCodexModelsError(w, http.StatusServiceUnavailable, "account_pool_unavailable", "account pool service is not initialized for Codex /v1/models")
+		return true
+	}
+
+	accounts, err := h.accountPoolService.PreviewSchedulableAccounts(ctx, r.URL.Path)
+	if err != nil {
+		writeCodexModelsError(w, http.StatusServiceUnavailable, "account_pool_unavailable", "failed to load schedulable account for Codex /v1/models")
+		return true
+	}
+	if len(accounts) == 0 {
+		writeCodexModelsError(w, http.StatusServiceUnavailable, "account_pool_unavailable", "no schedulable account for Codex /v1/models")
+		return true
+	}
+
+	var lastErr error
+	for _, acc := range accounts {
+		if acc == nil {
+			continue
+		}
+
+		attemptStartedAt := time.Now()
+		resp, upstreamCancel, err := h.forwardRequestToAccount(ctx, r, nil, acc, false)
+		releaseUpstream := func() {
+			if upstreamCancel != nil {
+				upstreamCancel()
+				upstreamCancel = nil
+			}
+		}
+		if err != nil {
+			releaseUpstream()
+			lastErr = err
+			if !h.shouldFailOverAfterSoftFailure(ctx, acc.ID, err.Error(), accountSoftFailureCategoryServerError, 0) {
+				break
+			}
+			continue
+		}
+		if resp == nil {
+			releaseUpstream()
+			lastErr = fmt.Errorf("empty response from account %d", acc.ID)
+			if !h.shouldFailOverAfterSoftFailure(ctx, acc.ID, lastErr.Error(), accountSoftFailureCategoryServerError, 0) {
+				break
+			}
+			continue
+		}
+
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			detail := readAndCloseResponseBody(resp, 1024)
+			releaseUpstream()
+			if detail == "" {
+				detail = fmt.Sprintf("upstream returned %d", resp.StatusCode)
+			}
+			lastErr = fmt.Errorf("auth failed: %s", detail)
+			_ = h.accountPoolService.MarkAccountAuthFailed(ctx, acc.ID, detail)
+			continue
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			retryAfter := h.accountRateLimitRetryAfter(resp)
+			detail := readAndCloseResponseBody(resp, 1024)
+			releaseUpstream()
+			if detail == "" {
+				detail = fmt.Sprintf("upstream returned %d", resp.StatusCode)
+			}
+			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
+			if usageLimit, ok := parseAccountUsageLimitWindow(detail, time.Now()); ok {
+				_ = h.accountPoolService.MarkAccountUsageLimitExceeded(ctx, acc.ID, detail, usageLimit.planType, usageLimit.resetAt)
+				continue
+			}
+			if !h.shouldFailOverAfterSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryRateLimit, retryAfter) {
+				break
+			}
+			continue
+		}
+
+		if resp.StatusCode >= 500 {
+			detail := readAndCloseResponseBody(resp, 1024)
+			releaseUpstream()
+			if detail == "" {
+				detail = fmt.Sprintf("upstream returned %d", resp.StatusCode)
+			}
+			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
+			if !h.shouldFailOverAfterSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryServerError, 0) {
+				break
+			}
+			continue
+		}
+
+		if resp.StatusCode >= 400 {
+			if err := h.writeRawResponse(w, resp); err != nil {
+				releaseUpstream()
+				writeCodexModelsError(w, http.StatusBadGateway, "account_pool_response_error", "failed to read upstream model list from account pool")
+				return true
+			}
+			releaseUpstream()
+			return true
+		}
+
+		if err := h.writeRawResponse(w, resp); err != nil {
+			releaseUpstream()
+			writeCodexModelsError(w, http.StatusBadGateway, "account_pool_response_error", "failed to read upstream model list from account pool")
+			return true
+		}
+		releaseUpstream()
+		finalizeCtx, finalizeCancel := h.newAccountSuccessContext()
+		_, _ = h.accountPoolService.MarkAccountSuccessIfNoNewerFailure(finalizeCtx, acc.ID, attemptStartedAt)
+		if accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
+			h.accountPoolService.TryEnqueueQuotaRefresh(acc.ID)
+		}
+		finalizeCancel()
+		return true
+	}
+
+	reason := "all account pool candidates failed for Codex /v1/models"
+	if lastErr != nil {
+		reason = lastErr.Error()
+	}
+	writeCodexModelsError(w, http.StatusBadGateway, "account_pool_upstream_error", reason)
+	return true
+}
+
+func (h *Handler) handleCodexModelsPassthrough(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	endpoints := h.getCodexModelEndpoints()
+	if len(endpoints) == 0 {
+		writeCodexModelsError(w, http.StatusServiceUnavailable, "codex_upstream_unavailable", "no Codex upstream endpoint available for /v1/models")
+		return
+	}
+
+	ep := endpoints[0]
+	resp, err := h.forwarder.ForwardRequestToEndpoint(ctx, r, nil, ep)
+	if err != nil {
+		h.endpointManager.RecordFailure(ep.Config.Name)
+		writeCodexModelsError(w, http.StatusBadGateway, "codex_upstream_error", fmt.Sprintf("failed to fetch upstream model list: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	responseBytes, err := h.responseProcessor.ProcessResponseBody(resp)
+	if err != nil {
+		h.endpointManager.RecordFailure(ep.Config.Name)
+		writeCodexModelsError(w, http.StatusBadGateway, "codex_upstream_response_error", "failed to read upstream model list")
+		return
+	}
+
+	h.responseProcessor.CopyResponseHeaders(resp, w)
+	w.WriteHeader(resp.StatusCode)
+	if _, err := w.Write(responseBytes); err != nil {
+		h.endpointManager.RecordFailure(ep.Config.Name)
+		return
+	}
+	h.endpointManager.RecordSuccess(ep.Config.Name)
+}
+
+func (h *Handler) getCodexModelEndpoints() []*endpoint.Endpoint {
+	if h == nil || h.endpointManager == nil {
+		return nil
+	}
+
+	all := h.endpointManager.GetAllEndpoints()
+	codexEndpoints := make([]*endpoint.Endpoint, 0, len(all))
+	for _, ep := range all {
+		if isEndpointEnabled(ep) && h.endpointManager.IsEndpointRoutable(ep) && isCodexModelEndpoint(ep) {
+			codexEndpoints = append(codexEndpoints, ep)
+		}
+	}
+	sort.SliceStable(codexEndpoints, func(i, j int) bool {
+		leftScore := codexModelEndpointScore(codexEndpoints[i])
+		rightScore := codexModelEndpointScore(codexEndpoints[j])
+		if leftScore != rightScore {
+			return leftScore > rightScore
+		}
+		return codexEndpoints[i].Config.Priority < codexEndpoints[j].Config.Priority
+	})
+	return codexEndpoints
+}
+
+func isEndpointEnabled(ep *endpoint.Endpoint) bool {
+	if ep == nil || ep.Config.Enabled == nil {
+		return true
+	}
+	return *ep.Config.Enabled
+}
+
+func isCodexModelEndpoint(ep *endpoint.Endpoint) bool {
+	return codexModelEndpointScore(ep) > 0
+}
+
+func codexModelEndpointScore(ep *endpoint.Endpoint) int {
+	if ep == nil {
+		return 0
+	}
+
+	channel := strings.ToLower(strings.TrimSpace(ep.Config.Channel))
+	name := strings.ToLower(strings.TrimSpace(ep.Config.Name))
+	rawURL := strings.ToLower(strings.TrimSpace(ep.Config.URL))
+	haystack := strings.Join([]string{channel, name, rawURL}, " ")
+
+	strongCodexHints := []string{
+		"codex",
+		"coderelay",
+		"code-relay",
+		"responses",
+	}
+	for _, hint := range strongCodexHints {
+		if strings.Contains(haystack, hint) {
+			return 100
+		}
+	}
+
+	if isClaudeCodeEndpointHint(channel, name, rawURL) {
+		return 0
+	}
+
+	openAIHints := []string{
+		"api.openai.com",
+		"openai",
+		"chatgpt",
+	}
+	for _, hint := range openAIHints {
+		if strings.Contains(haystack, hint) {
+			return 50
+		}
+	}
+
+	return 0
+}
+
+func isClaudeCodeEndpointHint(channel, name, rawURL string) bool {
+	if isCCLabel(channel) || isCCLabel(name) {
+		return true
+	}
+
+	haystack := strings.Join([]string{channel, name, rawURL}, " ")
+	claudeHints := []string{
+		"claude",
+		"anthropic",
+		"sonnet",
+		"opus",
+		"haiku",
+		"/v1/messages",
+	}
+	for _, hint := range claudeHints {
+		if strings.Contains(haystack, hint) {
+			return true
+		}
+	}
+	return false
+}
+
+func isCCLabel(value string) bool {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return false
+	}
+	return value == "cc" ||
+		strings.HasPrefix(value, "cc-") ||
+		strings.HasSuffix(value, "-cc") ||
+		strings.Contains(value, "-cc-") ||
+		strings.Contains(value, "_cc_")
+}
+
+func writeCodexModelsError(w http.ResponseWriter, statusCode int, errType, message string) {
+	writeAccountPipelineError(w, statusCode, errType, message)
+}
+
+func (h *Handler) tryWriteLocalCodexModels(ctx context.Context, w http.ResponseWriter, r *http.Request) bool {
+	if !h.isCodexModelsRequest(r) || h.codexModelsProvider == nil {
+		return false
+	}
+
+	responseBytes, handled, err := h.codexModelsProvider.GetCodexModelListResponse(ctx)
+	if !handled {
+		return false
+	}
+
+	if err != nil {
+		writeCodexModelsError(w, http.StatusInternalServerError, "codex_models_error", "failed to load local Codex model catalog")
+		return true
+	}
+
+	if len(responseBytes) == 0 {
+		responseBytes = []byte(`{"object":"list","data":[]}`)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(responseBytes); err != nil {
+		return true
+	}
+
+	return true
 }
 
 // shouldUseAccountPipeline 判断当前请求是否应走账号池链路
