@@ -18,8 +18,10 @@ import (
 
 const (
 	coderelayChannel     = "coderelay"
+	mywechatEndpointName = "mywechat"
 	cacheControlKey      = "cache_control"
 	cacheControlScopeKey = "scope"
+	contextManagementKey = "context_management"
 )
 
 // Forwarder 负责HTTP请求转发和头部处理
@@ -144,7 +146,7 @@ func prepareBodyForEndpoint(bodyBytes []byte, ep *endpoint.Endpoint) []byte {
 		return bodyBytes
 	}
 
-	return stripCacheControlScope(bodyBytes)
+	return stripCoderelayUnsupportedFields(bodyBytes, ep)
 }
 
 func isCoderelayChannel(ep *endpoint.Endpoint) bool {
@@ -155,7 +157,7 @@ func isCoderelayChannel(ep *endpoint.Endpoint) bool {
 	return strings.EqualFold(strings.TrimSpace(ep.Config.Channel), coderelayChannel)
 }
 
-func stripCacheControlScope(bodyBytes []byte) []byte {
+func stripCoderelayUnsupportedFields(bodyBytes []byte, ep *endpoint.Endpoint) []byte {
 	if len(bytes.TrimSpace(bodyBytes)) == 0 {
 		return bodyBytes
 	}
@@ -167,7 +169,11 @@ func stripCacheControlScope(bodyBytes []byte) []byte {
 		return bodyBytes
 	}
 
-	if !deleteCacheControlScope(payload) {
+	changed := deleteCacheControlScope(payload)
+	if isMywechatEndpoint(ep) && deleteTopLevelKey(payload, contextManagementKey) {
+		changed = true
+	}
+	if !changed {
 		return bodyBytes
 	}
 
@@ -178,27 +184,50 @@ func stripCacheControlScope(bodyBytes []byte) []byte {
 	return sanitizedBodyBytes
 }
 
+func isMywechatEndpoint(ep *endpoint.Endpoint) bool {
+	if ep == nil {
+		return false
+	}
+
+	return strings.EqualFold(strings.TrimSpace(ep.Config.Name), mywechatEndpointName)
+}
+
+func deleteTopLevelKey(value any, key string) bool {
+	node, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+
+	if _, exists := node[key]; !exists {
+		return false
+	}
+	delete(node, key)
+	return true
+}
+
 func deleteCacheControlScope(value any) bool {
+	return deleteCacheControlScopeValue(value, false)
+}
+
+func deleteCacheControlScopeValue(value any, insideCacheControl bool) bool {
 	changed := false
 
 	switch node := value.(type) {
 	case map[string]any:
-		for key, child := range node {
-			if key == cacheControlKey {
-				if cacheControl, ok := child.(map[string]any); ok {
-					if _, exists := cacheControl[cacheControlScopeKey]; exists {
-						delete(cacheControl, cacheControlScopeKey)
-						changed = true
-					}
-				}
+		if insideCacheControl {
+			if _, exists := node[cacheControlScopeKey]; exists {
+				delete(node, cacheControlScopeKey)
+				changed = true
 			}
-			if deleteCacheControlScope(child) {
+		}
+		for key, child := range node {
+			if deleteCacheControlScopeValue(child, insideCacheControl || key == cacheControlKey) {
 				changed = true
 			}
 		}
 	case []any:
 		for _, child := range node {
-			if deleteCacheControlScope(child) {
+			if deleteCacheControlScopeValue(child, insideCacheControl) {
 				changed = true
 			}
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -195,7 +196,10 @@ func TestForwarder_PrepareBodyForEndpoint_StripsCoderelayCacheControlScope(t *te
 				"cache_control": {
 					"type": "ephemeral",
 					"ttl": "1h",
-					"scope": "conversation"
+					"scope": "conversation",
+					"vendor_extension": {
+						"scope": "global"
+					}
 				}
 			}
 		],
@@ -208,8 +212,24 @@ func TestForwarder_PrepareBodyForEndpoint_StripsCoderelayCacheControlScope(t *te
 						"text": "hello",
 						"cache_control": {
 							"type": "ephemeral",
-							"scope": "conversation"
+							"scope": "conversation",
+							"rules": [
+								{
+									"scope": "global"
+								}
+							]
 						}
+					}
+				]
+			}
+		],
+		"tools": [
+			{
+				"name": "lookup",
+				"cache_control": [
+					{
+						"type": "ephemeral",
+						"scope": "global"
 					}
 				]
 			}
@@ -239,8 +259,8 @@ func TestForwarder_PrepareBodyForEndpoint_StripsCoderelayCacheControlScope(t *te
 			}
 
 			cacheControlCount, scopeCount := countCacheControlScopes(payload)
-			if cacheControlCount != 2 {
-				t.Fatalf("expected 2 cache_control objects, got %d", cacheControlCount)
+			if cacheControlCount != 3 {
+				t.Fatalf("expected 3 cache_control objects, got %d", cacheControlCount)
 			}
 			if scopeCount != 0 {
 				t.Fatalf("expected cache_control.scope to be stripped, got %d remaining", scopeCount)
@@ -261,6 +281,78 @@ func TestForwarder_PrepareBodyForEndpoint_StripsCoderelayCacheControlScope(t *te
 	}
 }
 
+func TestForwarder_PrepareBodyForEndpoint_StripsMywechatContextManagement(t *testing.T) {
+	bodyBytes := []byte(`{
+		"model": "claude-opus-4-7",
+		"stream": true,
+		"context_management": {
+			"edits": [
+				{
+					"type": "clear_tool_uses_20250919"
+				}
+			]
+		},
+		"system": [
+			{
+				"type": "text",
+				"text": "system prompt",
+				"cache_control": {
+					"type": "ephemeral",
+					"scope": "conversation"
+				}
+			}
+		],
+		"metadata": {
+			"context_management": "keep"
+		}
+	}`)
+	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "mywechat", Channel: "coderelay"}}
+
+	got := prepareBodyForEndpoint(bodyBytes, ep)
+
+	var payload any
+	if err := json.Unmarshal(got, &payload); err != nil {
+		t.Fatalf("sanitized body should still be JSON: %v", err)
+	}
+	root, ok := payload.(map[string]any)
+	if !ok {
+		t.Fatal("expected root object")
+	}
+	if _, exists := root[contextManagementKey]; exists {
+		t.Fatalf("expected top-level %s to be stripped, got %s", contextManagementKey, string(got))
+	}
+	metadata, ok := root["metadata"].(map[string]any)
+	if !ok {
+		t.Fatal("expected metadata object")
+	}
+	if metadata[contextManagementKey] != "keep" {
+		t.Fatalf("expected nested metadata context_management to be preserved, got %v", metadata[contextManagementKey])
+	}
+	_, scopeCount := countCacheControlScopes(payload)
+	if scopeCount != 0 {
+		t.Fatalf("expected cache_control.scope to still be stripped, got %d remaining", scopeCount)
+	}
+}
+
+func TestForwarder_PrepareBodyForEndpoint_KeepsContextManagementForOtherCoderelayEndpoints(t *testing.T) {
+	bodyBytes := []byte(`{"context_management":{"edits":[]},"system":[{"cache_control":{"type":"ephemeral","scope":"conversation"}}]}`)
+	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "relay-proxy", Channel: "coderelay"}}
+
+	got := prepareBodyForEndpoint(bodyBytes, ep)
+
+	var payload map[string]any
+	if err := json.Unmarshal(got, &payload); err != nil {
+		t.Fatalf("sanitized body should still be JSON: %v", err)
+	}
+	if _, exists := payload[contextManagementKey]; !exists {
+		t.Fatalf("expected %s to be preserved for non-mywechat coderelay endpoint, got %s", contextManagementKey, string(got))
+	}
+	_, scopeCount := countCacheControlScopes(payload)
+	if scopeCount != 0 {
+		t.Fatalf("expected cache_control.scope to be stripped, got %d remaining", scopeCount)
+	}
+}
+
 func TestForwarder_PrepareBodyForEndpoint_KeepsOtherChannelsUntouched(t *testing.T) {
 	bodyBytes := []byte(`{"system":[{"cache_control":{"type":"ephemeral","scope":"conversation"}}]}`)
 	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "coderelay", Channel: "custom"}}
@@ -272,29 +364,102 @@ func TestForwarder_PrepareBodyForEndpoint_KeepsOtherChannelsUntouched(t *testing
 	}
 }
 
+func TestRegularHandler_ExecuteRequest_StripsCoderelayCacheControlScope(t *testing.T) {
+	var receivedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		receivedBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{}
+	endpointManager := endpoint.NewManager(cfg)
+	forwarder := NewForwarder(cfg, endpointManager)
+	regularHandler := &RegularHandler{
+		config:    cfg,
+		forwarder: forwarder,
+	}
+	ep := &endpoint.Endpoint{
+		Config: config.EndpointConfig{
+			Name:    "mywechat",
+			URL:     server.URL,
+			Channel: "coderelay",
+			Timeout: 30 * time.Second,
+		},
+	}
+	bodyBytes := []byte(`{"system":[{"cache_control":{"type":"ephemeral","nested":{"scope":"global"}}}],"metadata":{"scope":"keep"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(bodyBytes))
+
+	resp, err := regularHandler.executeRequest(context.Background(), req, bodyBytes, ep)
+	if err != nil {
+		t.Fatalf("executeRequest failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var payload any
+	if err := json.Unmarshal(receivedBody, &payload); err != nil {
+		t.Fatalf("sanitized body should still be JSON: %v", err)
+	}
+
+	_, scopeCount := countCacheControlScopes(payload)
+	if scopeCount != 0 {
+		t.Fatalf("expected regular handler to strip cache_control scope, got %d remaining", scopeCount)
+	}
+	root, ok := payload.(map[string]any)
+	if !ok {
+		t.Fatal("expected root object")
+	}
+	metadata, ok := root["metadata"].(map[string]any)
+	if !ok {
+		t.Fatal("expected metadata object")
+	}
+	if metadata["scope"] != "keep" {
+		t.Fatalf("expected non-cache_control scope to be preserved, got %v", metadata["scope"])
+	}
+}
+
 func countCacheControlScopes(value any) (int, int) {
+	return countCacheControlScopesValue(value, false)
+}
+
+func countCacheControlScopesValue(value any, insideCacheControl bool) (int, int) {
 	cacheControlCount := 0
 	scopeCount := 0
 
 	switch node := value.(type) {
 	case map[string]any:
+		if insideCacheControl {
+			if _, exists := node[cacheControlScopeKey]; exists {
+				scopeCount++
+			}
+		}
 		for key, child := range node {
+			childInsideCacheControl := insideCacheControl || key == cacheControlKey
 			if key == cacheControlKey {
-				if cacheControl, ok := child.(map[string]any); ok {
+				switch cacheControl := child.(type) {
+				case map[string]any:
 					cacheControlCount++
-					if _, exists := cacheControl[cacheControlScopeKey]; exists {
-						scopeCount++
+				case []any:
+					for _, item := range cacheControl {
+						if _, ok := item.(map[string]any); ok {
+							cacheControlCount++
+						}
 					}
 				}
 			}
 
-			childCacheControlCount, childScopeCount := countCacheControlScopes(child)
+			childCacheControlCount, childScopeCount := countCacheControlScopesValue(child, childInsideCacheControl)
 			cacheControlCount += childCacheControlCount
 			scopeCount += childScopeCount
 		}
 	case []any:
 		for _, child := range node {
-			childCacheControlCount, childScopeCount := countCacheControlScopes(child)
+			childCacheControlCount, childScopeCount := countCacheControlScopesValue(child, insideCacheControl)
 			cacheControlCount += childCacheControlCount
 			scopeCount += childScopeCount
 		}

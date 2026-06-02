@@ -441,6 +441,8 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 
 // executeRequest 执行单个请求
 func (rh *RegularHandler) executeRequest(ctx context.Context, r *http.Request, bodyBytes []byte, endpoint *endpoint.Endpoint) (*http.Response, error) {
+	bodyBytes = prepareBodyForEndpoint(bodyBytes, endpoint)
+
 	// 创建目标请求
 	targetURL := endpoint.Config.URL + r.URL.Path
 	if r.URL.RawQuery != "" {
@@ -578,7 +580,8 @@ func (rh *RegularHandler) HandleRegularRequest(ctx context.Context, w http.Respo
 			targetURL += "?" + r.URL.RawQuery
 		}
 
-		req, err := http.NewRequestWithContext(ctx, r.Method, targetURL, bytes.NewReader(bodyBytes))
+		preparedBodyBytes := prepareBodyForEndpoint(bodyBytes, ep)
+		req, err := http.NewRequestWithContext(ctx, r.Method, targetURL, bytes.NewReader(preparedBodyBytes))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
