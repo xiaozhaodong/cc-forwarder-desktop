@@ -50,7 +50,11 @@ const Toolbar = ({
   autoRefresh = null,
   groups = [],
   activeGroup = '',
+  claudeRoutingState = null,
   onGroupSwitch,
+  onRestoreClaudeAuto,
+  onClearRouteCache,
+  routeSwitching = false,
   accounts = [],
   activeAccount = null,
   recentSelectedAccountId = null,
@@ -64,7 +68,11 @@ const Toolbar = ({
       <ActiveGroupSwitcher
         groups={groups}
         activeGroup={activeGroup}
+        routingState={claudeRoutingState}
         onSwitch={onGroupSwitch}
+        onRestoreAuto={onRestoreClaudeAuto}
+        onClearRouteCache={onClearRouteCache}
+        loading={routeSwitching}
       />
 
       <AccountPoolSwitcher

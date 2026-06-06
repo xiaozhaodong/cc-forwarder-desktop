@@ -9,7 +9,8 @@ import {
   RefreshCw,
   Database,
   Server,
-  Info
+  Info,
+  RotateCcw
 } from 'lucide-react';
 import {
   Button,
@@ -30,6 +31,8 @@ import {
   updateEndpointRecord,
   deleteEndpointRecord,
   toggleEndpointRecord,
+  getClaudeRoutingState,
+  clearClaudeRoutingOverride,
   isWailsEnvironment,
   subscribeToEvent
 } from '@utils/wailsApi.js';
@@ -58,6 +61,12 @@ const EndpointsPage = () => {
 
   // 批量连通性测试状态
   const [batchCheckLoading, setBatchCheckLoading] = useState(false);
+  const [routingState, setRoutingState] = useState({
+    mode: 'auto',
+    endpointName: '',
+    fallbackEnabled: true
+  });
+  const [routingActionLoading, setRoutingActionLoading] = useState(false);
 
   // 表单状态
   const [showForm, setShowForm] = useState(false);
@@ -91,6 +100,20 @@ const EndpointsPage = () => {
     loadStorageStatus();
   }, [loadStorageStatus]);
 
+  const loadClaudeRoutingState = useCallback(async () => {
+    if (!isWailsEnvironment()) return;
+    try {
+      const state = await getClaudeRoutingState();
+      setRoutingState(state);
+    } catch (err) {
+      console.error('获取 Claude 路由状态失败:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadClaudeRoutingState();
+  }, [loadClaudeRoutingState]);
+
   // SQLite 模式下监听 Wails 事件，实时刷新端点数据
   const isSqliteModeRef = useRef(false);
   useEffect(() => {
@@ -108,13 +131,20 @@ const EndpointsPage = () => {
         loadStorageStatus();
       }
     });
+    const unsubscribeRouting = subscribeToEvent('claude-routing:update', () => {
+      console.log('📡 [Endpoints] 收到 Claude 路由更新事件，刷新路由状态');
+      loadClaudeRoutingState();
+    });
 
     return () => {
       if (typeof unsubscribe === 'function') {
         unsubscribe();
       }
+      if (typeof unsubscribeRouting === 'function') {
+        unsubscribeRouting();
+      }
     };
-  }, [loadStorageStatus]);
+  }, [loadClaudeRoutingState, loadStorageStatus]);
 
   // 批量连通性测试处理
   const handleBatchHealthCheck = async () => {
@@ -138,6 +168,33 @@ const EndpointsPage = () => {
 
   // 获取要显示的端点列表
   const displayEndpoints = isSqliteMode ? storageEndpoints : endpoints;
+  const routeMode = routingState?.mode || 'auto';
+  const routeEndpointName = routingState?.endpointName || routingState?.endpoint_name || '';
+  const routeModeLabel = routeMode === 'manual_fixed' ? '手动固定' : '手动优选';
+
+  const handleActivateEndpointGroup = useCallback(async (endpointName, groupName) => {
+    const result = await activateEndpointGroup(endpointName, groupName);
+    await loadClaudeRoutingState();
+    return result;
+  }, [activateEndpointGroup, loadClaudeRoutingState]);
+
+  const handleRestoreAutoRouting = useCallback(async () => {
+    setRoutingActionLoading(true);
+    try {
+      await clearClaudeRoutingOverride();
+      await loadClaudeRoutingState();
+      if (isSqliteMode) {
+        await loadStorageStatus();
+      } else {
+        await refresh();
+      }
+    } catch (err) {
+      console.error('恢复自动路由失败:', err);
+      alert(`恢复自动路由失败: ${err.message}`);
+    } finally {
+      setRoutingActionLoading(false);
+    }
+  }, [isSqliteMode, loadClaudeRoutingState, loadStorageStatus, refresh]);
 
   // 计算统计数据
   const displayStats = isSqliteMode
@@ -309,6 +366,27 @@ const EndpointsPage = () => {
         </span>
       </div>
 
+      {routeMode !== 'auto' && (
+        <div className="flex items-center justify-between gap-3 mb-6 px-3 py-2 bg-indigo-50/80 rounded-lg border border-indigo-100 text-xs text-indigo-700">
+          <div className="flex min-w-0 items-center gap-2">
+            <Info className="w-3.5 h-3.5 flex-shrink-0 text-indigo-500" />
+            <span className="truncate">
+              Claude 路由：{routeModeLabel}{routeEndpointName ? ` · ${routeEndpointName}` : ''}
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={RotateCcw}
+            onClick={handleRestoreAutoRouting}
+            loading={routingActionLoading}
+            className="shrink-0 text-indigo-700 hover:bg-indigo-100"
+          >
+            恢复自动
+          </Button>
+        </div>
+      )}
+
       {/* 统计卡片 */}
       <div className="grid grid-cols-5 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-slate-200/60 p-4 shadow-sm">
@@ -373,7 +451,7 @@ const EndpointsPage = () => {
                 channel={channel}
                 endpoints={channelEndpoints}
                 storageMode={isSqliteMode ? 'sqlite' : 'yaml'}
-                onActivateGroup={activateEndpointGroup}
+                onActivateGroup={handleActivateEndpointGroup}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
                 onToggle={handleToggle}

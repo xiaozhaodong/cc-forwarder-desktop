@@ -154,6 +154,73 @@ func TestRetryManager_ShouldRetry_ServerError(t *testing.T) {
 	assert.Greater(t, delay, time.Duration(0), "重试延迟应该大于0")
 }
 
+func TestRetryManager_ShouldRetryWithDecision_ClassifiesCapabilityFailuresAsNoRecord(t *testing.T) {
+	rm := createTestRetryManager()
+
+	tests := []struct {
+		name         string
+		err          error
+		errorType    handlers.ErrorType
+		failureClass handlers.FailureClass
+	}{
+		{
+			name:         "model unsupported",
+			err:          fmt.Errorf("HTTP 404: model_not_found: claude-opus-4"),
+			errorType:    handlers.ErrorTypeHTTP,
+			failureClass: handlers.FailureClassModelUnsupported,
+		},
+		{
+			name:         "schema incompatible",
+			err:          fmt.Errorf("HTTP 400: extra inputs are not permitted: context_management"),
+			errorType:    handlers.ErrorTypeHTTP,
+			failureClass: handlers.FailureClassSchemaIncompatible,
+		},
+		{
+			name:         "payload too large",
+			err:          fmt.Errorf("HTTP 413: payload too large"),
+			errorType:    handlers.ErrorTypeHTTP,
+			failureClass: handlers.FailureClassPayloadTooLarge,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decision := rm.ShouldRetryWithDecision(&handlers.ErrorContext{
+				RequestID:     "req-capability",
+				EndpointName:  "primary",
+				GroupName:     "primary",
+				AttemptCount:  1,
+				ErrorType:     tt.errorType,
+				OriginalError: tt.err,
+			}, 1, 1, false)
+
+			assert.False(t, decision.RetrySameEndpoint)
+			assert.False(t, decision.SwitchEndpoint)
+			assert.False(t, decision.ShouldRecord)
+			assert.Equal(t, tt.failureClass, decision.FailureClass)
+		})
+	}
+}
+
+func TestRetryManager_ShouldRetryWithDecision_ServerErrorStillRecordsFailure(t *testing.T) {
+	rm := createTestRetryManager()
+
+	decision := rm.ShouldRetryWithDecision(&handlers.ErrorContext{
+		RequestID:     "req-server-error",
+		EndpointName:  "primary",
+		GroupName:     "primary",
+		AttemptCount:  1,
+		ErrorType:     handlers.ErrorTypeServerError,
+		OriginalError: fmt.Errorf("HTTP 502: Bad Gateway"),
+	}, 1, 1, false)
+
+	assert.False(t, decision.RetrySameEndpoint)
+	assert.False(t, decision.SwitchEndpoint)
+	assert.True(t, decision.ShouldRecord)
+	assert.Equal(t, handlers.FailureClassNone, decision.FailureClass)
+	assert.Equal(t, "server_error", decision.FinalStatus)
+}
+
 func TestRetryManager_ShouldRetry_HTTPError(t *testing.T) {
 	rm := createTestRetryManager()
 

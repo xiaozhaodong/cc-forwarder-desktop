@@ -237,6 +237,50 @@ export const activateGroup = async (groupName) => {
   return await fetchWithTimeout(url, { method: 'POST' });
 };
 
+export const fetchClaudeRoutingState = async () => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.getClaudeRoutingState();
+  }
+  return {
+    unsupported: true,
+    mode: 'auto',
+    endpoint_name: '',
+    endpointName: '',
+    fallback_enabled: true,
+    fallbackEnabled: true
+  };
+};
+
+export const setClaudeRoutingOverride = async (input) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.setClaudeRoutingOverride(input);
+  }
+  return {
+    unsupported: true,
+    message: '当前运行环境暂不支持 Claude 路由切换'
+  };
+};
+
+export const clearClaudeRoutingOverride = async () => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.clearClaudeRoutingOverride();
+  }
+  return {
+    unsupported: true,
+    message: '当前运行环境暂不支持 Claude 路由切换'
+  };
+};
+
+export const clearNegativeHitCache = async (endpointName = '') => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.clearNegativeHitCache(endpointName);
+  }
+  return {
+    unsupported: true,
+    message: '当前运行环境暂不支持清理路由缓存'
+  };
+};
+
 export const pauseGroup = async (groupName) => {
   // Wails 环境使用绑定
   if (isWailsEnvironment()) {
@@ -306,7 +350,12 @@ export const fetchRequests = async (params = {}) => {
     cacheReadTokens: request.cache_read_tokens || request.cacheReadTokens || 0,
     cost: request.total_cost_usd || request.cost || 0,
     isStreaming: request.is_streaming || request.isStreaming || false,
-    statusCode: request.status_code || request.statusCode
+    statusCode: request.status_code || request.statusCode,
+    routeMode: request.route_mode || request.routeMode || 'auto',
+    requestedEndpoint: request.requested_endpoint || request.requestedEndpoint || '',
+    effectiveEndpoint: request.effective_endpoint || request.effectiveEndpoint || '',
+    fallbackReason: request.fallback_reason || request.fallbackReason || '',
+    routeDecisionAt: request.route_decision_at || request.routeDecisionAt || ''
   });
 
   // Wails 环境使用绑定

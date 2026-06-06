@@ -20,6 +20,10 @@ import {
   fetchEndpoints,
   fetchGroups,
   activateGroup,
+  fetchClaudeRoutingState,
+  setClaudeRoutingOverride,
+  clearClaudeRoutingOverride,
+  clearNegativeHitCache,
   enableAutomaticAccountSelection,
   pinUpstreamAccountSelection,
   fetchUpstreamAccounts,
@@ -49,8 +53,10 @@ const RequestsPage = () => {
   const [endpoints, setEndpoints] = useState([]);
   const [groups, setGroups] = useState([]); // v4.0: 端点列表（一个端点=一个组）
   const [activeGroup, setActiveGroup] = useState('');
+  const [claudeRoutingState, setClaudeRoutingState] = useState({ mode: 'auto', endpointName: '', fallbackEnabled: true });
   const [accounts, setAccounts] = useState([]);
   const [latestScheduleSnapshot, setLatestScheduleSnapshot] = useState({ hasSnapshot: false, has_snapshot: false, candidates: [] });
+  const [routeSwitching, setRouteSwitching] = useState(false);
   const [accountSwitching, setAccountSwitching] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -177,7 +183,7 @@ const RequestsPage = () => {
       };
 
       // v4.0: 简化数据获取，移除 keysData
-      const [requestsData, statsData, modelsData, endpointsData, groupsData, accountsData, latestSnapshotData] = await Promise.all([
+      const [requestsData, statsData, modelsData, endpointsData, groupsData, routeStateData, accountsData, latestSnapshotData] = await Promise.all([
         fetchRequests({
           ...requestsQueryParams,
           page: pagination.page,
@@ -187,6 +193,10 @@ const RequestsPage = () => {
         fetchModels(),
         fetchEndpoints(),
         fetchGroups(),
+        fetchClaudeRoutingState().catch((err) => {
+          console.error('❌ 加载 Claude 路由状态失败:', err);
+          return { mode: 'auto', endpointName: '', fallbackEnabled: true };
+        }),
         fetchUpstreamAccounts().catch((err) => {
           console.error('❌ 加载账号池账号失败:', err);
           showNotice('error', err?.message || '加载账号池账号失败，账号切换器暂不可用');
@@ -226,6 +236,9 @@ const RequestsPage = () => {
       // v4.0: 端点列表（一个端点=一个组）
       const groupsList = groupsData?.groups || [];
       setGroups(Array.isArray(groupsList) ? groupsList : []);
+      setClaudeRoutingState(routeStateData && typeof routeStateData === 'object'
+        ? routeStateData
+        : { mode: 'auto', endpointName: '', fallbackEnabled: true });
 
       setAccounts(Array.isArray(accountsData) ? accountsData : []);
       setLatestScheduleSnapshot(latestSnapshotData && typeof latestSnapshotData === 'object'
@@ -236,6 +249,8 @@ const RequestsPage = () => {
       const activeGroupObj = groupsList.find(g => g.is_active);
       if (activeGroupObj) {
         setActiveGroup(activeGroupObj.name);
+      } else if (routeStateData?.currentActiveEndpoint || routeStateData?.current_active_endpoint) {
+        setActiveGroup(routeStateData.currentActiveEndpoint || routeStateData.current_active_endpoint);
       }
     } catch (err) {
       if (loadRequestIdRef.current !== requestId) {
@@ -319,13 +334,29 @@ const RequestsPage = () => {
   };
 
   // 端点切换回调
-  const handleGroupSwitch = async (endpointName) => {
+  const handleGroupSwitch = async (endpointName, mode = 'manual_preferred') => {
     try {
-      // 只有端点变化时才调用 API 激活
-      if (endpointName !== activeGroup) {
-        console.log('🔄 切换端点:', endpointName);
+      setRouteSwitching(true);
+      console.log('🔄 切换 Claude 路由:', endpointName, mode);
+      const nextState = await setClaudeRoutingOverride({
+        mode,
+        endpointName,
+        fallbackEnabled: mode !== 'manual_fixed'
+      });
+
+      if (nextState?.unsupported) {
         await activateGroup(endpointName);
         setActiveGroup(endpointName);
+        showNotice('info', nextState.message || '已切换端点，当前后端暂不支持保存 Claude 路由模式');
+      } else {
+        setClaudeRoutingState(nextState);
+        setActiveGroup(nextState.currentActiveEndpoint || nextState.current_active_endpoint || endpointName);
+        showNotice(
+          'success',
+          mode === 'manual_fixed'
+            ? `已严格固定 Claude 端点「${endpointName}」`
+            : `已优先使用 Claude 端点「${endpointName}」`
+        );
       }
 
       // 切换后刷新数据
@@ -333,8 +364,45 @@ const RequestsPage = () => {
     } catch (err) {
       console.error('❌ 切换失败:', err);
       throw err; // 让 ActiveGroupSwitcher 组件知道切换失败
+    } finally {
+      setRouteSwitching(false);
     }
   };
+
+  const handleRestoreClaudeAuto = useCallback(async () => {
+    setRouteSwitching(true);
+    try {
+      const nextState = await clearClaudeRoutingOverride();
+      if (nextState?.unsupported) {
+        showNotice('info', nextState.message || '当前后端暂不支持恢复自动路由');
+        return;
+      }
+      setClaudeRoutingState(nextState);
+      showNotice('success', 'Claude 路由已恢复自动调度');
+      await loadData(true);
+    } catch (err) {
+      showNotice('error', err.message || '恢复自动路由失败');
+    } finally {
+      setRouteSwitching(false);
+    }
+  }, [loadData, showNotice]);
+
+  const handleClearRouteCache = useCallback(async (endpointName = '') => {
+    setRouteSwitching(true);
+    try {
+      const result = await clearNegativeHitCache(endpointName);
+      if (result?.unsupported) {
+        showNotice('info', result.message || '当前后端暂不支持清理路由缓存');
+        return;
+      }
+      showNotice('success', endpointName ? `已清理「${endpointName}」的路由缓存` : '已清理 Claude 路由缓存');
+      await loadData(true);
+    } catch (err) {
+      showNotice('error', err.message || '清理路由缓存失败');
+    } finally {
+      setRouteSwitching(false);
+    }
+  }, [loadData, showNotice]);
 
   const handleAccountSwitch = useCallback(async (account) => {
     const accountId = resolveAccountId(account);
@@ -453,7 +521,11 @@ const RequestsPage = () => {
             autoRefresh={autoRefresh}
             groups={groups}
             activeGroup={activeGroup}
+            claudeRoutingState={claudeRoutingState}
             onGroupSwitch={handleGroupSwitch}
+            onRestoreClaudeAuto={handleRestoreClaudeAuto}
+            onClearRouteCache={handleClearRouteCache}
+            routeSwitching={routeSwitching}
             accounts={accounts}
             activeAccount={activeAccount}
             recentSelectedAccountId={recentSelectedAccountId}

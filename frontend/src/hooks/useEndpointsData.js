@@ -203,15 +203,15 @@ const useEndpointsData = () => {
     }
   }, [loadData]);
 
-  // 激活端点（v4.0: 通过激活对应的组实现）
+  // 激活端点（持久化为 Claude 手动优选路由）
   const activateEndpointGroup = useCallback(async (endpointName, groupName) => {
-    if (!groupName) {
+    if (!endpointName) {
       throw new Error('端点配置错误');
     }
 
     try {
       // 使用 API 适配层（自动检测 Wails 环境）
-      const result = await apiActivateGroup(groupName);
+      const result = await apiActivateGroup(endpointName);
 
       await loadData();
       return { success: true, message: result.message || '端点激活成功' };

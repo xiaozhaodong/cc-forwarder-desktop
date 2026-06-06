@@ -242,6 +242,36 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 			description: "上游ID字段",
 		},
 		{
+			table:       "request_logs",
+			checkColumn: "route_mode",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN route_mode TEXT DEFAULT 'auto'",
+			description: "Claude路由模式字段",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "requested_endpoint",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN requested_endpoint TEXT DEFAULT ''",
+			description: "Claude手动请求端点字段",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "effective_endpoint",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN effective_endpoint TEXT DEFAULT ''",
+			description: "Claude实际路由端点字段",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "fallback_reason",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN fallback_reason TEXT DEFAULT ''",
+			description: "Claude路由fallback原因字段",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "route_decision_at",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN route_decision_at DATETIME",
+			description: "Claude路由决策时间字段",
+		},
+		{
 			table:       "upstream_accounts",
 			checkColumn: "group_key",
 			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN group_key TEXT DEFAULT ''",

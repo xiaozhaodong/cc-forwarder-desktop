@@ -29,6 +29,13 @@ CREATE TABLE IF NOT EXISTS request_logs (
     upstream_name TEXT DEFAULT '',          -- 上游名称（账号名或端点名）
     upstream_id INTEGER,                    -- 上游ID（账号ID，可空）
     is_streaming BOOLEAN DEFAULT FALSE,     -- 是否为流式请求
+
+    -- Claude 端点路由诊断信息 (V1.1)
+    route_mode TEXT DEFAULT 'auto',          -- auto/manual_preferred/manual_fixed
+    requested_endpoint TEXT DEFAULT '',      -- 用户手动指定的端点
+    effective_endpoint TEXT DEFAULT '',      -- 本次实际选中的端点
+    fallback_reason TEXT DEFAULT '',         -- manual_preferred fallback 或 manual_fixed 阻塞原因
+    route_decision_at DATETIME,              -- 路由决策时间
     
     -- 状态信息 (v3.5.0更新: 生命周期状态与错误原因分离 - 2025-09-28)
     status TEXT NOT NULL DEFAULT 'pending', -- 生命周期状态: pending/forwarding/processing/retry/suspended/completed/failed/cancelled

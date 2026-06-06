@@ -73,6 +73,8 @@ type Manager struct {
 	groupManager   *GroupManager
 	keyManager     *KeyManager     // 管理多 API Key 状态
 	failureTracker *FailureTracker // 失败追踪器，用于检测端点持续故障
+	routeOverride  *RouteOverride
+	routeState     *RouteState
 	// EventBus for decoupled event publishing
 	eventBus events.EventBus
 	// 健康检查完成回调（用于推送 Wails 事件）
@@ -100,11 +102,13 @@ func NewManager(cfg *config.Config) *Manager {
 			Timeout:   cfg.Health.Timeout,
 			Transport: httpTransport,
 		},
-		ctx:          ctx,
-		cancel:       cancel,
-		fastTester:   NewFastTester(cfg),
-		groupManager: NewGroupManager(cfg),
-		keyManager:   NewKeyManager(), // 初始化 Key 管理器
+		ctx:           ctx,
+		cancel:        cancel,
+		fastTester:    NewFastTester(cfg),
+		groupManager:  NewGroupManager(cfg),
+		keyManager:    NewKeyManager(), // 初始化 Key 管理器
+		routeOverride: NewRouteOverride(),
+		routeState:    NewRouteState(),
 		failureTracker: NewFailureTracker(
 			cfg.FailureTracker.Enabled,
 			cfg.FailureTracker.TimeWindow,

@@ -18,6 +18,14 @@ export function CheckPortAvailable(arg1) {
   return window['go']['main']['App']['CheckPortAvailable'](arg1);
 }
 
+export function ClearClaudeRoutingOverride() {
+  return window['go']['main']['App']['ClearClaudeRoutingOverride']();
+}
+
+export function ClearNegativeHitCache(arg1) {
+  return window['go']['main']['App']['ClearNegativeHitCache'](arg1);
+}
+
 export function CreateEndpointRecord(arg1) {
   return window['go']['main']['App']['CreateEndpointRecord'](arg1);
 }
@@ -60,6 +68,10 @@ export function GetAllSettings() {
 
 export function GetChannels() {
   return window['go']['main']['App']['GetChannels']();
+}
+
+export function GetClaudeRoutingState() {
+  return window['go']['main']['App']['GetClaudeRoutingState']();
 }
 
 export function GetCodexModelCatalog() {
@@ -232,6 +244,10 @@ export function ResumeGroup(arg1) {
 
 export function SaveCodexModelCatalog(arg1) {
   return window['go']['main']['App']['SaveCodexModelCatalog'](arg1);
+}
+
+export function SetClaudeRoutingOverride(arg1) {
+  return window['go']['main']['App']['SetClaudeRoutingOverride'](arg1);
 }
 
 export function SetDefaultModelPricing(arg1) {

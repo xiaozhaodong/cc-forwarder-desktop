@@ -28,6 +28,10 @@ type ActiveRequest struct {
 	UpstreamSourceName string `json:"upstream_source_name"` // 订阅源名（账号链路）或固定来源
 	UpstreamName       string `json:"upstream_name"`        // 账号名或端点名
 	UpstreamID         int64  `json:"upstream_id"`          // 上游ID（账号ID）
+	RouteMode          string `json:"route_mode"`           // Claude 路由模式
+	RequestedEndpoint  string `json:"requested_endpoint"`   // 用户手动指定的端点
+	EffectiveEndpoint  string `json:"effective_endpoint"`   // 本次实际选中的端点
+	FallbackReason     string `json:"fallback_reason"`      // fallback 或阻塞原因
 	RetryCount         int    `json:"retry_count"`          // 重试次数
 	HTTPStatus         int    `json:"http_status"`          // HTTP状态码
 	ModelName          string `json:"model_name"`           // 模型名称
@@ -47,6 +51,8 @@ type ActiveRequest struct {
 	DurationMs   int64      `json:"duration_ms"`
 	FirstTokenMs *int64     `json:"first_token_ms,omitempty"`
 	TotalCostUSD float64    `json:"total_cost_usd"`
+
+	RouteDecisionAt *time.Time `json:"route_decision_at,omitempty"`
 
 	// 内部字段
 	mu sync.RWMutex `json:"-"` // 保护单个请求的并发访问

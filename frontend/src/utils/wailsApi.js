@@ -396,6 +396,68 @@ export const activateGroup = async (groupName) => {
   return { success: true };
 };
 
+const normalizeClaudeRoutingState = (state = {}) => ({
+  mode: state.mode || state.Mode || 'auto',
+  endpoint_name: state.endpoint_name || state.endpointName || state.EndpointName || '',
+  endpointName: state.endpoint_name || state.endpointName || state.EndpointName || '',
+  set_by: state.set_by || state.setBy || state.SetBy || '',
+  setAt: state.set_at || state.setAt || state.SetAt || '',
+  set_at: state.set_at || state.setAt || state.SetAt || '',
+  fallback_enabled: state.fallback_enabled ?? state.fallbackEnabled ?? state.FallbackEnabled ?? true,
+  fallbackEnabled: state.fallback_enabled ?? state.fallbackEnabled ?? state.FallbackEnabled ?? true,
+  revision: state.revision ?? state.Revision ?? 0,
+  fallback_reason: state.fallback_reason || state.fallbackReason || state.FallbackReason || '',
+  fallbackReason: state.fallback_reason || state.fallbackReason || state.FallbackReason || '',
+  last_effective_endpoint: state.last_effective_endpoint || state.lastEffectiveEndpoint || state.LastEffectiveEndpoint || '',
+  lastEffectiveEndpoint: state.last_effective_endpoint || state.lastEffectiveEndpoint || state.LastEffectiveEndpoint || '',
+  last_decision_at: state.last_decision_at || state.lastDecisionAt || state.LastDecisionAt || '',
+  lastDecisionAt: state.last_decision_at || state.lastDecisionAt || state.LastDecisionAt || '',
+  current_active_endpoint: state.current_active_endpoint || state.currentActiveEndpoint || state.CurrentActiveEndpoint || '',
+  currentActiveEndpoint: state.current_active_endpoint || state.currentActiveEndpoint || state.CurrentActiveEndpoint || '',
+  available_endpoints: state.available_endpoints || state.availableEndpoints || state.AvailableEndpoints || [],
+  availableEndpoints: state.available_endpoints || state.availableEndpoints || state.AvailableEndpoints || []
+});
+
+export const getClaudeRoutingState = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('GetClaudeRoutingState');
+  const state = await method();
+  return normalizeClaudeRoutingState(state);
+};
+
+export const setClaudeRoutingOverride = async ({ mode, endpointName, endpoint_name, fallbackEnabled, fallback_enabled } = {}) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('SetClaudeRoutingOverride');
+  const state = await method({
+    mode: mode || 'auto',
+    endpoint_name: endpoint_name || endpointName || '',
+    fallback_enabled: fallback_enabled ?? fallbackEnabled ?? false
+  });
+  return normalizeClaudeRoutingState(state);
+};
+
+export const clearClaudeRoutingOverride = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('ClearClaudeRoutingOverride');
+  const state = await method();
+  return normalizeClaudeRoutingState(state);
+};
+
+export const clearNegativeHitCache = async (endpointName = '') => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('ClearNegativeHitCache');
+  await method(endpointName || '');
+  return { success: true };
+};
+
 export const pauseGroup = async (groupName) => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
@@ -1029,6 +1091,16 @@ export const getRequests = async (params = {}) => {
     is_streaming: r.is_streaming,
     total_cost_usd: r.cost,
     cost: r.cost,
+    route_mode: r.route_mode || r.routeMode || 'auto',
+    routeMode: r.route_mode || r.routeMode || 'auto',
+    requested_endpoint: r.requested_endpoint || r.requestedEndpoint || '',
+    requestedEndpoint: r.requested_endpoint || r.requestedEndpoint || '',
+    effective_endpoint: r.effective_endpoint || r.effectiveEndpoint || '',
+    effectiveEndpoint: r.effective_endpoint || r.effectiveEndpoint || '',
+    fallback_reason: r.fallback_reason || r.fallbackReason || '',
+    fallbackReason: r.fallback_reason || r.fallbackReason || '',
+    route_decision_at: r.route_decision_at || r.routeDecisionAt || '',
+    routeDecisionAt: r.route_decision_at || r.routeDecisionAt || '',
     // 错误信息字段
     failure_reason: r.failure_reason || '',
     cancel_reason: r.cancel_reason || ''

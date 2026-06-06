@@ -83,6 +83,11 @@ func TestSQLiteSchemaInit_OldRequestLogsWithoutUpstreamColumns(t *testing.T) {
 		"upstream_source_name",
 		"upstream_name",
 		"upstream_id",
+		"route_mode",
+		"requested_endpoint",
+		"effective_endpoint",
+		"fallback_reason",
+		"route_decision_at",
 	}
 	for _, col := range requiredColumns {
 		var count int
@@ -188,6 +193,83 @@ func TestSQLiteAccountRequestsArchiveIntoRequestLogs(t *testing.T) {
 	assert.Equal(t, int64(20), inputTokens)
 	assert.Equal(t, int64(5), outputTokens)
 	assert.Equal(t, int64(2), cacheReadToken)
+}
+
+func TestSQLiteRequestLogsPersistRouteDiagnostics(t *testing.T) {
+	cfg := &Config{
+		Enabled:         true,
+		DatabasePath:    ":memory:",
+		BufferSize:      10,
+		BatchSize:       5,
+		FlushInterval:   50 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
+		HotPool:         &HotPoolSettings{Enabled: false},
+	}
+
+	tracker, err := NewUsageTracker(cfg)
+	require.NoError(t, err)
+	defer tracker.Close()
+
+	requestID := "req-route-diagnostics-001"
+	tracker.RecordRequestStart(requestID, "127.0.0.1", "claude-code", "POST", "/v1/messages", true)
+
+	routeMode := "manual_preferred"
+	requestedEndpoint := "primary"
+	effectiveEndpoint := "backup"
+	fallbackReason := "manual_preferred_fallback"
+	decisionAt := time.Now().Truncate(time.Second)
+	tracker.RecordRequestUpdate(requestID, UpdateOptions{
+		RouteMode:         &routeMode,
+		RequestedEndpoint: &requestedEndpoint,
+		EffectiveEndpoint: &effectiveEndpoint,
+		FallbackReason:    &fallbackReason,
+		RouteDecisionAt:   &decisionAt,
+	})
+
+	require.Eventually(t, func() bool {
+		details, err := tracker.QueryRequestDetails(context.Background(), &QueryOptions{Limit: 10})
+		if err != nil || len(details) == 0 {
+			return false
+		}
+		for _, detail := range details {
+			if detail.RequestID != requestID {
+				continue
+			}
+			return detail.RouteMode == routeMode &&
+				detail.RequestedEndpoint == requestedEndpoint &&
+				detail.EffectiveEndpoint == effectiveEndpoint &&
+				detail.FallbackReason == fallbackReason &&
+				detail.RouteDecisionAt != nil
+		}
+		return false
+	}, 2*time.Second, 50*time.Millisecond)
+}
+
+func TestActiveRequestToDetailCarriesRouteDiagnostics(t *testing.T) {
+	decisionAt := time.Now().Truncate(time.Second)
+	tracker := &UsageTracker{}
+
+	detail := tracker.ActiveRequestToDetail(&ActiveRequest{
+		RequestID:         "req-hot-route-001",
+		StartTime:         time.Now(),
+		Method:            "POST",
+		Path:              "/v1/messages",
+		Status:            "processing",
+		RouteMode:         "manual_fixed",
+		RequestedEndpoint: "primary",
+		EffectiveEndpoint: "primary",
+		FallbackReason:    "failure_tracker_threshold",
+		RouteDecisionAt:   &decisionAt,
+	})
+
+	assert.Equal(t, "manual_fixed", detail.RouteMode)
+	assert.Equal(t, "primary", detail.RequestedEndpoint)
+	assert.Equal(t, "primary", detail.EffectiveEndpoint)
+	assert.Equal(t, "failure_tracker_threshold", detail.FallbackReason)
+	require.NotNil(t, detail.RouteDecisionAt)
+	assert.True(t, detail.RouteDecisionAt.Equal(decisionAt))
 }
 
 func TestSQLiteRestartDoesNotDeleteAccountRequestsAfterMigration(t *testing.T) {

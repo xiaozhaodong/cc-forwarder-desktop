@@ -92,6 +92,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 	// 创建管理器 - 修复依赖注入
 	retryMgr := rh.retryManagerFactory.NewRetryManager()
 	errorRecovery := rh.errorRecoveryFactory.NewErrorRecoveryManager(rh.usageTracker)
+	routeProfile := endpoint.BuildRouteRequestProfile(r.URL.Path, bodyBytes)
 
 	// 外层循环处理组切换逻辑
 	for {
@@ -106,8 +107,23 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 		}
 
 		// 获取端点列表
-		endpoints := retryMgr.GetHealthyEndpoints(ctx)
+		var endpoints []*endpoint.Endpoint
+		if cfg := rh.endpointManager.GetConfig(); cfg != nil && cfg.Strategy.Type == "fastest" && cfg.Strategy.FastTestEnabled {
+			endpoints = rh.endpointManager.GetFastestEndpointsWithRealTimeTestForRoute(ctx, routeProfile)
+		} else {
+			endpoints = rh.endpointManager.GetHealthyEndpointsForRoute(routeProfile)
+		}
 		if len(endpoints) == 0 {
+			if block := rh.endpointManager.GetManualFixedRouteBlock(routeProfile); block != nil {
+				rh.endpointManager.NoteRouteDecision(block.Endpoint, block.Reason)
+				lifecycleManager.FailRequest(block.Reason, block.Message, block.StatusCode)
+				if block.RetryAfter > 0 {
+					w.Header().Set("Retry-After", strconv.Itoa(block.RetryAfter))
+				}
+				http.Error(w, fmt.Sprintf("%s: %s", block.Code, block.Message), block.StatusCode)
+				return
+			}
+
 			// 创建特殊错误，交给错误分类和重试系统处理
 			noHealthyErr := fmt.Errorf("no endpoints available")
 			errorRecovery := rh.errorRecoveryFactory.NewErrorRecoveryManager(rh.usageTracker)
@@ -136,6 +152,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 
 					fallbackEndpoints = append(fallbackEndpoints, ep)
 				}
+				fallbackEndpoints = rh.endpointManager.FilterRouteCandidates(fallbackEndpoints, routeProfile)
 
 				if len(fallbackEndpoints) > 0 {
 					slog.InfoContext(ctx, fmt.Sprintf("🔄 [健康检查回退] [%s] 忽略健康状态，尝试 %d 个端点（已过滤失败和冷却）",
@@ -165,6 +182,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 		groupSwitchNeeded := false
 		for i, endpoint := range endpoints {
 			lifecycleManager.SetEndpoint(endpoint.Config.Name, endpoint.Config.Group, endpoint.Config.Channel)
+			rh.noteRouteDecision(endpoint.Config.Name)
 			lifecycleManager.UpdateStatus("forwarding", i, 0)
 
 			// 🔧 [端点上下文修复] 立即设置端点信息到请求上下文，确保所有分支（成功/失败/取消）的日志都能正确记录端点
@@ -285,6 +303,10 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 							failCount := rh.endpointManager.RecordFailure(endpoint.Config.Name)
 							slog.Info(fmt.Sprintf("📊 [失败追踪] [%s] 端点 %s 失败，窗口内失败次数: %d",
 								connID, endpoint.Config.Name, failCount))
+						} else if decision.FailureClass != FailureClassNone && decision.FailureClass != FailureClassClientCancel {
+							rh.endpointManager.RecordNegativeRouteHit(endpoint.Config.Name, string(decision.FailureClass), routeProfile, err.Error())
+							slog.Info(fmt.Sprintf("🧭 [路由负向缓存] [%s] 端点 %s 写入负向命中: %s",
+								connID, endpoint.Config.Name, decision.FailureClass))
 						}
 
 						// 获取真实状态码（用于内部记录）
@@ -298,7 +320,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 						// 避免 Claude Code SDK 的不同重试策略干扰 ccf 的故障转移逻辑
 						clientStatusCode := statusCode
 						retryAfter := decision.RetryAfterSeconds
-						if errorCtx.ErrorType == ErrorTypeRateLimit || errorCtx.ErrorType == ErrorTypeServerError {
+						if decision.ShouldRecord && (errorCtx.ErrorType == ErrorTypeRateLimit || errorCtx.ErrorType == ErrorTypeServerError) {
 							clientStatusCode = http.StatusInternalServerError // 统一返回 500
 							// 从配置读取失败阈值作为重试延迟
 							if threshold := rh.endpointManager.GetConfig().FailureTracker.Threshold; threshold > 0 {
@@ -381,9 +403,9 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 
 	// 检查是否应该挂起请求
 	if suspensionMgr.ShouldSuspend(ctx) {
-		currentEndpoints := rh.endpointManager.GetHealthyEndpoints()
+		currentEndpoints := rh.endpointManager.GetHealthyEndpointsForRoute(routeProfile)
 		if cfg := rh.endpointManager.GetConfig(); cfg != nil && cfg.Strategy.Type == "fastest" && cfg.Strategy.FastTestEnabled {
-			currentEndpoints = rh.endpointManager.GetFastestEndpointsWithRealTimeTest(ctx)
+			currentEndpoints = rh.endpointManager.GetFastestEndpointsWithRealTimeTestForRoute(ctx, routeProfile)
 		}
 
 		// 🚀 [状态机重构] Phase 4: 挂起时更新状态（移除重复的失败原因记录）
@@ -403,9 +425,9 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 
 			var newEndpoints []*endpoint.Endpoint
 			if rh.endpointManager.GetConfig().Strategy.Type == "fastest" && rh.endpointManager.GetConfig().Strategy.FastTestEnabled {
-				newEndpoints = rh.endpointManager.GetFastestEndpointsWithRealTimeTest(ctx)
+				newEndpoints = rh.endpointManager.GetFastestEndpointsWithRealTimeTestForRoute(ctx, routeProfile)
 			} else {
-				newEndpoints = rh.endpointManager.GetHealthyEndpoints()
+				newEndpoints = rh.endpointManager.GetHealthyEndpointsForRoute(routeProfile)
 			}
 
 			if len(newEndpoints) > 0 {
@@ -437,6 +459,15 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 	// 所有端点都失败了，使用FailRequest方法标记最终失败（修复：添加HTTP状态码）
 	lifecycleManager.FailRequest("endpoint_exhausted", "All endpoints failed", http.StatusBadGateway)
 	http.Error(w, "All endpoints failed", http.StatusBadGateway)
+}
+
+func (rh *RegularHandler) noteRouteDecision(endpointName string) {
+	override := rh.endpointManager.GetClaudeRoutingOverride()
+	fallbackReason := ""
+	if override.Mode == endpoint.RouteModeManualPreferred && override.EndpointName != "" && endpointName != override.EndpointName {
+		fallbackReason = "manual_preferred_fallback"
+	}
+	rh.endpointManager.NoteRouteDecision(endpointName, fallbackReason)
 }
 
 // executeRequest 执行单个请求

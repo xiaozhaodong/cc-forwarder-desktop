@@ -312,6 +312,7 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			start_time, end_time, duration_ms, first_token_ms,
 			channel, endpoint_name, group_name, model_name,
 			upstream_type, upstream_source_name, upstream_name, upstream_id,
+			route_mode, requested_endpoint, effective_endpoint, fallback_reason, route_decision_at,
 			status, http_status_code, retry_count,
 			failure_reason, cancel_reason,
 			is_streaming,
@@ -321,7 +322,7 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			input_cost_usd, output_cost_usd,
 			cache_creation_cost_usd, cache_creation_5m_cost_usd, cache_creation_1h_cost_usd,
 			cache_read_cost_usd, total_cost_usd
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare request_logs statement: %w", err)
@@ -346,6 +347,16 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 		} else {
 			endTime = nil
 		}
+		var routeDecisionAt interface{}
+		if req.RouteDecisionAt != nil {
+			routeDecisionAt = am.formatTime(*req.RouteDecisionAt)
+		} else {
+			routeDecisionAt = nil
+		}
+		routeMode := req.RouteMode
+		if routeMode == "" {
+			routeMode = "auto"
+		}
 
 		_, err = requestStmt.ExecContext(ctx,
 			req.RequestID,
@@ -365,6 +376,11 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			req.UpstreamSourceName,
 			req.UpstreamName,
 			nullInt64(req.UpstreamID),
+			routeMode,
+			req.RequestedEndpoint,
+			req.EffectiveEndpoint,
+			req.FallbackReason,
+			routeDecisionAt,
 			req.Status,
 			req.HTTPStatus,
 			req.RetryCount,

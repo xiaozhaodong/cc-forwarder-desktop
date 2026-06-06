@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"unicode/utf8"
 
 	"cc-forwarder/config"
@@ -48,9 +49,10 @@ type CountTokensResponse struct {
 // Handle 处理count_tokens请求 - 极简逻辑
 func (h *CountTokensHandler) Handle(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, connID string) {
 	slog.Info(fmt.Sprintf("🔢 [Token计数] [%s] 收到count_tokens请求", connID))
+	routeProfile := endpoint.BuildRouteRequestProfile(r.URL.Path, bodyBytes)
 
 	// 1. 找配置了 supports_count_tokens: true 的端点
-	supportedEndpoints := h.getSupportedEndpoints()
+	supportedEndpoints := h.getSupportedEndpoints(routeProfile)
 
 	// 2. 如果有，尝试转发
 	if len(supportedEndpoints) > 0 {
@@ -72,8 +74,8 @@ func (h *CountTokensHandler) Handle(ctx context.Context, w http.ResponseWriter, 
 }
 
 // getSupportedEndpoints 获取支持count_tokens的端点
-func (h *CountTokensHandler) getSupportedEndpoints() []*endpoint.Endpoint {
-	allEndpoints := h.endpointManager.GetHealthyEndpoints()
+func (h *CountTokensHandler) getSupportedEndpoints(profile endpoint.RouteRequestProfile) []*endpoint.Endpoint {
+	allEndpoints := h.endpointManager.GetHealthyEndpointsForRoute(profile)
 	var supported []*endpoint.Endpoint
 
 	for _, ep := range allEndpoints {
@@ -118,10 +120,35 @@ func (h *CountTokensHandler) tryForward(ctx context.Context, r *http.Request, bo
 				slog.Info(fmt.Sprintf("✅ [转发成功] [%s] 端点: %s", connID, ep.Config.Name))
 				return bodyBytes, true
 			}
+			continue
+		}
+
+		errorBody, _ := io.ReadAll(resp.Body)
+		if isCountTokensUnsupported(resp.StatusCode, string(errorBody)) {
+			profile := endpoint.BuildRouteRequestProfile(r.URL.Path, bodyBytes)
+			h.endpointManager.RecordNegativeRouteHit(ep.Config.Name, endpoint.FailureClassCountTokensUnsupported, profile, string(errorBody))
+			slog.Info(fmt.Sprintf("🧭 [Token计数] [%s] 端点 %s 不支持 count_tokens，写入负向缓存", connID, ep.Config.Name))
 		}
 	}
 
 	return nil, false
+}
+
+func isCountTokensUnsupported(statusCode int, body string) bool {
+	if statusCode == http.StatusNotFound || statusCode == http.StatusMethodNotAllowed || statusCode == http.StatusNotImplemented {
+		return true
+	}
+	lower := strings.ToLower(body)
+	mentionsCountTokens := strings.Contains(lower, "count_tokens") ||
+		strings.Contains(lower, "count tokens") ||
+		strings.Contains(lower, "count token") ||
+		strings.Contains(lower, "token counting")
+	if !mentionsCountTokens {
+		return false
+	}
+	return strings.Contains(lower, "not implemented") ||
+		strings.Contains(lower, "unsupported") ||
+		strings.Contains(lower, "not supported")
 }
 
 // respondWithEstimation 返回本地估算结果

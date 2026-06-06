@@ -534,6 +534,26 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 		setParts = append(setParts, "failure_reason = ?")
 		args = append(args, *opts.FailureReason)
 	}
+	if opts.RouteMode != nil {
+		setParts = append(setParts, "route_mode = ?")
+		args = append(args, *opts.RouteMode)
+	}
+	if opts.RequestedEndpoint != nil {
+		setParts = append(setParts, "requested_endpoint = ?")
+		args = append(args, *opts.RequestedEndpoint)
+	}
+	if opts.EffectiveEndpoint != nil {
+		setParts = append(setParts, "effective_endpoint = ?")
+		args = append(args, *opts.EffectiveEndpoint)
+	}
+	if opts.FallbackReason != nil {
+		setParts = append(setParts, "fallback_reason = ?")
+		args = append(args, *opts.FallbackReason)
+	}
+	if opts.RouteDecisionAt != nil {
+		setParts = append(setParts, "route_decision_at = ?")
+		args = append(args, *opts.RouteDecisionAt)
+	}
 
 	// 如果没有字段需要更新，返回错误
 	if len(setParts) == 0 {

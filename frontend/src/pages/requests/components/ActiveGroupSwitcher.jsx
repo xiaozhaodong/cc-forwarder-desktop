@@ -4,7 +4,7 @@
 // ============================================
 
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { ArrowLeftRight, Server, Check, AlertCircle } from 'lucide-react';
+import { ArrowLeftRight, Server, Check, AlertCircle, LockKeyhole, RotateCcw, Trash2 } from 'lucide-react';
 
 /**
  * ActiveGroupSwitcher - 端点快捷切换器
@@ -17,7 +17,10 @@ import { ArrowLeftRight, Server, Check, AlertCircle } from 'lucide-react';
 const ActiveGroupSwitcher = ({
   groups = [],
   activeGroup = '',
+  routingState = null,
   onSwitch,
+  onRestoreAuto,
+  onClearRouteCache,
   loading = false
 }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -28,6 +31,10 @@ const ActiveGroupSwitcher = ({
   const sortedGroups = useMemo(() => {
     return [...groups].sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
   }, [groups]);
+
+  const routeMode = routingState?.mode || 'auto';
+  const requestedEndpoint = routingState?.endpointName || routingState?.endpoint_name || '';
+  const isManualFixed = routeMode === 'manual_fixed';
 
   // 点击外部关闭
   useEffect(() => {
@@ -55,22 +62,67 @@ const ActiveGroupSwitcher = ({
 
   // 处理端点选择
   const handleEndpointSelect = async (endpoint) => {
-    if (switching) return;
+    if (switching || loading) return;
 
-    // 如果选择的是当前活跃端点，直接关闭
-    if (endpoint.name === activeGroup) {
+    if (
+      endpoint.name === activeGroup &&
+      routeMode === 'manual_preferred' &&
+      requestedEndpoint === endpoint.name
+    ) {
       setIsOpen(false);
       return;
     }
 
     setSwitching(true);
     try {
-      // 只传递端点名（组名）
-      await onSwitch?.(endpoint.name, null);
+      await onSwitch?.(endpoint.name, 'manual_preferred');
       setIsOpen(false);
     } catch (error) {
       console.error('切换失败:', error);
       alert(`切换失败: ${error.message || '未知错误'}`);
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  const handleFixedSelect = async (endpoint) => {
+    if (switching || loading) return;
+
+    setSwitching(true);
+    try {
+      await onSwitch?.(endpoint.name, 'manual_fixed');
+      setIsOpen(false);
+    } catch (error) {
+      console.error('固定失败:', error);
+      alert(`固定失败: ${error.message || '未知错误'}`);
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  const handleRestoreAuto = async () => {
+    if (switching || loading) return;
+    setSwitching(true);
+    try {
+      await onRestoreAuto?.();
+      setIsOpen(false);
+    } catch (error) {
+      console.error('恢复自动失败:', error);
+      alert(`恢复自动失败: ${error.message || '未知错误'}`);
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  const handleClearCache = async () => {
+    if (switching || loading) return;
+    setSwitching(true);
+    try {
+      await onClearRouteCache?.(requestedEndpoint || activeGroup || '');
+      setIsOpen(false);
+    } catch (error) {
+      console.error('清理缓存失败:', error);
+      alert(`清理缓存失败: ${error.message || '未知错误'}`);
     } finally {
       setSwitching(false);
     }
@@ -117,6 +169,12 @@ const ActiveGroupSwitcher = ({
   // 查找当前活跃端点
   const activeEndpoint = sortedGroups.find(g => g.name === activeGroup) || sortedGroups[0];
   const activeHealth = getHealthStyle(activeEndpoint);
+  const modeLabel = routeMode === 'manual_fixed' ? '固定' : routeMode === 'manual_preferred' ? '优选' : '自动';
+  const modeClass = routeMode === 'manual_fixed'
+    ? 'bg-rose-50 text-rose-600 border-rose-100'
+    : routeMode === 'manual_preferred'
+      ? 'bg-indigo-50 text-indigo-600 border-indigo-100'
+      : 'bg-slate-50 text-slate-500 border-slate-100';
 
   return (
     <div className="relative" ref={containerRef}>
@@ -142,6 +200,9 @@ const ActiveGroupSwitcher = ({
           <span className="font-bold truncate">{activeGroup || '未选择'}</span>
         </div>
 
+        <span className={`hidden lg:inline-flex px-1.5 py-0.5 rounded border text-[10px] font-semibold shrink-0 ${modeClass}`}>
+          {modeLabel}
+        </span>
         <ArrowLeftRight className={`w-3.5 h-3.5 ml-1 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
@@ -150,11 +211,35 @@ const ActiveGroupSwitcher = ({
         <div className="absolute top-full left-0 mt-2 w-[280px] bg-white rounded-xl shadow-xl border border-gray-100 ring-1 ring-black/5 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
           {/* 标题 */}
           <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
-            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              选择端点
-            </div>
-            <div className="text-[10px] text-gray-400 mt-0.5">
-              共 {sortedGroups.length} 个端点
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  选择端点
+                </div>
+                <div className="text-[10px] text-gray-400 mt-0.5">
+                  共 {sortedGroups.length} 个端点
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={handleRestoreAuto}
+                  disabled={switching || loading || routeMode === 'auto'}
+                  title="恢复自动路由"
+                  className="p-1.5 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-white border border-transparent hover:border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearCache}
+                  disabled={switching || loading}
+                  title="清理路由缓存"
+                  className="p-1.5 rounded-md text-slate-400 hover:text-rose-600 hover:bg-white border border-transparent hover:border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -165,24 +250,27 @@ const ActiveGroupSwitcher = ({
               const health = getHealthStyle(endpoint);
 
               return (
-                <button
+                <div
                   key={endpoint.name}
-                  onClick={() => handleEndpointSelect(endpoint)}
-                  disabled={switching}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm text-left transition-colors ${
                     isActive
                       ? 'bg-indigo-50 text-indigo-700'
                       : 'hover:bg-gray-50 text-gray-700'
                   } ${switching ? 'opacity-50 cursor-wait' : ''}`}
                 >
-                  <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleEndpointSelect(endpoint)}
+                    disabled={switching || loading}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:cursor-wait"
+                  >
                     {/* 连通性状态指示点 */}
                     <span className={`w-2 h-2 rounded-full ${health.dot}`} />
 
-                    <div className="flex flex-col">
+                    <div className="flex min-w-0 flex-col">
                       {/* 端点名称 + 渠道 */}
                       <div className="flex items-center gap-2">
-                        <span className={`font-medium ${isActive ? 'text-indigo-700' : 'text-gray-800'}`}>
+                        <span className={`font-medium truncate ${isActive ? 'text-indigo-700' : 'text-gray-800'}`}>
                           {endpoint.name}
                         </span>
                         {endpoint.channel && (
@@ -197,7 +285,7 @@ const ActiveGroupSwitcher = ({
                         {endpoint.in_cooldown && ' · 冷却中'}
                       </span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* 选中状态 */}
                   <div className="flex items-center gap-2">
@@ -207,8 +295,21 @@ const ActiveGroupSwitcher = ({
                       </span>
                     )}
                     {isActive && <Check className="w-4 h-4 text-indigo-600" />}
+                    <button
+                      type="button"
+                      onClick={() => handleFixedSelect(endpoint)}
+                      disabled={switching || loading || (isManualFixed && requestedEndpoint === endpoint.name)}
+                      title="严格固定到此端点"
+                      className={`p-1 rounded-md border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                        isManualFixed && requestedEndpoint === endpoint.name
+                          ? 'bg-rose-50 text-rose-600 border-rose-100'
+                          : 'text-slate-400 border-transparent hover:bg-rose-50 hover:text-rose-600 hover:border-rose-100'
+                      }`}
+                    >
+                      <LockKeyhole className="w-3.5 h-3.5" />
+                    </button>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>

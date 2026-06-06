@@ -237,6 +237,8 @@ func (sh *StreamingHandler) setStreamingHeaders(w http.ResponseWriter) {
 
 // executeStreamingWithRetry 执行带重试的流式处理
 func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, lifecycleManager RequestLifecycleManager, flusher http.Flusher) {
+	routeProfile := endpoint.BuildRouteRequestProfile(r.URL.Path, bodyBytes)
+
 restartLoop:
 	for restartCount := 0; restartCount < maxStreamingExecutionRestarts; restartCount++ {
 		connID := lifecycleManager.GetRequestID()
@@ -256,12 +258,22 @@ restartLoop:
 
 		var endpoints []*endpoint.Endpoint
 		if sh.endpointManager.GetConfig().Strategy.Type == "fastest" && sh.endpointManager.GetConfig().Strategy.FastTestEnabled {
-			endpoints = sh.endpointManager.GetFastestEndpointsWithRealTimeTest(ctx)
+			endpoints = sh.endpointManager.GetFastestEndpointsWithRealTimeTestForRoute(ctx, routeProfile)
 		} else {
-			endpoints = sh.endpointManager.GetHealthyEndpoints()
+			endpoints = sh.endpointManager.GetHealthyEndpointsForRoute(routeProfile)
 		}
 
 		if len(endpoints) == 0 {
+			if block := sh.endpointManager.GetManualFixedRouteBlock(routeProfile); block != nil {
+				sh.endpointManager.NoteRouteDecision(block.Endpoint, block.Reason)
+				lifecycleManager.FailRequest(block.Reason, block.Message, block.StatusCode)
+				if block.RetryAfter > 0 {
+					setStreamingHeaderIfPossible(w, "Retry-After", strconv.Itoa(block.RetryAfter))
+				}
+				writeStreamingTerminalError(w, flusher, block.StatusCode, fmt.Sprintf("%s: %s", block.Code, block.Message))
+				return
+			}
+
 			// 创建特殊错误，交给错误分类和重试系统处理
 			noHealthyErr := fmt.Errorf("no endpoints available")
 			errorRecovery := sh.errorRecoveryFactory.NewErrorRecoveryManager(sh.usageTracker)
@@ -290,6 +302,7 @@ restartLoop:
 
 					fallbackEndpoints = append(fallbackEndpoints, ep)
 				}
+				fallbackEndpoints = sh.endpointManager.FilterRouteCandidates(fallbackEndpoints, routeProfile)
 
 				if len(fallbackEndpoints) > 0 {
 					slog.InfoContext(ctx, fmt.Sprintf("🔄 [健康检查回退] [%s] 忽略健康状态，尝试 %d 个端点（已过滤失败和冷却）",
@@ -327,6 +340,7 @@ restartLoop:
 			lastFailedEndpoint = ep.Config.Name // 🚀 [端点自愈] 记录当前尝试的端点
 			// 更新生命周期管理器信息
 			lifecycleManager.SetEndpoint(ep.Config.Name, ep.Config.Group, ep.Config.Channel)
+			sh.noteRouteDecision(ep.Config.Name)
 			lifecycleManager.UpdateStatus("forwarding", i, 0)
 
 			// 🔧 [端点上下文修复] 立即设置端点信息到请求上下文，确保所有分支（成功/失败/取消）的日志都能正确记录端点
@@ -652,6 +666,10 @@ restartLoop:
 							failCount := sh.endpointManager.RecordFailure(ep.Config.Name)
 							slog.Info(fmt.Sprintf("📊 [失败追踪] [%s] 端点 %s 失败，窗口内失败次数: %d",
 								connID, ep.Config.Name, failCount))
+						} else if decision.FailureClass != FailureClassNone && decision.FailureClass != FailureClassClientCancel {
+							sh.endpointManager.RecordNegativeRouteHit(ep.Config.Name, string(decision.FailureClass), routeProfile, lastErr.Error())
+							slog.Info(fmt.Sprintf("🧭 [路由负向缓存] [%s] 端点 %s 写入负向命中: %s",
+								connID, ep.Config.Name, decision.FailureClass))
 						}
 
 						// 获取真实状态码（用于内部记录）
@@ -674,7 +692,7 @@ restartLoop:
 						// 避免 Claude Code SDK 的不同重试策略干扰 ccf 的故障转移逻辑
 						clientStatusCode := statusCode
 						retryAfter := decision.RetryAfterSeconds
-						if errorCtx.ErrorType == ErrorTypeRateLimit || errorCtx.ErrorType == ErrorTypeServerError {
+						if decision.ShouldRecord && (errorCtx.ErrorType == ErrorTypeRateLimit || errorCtx.ErrorType == ErrorTypeServerError) {
 							clientStatusCode = http.StatusInternalServerError // 统一返回 500
 							// 从配置读取失败阈值作为重试延迟
 							if threshold := sh.endpointManager.GetConfig().FailureTracker.Threshold; threshold > 0 {
@@ -836,9 +854,9 @@ restartLoop:
 
 		// 检查是否应该挂起请求
 		if suspensionMgr.ShouldSuspend(ctx) {
-			currentEndpoints := sh.endpointManager.GetHealthyEndpoints()
+			currentEndpoints := sh.endpointManager.GetHealthyEndpointsForRoute(routeProfile)
 			if cfg := sh.endpointManager.GetConfig(); cfg != nil && cfg.Strategy.Type == "fastest" && cfg.Strategy.FastTestEnabled {
-				currentEndpoints = sh.endpointManager.GetFastestEndpointsWithRealTimeTest(ctx)
+				currentEndpoints = sh.endpointManager.GetFastestEndpointsWithRealTimeTestForRoute(ctx, routeProfile)
 			}
 
 			// 🚀 [状态机重构] Phase 4: 挂起时更新状态（移除重复的失败原因记录）
@@ -861,9 +879,9 @@ restartLoop:
 
 				var newEndpoints []*endpoint.Endpoint
 				if sh.endpointManager.GetConfig().Strategy.Type == "fastest" && sh.endpointManager.GetConfig().Strategy.FastTestEnabled {
-					newEndpoints = sh.endpointManager.GetFastestEndpointsWithRealTimeTest(ctx)
+					newEndpoints = sh.endpointManager.GetFastestEndpointsWithRealTimeTestForRoute(ctx, routeProfile)
 				} else {
-					newEndpoints = sh.endpointManager.GetHealthyEndpoints()
+					newEndpoints = sh.endpointManager.GetHealthyEndpointsForRoute(routeProfile)
 				}
 
 				if len(newEndpoints) > 0 {
@@ -912,4 +930,13 @@ restartLoop:
 	slog.Error(fmt.Sprintf("❌ [流式重启超限] [%s] 连续重启超过上限 %d 次，终止处理", connID, maxStreamingExecutionRestarts))
 	lifecycleManager.FailRequest("streaming_restart_limit_exceeded", "streaming retry restart limit exceeded", http.StatusServiceUnavailable)
 	writeStreamingTerminalError(w, flusher, http.StatusServiceUnavailable, "streaming retry restart limit exceeded")
+}
+
+func (sh *StreamingHandler) noteRouteDecision(endpointName string) {
+	override := sh.endpointManager.GetClaudeRoutingOverride()
+	fallbackReason := ""
+	if override.Mode == endpoint.RouteModeManualPreferred && override.EndpointName != "" && endpointName != override.EndpointName {
+		fallbackReason = "manual_preferred_fallback"
+	}
+	sh.endpointManager.NoteRouteDecision(endpointName, fallbackReason)
 }

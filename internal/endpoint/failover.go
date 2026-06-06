@@ -4,6 +4,7 @@
 package endpoint
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -20,6 +21,10 @@ func (m *Manager) SetOnFailoverTriggered(fn func(failedEndpoint, newEndpoint str
 // 当请求在某端点上失败达到重试上限时调用
 // 返回: 新激活的端点名，如果没有可用端点则返回空字符串
 func (m *Manager) TriggerRequestFailover(failedEndpointName string, reason string) (string, error) {
+	return m.TriggerRequestFailoverWithCaller(failedEndpointName, reason, RouteCallerSystemFailoverRequest)
+}
+
+func (m *Manager) TriggerRequestFailoverWithCaller(failedEndpointName string, reason string, callerKind string) (string, error) {
 	cfg := m.getConfigSnapshot()
 
 	// 🔧 [热更新修复] 检查故障转移开关
@@ -34,6 +39,17 @@ func (m *Manager) TriggerRequestFailover(failedEndpointName string, reason strin
 	failedEndpoint := m.GetEndpointByNameAny(failedEndpointName)
 	if failedEndpoint == nil {
 		return "", fmt.Errorf("端点 %s 不存在", failedEndpointName)
+	}
+
+	newEndpointName := m.selectNextFailoverEndpoint(failedEndpointName)
+	if newEndpointName == "" {
+		slog.Error("❌ [故障转移] 没有可用的故障转移端点")
+		return "", fmt.Errorf("没有可用的故障转移端点")
+	}
+	if ok, blockReason := m.AllowSystemRouteSwitch(failedEndpointName, newEndpointName, callerKind); !ok {
+		m.NoteRouteDecision(failedEndpointName, blockReason)
+		slog.Warn(fmt.Sprintf("⛔ [故障转移] manual override 阻止系统切换: %s", blockReason))
+		return "", errors.New(blockReason)
 	}
 
 	// 计算冷却时间
@@ -57,13 +73,6 @@ func (m *Manager) TriggerRequestFailover(failedEndpointName string, reason strin
 	// 2. 停用失败端点的组
 	if err := m.groupManager.DeactivateGroup(failedEndpointName); err != nil {
 		slog.Warn(fmt.Sprintf("⚠️ [故障转移] 停用组失败: %v", err))
-	}
-
-	// 3. 选择下一个可用端点
-	newEndpointName := m.selectNextFailoverEndpoint(failedEndpointName)
-	if newEndpointName == "" {
-		slog.Error("❌ [故障转移] 没有可用的故障转移端点")
-		return "", fmt.Errorf("没有可用的故障转移端点")
 	}
 
 	// 4. 激活新端点

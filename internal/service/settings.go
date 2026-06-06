@@ -24,6 +24,7 @@ const (
 	CategoryRetention     = "retention"
 	CategoryHotPool       = "hot_pool"
 	CategoryServer        = "server"
+	CategoryClaudeRouting = "claude_routing"
 )
 
 // SettingValueType 设置值类型常量
@@ -107,6 +108,13 @@ func NewSettingsService(store store.SettingsStore) *SettingsService {
 				Description: "配置历史数据保留策略",
 				Icon:        "📦",
 				Order:       7,
+			},
+			CategoryClaudeRouting: {
+				Name:        CategoryClaudeRouting,
+				Label:       "Claude 路由",
+				Description: "记录 Claude 端点手动切换状态",
+				Icon:        "🧭",
+				Order:       8,
 			},
 			CategoryServer: {
 				Name:        CategoryServer,
@@ -352,6 +360,9 @@ func (s *SettingsService) GetAllDefaults() []*store.SettingRecord {
 	// Retention 设置
 	defaults = append(defaults, s.getDefaultsForCategory(CategoryRetention)...)
 
+	// ClaudeRouting 设置
+	defaults = append(defaults, s.getDefaultsForCategory(CategoryClaudeRouting)...)
+
 	return defaults
 }
 
@@ -423,6 +434,15 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 		return []*store.SettingRecord{
 			{Category: CategoryRetention, Key: "retention_days", Value: "0", ValueType: ValueTypeInt, Label: "数据保留天数", Description: "请求日志保留天数，0 表示永久保留", DisplayOrder: 1},
 			{Category: CategoryRetention, Key: "cleanup_interval", Value: "24h", ValueType: ValueTypeDuration, Label: "清理间隔", Description: "自动清理任务的执行间隔", DisplayOrder: 2},
+		}
+
+	case CategoryClaudeRouting:
+		return []*store.SettingRecord{
+			{Category: CategoryClaudeRouting, Key: "mode", Value: "auto", ValueType: ValueTypeString, Label: "路由模式", Description: "auto / manual_preferred / manual_fixed", DisplayOrder: 1},
+			{Category: CategoryClaudeRouting, Key: "endpoint_name", Value: "", ValueType: ValueTypeString, Label: "手动端点", Description: "手动路由目标端点名称", DisplayOrder: 2},
+			{Category: CategoryClaudeRouting, Key: "set_by", Value: "", ValueType: ValueTypeString, Label: "设置来源", Description: "最近一次路由模式修改来源", DisplayOrder: 3},
+			{Category: CategoryClaudeRouting, Key: "set_at", Value: "", ValueType: ValueTypeString, Label: "设置时间", Description: "最近一次路由模式修改时间", DisplayOrder: 4},
+			{Category: CategoryClaudeRouting, Key: "fallback_enabled", Value: "true", ValueType: ValueTypeBool, Label: "允许回退", Description: "手动优选模式下允许失败后回退其他端点", DisplayOrder: 5},
 		}
 
 	case CategoryHotPool:

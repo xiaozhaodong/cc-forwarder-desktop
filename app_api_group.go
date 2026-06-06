@@ -5,9 +5,10 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"time"
+
+	"cc-forwarder/internal/endpoint"
 )
 
 // ============================================================
@@ -72,38 +73,22 @@ func (a *App) GetGroups() []GroupInfo {
 	return result
 }
 
-// ActivateGroup 激活指定组（端点）
-// v5.0: 同时更新数据库中的 enabled 状态
+// ActivateGroup 激活指定组（端点），并记录为 Claude 手动优选路由。
 func (a *App) ActivateGroup(name string) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	manager := a.endpointManager
+	a.mu.RUnlock()
 
-	if a.endpointManager == nil {
+	if manager == nil {
 		return fmt.Errorf("端点管理器未初始化")
 	}
 
-	// v5.0: 如果有 endpointService，同步到数据库
-	if a.endpointService != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		// 1. 先禁用所有端点
-		if err := a.endpointService.DisableAllEndpoints(ctx); err != nil {
-			a.logger.Warn("禁用所有端点失败", "error", err)
-			// 继续执行，不阻断流程
-		}
-
-		// 2. 启用选中的端点
-		if err := a.endpointService.ToggleEndpoint(ctx, name, true); err != nil {
-			a.logger.Warn("启用端点失败", "endpoint", name, "error", err)
-			// 继续执行内存激活
-		} else {
-			a.logger.Info("✅ 端点已同步到数据库", "endpoint", name, "enabled", true)
-		}
-	}
-
-	// 3. 内存中激活组
-	return a.endpointManager.ManualActivateGroup(name)
+	_, err := a.SetClaudeRoutingOverride(SetClaudeRoutingOverrideInput{
+		Mode:            endpoint.RouteModeManualPreferred,
+		EndpointName:    name,
+		FallbackEnabled: true,
+	})
+	return err
 }
 
 // PauseGroup 暂停指定组

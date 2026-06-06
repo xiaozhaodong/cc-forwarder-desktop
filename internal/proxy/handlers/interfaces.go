@@ -103,6 +103,17 @@ const (
 	ErrorTypeNoHealthyEndpoints                  // 13: 没有健康端点可用
 )
 
+type FailureClass string
+
+const (
+	FailureClassNone                   FailureClass = ""
+	FailureClassClientCancel           FailureClass = "client_cancel"
+	FailureClassModelUnsupported       FailureClass = "model_unsupported"
+	FailureClassSchemaIncompatible     FailureClass = "schema_incompatible"
+	FailureClassPayloadTooLarge        FailureClass = "payload_too_large"
+	FailureClassCountTokensUnsupported FailureClass = "count_tokens_unsupported"
+)
+
 // StreamIncompleteErrorInterface 流不完整错误接口
 // 🆕 [流完整性追踪] 2025-12-11
 // 用于跨包检查流不完整错误，避免循环导入
@@ -205,6 +216,7 @@ type RetryDecision struct {
 	Delay             time.Duration // 重试延迟时间（仅在请求内重试时使用）
 	FinalStatus       string        // 若终止，应记录的最终状态
 	Reason            string        // 决策原因（用于日志）
+	FailureClass      FailureClass  // 失败分类（用于路由状态和负向缓存）
 	ShouldRecord      bool          // 是否应记录到 FailureTracker（用于后续请求的端点选择）
 	RetryAfterSeconds int           // 建议客户端重试的延迟秒数（通过 Retry-After 响应头返回）
 }

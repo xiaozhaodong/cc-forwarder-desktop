@@ -12,6 +12,14 @@ import (
 )
 
 func (m *Manager) GetHealthyEndpoints() []*Endpoint {
+	return m.getHealthyEndpoints(nil)
+}
+
+func (m *Manager) GetHealthyEndpointsForRoute(profile RouteRequestProfile) []*Endpoint {
+	return m.getHealthyEndpoints(&profile)
+}
+
+func (m *Manager) getHealthyEndpoints(profile *RouteRequestProfile) []*Endpoint {
 	cfg := m.getConfigSnapshot()
 
 	// v5.0+: 使用快照机制
@@ -21,12 +29,16 @@ func (m *Manager) GetHealthyEndpoints() []*Endpoint {
 	m.endpointsMu.RUnlock()
 
 	// 1. 首先尝试获取活跃组（用户激活的端点）的健康端点
-	activeEndpoints := m.groupManager.FilterEndpointsByActiveGroups(snapshot)
+	activeEndpoints := m.routeAwareActiveEndpoints(snapshot)
 
 	var healthy []*Endpoint
 	var failedEndpoints []string // 📊 [失败追踪] 记录达到失败阈值的端点
 
 	for _, endpoint := range activeEndpoints {
+		if m.shouldSkipByRouteProfile(endpoint, profile) {
+			continue
+		}
+
 		// 📊 [失败追踪] 检查是否达到失败阈值
 		if cfg.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(endpoint.Config.Name) {
 			action := cfg.FailureTracker.Action
@@ -55,7 +67,7 @@ func (m *Manager) GetHealthyEndpoints() []*Endpoint {
 	}
 
 	if len(healthy) > 0 {
-		return m.sortHealthyEndpoints(healthy, true)
+		return m.applyRouteOverrideOrder(m.sortHealthyEndpoints(healthy, true))
 	}
 
 	if !cfg.Failover.Enabled {
@@ -63,23 +75,23 @@ func (m *Manager) GetHealthyEndpoints() []*Endpoint {
 	}
 
 	slog.Info("🔄 [故障转移] 活跃端点不可用（失败追踪或冷却），尝试故障转移到其他端点")
-	healthy = m.getFailoverEndpoints(activeEndpoints, snapshot)
+	healthy = m.getFailoverEndpoints(activeEndpoints, snapshot, profile)
 
 	if len(healthy) > 0 {
 		slog.Info(fmt.Sprintf("✅ [故障转移] 找到 %d 个可用的故障转移端点", len(healthy)))
 
 		// 🔧 [选择阶段故障转移] 对因失败追踪被跳过的端点，设置冷却并激活新端点
 		if len(failedEndpoints) > 0 {
-			m.executeSelectionFailover(failedEndpoints, healthy[0].Config.Name)
+			m.executeSelectionFailover(failedEndpoints, healthy[0].Config.Name, RouteCallerSystemFailoverSelection)
 		}
 	}
 
-	return m.sortHealthyEndpoints(healthy, true) // 按策略排序
+	return m.applyRouteOverrideOrder(m.sortHealthyEndpoints(healthy, true)) // 按策略排序
 }
 
 // getFailoverEndpoints 获取故障转移端点（排除活跃端点）
 // 返回所有 failover_enabled=true 且健康且不在冷却中的非活跃端点
-func (m *Manager) getFailoverEndpoints(activeEndpoints, snapshot []*Endpoint) []*Endpoint {
+func (m *Manager) getFailoverEndpoints(activeEndpoints, snapshot []*Endpoint, profile *RouteRequestProfile) []*Endpoint {
 	cfg := m.getConfigSnapshot()
 
 	// 构建活跃端点名称集合
@@ -89,7 +101,12 @@ func (m *Manager) getFailoverEndpoints(activeEndpoints, snapshot []*Endpoint) []
 	}
 
 	var failoverEndpoints []*Endpoint
+	override := m.routeOverride.Snapshot()
 	for _, endpoint := range snapshot {
+		if override.Mode == RouteModeManualFixed && override.EndpointName != "" && endpoint.Config.Name != override.EndpointName {
+			continue
+		}
+
 		// 跳过活跃端点（已经检查过了）
 		if activeNames[endpoint.Config.Name] {
 			continue
@@ -114,11 +131,112 @@ func (m *Manager) getFailoverEndpoints(activeEndpoints, snapshot []*Endpoint) []
 			slog.Debug(fmt.Sprintf("⏭️ [故障转移] 跳过冷却中的端点: %s", endpoint.Config.Name))
 			continue
 		}
+		if m.shouldSkipByRouteProfile(endpoint, profile) {
+			continue
+		}
 
 		failoverEndpoints = append(failoverEndpoints, endpoint)
 	}
 
 	return failoverEndpoints
+}
+
+func (m *Manager) routeAwareActiveEndpoints(snapshot []*Endpoint) []*Endpoint {
+	override := m.routeOverride.Snapshot()
+	if override.Mode == RouteModeAuto || override.EndpointName == "" {
+		return m.groupManager.FilterEndpointsByActiveGroups(snapshot)
+	}
+
+	target := findEndpointInSnapshot(snapshot, override.EndpointName)
+	if target == nil {
+		return m.groupManager.FilterEndpointsByActiveGroups(snapshot)
+	}
+
+	if !m.isGroupActive(target.Config.Name) {
+		if m.IsEndpointRoutable(target) {
+			if err := m.groupManager.ManualActivateGroup(target.Config.Name); err != nil {
+				slog.Warn(fmt.Sprintf("⚠️ [路由override] 激活手动端点组失败: %s, error=%v", target.Config.Name, err))
+			}
+		} else {
+			slog.Debug(fmt.Sprintf("⏭️ [路由override] 手动端点暂不可路由，跳过组激活: %s", target.Config.Name))
+		}
+	}
+
+	if override.Mode == RouteModeManualFixed {
+		return []*Endpoint{target}
+	}
+
+	return m.groupManager.FilterEndpointsByActiveGroups(snapshot)
+}
+
+func (m *Manager) isGroupActive(groupName string) bool {
+	for _, group := range m.groupManager.GetAllGroups() {
+		if group.Name == groupName {
+			return group.IsActive
+		}
+	}
+	return false
+}
+
+func findEndpointInSnapshot(snapshot []*Endpoint, name string) *Endpoint {
+	for _, endpoint := range snapshot {
+		if endpoint.Config.Name == name {
+			return endpoint
+		}
+	}
+	return nil
+}
+
+func (m *Manager) shouldSkipByRouteProfile(endpoint *Endpoint, profile *RouteRequestProfile) bool {
+	if endpoint == nil || profile == nil {
+		return false
+	}
+	if hit, reason := m.routeState.HasNegativeHit(endpoint.Config.Name, *profile); hit {
+		slog.Info(fmt.Sprintf("⏭️ [路由负向缓存] 跳过端点: %s, reason=%s, model=%s, path=%s",
+			endpoint.Config.Name, reason, profile.Model, profile.Path))
+		return true
+	}
+	return false
+}
+
+func (m *Manager) FilterRouteCandidates(endpoints []*Endpoint, profile RouteRequestProfile) []*Endpoint {
+	if len(endpoints) == 0 {
+		return endpoints
+	}
+
+	override := m.routeOverride.Snapshot()
+	filtered := make([]*Endpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if endpoint == nil {
+			continue
+		}
+		if override.Mode == RouteModeManualFixed && override.EndpointName != "" && endpoint.Config.Name != override.EndpointName {
+			continue
+		}
+		if m.shouldSkipByRouteProfile(endpoint, &profile) {
+			continue
+		}
+		filtered = append(filtered, endpoint)
+	}
+	return m.applyRouteOverrideOrder(filtered)
+}
+
+func (m *Manager) applyRouteOverrideOrder(endpoints []*Endpoint) []*Endpoint {
+	override := m.routeOverride.Snapshot()
+	if override.Mode != RouteModeManualPreferred || override.EndpointName == "" || len(endpoints) < 2 {
+		return endpoints
+	}
+
+	sort.SliceStable(endpoints, func(i, j int) bool {
+		if endpoints[i].Config.Name == override.EndpointName {
+			return true
+		}
+		if endpoints[j].Config.Name == override.EndpointName {
+			return false
+		}
+		return false
+	})
+	return endpoints
 }
 
 // sortHealthyEndpoints sorts healthy endpoints based on strategy with optional logging
@@ -178,6 +296,10 @@ func (m *Manager) sortHealthyEndpoints(healthy []*Endpoint, showLogs bool) []*En
 // GetFastestEndpointsWithRealTimeTest returns endpoints from active groups sorted by real-time testing
 // v5.0 Desktop: 支持故障转移 - 活跃端点不健康时，返回其他 failover_enabled=true 的健康端点
 func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*Endpoint {
+	return m.GetFastestEndpointsWithRealTimeTestForRoute(ctx, RouteRequestProfile{})
+}
+
+func (m *Manager) GetFastestEndpointsWithRealTimeTestForRoute(ctx context.Context, profile RouteRequestProfile) []*Endpoint {
 	cfg := m.getConfigSnapshot()
 
 	// v5.0+: 使用快照机制
@@ -187,12 +309,16 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*En
 	m.endpointsMu.RUnlock()
 
 	// 1. 首先尝试获取活跃组（用户激活的端点）的健康端点
-	activeEndpoints := m.groupManager.FilterEndpointsByActiveGroups(snapshot)
+	activeEndpoints := m.routeAwareActiveEndpoints(snapshot)
 
 	var healthy []*Endpoint
 	var failedEndpoints []string // 📊 [失败追踪] 记录达到失败阈值的端点
 
 	for _, endpoint := range activeEndpoints {
+		if m.shouldSkipByRouteProfile(endpoint, &profile) {
+			continue
+		}
+
 		// 📊 [失败追踪] 检查是否达到失败阈值
 		if cfg.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(endpoint.Config.Name) {
 			action := cfg.FailureTracker.Action
@@ -214,14 +340,14 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*En
 
 	if len(healthy) == 0 && cfg.Failover.Enabled {
 		slog.InfoContext(ctx, "🔄 [故障转移] 活跃端点不可用（失败追踪或冷却），尝试故障转移到其他端点")
-		healthy = m.getFailoverEndpoints(activeEndpoints, snapshot)
+		healthy = m.getFailoverEndpoints(activeEndpoints, snapshot, &profile)
 
 		if len(healthy) > 0 {
 			slog.InfoContext(ctx, fmt.Sprintf("✅ [故障转移] 找到 %d 个可用的故障转移端点", len(healthy)))
 
 			// 🔧 [选择阶段故障转移] 对因失败追踪被跳过的端点，设置冷却并激活新端点
 			if len(failedEndpoints) > 0 {
-				m.executeSelectionFailover(failedEndpoints, healthy[0].Config.Name)
+				m.executeSelectionFailover(failedEndpoints, healthy[0].Config.Name, RouteCallerSystemFailoverSelection)
 			}
 		}
 	}
@@ -232,7 +358,7 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*En
 
 	// If not using fastest strategy or fast test disabled, apply sorting with logging
 	if cfg.Strategy.Type != "fastest" || !cfg.Strategy.FastTestEnabled {
-		return m.sortHealthyEndpoints(healthy, true) // Show logs
+		return m.applyRouteOverrideOrder(m.sortHealthyEndpoints(healthy, true)) // Show logs
 	}
 
 	// Check if we have cached fast test results first
@@ -332,7 +458,7 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*En
 		}
 	}
 
-	return endpoints
+	return m.applyRouteOverrideOrder(endpoints)
 }
 
 // GetEndpointByName returns an endpoint by name, only from active groups
@@ -414,8 +540,18 @@ func (m *Manager) GetEndpointCount() int {
 // executeSelectionFailover 执行选择阶段的故障转移操作
 // 当在端点选择阶段检测到失败追踪阈值时调用
 // 对失败端点设置冷却并停用，激活新故障转移端点
-func (m *Manager) executeSelectionFailover(failedEndpoints []string, newEndpointName string) {
+func (m *Manager) executeSelectionFailover(failedEndpoints []string, newEndpointName string, callerKind string) {
 	cfg := m.getConfigSnapshot()
+
+	fromEndpoint := ""
+	if len(failedEndpoints) > 0 {
+		fromEndpoint = failedEndpoints[0]
+	}
+	if ok, reason := m.AllowSystemRouteSwitch(fromEndpoint, newEndpointName, callerKind); !ok {
+		m.NoteRouteDecision(fromEndpoint, reason)
+		slog.Warn(fmt.Sprintf("⛔ [选择阶段故障转移] manual override 阻止系统切换: %s", reason))
+		return
+	}
 
 	// 计算冷却时间
 	cooldownDuration := cfg.Failover.DefaultCooldown

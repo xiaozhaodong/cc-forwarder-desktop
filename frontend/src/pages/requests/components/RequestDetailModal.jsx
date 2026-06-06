@@ -123,6 +123,17 @@ const getTimingPillClassName = (type, ms) => {
   return 'bg-emerald-50 text-emerald-600 border-emerald-100';
 };
 
+const formatRouteMode = (mode) => {
+  switch (mode) {
+    case 'manual_fixed':
+      return '严格固定';
+    case 'manual_preferred':
+      return '手动优选';
+    default:
+      return '自动';
+  }
+};
+
 const RequestTimingValue = ({ request }) => {
   const hasFirstToken = request.isStreaming && Number.isFinite(request.firstTokenMs);
 
@@ -271,6 +282,16 @@ const RequestDetailModal = ({ isOpen, onClose, request }) => {
                   <InfoRow icon={Clock} label={request.isStreaming ? '首响 / 持续时间' : '持续时间'} value={<RequestTimingValue request={request} />} />
                   <InfoRow icon={Server} label="端点" value={request.endpoint} />
                   <InfoRow icon={Layers} label="渠道" value={request.channel || request.group} />
+                  <InfoRow icon={Activity} label="路由模式" value={formatRouteMode(request.routeMode)} />
+                  {request.requestedEndpoint && (
+                    <InfoRow icon={Server} label="手动目标" value={request.requestedEndpoint} />
+                  )}
+                  {request.effectiveEndpoint && request.effectiveEndpoint !== request.endpoint && (
+                    <InfoRow icon={Server} label="实际端点" value={request.effectiveEndpoint} />
+                  )}
+                  {request.fallbackReason && (
+                    <InfoRow icon={AlertCircle} label="回退原因" value={request.fallbackReason} />
+                  )}
                 </div>
               </div>
 

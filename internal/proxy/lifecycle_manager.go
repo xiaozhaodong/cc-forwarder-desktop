@@ -224,6 +224,7 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 				HttpStatus:         &httpStatus,
 				ModelName:          &currentModel,
 			}
+			rlm.attachRouteDiagnostics(&opts, state.endpointName)
 			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
 		} else {
 			// 正常状态更新（模型已更新过或尚未就绪）
@@ -239,6 +240,7 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 				RetryCount:         &actualRetryCount,
 				HttpStatus:         &httpStatus,
 			}
+			rlm.attachRouteDiagnostics(&opts, state.endpointName)
 			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
 		}
 	}
@@ -856,6 +858,12 @@ func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail strin
 	modelName := rlm.getModelNameForCost()
 	state := rlm.snapshotState()
 
+	if rlm.usageTracker != nil && rlm.requestID != "" {
+		opts := tracking.UpdateOptions{}
+		rlm.attachRouteDiagnostics(&opts, state.endpointName)
+		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
+	}
+
 	// 🚀 [架构重构] 使用统一的最终失败记录方法，一次性更新所有相关字段
 	if rlm.usageTracker != nil {
 		rlm.usageTracker.RecordRequestFinalFailure(rlm.requestID, modelName, "failed", failureReason, errorDetail, duration, httpStatus, nil)
@@ -870,6 +878,36 @@ func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail strin
 
 	// 调用统一的状态通知方法
 	rlm.notifyStatusChange("failed", state.retryCount, httpStatus)
+}
+
+func (rlm *RequestLifecycleManager) attachRouteDiagnostics(opts *tracking.UpdateOptions, effectiveEndpoint string) {
+	if opts == nil || rlm.endpointManager == nil {
+		return
+	}
+
+	route := rlm.endpointManager.GetClaudeRoutingOverride()
+	mode := route.Mode
+	if mode == "" {
+		mode = endpoint.RouteModeAuto
+	}
+	requestedEndpoint := ""
+	if mode != endpoint.RouteModeAuto {
+		requestedEndpoint = route.EndpointName
+	}
+	fallbackReason := route.FallbackReason
+	if mode == endpoint.RouteModeManualPreferred && requestedEndpoint != "" && effectiveEndpoint != "" && requestedEndpoint != effectiveEndpoint {
+		fallbackReason = "manual_preferred_fallback"
+	}
+	decisionAt := route.LastDecisionAt
+	if decisionAt.IsZero() {
+		decisionAt = time.Now()
+	}
+
+	opts.RouteMode = &mode
+	opts.RequestedEndpoint = &requestedEndpoint
+	opts.EffectiveEndpoint = &effectiveEndpoint
+	opts.FallbackReason = &fallbackReason
+	opts.RouteDecisionAt = &decisionAt
 }
 
 // CancelRequest 标记请求被取消

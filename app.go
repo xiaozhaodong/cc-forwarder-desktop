@@ -167,6 +167,9 @@ func (a *App) startup(ctx context.Context) {
 	a.syncEndpointMultipliersToTracker(ctx)
 	a.syncAccountMultipliersToTracker(ctx)
 
+	// 7.8 恢复 Claude 手动路由状态
+	a.loadClaudeRoutingOverride(ctx)
+
 	// 8. 启动端点管理器（此时端点已从数据库加载完成）
 	a.endpointManager.Start()
 

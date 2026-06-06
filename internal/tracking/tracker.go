@@ -346,6 +346,11 @@ type UpdateOptions struct {
 	Duration           *time.Duration // 持续时间
 	FirstTokenMs       *int64         // 首个流式业务事件到达耗时(毫秒)
 	FailureReason      *string        // 失败原因（用于中间过程记录）
+	RouteMode          *string        // Claude 路由模式
+	RequestedEndpoint  *string        // 手动指定端点
+	EffectiveEndpoint  *string        // 实际路由端点
+	FallbackReason     *string        // fallback 或阻塞原因
+	RouteDecisionAt    *time.Time     // 路由决策时间
 }
 
 // UsageTracker 使用跟踪器
@@ -876,6 +881,22 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 			}
 			if opts.UpstreamID != nil {
 				req.UpstreamID = *opts.UpstreamID
+			}
+			if opts.RouteMode != nil {
+				req.RouteMode = *opts.RouteMode
+			}
+			if opts.RequestedEndpoint != nil {
+				req.RequestedEndpoint = *opts.RequestedEndpoint
+			}
+			if opts.EffectiveEndpoint != nil {
+				req.EffectiveEndpoint = *opts.EffectiveEndpoint
+			}
+			if opts.FallbackReason != nil {
+				req.FallbackReason = *opts.FallbackReason
+			}
+			if opts.RouteDecisionAt != nil {
+				decisionAt := *opts.RouteDecisionAt
+				req.RouteDecisionAt = &decisionAt
 			}
 			if opts.Status != nil {
 				req.Status = *opts.Status
@@ -1939,6 +1960,10 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 	if req.HTTPStatus > 0 {
 		httpStatus = &req.HTTPStatus
 	}
+	routeMode := req.RouteMode
+	if routeMode == "" {
+		routeMode = "auto"
+	}
 
 	// 计算成本（使用公共函数消除重复代码）
 	var cost CostBreakdown
@@ -1992,6 +2017,11 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 		UpstreamSourceName:    req.UpstreamSourceName,
 		UpstreamName:          req.UpstreamName,
 		UpstreamID:            req.UpstreamID,
+		RouteMode:             routeMode,
+		RequestedEndpoint:     req.RequestedEndpoint,
+		EffectiveEndpoint:     req.EffectiveEndpoint,
+		FallbackReason:        req.FallbackReason,
+		RouteDecisionAt:       req.RouteDecisionAt,
 		ModelName:             req.ModelName,
 		IsStreaming:           req.IsStreaming,
 		Status:                req.Status,

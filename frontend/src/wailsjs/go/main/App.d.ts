@@ -11,6 +11,10 @@ export function BatchUpdateSettings(arg1:main.BatchUpdateSettingsInput):Promise<
 
 export function CheckPortAvailable(arg1:number):Promise<boolean>;
 
+export function ClearClaudeRoutingOverride():Promise<main.ClaudeRoutingState>;
+
+export function ClearNegativeHitCache(arg1:string):Promise<void>;
+
 export function CreateEndpointRecord(arg1:main.CreateEndpointInput):Promise<void>;
 
 export function CreateModelPricing(arg1:main.CreateModelPricingInput):Promise<void>;
@@ -32,6 +36,8 @@ export function GenerateChatGPTOAuthLink():Promise<main.GenerateChatGPTOAuthLink
 export function GetAllSettings():Promise<Array<main.SettingInfo>>;
 
 export function GetChannels():Promise<Array<main.ChannelInfo>>;
+
+export function GetClaudeRoutingState():Promise<main.ClaudeRoutingState>;
 
 export function GetCodexModelCatalog():Promise<main.CodexModelCatalogInfo>;
 
@@ -118,6 +124,8 @@ export function ResetCodexModelCatalog():Promise<main.CodexModelCatalogInfo>;
 export function ResumeGroup(arg1:string):Promise<void>;
 
 export function SaveCodexModelCatalog(arg1:main.SaveCodexModelCatalogInput):Promise<main.CodexModelCatalogInfo>;
+
+export function SetClaudeRoutingOverride(arg1:main.SetClaudeRoutingOverrideInput):Promise<main.ClaudeRoutingState>;
 
 export function SetDefaultModelPricing(arg1:string):Promise<void>;
 

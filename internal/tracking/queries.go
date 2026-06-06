@@ -29,6 +29,11 @@ const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(upstream_source_name, '') as upstream_source_name,
 	COALESCE(upstream_name, '') as upstream_name,
 	COALESCE(upstream_id, 0) as upstream_id,
+	COALESCE(route_mode, 'auto') as route_mode,
+	COALESCE(requested_endpoint, '') as requested_endpoint,
+	COALESCE(effective_endpoint, '') as effective_endpoint,
+	COALESCE(fallback_reason, '') as fallback_reason,
+	route_decision_at,
 	COALESCE(model_name, '') as model_name,
 	COALESCE(is_streaming, false) as is_streaming,
 	status, http_status_code, retry_count,
@@ -171,6 +176,7 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 			&detail.StartTime, &detail.EndTime, &detail.DurationMs, &detail.FirstTokenMs,
 			&detail.Channel, &detail.EndpointName, &detail.GroupName,
 			&detail.UpstreamType, &detail.UpstreamSourceName, &detail.UpstreamName, &detail.UpstreamID,
+			&detail.RouteMode, &detail.RequestedEndpoint, &detail.EffectiveEndpoint, &detail.FallbackReason, &detail.RouteDecisionAt,
 			&detail.ModelName, &detail.IsStreaming,
 			&detail.Status, &detail.HTTPStatusCode, &detail.RetryCount,
 			&detail.FailureReason, &detail.LastFailureReason, &detail.CancelReason,
@@ -313,15 +319,20 @@ type RequestDetail struct {
 	DurationMs   *int64     `json:"duration_ms"`
 	FirstTokenMs *int64     `json:"first_token_ms"`
 
-	Channel            string `json:"channel"` // 渠道标签
-	EndpointName       string `json:"endpoint_name"`
-	GroupName          string `json:"group_name"`
-	UpstreamType       string `json:"upstream_type"`
-	UpstreamSourceName string `json:"upstream_source_name"`
-	UpstreamName       string `json:"upstream_name"`
-	UpstreamID         int64  `json:"upstream_id"`
-	ModelName          string `json:"model_name"`
-	IsStreaming        bool   `json:"is_streaming"` // 是否为流式请求
+	Channel            string     `json:"channel"` // 渠道标签
+	EndpointName       string     `json:"endpoint_name"`
+	GroupName          string     `json:"group_name"`
+	UpstreamType       string     `json:"upstream_type"`
+	UpstreamSourceName string     `json:"upstream_source_name"`
+	UpstreamName       string     `json:"upstream_name"`
+	UpstreamID         int64      `json:"upstream_id"`
+	RouteMode          string     `json:"route_mode"`
+	RequestedEndpoint  string     `json:"requested_endpoint"`
+	EffectiveEndpoint  string     `json:"effective_endpoint"`
+	FallbackReason     string     `json:"fallback_reason"`
+	RouteDecisionAt    *time.Time `json:"route_decision_at"`
+	ModelName          string     `json:"model_name"`
+	IsStreaming        bool       `json:"is_streaming"` // 是否为流式请求
 
 	Status         string `json:"status"`
 	HTTPStatusCode *int   `json:"http_status_code"`

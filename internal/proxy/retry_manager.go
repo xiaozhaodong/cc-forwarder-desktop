@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"cc-forwarder/config"
@@ -170,6 +171,11 @@ func (rm *RetryManager) ShouldRetryWithDecision(errorCtx *handlers.ErrorContext,
 			FinalStatus:       "completed",
 			Reason:            "没有错误，无需重试",
 		}
+	}
+
+	failureClass := classifyFailureClass(errorCtx)
+	if failureClass != handlers.FailureClassNone {
+		return buildNoRecordDecision(errorCtx, failureClass)
 	}
 
 	// 使用 ErrorType 枚举进行类型安全的判断
@@ -341,6 +347,96 @@ func (rm *RetryManager) ShouldRetryWithDecision(errorCtx *handlers.ErrorContext,
 			ShouldRecord:      false,
 		}
 	}
+}
+
+func classifyFailureClass(errorCtx *handlers.ErrorContext) handlers.FailureClass {
+	if errorCtx == nil {
+		return handlers.FailureClassNone
+	}
+	if errorCtx.ErrorType == handlers.ErrorTypeClientCancel {
+		return handlers.FailureClassClientCancel
+	}
+
+	errText := ""
+	if errorCtx.OriginalError != nil {
+		errText = strings.ToLower(errorCtx.OriginalError.Error())
+	}
+	statusCode := handlers.GetStatusCodeFromError(errorCtx.OriginalError, nil)
+	if statusCode == http.StatusRequestEntityTooLarge ||
+		strings.Contains(errText, "payload too large") ||
+		strings.Contains(errText, "request entity too large") {
+		return handlers.FailureClassPayloadTooLarge
+	}
+	if isModelUnsupportedError(errText) {
+		return handlers.FailureClassModelUnsupported
+	}
+	if isSchemaIncompatibleError(errText) {
+		return handlers.FailureClassSchemaIncompatible
+	}
+	return handlers.FailureClassNone
+}
+
+func buildNoRecordDecision(errorCtx *handlers.ErrorContext, failureClass handlers.FailureClass) handlers.RetryDecision {
+	if failureClass == handlers.FailureClassClientCancel {
+		return handlers.RetryDecision{
+			RetrySameEndpoint: false,
+			SwitchEndpoint:    false,
+			SuspendRequest:    false,
+			FinalStatus:       "cancelled",
+			Reason:            "客户端取消请求，立即停止",
+			FailureClass:      failureClass,
+			ShouldRecord:      false,
+		}
+	}
+
+	reason := "请求与当前端点能力不匹配，不计入端点失败窗口"
+	switch failureClass {
+	case handlers.FailureClassModelUnsupported:
+		reason = "模型不受当前端点支持，不计入端点失败窗口"
+	case handlers.FailureClassSchemaIncompatible:
+		reason = "请求 schema 与当前端点不兼容，不计入端点失败窗口"
+	case handlers.FailureClassPayloadTooLarge:
+		reason = "请求体超过当前端点限制，不计入端点失败窗口"
+	}
+
+	finalStatus := "error"
+	if errorCtx != nil && errorCtx.ErrorType == handlers.ErrorTypeAuth {
+		finalStatus = "auth_error"
+	}
+	return handlers.RetryDecision{
+		RetrySameEndpoint: false,
+		SwitchEndpoint:    false,
+		SuspendRequest:    false,
+		FinalStatus:       finalStatus,
+		Reason:            reason,
+		FailureClass:      failureClass,
+		ShouldRecord:      false,
+	}
+}
+
+func isModelUnsupportedError(errText string) bool {
+	if errText == "" {
+		return false
+	}
+	return strings.Contains(errText, "model_not_found") ||
+		strings.Contains(errText, "model not found") ||
+		strings.Contains(errText, "no available channel for model") ||
+		strings.Contains(errText, "model is not supported") ||
+		strings.Contains(errText, "unsupported model") ||
+		strings.Contains(errText, "does not have access to model")
+}
+
+func isSchemaIncompatibleError(errText string) bool {
+	if errText == "" {
+		return false
+	}
+	return strings.Contains(errText, "extra inputs are not permitted") ||
+		strings.Contains(errText, "context_management") ||
+		strings.Contains(errText, "cache_control.scope") ||
+		(strings.Contains(errText, "anthropic-beta") && strings.Contains(errText, "not supported")) ||
+		strings.Contains(errText, "field not supported") ||
+		strings.Contains(errText, "字段不支持") ||
+		strings.Contains(errText, "参数不允许")
 }
 
 // GetDefaultStatusCodeForFinalStatus 根据最终状态获取默认HTTP状态码

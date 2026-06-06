@@ -271,6 +271,11 @@ type RequestRecord struct {
 	UpstreamSourceName    string  `json:"upstream_source_name"`     // 订阅源
 	UpstreamName          string  `json:"upstream_name"`            // 账号名/端点名
 	UpstreamID            int64   `json:"upstream_id"`              // 账号ID（可空）
+	RouteMode             string  `json:"route_mode,omitempty"`
+	RequestedEndpoint     string  `json:"requested_endpoint,omitempty"`
+	EffectiveEndpoint     string  `json:"effective_endpoint,omitempty"`
+	FallbackReason        string  `json:"fallback_reason,omitempty"`
+	RouteDecisionAt       string  `json:"route_decision_at,omitempty"`
 	InputTokens           int64   `json:"input_tokens"`
 	OutputTokens          int64   `json:"output_tokens"`
 	CacheCreationTokens   int64   `json:"cache_creation_tokens"`    // 总缓存创建（向后兼容）
@@ -405,6 +410,10 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 			UpstreamSourceName:    r.UpstreamSourceName,
 			UpstreamName:          r.UpstreamName,
 			UpstreamID:            r.UpstreamID,
+			RouteMode:             r.RouteMode,
+			RequestedEndpoint:     r.RequestedEndpoint,
+			EffectiveEndpoint:     r.EffectiveEndpoint,
+			FallbackReason:        r.FallbackReason,
 			InputTokens:           r.InputTokens,
 			OutputTokens:          r.OutputTokens,
 			CacheCreationTokens:   r.CacheCreationTokens,
@@ -421,6 +430,9 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 		}
 		if r.DurationMs != nil {
 			record.ResponseTime = *r.DurationMs
+		}
+		if r.RouteDecisionAt != nil {
+			record.RouteDecisionAt = r.RouteDecisionAt.Format("2006-01-02 15:04:05")
 		}
 		record.FirstTokenMs = r.FirstTokenMs
 
