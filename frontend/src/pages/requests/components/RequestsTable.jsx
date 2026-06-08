@@ -12,23 +12,7 @@ import RequestStatusBadge from './RequestStatusBadge.jsx';
 import ModelTag from './ModelTag.jsx';
 import Pagination from './Pagination.jsx';
 import { copyTextToClipboard } from './clipboard.js';
-
-const formatTimingBadge = (ms) => {
-  const value = Number.isFinite(ms) ? Math.max(ms, 0) : 0;
-  return `${(value / 1000).toFixed(1)}s`;
-};
-
-const getTimingPillClassName = (type, ms) => {
-  if (type === 'first') {
-    if (ms > 20000) return 'bg-rose-50 text-rose-600 border-rose-100';
-    if (ms > 10000) return 'bg-amber-50 text-amber-600 border-amber-100';
-    return 'bg-emerald-50 text-emerald-600 border-emerald-100';
-  }
-
-  if (ms > 40000) return 'bg-rose-50 text-rose-600 border-rose-100';
-  if (ms > 20000) return 'bg-orange-50 text-orange-600 border-orange-100';
-  return 'bg-emerald-50 text-emerald-600 border-emerald-100';
-};
+import { formatTimingBadge, getTimingPillClassName } from '../utils/timing.js';
 
 const RequestTimingCell = ({ request }) => {
   const hasFirstToken = request.isStreaming && Number.isFinite(request.firstTokenMs);
