@@ -558,6 +558,41 @@ func TestAccountPipeline_PreparesCompactRequestPath(t *testing.T) {
 	}
 }
 
+func TestAccountPipeline_AnyRouterRewritesUnsupportedCodexModelBeforeForward(t *testing.T) {
+	var receivedModel string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode upstream body failed: %v", err)
+		}
+		receivedModel, _ = payload["model"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_1","model":"gpt-5.5","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 9, AccountName: "anyrouter", ProviderType: "api_key", CredentialRaw: "sk-anyrouter", BaseURL: upstream.URL, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+
+	body := bytes.NewBufferString(`{"model":"gpt-5.4-mini-2026-03-17","input":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if receivedModel != "gpt-5.5" {
+		t.Fatalf("expected upstream model gpt-5.5, got %q", receivedModel)
+	}
+}
+
 func TestAccountPipeline_OAuthSuccessEnqueuesQuotaRefresh(t *testing.T) {
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1304,6 +1339,93 @@ func TestApplyOpenAIChatGPTModelsHeaders_SkipsResponsesOnlyHeaders(t *testing.T)
 	}
 	if req.Header.Get("Accept") == "text/event-stream" {
 		t.Fatal("expected models request not to force text/event-stream")
+	}
+}
+
+func TestPrepareCodexAccountBodyForUpstream_AnyRouterModelAlias(t *testing.T) {
+	anyRouterAccount := &store.UpstreamAccountRecord{
+		AccountName:   "anyrouter-codex",
+		ProviderType:  "api_key",
+		CredentialRaw: "sk-anyrouter",
+		BaseURL:       "https://api.anyrouter.example",
+	}
+	regularAccount := &store.UpstreamAccountRecord{
+		AccountName:   "openai",
+		ProviderType:  "api_key",
+		CredentialRaw: "sk-openai",
+		BaseURL:       "https://api.openai.com",
+	}
+
+	tests := []struct {
+		name      string
+		account   *store.UpstreamAccountRecord
+		path      string
+		body      string
+		wantModel string
+		wantRaw   string
+	}{
+		{
+			name:      "rewrites versioned gpt-5.4-mini for anyrouter responses",
+			account:   anyRouterAccount,
+			path:      "/v1/responses",
+			body:      `{"model":"gpt-5.4-mini-2026-03-17","input":"hello"}`,
+			wantModel: "gpt-5.5",
+		},
+		{
+			name:      "rewrites gpt-5.4 for anyrouter compact",
+			account:   anyRouterAccount,
+			path:      "/v1/responses/compact",
+			body:      `{"model":"gpt-5.4","input":"hello"}`,
+			wantModel: "gpt-5.5",
+		},
+		{
+			name:      "keeps supported model for anyrouter",
+			account:   anyRouterAccount,
+			path:      "/v1/responses",
+			body:      `{"model":"gpt-5.5","input":"hello"}`,
+			wantModel: "gpt-5.5",
+		},
+		{
+			name:      "keeps gpt-5.4 for non-anyrouter account",
+			account:   regularAccount,
+			path:      "/v1/responses",
+			body:      `{"model":"gpt-5.4-mini","input":"hello"}`,
+			wantModel: "gpt-5.4-mini",
+		},
+		{
+			name:    "keeps models path untouched",
+			account: anyRouterAccount,
+			path:    "/v1/models",
+			body:    `{"model":"gpt-5.4-mini","input":"hello"}`,
+			wantRaw: `{"model":"gpt-5.4-mini","input":"hello"}`,
+		},
+		{
+			name:    "keeps invalid json untouched",
+			account: anyRouterAccount,
+			path:    "/v1/responses",
+			body:    `{"model":`,
+			wantRaw: `{"model":`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := prepareCodexAccountBodyForUpstream([]byte(tt.body), tt.account, tt.path)
+			if tt.wantRaw != "" {
+				if string(got) != tt.wantRaw {
+					t.Fatalf("expected raw body %q, got %q", tt.wantRaw, string(got))
+				}
+				return
+			}
+
+			var payload map[string]any
+			if err := json.Unmarshal(got, &payload); err != nil {
+				t.Fatalf("unmarshal rewritten body failed: %v body=%s", err, string(got))
+			}
+			if payload["model"] != tt.wantModel {
+				t.Fatalf("expected model %q, got %q", tt.wantModel, payload["model"])
+			}
+		})
 	}
 }
 

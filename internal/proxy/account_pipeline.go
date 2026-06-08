@@ -37,6 +37,9 @@ const (
 	chatGPTCodexModelsURL    = "https://chatgpt.com/backend-api/codex/models"
 	openAIBetaResponsesValue = "responses=experimental"
 	defaultOAuthOriginator   = "codex_cli_rs"
+	anyRouterAccountMarker   = "anyrouter"
+	unsupportedGPT54Prefix   = "gpt-5.4"
+	anyRouterCodexModelAlias = "gpt-5.5"
 )
 
 type accountUsageLimitErrorEnvelope struct {
@@ -357,6 +360,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	if err != nil {
 		return nil, nil, err
 	}
+	bodyBytes = prepareCodexAccountBodyForUpstream(bodyBytes, acc, r.URL.Path)
 
 	requestCtx := ctx
 	var release context.CancelFunc
@@ -408,6 +412,56 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 		return nil, nil, fmt.Errorf("request failed: %w", err)
 	}
 	return resp, release, nil
+}
+
+func prepareCodexAccountBodyForUpstream(bodyBytes []byte, acc *store.UpstreamAccountRecord, path string) []byte {
+	if !shouldRewriteAnyRouterCodexModel(acc, path) || len(bytes.TrimSpace(bodyBytes)) == 0 {
+		return bodyBytes
+	}
+
+	var payload map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		return bodyBytes
+	}
+
+	model, ok := payload["model"].(string)
+	if !ok {
+		return bodyBytes
+	}
+	if !isUnsupportedGPT54Model(model) {
+		return bodyBytes
+	}
+
+	payload["model"] = anyRouterCodexModelAlias
+	rewritten, err := json.Marshal(payload)
+	if err != nil {
+		return bodyBytes
+	}
+	return rewritten
+}
+
+func shouldRewriteAnyRouterCodexModel(acc *store.UpstreamAccountRecord, path string) bool {
+	return isCodexResponsesRequestPath(path) && isAnyRouterAPIKeyAccount(acc)
+}
+
+func isCodexResponsesRequestPath(path string) bool {
+	return path == "/v1/responses" || path == "/v1/responses/compact"
+}
+
+func isAnyRouterAPIKeyAccount(acc *store.UpstreamAccountRecord) bool {
+	if acc == nil || accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
+		return false
+	}
+
+	name := strings.ToLower(strings.TrimSpace(acc.AccountName))
+	baseURL := strings.ToLower(strings.TrimSpace(acc.BaseURL))
+	return strings.Contains(name, anyRouterAccountMarker) || strings.Contains(baseURL, anyRouterAccountMarker)
+}
+
+func isUnsupportedGPT54Model(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), unsupportedGPT54Prefix)
 }
 
 func (h *Handler) isLocalNoAvailableProviders503Response(resp *http.Response) (bool, string) {
