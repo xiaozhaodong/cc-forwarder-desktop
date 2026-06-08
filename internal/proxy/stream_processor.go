@@ -236,8 +236,14 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 			// 4. 更新处理状态
 			sp.bytesProcessed += int64(n)
 
-			if sp.downstreamDisconnected && sp.tokenParser.GetStreamCompleteness().IsComplete {
-				return sp.finalizeCompletedAfterDisconnect(context.Canceled)
+			if sp.tokenParser.GetStreamCompleteness().IsComplete {
+				if sp.downstreamDisconnected {
+					return sp.finalizeCompletedAfterDisconnect(context.Canceled)
+				}
+				finalTokenUsage := sp.getFinalTokenUsage()
+				slog.Info(fmt.Sprintf("✅ [流式终态] [%s] 端点: %s, 已收到 terminal event，主动结束上游读取，已处理 %d 字节",
+					sp.requestID, sp.endpoint, sp.bytesProcessed))
+				return finalTokenUsage, nil
 			}
 		}
 

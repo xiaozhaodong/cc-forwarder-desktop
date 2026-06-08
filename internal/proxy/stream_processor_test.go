@@ -250,6 +250,53 @@ func TestStreamProcessor_ProcessStreamWithRetry_ParsesLargeResponsesCompletedEve
 	}
 }
 
+func TestStreamProcessor_ProcessStreamWithRetry_StopsAtResponsesTerminalWithoutWaitingForEOF(t *testing.T) {
+	reader, writerPipe := io.Pipe()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       reader,
+	}
+
+	writeDone := make(chan struct{})
+	go func() {
+		defer close(writeDone)
+		_, _ = io.WriteString(writerPipe, "event: response.completed\n")
+		_, _ = io.WriteString(writerPipe, `data: {"type":"response.completed","response":{"model":"gpt-5.5"},"usage":{"input_tokens":18,"output_tokens":5,"input_tokens_details":{"cached_tokens":9}}}`+"\n\n")
+		time.Sleep(300 * time.Millisecond)
+		_ = writerPipe.Close()
+	}()
+
+	tokenParser := NewTokenParserWithRequestID("test-responses-terminal-open-connection")
+	writer := &mockResponseWriter{}
+	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-responses-terminal-open-connection", "anyrouter")
+
+	startedAt := time.Now()
+	tokenUsage, modelName, err := processor.ProcessStreamWithRetry(context.Background(), resp)
+	elapsed := time.Since(startedAt)
+	if err != nil {
+		t.Fatalf("ProcessStreamWithRetry should stop at response.completed, got error: %v", err)
+	}
+	if elapsed >= 150*time.Millisecond {
+		t.Fatalf("expected stream to finish without waiting for EOF, elapsed=%s", elapsed)
+	}
+	if tokenUsage == nil {
+		t.Fatal("expected tokenUsage from response.completed")
+	}
+	if tokenUsage.InputTokens != 18 || tokenUsage.OutputTokens != 5 || tokenUsage.CacheReadTokens != 9 {
+		t.Fatalf("unexpected usage: input=%d output=%d cache=%d", tokenUsage.InputTokens, tokenUsage.OutputTokens, tokenUsage.CacheReadTokens)
+	}
+	if modelName != "gpt-5.5" {
+		t.Fatalf("expected modelName=gpt-5.5, got %s", modelName)
+	}
+
+	select {
+	case <-writeDone:
+	case <-time.After(time.Second):
+		t.Fatal("writer goroutine did not finish")
+	}
+}
+
 func TestStreamProcessor_ProcessStreamWithRetry_RecordsFirstTokenOnce(t *testing.T) {
 	streamBody := strings.Join([]string{
 		"event: message_start\n",
