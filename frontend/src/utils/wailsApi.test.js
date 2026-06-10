@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { mapEndpointRecord, normalizeUpstreamAccount } from './wailsApi.js';
+import { buildUpstreamAccountPayload, mapEndpointRecord, normalizeUpstreamAccount } from './wailsApi.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.resolve(__dirname, './wailsApi.js');
@@ -27,6 +27,7 @@ test('normalizeUpstreamAccount keeps mirrored aliases in sync for mixed-case ups
     isGroupPreferred: true,
     credentialRaw: 'sk-live',
     baseURL: 'https://example.com',
+    modelRewriteRules: '[{"from":"gpt-5.4","to":"gpt-5.5"}]',
     costMultiplier: '1.5',
     input_cost_multiplier: '1.2',
     outputCostMultiplier: '2.4',
@@ -75,6 +76,8 @@ test('normalizeUpstreamAccount keeps mirrored aliases in sync for mixed-case ups
   assert.equal(result.cacheCreationCostMultiplier1h, 3.5);
   assert.equal(result.cache_read_cost_multiplier, 0.8);
   assert.equal(result.cacheReadCostMultiplier, 0.8);
+  assert.equal(result.model_rewrite_rules, '[{"from":"gpt-5.4","to":"gpt-5.5"}]');
+  assert.equal(result.modelRewriteRules, '[{"from":"gpt-5.4","to":"gpt-5.5"}]');
   assert.equal(result.group_key, 'primary');
   assert.equal(result.groupKey, 'primary');
   assert.equal(result.priority, 10);
@@ -109,6 +112,26 @@ test('normalizeUpstreamAccount keeps mirrored aliases in sync for mixed-case ups
   assert.equal(result.createdAt, '2026-03-20T00:00:00Z');
   assert.equal(result.updated_at, '2026-03-24T13:05:00Z');
   assert.equal(result.updatedAt, '2026-03-24T13:05:00Z');
+});
+
+test('buildUpstreamAccountPayload serializes editable model rewrite rule arrays', () => {
+  const payload = buildUpstreamAccountPayload({
+    provider_type: 'api_key',
+    account_name: 'anyrouter',
+    credential_raw: 'sk-anyrouter',
+    modelRewriteRules: [
+      { source: 'gpt-5.4', target: 'gpt-5.5' },
+      { source: 'gpt-5.4-mini', target: 'gpt-5.5' }
+    ]
+  });
+
+  assert.deepEqual(
+    JSON.parse(payload.model_rewrite_rules).map((rule) => [rule.match, rule.from, rule.to]),
+    [
+      ['exact', 'gpt-5.4', 'gpt-5.5'],
+      ['exact', 'gpt-5.4-mini', 'gpt-5.5']
+    ]
+  );
 });
 
 test('normalizeUpstreamAccount uses alias helpers instead of repeating inline field chains', async () => {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildManualFailoverPriorityPlan } from './manualFailover.js';
+import { buildAccountUpdatePayload, buildManualFailoverPriorityPlan } from './manualFailover.js';
 
 const summarizePlan = (plan = []) => plan
   .map(({ account, priority }) => [account.id, priority])
@@ -64,4 +64,19 @@ test('buildManualFailoverPriorityPlan keeps an existing primary tier intact', ()
   });
 
   assert.deepEqual(plan, []);
+});
+
+test('buildAccountUpdatePayload preserves model rewrite rules during manual tier updates', () => {
+  const payload = buildAccountUpdatePayload({
+    id: 9,
+    provider_type: 'api_key',
+    account_name: 'anyrouter',
+    credential_raw: 'sk-anyrouter',
+    base_url: 'https://api.anyrouter.example',
+    model_rewrite_rules: '[{"from":"gpt-5.4","to":"gpt-5.5"}]',
+    enabled: true
+  }, 20);
+
+  assert.equal(payload.model_rewrite_rules, '[{"from":"gpt-5.4","to":"gpt-5.5"}]');
+  assert.equal(payload.priority, 20);
 });

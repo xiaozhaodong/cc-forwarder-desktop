@@ -108,6 +108,14 @@ func TestListAccounts_AutoAddsMissingGroupKeyColumnForLegacyDatabase(t *testing.
 	if groupKeyCount != 1 {
 		t.Fatalf("expected group_key column to be auto-added, got count=%d", groupKeyCount)
 	}
+
+	var modelRewriteRulesCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('upstream_accounts') WHERE name = 'model_rewrite_rules'`).Scan(&modelRewriteRulesCount); err != nil {
+		t.Fatalf("query model_rewrite_rules existence failed: %v", err)
+	}
+	if modelRewriteRulesCount != 1 {
+		t.Fatalf("expected model_rewrite_rules column to be auto-added, got count=%d", modelRewriteRulesCount)
+	}
 }
 
 func TestFindAccountByFingerprint_ReturnsAccount(t *testing.T) {
@@ -203,6 +211,125 @@ func TestCreateAccount_PersistsExplicitGroupKey(t *testing.T) {
 
 	if record.GroupKey != "primary" {
 		t.Fatalf("expected group_key primary, got %+v", record)
+	}
+}
+
+func TestCreateAccount_PersistsModelRewriteRules(t *testing.T) {
+	st := newTestSQLiteAccountPoolStore(t)
+	ctx := context.Background()
+
+	rules := `[{"paths":["/v1/responses"],"match":"exact","from":"gpt-5.4","to":"gpt-5.5"}]`
+	record, err := st.CreateAccount(ctx, &UpstreamAccountRecord{
+		ProviderType:      "api_key",
+		AccountName:       "rewrite-rules",
+		CredentialRaw:     "sk-rewrite-rules",
+		BaseURL:           "https://api.openai.com",
+		ModelRewriteRules: rules,
+		GroupKey:          "primary",
+		Priority:          10,
+		Enabled:           true,
+		State:             "active",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount failed: %v", err)
+	}
+
+	got, err := st.GetAccount(ctx, record.ID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if got.ModelRewriteRules != rules {
+		t.Fatalf("expected model rewrite rules to persist, got %q", got.ModelRewriteRules)
+	}
+}
+
+func TestCreateAccount_DoesNotDefaultAnyRouterModelRewriteRules(t *testing.T) {
+	st := newTestSQLiteAccountPoolStore(t)
+	ctx := context.Background()
+
+	record, err := st.CreateAccount(ctx, &UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "anyrouter",
+		CredentialRaw: "sk-anyrouter",
+		BaseURL:       "https://anyrouter.top",
+		GroupKey:      "primary",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount failed: %v", err)
+	}
+
+	got, err := st.GetAccount(ctx, record.ID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if got.ModelRewriteRules != "" {
+		t.Fatalf("expected new AnyRouter account to require explicit model rewrite rules, got %q", got.ModelRewriteRules)
+	}
+}
+
+func TestUpdateAccount_AllowsClearingExplicitModelRewriteRules(t *testing.T) {
+	st := newTestSQLiteAccountPoolStore(t)
+	ctx := context.Background()
+	rules := `[{"paths":["/v1/responses"],"match":"exact","from":"gpt-5.4","to":"gpt-5.5"}]`
+
+	record, err := st.CreateAccount(ctx, &UpstreamAccountRecord{
+		ProviderType:      "api_key",
+		AccountName:       "anyrouter-clear",
+		CredentialRaw:     "sk-anyrouter-clear",
+		BaseURL:           "https://anyrouter.top",
+		ModelRewriteRules: rules,
+		GroupKey:          "primary",
+		Priority:          10,
+		Enabled:           true,
+		State:             "active",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount failed: %v", err)
+	}
+
+	record.ModelRewriteRules = ""
+	if err := st.UpdateAccount(ctx, record); err != nil {
+		t.Fatalf("UpdateAccount failed: %v", err)
+	}
+	got, err := st.GetAccount(ctx, record.ID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if got.ModelRewriteRules != "" {
+		t.Fatalf("expected cleared model rewrite rules to stay empty, got %q", got.ModelRewriteRules)
+	}
+}
+
+func TestListAccounts_MigratesPrefixModelRewriteRulesToExact(t *testing.T) {
+	st := newTestSQLiteAccountPoolStore(t)
+	ctx := context.Background()
+	prefixRules := `[{"paths":["/v1/responses"],"match":"prefix","from":"gpt-5.4","to":"gpt-5.5"}]`
+
+	if _, err := st.db.ExecContext(ctx, `
+		INSERT INTO upstream_accounts (
+			provider_type, account_name, credential_raw, base_url, model_rewrite_rules,
+			priority, enabled, state, fingerprint
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "api_key", "prefix-rule", "sk-prefix-rule", "https://api.anyrouter.example", prefixRules, 10, 1, "active", "prefix-rule-fingerprint"); err != nil {
+		t.Fatalf("insert prefix rule account failed: %v", err)
+	}
+
+	if _, err := st.ListAccounts(ctx, true); err != nil {
+		t.Fatalf("ListAccounts failed: %v", err)
+	}
+
+	var storedRules string
+	if err := st.db.QueryRowContext(ctx, `SELECT model_rewrite_rules FROM upstream_accounts WHERE account_name = 'prefix-rule'`).Scan(&storedRules); err != nil {
+		t.Fatalf("query model rewrite rules failed: %v", err)
+	}
+	if !strings.Contains(storedRules, `"match":"exact"`) {
+		t.Fatalf("expected prefix rule to migrate to exact, got %s", storedRules)
+	}
+	if strings.Contains(storedRules, `"match":"prefix"`) {
+		t.Fatalf("expected migrated rules not to contain prefix, got %s", storedRules)
 	}
 }
 

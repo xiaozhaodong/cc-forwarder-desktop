@@ -528,6 +528,7 @@ export const normalizeUpstreamAccount = (account = {}) => {
     ['credential_raw_masked', 'credentialRawMasked', pickAccountValue(account, ['credential_raw_masked', 'credentialRawMasked', 'CredentialRawMasked'], credentialRaw)],
     ['has_credential', 'hasCredential', hasCredential],
     ['base_url', 'baseURL', pickAccountValue(account, ['base_url', 'baseURL', 'BaseURL'], '')],
+    ['model_rewrite_rules', 'modelRewriteRules', pickAccountValue(account, ['model_rewrite_rules', 'modelRewriteRules', 'ModelRewriteRules'], '')],
     ['cost_multiplier', 'costMultiplier', Number.parseFloat(pickAccountValue(account, ['cost_multiplier', 'costMultiplier', 'CostMultiplier'], 1.0)) || 1.0],
     ['input_cost_multiplier', 'inputCostMultiplier', Number.parseFloat(pickAccountValue(account, ['input_cost_multiplier', 'inputCostMultiplier', 'InputCostMultiplier'], 1.0)) || 1.0],
     ['output_cost_multiplier', 'outputCostMultiplier', Number.parseFloat(pickAccountValue(account, ['output_cost_multiplier', 'outputCostMultiplier', 'OutputCostMultiplier'], 1.0)) || 1.0],
@@ -558,6 +559,32 @@ export const normalizeUpstreamAccount = (account = {}) => {
   return normalized;
 };
 
+const normalizeModelRewriteSource = (sourceModel = '') => {
+  const trimmed = String(sourceModel || '').trim();
+  if (!trimmed) {
+    return '';
+  }
+  return trimmed.endsWith('*') ? trimmed.slice(0, -1).trim() : trimmed;
+};
+
+const serializeModelRewriteRules = (value) => {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  const rules = Array.isArray(value) ? value : [];
+  const normalized = rules
+    .map((rule = {}) => ({
+      paths: Array.isArray(rule.paths) && rule.paths.length > 0
+        ? rule.paths
+        : ['/v1/responses', '/v1/responses/compact'],
+      match: String(rule.match || 'exact').trim() || 'exact',
+      from: normalizeModelRewriteSource(rule.from ?? rule.source ?? ''),
+      to: String(rule.to ?? rule.target ?? '').trim()
+    }))
+    .filter((rule) => rule.from && rule.to);
+  return normalized.length > 0 ? JSON.stringify(normalized) : '';
+};
+
 export const buildUpstreamAccountPayload = (input = {}) => {
   const providerType = String(input.provider_type || input.providerType || '').trim().toLowerCase();
   const isAPIKeyAccount = providerType === 'api_key';
@@ -572,6 +599,7 @@ export const buildUpstreamAccountPayload = (input = {}) => {
     provider_type: input.provider_type || input.providerType || '',
     credential_raw: input.credential_raw || input.credentialRaw || '',
     base_url: input.base_url || input.baseURL || '',
+    model_rewrite_rules: isAPIKeyAccount ? serializeModelRewriteRules(input.model_rewrite_rules ?? input.modelRewriteRules ?? '') : '',
     cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.cost_multiplier ?? input.costMultiplier) : 1.0,
     input_cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.input_cost_multiplier ?? input.inputCostMultiplier) : 1.0,
     output_cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.output_cost_multiplier ?? input.outputCostMultiplier) : 1.0,

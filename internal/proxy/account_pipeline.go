@@ -37,10 +37,16 @@ const (
 	chatGPTCodexModelsURL    = "https://chatgpt.com/backend-api/codex/models"
 	openAIBetaResponsesValue = "responses=experimental"
 	defaultOAuthOriginator   = "codex_cli_rs"
-	anyRouterAccountMarker   = "anyrouter"
-	unsupportedGPT54Prefix   = "gpt-5.4"
-	anyRouterCodexModelAlias = "gpt-5.5"
+	modelRewriteMatchExact   = "exact"
+	modelRewriteMatchPrefix  = "prefix"
 )
+
+type accountModelRewriteRule struct {
+	Paths []string `json:"paths"`
+	Match string   `json:"match"`
+	From  string   `json:"from"`
+	To    string   `json:"to"`
+}
 
 type accountUsageLimitErrorEnvelope struct {
 	Error accountUsageLimitErrorDetail `json:"error"`
@@ -415,7 +421,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 }
 
 func prepareCodexAccountBodyForUpstream(bodyBytes []byte, acc *store.UpstreamAccountRecord, path string) []byte {
-	if !shouldRewriteAnyRouterCodexModel(acc, path) || len(bytes.TrimSpace(bodyBytes)) == 0 {
+	if !shouldRewriteCodexAccountModel(acc, path) || len(bytes.TrimSpace(bodyBytes)) == 0 {
 		return bodyBytes
 	}
 
@@ -430,11 +436,12 @@ func prepareCodexAccountBodyForUpstream(bodyBytes []byte, acc *store.UpstreamAcc
 	if !ok {
 		return bodyBytes
 	}
-	if !isUnsupportedGPT54Model(model) {
+	targetModel, shouldRewrite := rewriteCodexAccountModel(acc, path, model)
+	if !shouldRewrite {
 		return bodyBytes
 	}
 
-	payload["model"] = anyRouterCodexModelAlias
+	payload["model"] = targetModel
 	rewritten, err := json.Marshal(payload)
 	if err != nil {
 		return bodyBytes
@@ -442,26 +449,89 @@ func prepareCodexAccountBodyForUpstream(bodyBytes []byte, acc *store.UpstreamAcc
 	return rewritten
 }
 
-func shouldRewriteAnyRouterCodexModel(acc *store.UpstreamAccountRecord, path string) bool {
-	return isCodexResponsesRequestPath(path) && isAnyRouterAPIKeyAccount(acc)
+func shouldRewriteCodexAccountModel(acc *store.UpstreamAccountRecord, path string) bool {
+	if acc == nil || accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
+		return false
+	}
+	return isCodexResponsesRequestPath(path) && strings.TrimSpace(acc.ModelRewriteRules) != ""
 }
 
 func isCodexResponsesRequestPath(path string) bool {
 	return path == "/v1/responses" || path == "/v1/responses/compact"
 }
 
-func isAnyRouterAPIKeyAccount(acc *store.UpstreamAccountRecord) bool {
-	if acc == nil || accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
-		return false
+func rewriteCodexAccountModel(acc *store.UpstreamAccountRecord, path, model string) (string, bool) {
+	if acc == nil {
+		return "", false
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return "", false
 	}
 
-	name := strings.ToLower(strings.TrimSpace(acc.AccountName))
-	baseURL := strings.ToLower(strings.TrimSpace(acc.BaseURL))
-	return strings.Contains(name, anyRouterAccountMarker) || strings.Contains(baseURL, anyRouterAccountMarker)
+	rules := parseAccountModelRewriteRules(acc.ModelRewriteRules)
+	for _, rule := range rules {
+		target := strings.TrimSpace(rule.To)
+		if target == "" || !accountModelRewriteRuleMatchesPath(rule, path) || !accountModelRewriteRuleMatchesModel(rule, model) {
+			continue
+		}
+		if target == model {
+			return "", false
+		}
+		return target, true
+	}
+	return "", false
 }
 
-func isUnsupportedGPT54Model(model string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), unsupportedGPT54Prefix)
+func parseAccountModelRewriteRules(raw string) []accountModelRewriteRule {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var rules []accountModelRewriteRule
+	if err := json.Unmarshal([]byte(raw), &rules); err == nil {
+		return rules
+	}
+
+	var single accountModelRewriteRule
+	if err := json.Unmarshal([]byte(raw), &single); err != nil {
+		return nil
+	}
+	return []accountModelRewriteRule{single}
+}
+
+func accountModelRewriteRuleMatchesPath(rule accountModelRewriteRule, path string) bool {
+	if len(rule.Paths) == 0 {
+		return true
+	}
+	for _, allowedPath := range rule.Paths {
+		if strings.TrimSpace(allowedPath) == path {
+			return true
+		}
+	}
+	return false
+}
+
+func accountModelRewriteRuleMatchesModel(rule accountModelRewriteRule, model string) bool {
+	from := strings.TrimSpace(rule.From)
+	if from == "" {
+		return false
+	}
+	match := strings.TrimSpace(strings.ToLower(rule.Match))
+	if match == "" {
+		match = modelRewriteMatchExact
+	}
+
+	normalizedModel := strings.ToLower(model)
+	normalizedFrom := strings.ToLower(from)
+	switch match {
+	case modelRewriteMatchPrefix:
+		return strings.HasPrefix(normalizedModel, normalizedFrom)
+	case modelRewriteMatchExact:
+		return normalizedModel == normalizedFrom
+	default:
+		return false
+	}
 }
 
 func (h *Handler) isLocalNoAvailableProviders503Response(resp *http.Response) (bool, string) {

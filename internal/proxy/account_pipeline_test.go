@@ -27,6 +27,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const testGPT54ModelRewriteRules = `[{"paths":["/v1/responses","/v1/responses/compact"],"match":"exact","from":"gpt-5.4","to":"gpt-5.5"}]`
+const testGPT54AndMiniModelRewriteRules = `[{"paths":["/v1/responses","/v1/responses/compact"],"match":"exact","from":"gpt-5.4","to":"gpt-5.5"},{"paths":["/v1/responses","/v1/responses/compact"],"match":"exact","from":"gpt-5.4-mini","to":"gpt-5.5"}]`
+
 type accountTransientCall struct {
 	id       int64
 	reason   string
@@ -558,7 +561,7 @@ func TestAccountPipeline_PreparesCompactRequestPath(t *testing.T) {
 	}
 }
 
-func TestAccountPipeline_AnyRouterRewritesUnsupportedCodexModelBeforeForward(t *testing.T) {
+func TestAccountPipeline_ConfiguredRuleRewritesUnsupportedCodexModelBeforeForward(t *testing.T) {
 	var receivedModel string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload map[string]any
@@ -573,12 +576,12 @@ func TestAccountPipeline_AnyRouterRewritesUnsupportedCodexModelBeforeForward(t *
 
 	service := &mockAccountPoolService{
 		accounts: []*store.UpstreamAccountRecord{
-			{ID: 9, AccountName: "anyrouter", ProviderType: "api_key", CredentialRaw: "sk-anyrouter", BaseURL: upstream.URL, Enabled: true},
+			{ID: 9, AccountName: "anyrouter", ProviderType: "api_key", CredentialRaw: "sk-anyrouter", BaseURL: upstream.URL, ModelRewriteRules: testGPT54ModelRewriteRules, Enabled: true},
 		},
 	}
 	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
 
-	body := bytes.NewBufferString(`{"model":"gpt-5.4-mini-2026-03-17","input":"hello"}`)
+	body := bytes.NewBufferString(`{"model":"gpt-5.4","input":"hello"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -1342,18 +1345,32 @@ func TestApplyOpenAIChatGPTModelsHeaders_SkipsResponsesOnlyHeaders(t *testing.T)
 	}
 }
 
-func TestPrepareCodexAccountBodyForUpstream_AnyRouterModelAlias(t *testing.T) {
+func TestPrepareCodexAccountBodyForUpstream_ConfiguredModelRewriteRules(t *testing.T) {
 	anyRouterAccount := &store.UpstreamAccountRecord{
-		AccountName:   "anyrouter-codex",
-		ProviderType:  "api_key",
-		CredentialRaw: "sk-anyrouter",
-		BaseURL:       "https://api.anyrouter.example",
+		AccountName:       "anyrouter-codex",
+		ProviderType:      "api_key",
+		CredentialRaw:     "sk-anyrouter",
+		BaseURL:           "https://api.anyrouter.example",
+		ModelRewriteRules: testGPT54ModelRewriteRules,
+	}
+	anyRouterMultiRuleAccount := &store.UpstreamAccountRecord{
+		AccountName:       "anyrouter-codex-multi",
+		ProviderType:      "api_key",
+		CredentialRaw:     "sk-anyrouter",
+		BaseURL:           "https://api.anyrouter.example",
+		ModelRewriteRules: testGPT54AndMiniModelRewriteRules,
 	}
 	regularAccount := &store.UpstreamAccountRecord{
 		AccountName:   "openai",
 		ProviderType:  "api_key",
 		CredentialRaw: "sk-openai",
 		BaseURL:       "https://api.openai.com",
+	}
+	anyRouterWithoutRules := &store.UpstreamAccountRecord{
+		AccountName:   "anyrouter-no-rules",
+		ProviderType:  "api_key",
+		CredentialRaw: "sk-anyrouter",
+		BaseURL:       "https://api.anyrouter.example",
 	}
 
 	tests := []struct {
@@ -1365,10 +1382,17 @@ func TestPrepareCodexAccountBodyForUpstream_AnyRouterModelAlias(t *testing.T) {
 		wantRaw   string
 	}{
 		{
-			name:      "rewrites versioned gpt-5.4-mini for anyrouter responses",
+			name:      "keeps gpt-5.4-mini when only exact gpt-5.4 rule is configured",
 			account:   anyRouterAccount,
 			path:      "/v1/responses",
-			body:      `{"model":"gpt-5.4-mini-2026-03-17","input":"hello"}`,
+			body:      `{"model":"gpt-5.4-mini","input":"hello"}`,
+			wantModel: "gpt-5.4-mini",
+		},
+		{
+			name:      "rewrites exact gpt-5.4-mini when explicitly configured",
+			account:   anyRouterMultiRuleAccount,
+			path:      "/v1/responses",
+			body:      `{"model":"gpt-5.4-mini","input":"hello"}`,
 			wantModel: "gpt-5.5",
 		},
 		{
@@ -1388,6 +1412,13 @@ func TestPrepareCodexAccountBodyForUpstream_AnyRouterModelAlias(t *testing.T) {
 		{
 			name:      "keeps gpt-5.4 for non-anyrouter account",
 			account:   regularAccount,
+			path:      "/v1/responses",
+			body:      `{"model":"gpt-5.4-mini","input":"hello"}`,
+			wantModel: "gpt-5.4-mini",
+		},
+		{
+			name:      "keeps gpt-5.4 for anyrouter account without configured rule",
+			account:   anyRouterWithoutRules,
 			path:      "/v1/responses",
 			body:      `{"model":"gpt-5.4-mini","input":"hello"}`,
 			wantModel: "gpt-5.4-mini",

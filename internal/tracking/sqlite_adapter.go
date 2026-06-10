@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -279,6 +280,12 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		},
 		{
 			table:       "upstream_accounts",
+			checkColumn: "model_rewrite_rules",
+			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN model_rewrite_rules TEXT DEFAULT ''",
+			description: "账号模型兼容改写规则字段",
+		},
+		{
+			table:       "upstream_accounts",
 			checkColumn: "cost_multiplier",
 			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN cost_multiplier REAL DEFAULT 1.0",
 			description: "账号总成本倍率字段",
@@ -405,8 +412,93 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 	if err := s.migrateDeprecatedAccountPoolSchema(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateModelRewriteRulesToExact(ctx); err != nil {
+		return err
+	}
 
 	return nil
+}
+
+func (s *SQLiteAdapter) migrateModelRewriteRulesToExact(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, model_rewrite_rules
+		FROM upstream_accounts
+		WHERE TRIM(COALESCE(model_rewrite_rules, '')) != ''
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to read model rewrite rules: %w", err)
+	}
+	defer rows.Close()
+
+	updates := make(map[int64]string)
+	for rows.Next() {
+		var (
+			id    int64
+			rules string
+		)
+		if err := rows.Scan(&id, &rules); err != nil {
+			return fmt.Errorf("failed to scan model rewrite rules: %w", err)
+		}
+		if normalized, changed := normalizeModelRewriteRulesToExact(rules); changed {
+			updates[id] = normalized
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to iterate model rewrite rules: %w", err)
+	}
+	for id, rules := range updates {
+		if _, err := s.db.ExecContext(ctx, `UPDATE upstream_accounts SET model_rewrite_rules = ? WHERE id = ?`, rules, id); err != nil {
+			return fmt.Errorf("failed to migrate model rewrite rules to exact matching: %w", err)
+		}
+	}
+	return nil
+}
+
+func normalizeModelRewriteRulesToExact(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return raw, false
+	}
+
+	var rules []map[string]any
+	if err := json.Unmarshal([]byte(raw), &rules); err == nil {
+		if !rewriteRuleMatchesToExact(rules) {
+			return raw, false
+		}
+		encoded, err := json.Marshal(rules)
+		if err != nil {
+			return raw, false
+		}
+		return string(encoded), true
+	}
+
+	var single map[string]any
+	if err := json.Unmarshal([]byte(raw), &single); err != nil {
+		return raw, false
+	}
+	if !rewriteRuleMatchesToExact([]map[string]any{single}) {
+		return raw, false
+	}
+	encoded, err := json.Marshal(single)
+	if err != nil {
+		return raw, false
+	}
+	return string(encoded), true
+}
+
+func rewriteRuleMatchesToExact(rules []map[string]any) bool {
+	changed := false
+	for _, rule := range rules {
+		match, ok := rule["match"].(string)
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(match), "prefix") {
+			rule["match"] = "exact"
+			changed = true
+		}
+	}
+	return changed
 }
 
 func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) (retErr error) {
@@ -474,6 +566,7 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 				account_name TEXT NOT NULL,
 				credential_raw TEXT NOT NULL,
 				base_url TEXT NOT NULL DEFAULT 'https://api.openai.com',
+				model_rewrite_rules TEXT DEFAULT '',
 				cost_multiplier REAL DEFAULT 1.0,
 				input_cost_multiplier REAL DEFAULT 1.0,
 				output_cost_multiplier REAL DEFAULT 1.0,
@@ -503,7 +596,7 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 				updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
 			)`,
 			`INSERT INTO upstream_accounts_new (
-				id, provider_type, account_name, credential_raw, base_url,
+				id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules,
 				cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 				cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 				group_key, priority, enabled, state, cooldown_until, fail_count,
@@ -513,6 +606,7 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 			)
 			SELECT
 				id, provider_type, account_name, credential_raw, base_url,
+				'' AS model_rewrite_rules,
 				1.0 AS cost_multiplier,
 				1.0 AS input_cost_multiplier,
 				1.0 AS output_cost_multiplier,

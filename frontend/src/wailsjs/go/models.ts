@@ -387,6 +387,7 @@ export namespace main {
 	    account_name: string;
 	    credential_raw: string;
 	    base_url: string;
+	    model_rewrite_rules: string;
 	    cost_multiplier: number;
 	    input_cost_multiplier: number;
 	    output_cost_multiplier: number;
@@ -407,6 +408,7 @@ export namespace main {
 	        this.account_name = source["account_name"];
 	        this.credential_raw = source["credential_raw"];
 	        this.base_url = source["base_url"];
+	        this.model_rewrite_rules = source["model_rewrite_rules"];
 	        this.cost_multiplier = source["cost_multiplier"];
 	        this.input_cost_multiplier = source["input_cost_multiplier"];
 	        this.output_cost_multiplier = source["output_cost_multiplier"];
@@ -1327,6 +1329,7 @@ export namespace main {
 	    is_active_selection: boolean;
 	    is_group_preferred: boolean;
 	    base_url: string;
+	    model_rewrite_rules: string;
 	    cost_multiplier: number;
 	    input_cost_multiplier: number;
 	    output_cost_multiplier: number;
@@ -1370,6 +1373,7 @@ export namespace main {
 	        this.is_active_selection = source["is_active_selection"];
 	        this.is_group_preferred = source["is_group_preferred"];
 	        this.base_url = source["base_url"];
+	        this.model_rewrite_rules = source["model_rewrite_rules"];
 	        this.cost_multiplier = source["cost_multiplier"];
 	        this.input_cost_multiplier = source["input_cost_multiplier"];
 	        this.output_cost_multiplier = source["output_cost_multiplier"];

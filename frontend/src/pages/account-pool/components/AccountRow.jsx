@@ -11,6 +11,7 @@ import {
   QUOTA_STATUS_STYLE,
   normalizePlanType,
   normalizePriorityValue,
+  parseCodexModelRewriteSettings,
   resolveAccountId,
   toAccountAuthLabel,
   toAccountStateLabel,
@@ -74,6 +75,12 @@ const AccountRow = ({
   const normalizedPlanType = normalizePlanType(planType);
   const normalizedProviderType = String(account.provider_type || account.providerType || '').trim().toLowerCase();
   const isAPIKeyAccount = normalizedProviderType === 'api_key';
+  const modelRewriteSettings = parseCodexModelRewriteSettings(account.model_rewrite_rules || account.modelRewriteRules || '');
+  const modelRewriteRuleLabels = (modelRewriteSettings.rules || [])
+    .map((rule) => `${rule.source}→${rule.target}`);
+  const modelRewriteBadgeText = modelRewriteRuleLabels.length > 1
+    ? `${modelRewriteRuleLabels[0]} +${modelRewriteRuleLabels.length - 1}`
+    : modelRewriteRuleLabels[0];
   const formatMultiplier = (value) => {
     const parsed = Number.parseFloat(value);
     return Number.isFinite(parsed) ? parsed.toFixed(1) : '1.0';
@@ -153,6 +160,14 @@ const AccountRow = ({
 
         {planTypeLabel && (
           <Badge text={planTypeLabel} className="bg-violet-50 text-violet-600 border-violet-100" />
+        )}
+
+        {isAPIKeyAccount && modelRewriteSettings.enabled && (
+          <Badge
+            text={modelRewriteBadgeText}
+            className="bg-cyan-50 text-cyan-700 border-cyan-100"
+            title={modelRewriteRuleLabels.join(' / ')}
+          />
         )}
 
         <div className="flex items-center gap-1.5 md:ml-auto">

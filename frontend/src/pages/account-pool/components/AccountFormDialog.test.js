@@ -39,6 +39,25 @@ test('AccountFormDialog uses 10-based validation for in-group order values', asy
   assert.match(source, /step="10"/);
 });
 
+test('AccountFormDialog exposes editable model compatibility controls', async () => {
+  const [dialogSource, hookSource] = await Promise.all([
+    readFile(sourcePath, 'utf8'),
+    readFile(formHookPath, 'utf8')
+  ]);
+
+  assert.match(dialogSource, /模型兼容/);
+  assert.match(dialogSource, /启用模型兼容改写/);
+  assert.match(dialogSource, /匹配模型/);
+  assert.match(dialogSource, /替代模型/);
+  assert.match(dialogSource, /添加规则/);
+  assert.match(dialogSource, /删除模型兼容规则/);
+  assert.match(dialogSource, /modelRewriteRules/);
+  assert.doesNotMatch(dialogSource, /value="gpt-5\.4\*"/);
+  assert.match(hookSource, /buildCodexModelRewriteRules/);
+  assert.match(hookSource, /rules:\s*accountForm\.modelRewriteRules/);
+  assert.match(hookSource, /model_rewrite_rules:\s*modelRewriteRules/);
+});
+
 test('account form defaults new records to primary group and preserves group_key during edit and submit', async () => {
   const [constantsSource, hookSource] = await Promise.all([
     readFile(constantsPath, 'utf8'),

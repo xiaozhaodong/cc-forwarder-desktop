@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildManualSwitchSuccessMessage, isValidAccountId } from './accountPool.js';
+import {
+  buildManualSwitchSuccessMessage,
+  buildCodexModelRewriteRules,
+  createDefaultModelRewriteRules,
+  isValidAccountId,
+  parseCodexModelRewriteSettings
+} from './accountPool.js';
 
 test('buildManualSwitchSuccessMessage avoids promising immediate effect', () => {
   const message = buildManualSwitchSuccessMessage('primary-a', 'primary');
@@ -26,4 +32,46 @@ test('isValidAccountId accepts normalized account ids and rejects empty values',
   assert.equal(isValidAccountId(''), false);
   assert.equal(isValidAccountId(null), false);
   assert.equal(isValidAccountId(undefined), false);
+});
+
+test('buildCodexModelRewriteRules serializes multiple exact rewrite rules', () => {
+  const raw = buildCodexModelRewriteRules({
+    rules: [
+      { source: 'gpt-5.4', target: 'gpt-5.5' },
+      { source: 'gpt-5.6', target: 'gpt-5.5' }
+    ]
+  });
+
+  const rules = JSON.parse(raw);
+
+  assert.equal(rules.length, 2);
+  assert.deepEqual(
+    rules.map((rule) => [rule.match, rule.from, rule.to]),
+    [
+      ['exact', 'gpt-5.4', 'gpt-5.5'],
+      ['exact', 'gpt-5.6', 'gpt-5.5']
+    ]
+  );
+});
+
+test('createDefaultModelRewriteRules includes base and mini mappings', () => {
+  assert.deepEqual(createDefaultModelRewriteRules(), [
+    { source: 'gpt-5.4', target: 'gpt-5.5' },
+    { source: 'gpt-5.4-mini', target: 'gpt-5.5' }
+  ]);
+});
+
+test('parseCodexModelRewriteSettings restores multiple editable rules', () => {
+  const raw = JSON.stringify([
+    { paths: ['/v1/responses'], match: 'exact', from: 'gpt-5.4', to: 'gpt-5.5' },
+    { paths: ['/v1/responses'], match: 'exact', from: 'gpt-5.6', to: 'gpt-5.5' }
+  ]);
+
+  const settings = parseCodexModelRewriteSettings(raw);
+
+  assert.equal(settings.enabled, true);
+  assert.deepEqual(settings.rules, [
+    { source: 'gpt-5.4', target: 'gpt-5.5' },
+    { source: 'gpt-5.6', target: 'gpt-5.5' }
+  ]);
 });

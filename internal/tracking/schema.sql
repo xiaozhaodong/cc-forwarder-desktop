@@ -281,6 +281,7 @@ CREATE TABLE IF NOT EXISTS upstream_accounts (
     account_name TEXT NOT NULL,                     -- 账号展示名
     credential_raw TEXT NOT NULL,                   -- 凭据（首版明文）
     base_url TEXT NOT NULL DEFAULT 'https://api.openai.com', -- 上游基础URL
+    model_rewrite_rules TEXT DEFAULT '',            -- Codex 模型兼容改写规则 JSON
 
     -- ========== 成本倍率 ==========
     cost_multiplier REAL DEFAULT 1.0,               -- 总成本倍率

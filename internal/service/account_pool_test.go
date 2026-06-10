@@ -921,6 +921,42 @@ func TestUpdateAccount_PreservesPinnedSelectionWhenPinnedAccountPriorityChanges(
 	}
 }
 
+func TestUpdateAccount_PersistsModelRewriteRules(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	account, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:      "api_key",
+		AccountName:       "anyrouter",
+		CredentialRaw:     "sk-anyrouter",
+		BaseURL:           "https://api.anyrouter.example",
+		ModelRewriteRules: `[{"paths":["/v1/responses"],"match":"exact","from":"gpt-5.4","to":"gpt-5.5"}]`,
+		Priority:          10,
+		Enabled:           true,
+		State:             "active",
+	})
+	if err != nil {
+		t.Fatalf("create account failed: %v", err)
+	}
+
+	updated, err := svc.GetAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	updated.ModelRewriteRules = `[{"paths":["/v1/responses","/v1/responses/compact"],"match":"exact","from":"gpt-5.4","to":"gpt-5.5"},{"paths":["/v1/responses","/v1/responses/compact"],"match":"exact","from":"gpt-5.4-mini","to":"gpt-5.5"}]`
+	if err := svc.UpdateAccount(ctx, updated); err != nil {
+		t.Fatalf("UpdateAccount failed: %v", err)
+	}
+
+	persisted, err := st.GetAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("GetAccount from store failed: %v", err)
+	}
+	if persisted.ModelRewriteRules != updated.ModelRewriteRules {
+		t.Fatalf("expected model rewrite rules to persist, got %s want %s", persisted.ModelRewriteRules, updated.ModelRewriteRules)
+	}
+}
+
 func TestPinAccountSelection_PreservesPinnedTargetAcrossTransientCooldown(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()

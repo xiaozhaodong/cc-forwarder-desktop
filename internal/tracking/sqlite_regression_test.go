@@ -411,7 +411,7 @@ func TestSQLiteMigrationRebuildsLegacyUpstreamAccountsAndRestoresForeignKeys(t *
 				id, source_id, provider_type, account_name, credential_raw, base_url,
 				priority, enabled, state, fail_count, fingerprint, created_at, updated_at
 			) VALUES (
-				11, 1, 'api_key', 'legacy-account', 'sk-legacy', 'https://api.openai.com',
+				11, 1, 'api_key', 'anyrouter-legacy', 'sk-legacy', 'https://api.anyrouter.example',
 				1, 1, 'active', 0, 'fp-legacy', datetime('now'), datetime('now')
 			);
 
@@ -463,6 +463,7 @@ func TestSQLiteMigrationRebuildsLegacyUpstreamAccountsAndRestoresForeignKeys(t *
 		"quota_weekly_reset_at",
 		"quota_status",
 		"quota_refreshed_at",
+		"model_rewrite_rules",
 	} {
 		var columnCount int
 		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('upstream_accounts') WHERE name = ?`, column).Scan(&columnCount)
@@ -471,9 +472,14 @@ func TestSQLiteMigrationRebuildsLegacyUpstreamAccountsAndRestoresForeignKeys(t *
 	}
 
 	var accountCount int
-	err = db.QueryRow(`SELECT COUNT(*) FROM upstream_accounts WHERE id = 11 AND account_name = 'legacy-account'`).Scan(&accountCount)
+	err = db.QueryRow(`SELECT COUNT(*) FROM upstream_accounts WHERE id = 11 AND account_name = 'anyrouter-legacy'`).Scan(&accountCount)
 	require.NoError(t, err)
 	assert.Equal(t, 1, accountCount, "legacy account row should be preserved during rebuild")
+
+	var modelRewriteRules string
+	err = db.QueryRow(`SELECT model_rewrite_rules FROM upstream_accounts WHERE id = 11`).Scan(&modelRewriteRules)
+	require.NoError(t, err)
+	assert.Empty(t, modelRewriteRules, "AnyRouter legacy account should require explicit model rewrite rules")
 
 	var requestCount int
 	err = db.QueryRow(`SELECT COUNT(*) FROM request_logs WHERE request_id = 'legacy-account-request'`).Scan(&requestCount)

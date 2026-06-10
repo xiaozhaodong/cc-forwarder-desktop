@@ -5,11 +5,11 @@
 - **internal/**：核心业务模块，当前主要包含 endpoint（端点调度）、proxy（请求处理）、transport（HTTP 客户端）、logging、monitor、tracking、service、store、accountauth 等子包，新增功能请按现有分层扩展。
 - **internal/accountauth/**：ChatGPT OAuth / refresh token / id_token 解析与账号画像提取。
 - **internal/service/account_pool*.go**：账号池业务逻辑，包含单账号测试、启动批量连通性检查、分组编排、最近一次调度快照、画像刷新、quota 拉取与状态回写。
-- **internal/store/account_pool.go**：`upstream_accounts` 存储层；账号画像、quota、`group_key`、账号成本倍率字段变更需同步这里与 schema。
+- **internal/store/account_pool.go**：`upstream_accounts` 存储层；账号画像、quota、`group_key`、账号成本倍率、`model_rewrite_rules` 字段变更需同步这里与 schema。
 - **app_startup_connectivity.go**：桌面端启动后异步触发端点与账号池批量连通性检查。
 - **config/**：示例与运行配置，`config/example.yaml` 为基础模板，生产部署请复制为 `config/config.yaml`。
 - **data/** 与 `docs/`：分别存储运行时数据库、设计文档；保证数据目录可写。
-- **frontend/src/pages/account-pool/**：Codex 账号池前端工作台，包含账号 inventory、筛选搜索、批量移动、调度编排卡片/抽屉、最近一次调度快照，以及 `api_key` 账号成本倍率配置/展示。
+- **frontend/src/pages/account-pool/**：Codex 账号池前端工作台，包含账号 inventory、筛选搜索、批量移动、调度编排卡片/抽屉、最近一次调度快照，以及 `api_key` 账号成本倍率和模型兼容配置/展示。
 - **frontend/src/pages/requests/**：请求页与 Codex 账号切换器；切换具体账号会固定当前请求目标，切回 Auto 才恢复按编排调度。
 - **tests/**：单元与集成测试分层，`tests/unit/{module}` 与 `tests/integration/request_suspend` 对应主要质量保障。
 
@@ -59,6 +59,7 @@
 - `upstream_accounts` 现已包含账号画像字段：`plan_type`、`chatgpt_account_id`、`chatgpt_user_id`、`organization_id`。
 - `upstream_accounts` 现已包含 quota 字段：`quota_5h_*`、`quota_weekly_*`、`quota_status`、`quota_refreshed_at`。
 - `upstream_accounts` 现已包含 6 个账号成本倍率字段：`cost_multiplier`、`input_cost_multiplier`、`output_cost_multiplier`、`cache_creation_cost_multiplier`、`cache_creation_cost_multiplier_1h`、`cache_read_cost_multiplier`。
+- `upstream_accounts` 现已包含 `model_rewrite_rules`，用于 `api_key` 账号的 Codex 模型兼容改写；不按渠道自动生成规则，所有改写规则都由前端显式启用并维护，当前使用精确匹配。
 - `upstream_accounts` 现已包含 `group_key`；显式分组为 `primary / backup / cold`，若为空则按优先级推断：`<=10 => primary`、`<=20 => backup`、其余 => `cold`。
 - `free` 账号只有周额度；前端使用 `d7` 标签显示。
 - `api_key` 账号在前端默认显示 `5h / d7 = 无限额`。

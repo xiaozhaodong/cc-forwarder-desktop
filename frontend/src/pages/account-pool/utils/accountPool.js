@@ -5,6 +5,10 @@
 
 import { PLAN_TYPE_LABELS } from './constants.js';
 
+const DEFAULT_MODEL_REWRITE_SOURCE = 'gpt-5.4';
+const DEFAULT_MODEL_REWRITE_TARGET = 'gpt-5.5';
+const CODEX_MODEL_REWRITE_PATHS = ['/v1/responses', '/v1/responses/compact'];
+
 const providerTypeToAuthMethod = (providerType = '') => {
   const type = String(providerType).trim().toLowerCase();
   if (['chatgpt_refresh_token', 'chatgpt_rt', 'refresh_token', 'rt', 'oauth', 'openai_oauth'].includes(type)) return 'chatgpt_refresh_token';
@@ -24,6 +28,96 @@ const toAccountAuthLabel = (providerType = '') => {
 };
 
 const isAPIKeyProviderType = (providerType = '') => String(providerType).trim().toLowerCase() === 'api_key';
+
+const normalizeModelRewriteSource = (sourceModel = '') => {
+  const trimmed = String(sourceModel || '').trim();
+  if (!trimmed) {
+    return '';
+  }
+  return trimmed.endsWith('*') ? trimmed.slice(0, -1).trim() : trimmed;
+};
+
+const createDefaultModelRewriteRule = () => ({
+  source: DEFAULT_MODEL_REWRITE_SOURCE,
+  target: DEFAULT_MODEL_REWRITE_TARGET
+});
+
+const createDefaultModelRewriteRules = () => [
+  createDefaultModelRewriteRule(),
+  {
+    source: 'gpt-5.4-mini',
+    target: DEFAULT_MODEL_REWRITE_TARGET
+  }
+];
+
+const normalizeModelRewriteFormRule = (rule = {}) => ({
+  source: normalizeModelRewriteSource(rule.source ?? rule.from ?? ''),
+  target: String(rule.target ?? rule.to ?? '').trim()
+});
+
+const buildCodexModelRewriteRules = (options = {}) => {
+  const inputRules = Array.isArray(options.rules)
+    ? options.rules
+    : [{
+      source: options.sourceModel ?? DEFAULT_MODEL_REWRITE_SOURCE,
+      target: options.targetModel ?? DEFAULT_MODEL_REWRITE_TARGET
+    }];
+  const rules = inputRules
+    .map(normalizeModelRewriteFormRule)
+    .filter((rule) => rule.source && rule.target);
+  if (!rules.length) {
+    return '';
+  }
+  return JSON.stringify(rules.map((rule) => ({
+    paths: CODEX_MODEL_REWRITE_PATHS,
+    match: 'exact',
+    from: rule.source,
+    to: rule.target
+  })));
+};
+
+const parseCodexModelRewriteSettings = (raw = '') => {
+  const fallback = {
+    enabled: false,
+    rules: createDefaultModelRewriteRules(),
+    source: DEFAULT_MODEL_REWRITE_SOURCE,
+    target: DEFAULT_MODEL_REWRITE_TARGET
+  };
+  const text = String(raw || '').trim();
+  if (!text) {
+    return fallback;
+  }
+
+  try {
+    const parsed = JSON.parse(text);
+    const rules = Array.isArray(parsed) ? parsed : [parsed];
+    const formRules = rules
+      .filter((item) => {
+        if (!item || typeof item !== 'object') {
+          return false;
+        }
+        const from = String(item.from || '').trim();
+        const match = String(item.match || 'exact').trim().toLowerCase();
+        return from && (match === 'exact' || match === 'prefix') && String(item.to || '').trim();
+      })
+      .map((item) => normalizeModelRewriteFormRule({
+        source: item.from,
+        target: item.to
+      }))
+      .filter((rule) => rule.source && rule.target);
+    if (!formRules.length) {
+      return fallback;
+    }
+    return {
+      enabled: true,
+      rules: formRules,
+      source: formRules[0].source,
+      target: formRules[0].target
+    };
+  } catch {
+    return fallback;
+  }
+};
 
 const buildOAuthCredentialRaw = (result = {}) => {
   if (result?.credential_raw) {
@@ -309,8 +403,13 @@ const maskSessionId = (sessionId = '') => {
 
 export {
   authMethodToProviderType,
+  buildCodexModelRewriteRules,
   buildOAuthCredentialRaw,
   buildManualSwitchSuccessMessage,
+  createDefaultModelRewriteRule,
+  createDefaultModelRewriteRules,
+  DEFAULT_MODEL_REWRITE_SOURCE,
+  DEFAULT_MODEL_REWRITE_TARGET,
   hasFutureQuotaReset,
   isAccountSchedulable,
   isAPIKeyProviderType,
@@ -318,6 +417,7 @@ export {
   maskSessionId,
   normalizeEntityId,
   normalizePlanType,
+  parseCodexModelRewriteSettings,
   providerTypeToAuthMethod,
   resolveAccountId,
   summarizeCallbackURL,

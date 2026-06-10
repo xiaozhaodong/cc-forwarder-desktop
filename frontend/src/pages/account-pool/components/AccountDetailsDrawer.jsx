@@ -7,6 +7,7 @@ import { createPortal } from 'react-dom';
 import { Activity, Gauge, Settings, Shield, X } from 'lucide-react';
 import { Button } from '@components/ui';
 import Badge from './Badge.jsx';
+import { parseCodexModelRewriteSettings } from '../utils.js';
 
 const TONE_CLASS = {
   rose: 'bg-rose-50 text-rose-700 border-rose-200',
@@ -114,6 +115,12 @@ const AccountDetailsDrawer = ({
   const account = detail.rawAccount || detail.account || row;
   const currentGroupKey = normalizeGroupKey(detail.groupKey || row.groupKey || row.groupLabel);
   const enabled = detail.enabled ?? account.enabled ?? true;
+  const modelRewriteSettings = parseCodexModelRewriteSettings(account.model_rewrite_rules || account.modelRewriteRules || '');
+  const modelRewriteDetailText = modelRewriteSettings.enabled
+    ? (modelRewriteSettings.rules || [])
+      .map((rule) => `${rule.source} -> ${rule.target}`)
+      .join(' / ')
+    : '未启用';
   const actionBusy = Boolean(busyKey);
   const moveBusy = actionBusy;
   const groupActions = [
@@ -182,6 +189,10 @@ const AccountDetailsDrawer = ({
             <DetailRow label="组内顺序" value={detail.priorityLabel || detail.priority || '-'} />
             <DetailRow label="组内角色" value={detail.groupOrderLabel || detail.groupOrder || '-'} />
             <DetailRow label="Base URL" value={detail.baseUrl || detail.baseURL || '-'} />
+            <DetailRow
+              label="模型兼容"
+              value={modelRewriteDetailText}
+            />
             <DetailRow label="路由备注" value={detail.routingNote || detail.routeNote || '-'} />
           </SectionCard>
 

@@ -88,6 +88,11 @@ const EMPTY_ACCOUNT_FORM = {
   cacheCreationCostMultiplier: '1.0',
   cacheCreationCostMultiplier1h: '1.0',
   cacheReadCostMultiplier: '1.0',
+  modelRewriteEnabled: false,
+  modelRewriteRules: [
+    { source: 'gpt-5.4', target: 'gpt-5.5' },
+    { source: 'gpt-5.4-mini', target: 'gpt-5.5' }
+  ],
   priority: '10',
   enabled: true,
   credential_raw: '',

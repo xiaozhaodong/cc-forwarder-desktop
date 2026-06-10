@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -31,6 +32,7 @@ type UpstreamAccountRecord struct {
 	AccountName                   string     `json:"account_name"`
 	CredentialRaw                 string     `json:"credential_raw"`
 	BaseURL                       string     `json:"base_url"`
+	ModelRewriteRules             string     `json:"model_rewrite_rules"`
 	CostMultiplier                float64    `json:"cost_multiplier"`
 	InputCostMultiplier           float64    `json:"input_cost_multiplier"`
 	OutputCostMultiplier          float64    `json:"output_cost_multiplier"`
@@ -105,26 +107,130 @@ func (s *SQLiteAccountPoolStore) ensureSchemaCompatibility(ctx context.Context) 
 	}
 
 	s.schemaCompatOnce.Do(func() {
-		exists, err := s.columnExists(ctx, "upstream_accounts", "group_key")
-		if err != nil {
-			s.schemaCompatError = err
-			return
-		}
-		if exists {
-			return
+		migrations := []struct {
+			column string
+			sql    string
+			errMsg string
+		}{
+			{
+				column: "group_key",
+				sql:    `ALTER TABLE upstream_accounts ADD COLUMN group_key TEXT DEFAULT ''`,
+				errMsg: "补齐 group_key 字段失败",
+			},
+			{
+				column: "model_rewrite_rules",
+				sql:    `ALTER TABLE upstream_accounts ADD COLUMN model_rewrite_rules TEXT DEFAULT ''`,
+				errMsg: "补齐 model_rewrite_rules 字段失败",
+			},
 		}
 
-		if _, err := s.db.ExecContext(ctx, `ALTER TABLE upstream_accounts ADD COLUMN group_key TEXT DEFAULT ''`); err != nil {
-			s.schemaCompatError = fmt.Errorf("补齐 group_key 字段失败: %w", err)
-			return
+		for _, migration := range migrations {
+			exists, err := s.columnExists(ctx, "upstream_accounts", migration.column)
+			if err != nil {
+				s.schemaCompatError = err
+				return
+			}
+			if exists {
+				continue
+			}
+			if _, err := s.db.ExecContext(ctx, migration.sql); err != nil {
+				s.schemaCompatError = fmt.Errorf("%s: %w", migration.errMsg, err)
+				return
+			}
 		}
 		if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_upstream_accounts_group_key ON upstream_accounts(group_key)`); err != nil {
 			s.schemaCompatError = fmt.Errorf("补齐 group_key 索引失败: %w", err)
 			return
 		}
+		if err := s.migrateModelRewriteRulesToExact(ctx); err != nil {
+			s.schemaCompatError = err
+			return
+		}
 	})
 
 	return s.schemaCompatError
+}
+
+func (s *SQLiteAccountPoolStore) migrateModelRewriteRulesToExact(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, model_rewrite_rules
+		FROM upstream_accounts
+		WHERE TRIM(COALESCE(model_rewrite_rules, '')) != ''
+	`)
+	if err != nil {
+		return fmt.Errorf("读取模型改写规则失败: %w", err)
+	}
+	defer rows.Close()
+
+	updates := make(map[int64]string)
+	for rows.Next() {
+		var (
+			id    int64
+			rules string
+		)
+		if err := rows.Scan(&id, &rules); err != nil {
+			return fmt.Errorf("扫描模型改写规则失败: %w", err)
+		}
+		if normalized, changed := normalizeModelRewriteRulesToExact(rules); changed {
+			updates[id] = normalized
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("遍历模型改写规则失败: %w", err)
+	}
+	for id, rules := range updates {
+		if _, err := s.db.ExecContext(ctx, `UPDATE upstream_accounts SET model_rewrite_rules = ? WHERE id = ?`, rules, id); err != nil {
+			return fmt.Errorf("迁移模型改写规则为精确匹配失败: %w", err)
+		}
+	}
+	return nil
+}
+
+func normalizeModelRewriteRulesToExact(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return raw, false
+	}
+
+	var rules []map[string]any
+	if err := json.Unmarshal([]byte(raw), &rules); err == nil {
+		if !rewriteRuleMatchesToExact(rules) {
+			return raw, false
+		}
+		encoded, err := json.Marshal(rules)
+		if err != nil {
+			return raw, false
+		}
+		return string(encoded), true
+	}
+
+	var single map[string]any
+	if err := json.Unmarshal([]byte(raw), &single); err != nil {
+		return raw, false
+	}
+	if !rewriteRuleMatchesToExact([]map[string]any{single}) {
+		return raw, false
+	}
+	encoded, err := json.Marshal(single)
+	if err != nil {
+		return raw, false
+	}
+	return string(encoded), true
+}
+
+func rewriteRuleMatchesToExact(rules []map[string]any) bool {
+	changed := false
+	for _, rule := range rules {
+		match, ok := rule["match"].(string)
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(match), "prefix") {
+			rule["match"] = "exact"
+			changed = true
+		}
+	}
+	return changed
 }
 
 func (s *SQLiteAccountPoolStore) columnExists(ctx context.Context, table, column string) (bool, error) {
@@ -175,17 +281,17 @@ func (s *SQLiteAccountPoolStore) CreateAccount(ctx context.Context, record *Upst
 	normalizeAccountRecord(record)
 	query := `
 		INSERT INTO upstream_accounts (
-			provider_type, account_name, credential_raw, base_url,
+			provider_type, account_name, credential_raw, base_url, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
 			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
 			quota_status, quota_refreshed_at, fingerprint
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	res, err := s.getQuerier().ExecContext(ctx, query,
-		record.ProviderType, record.AccountName, record.CredentialRaw, record.BaseURL,
+		record.ProviderType, record.AccountName, record.CredentialRaw, record.BaseURL, record.ModelRewriteRules,
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
 		record.GroupKey, record.Priority, boolToInt(record.Enabled), record.State, nullableTime(record.CooldownUntil), record.FailCount,
@@ -218,7 +324,7 @@ func (s *SQLiteAccountPoolStore) UpdateAccount(ctx context.Context, record *Upst
 	normalizeAccountRecord(record)
 	query := `
 		UPDATE upstream_accounts
-		SET provider_type = ?, account_name = ?, credential_raw = ?, base_url = ?,
+		SET provider_type = ?, account_name = ?, credential_raw = ?, base_url = ?, model_rewrite_rules = ?,
 			cost_multiplier = ?, input_cost_multiplier = ?, output_cost_multiplier = ?,
 			cache_creation_cost_multiplier = ?, cache_creation_cost_multiplier_1h = ?, cache_read_cost_multiplier = ?,
 			group_key = ?, priority = ?, enabled = ?, state = ?, cooldown_until = ?, fail_count = ?, last_success_at = ?, last_error = ?,
@@ -228,7 +334,7 @@ func (s *SQLiteAccountPoolStore) UpdateAccount(ctx context.Context, record *Upst
 		WHERE id = ?
 	`
 	res, err := s.getQuerier().ExecContext(ctx, query,
-		record.ProviderType, record.AccountName, record.CredentialRaw, record.BaseURL,
+		record.ProviderType, record.AccountName, record.CredentialRaw, record.BaseURL, record.ModelRewriteRules,
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
 		record.GroupKey, record.Priority, boolToInt(record.Enabled), record.State, nullableTime(record.CooldownUntil), record.FailCount,
@@ -369,7 +475,7 @@ func (s *SQLiteAccountPoolStore) GetAccount(ctx context.Context, id int64) (*Ups
 
 func (s *SQLiteAccountPoolStore) getAccountByID(ctx context.Context, id int64) (*UpstreamAccountRecord, error) {
 	query := `
-		SELECT id, provider_type, account_name, credential_raw, base_url,
+		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
@@ -419,7 +525,7 @@ func (s *SQLiteAccountPoolStore) ListAccounts(ctx context.Context, includeDisabl
 func (s *SQLiteAccountPoolStore) listAccountsRaw(ctx context.Context, includeDisabled bool) ([]*UpstreamAccountRecord, error) {
 
 	query := `
-		SELECT id, provider_type, account_name, credential_raw, base_url,
+		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
@@ -462,7 +568,7 @@ func (s *SQLiteAccountPoolStore) ListSchedulableAccounts(ctx context.Context, no
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, provider_type, account_name, credential_raw, base_url,
+		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
@@ -504,7 +610,7 @@ func (s *SQLiteAccountPoolStore) FindAccountByFingerprint(ctx context.Context, f
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, provider_type, account_name, credential_raw, base_url,
+		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
@@ -724,6 +830,10 @@ func normalizeAccountRecord(record *UpstreamAccountRecord) {
 		record.BaseURL = defaultAccountBaseURL
 	}
 	record.BaseURL = normalizeBaseURL(record.BaseURL)
+	record.ModelRewriteRules = strings.TrimSpace(record.ModelRewriteRules)
+	if strings.TrimSpace(strings.ToLower(record.ProviderType)) != "api_key" {
+		record.ModelRewriteRules = ""
+	}
 	applyAccountCostMultiplierPolicy(record)
 	if record.Priority == 0 {
 		record.Priority = defaultAccountPrio
@@ -832,6 +942,7 @@ func scanAccountRow(scanner rowScanner) (*UpstreamAccountRecord, error) {
 	)
 	if err := scanner.Scan(
 		&rec.ID, &rec.ProviderType, &rec.AccountName, &rec.CredentialRaw, &rec.BaseURL,
+		&rec.ModelRewriteRules,
 		&costMultiplier, &inputCostMultiplier, &outputCostMultiplier,
 		&cacheCreationMultiplier, &cacheCreationMultiplier1h, &cacheReadMultiplier,
 		&rec.GroupKey, &rec.Priority, &enabled, &rec.State, &cooldownUntilStr, &rec.FailCount, &lastSuccessAtStr, &rec.LastError,

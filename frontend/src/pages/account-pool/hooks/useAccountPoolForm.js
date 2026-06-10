@@ -14,11 +14,13 @@ import {
 import {
   DEFAULT_BASE_URL,
   EMPTY_ACCOUNT_FORM,
+  buildCodexModelRewriteRules,
   authMethodToProviderType,
   buildOAuthCredentialRaw,
   isAPIKeyProviderType,
   isValidAccountId,
   maskSessionId,
+  parseCodexModelRewriteSettings,
   providerTypeToAuthMethod,
   resolveAccountId,
   summarizeCallbackURL
@@ -175,6 +177,8 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
   const openEditAccount = useCallback(async (account) => {
     const providerType = account.provider_type || account.providerType || 'chatgpt_refresh_token';
     const isAPIKeyAccount = isAPIKeyProviderType(providerType);
+    const modelRewriteRulesRaw = account.model_rewrite_rules || account.modelRewriteRules || '';
+    const modelRewriteSettings = parseCodexModelRewriteSettings(modelRewriteRulesRaw);
     const nextForm = {
       account_name: account.account_name || account.accountName || '',
       auth_method: providerTypeToAuthMethod(providerType),
@@ -189,7 +193,10 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
       priority: String(account.priority || 10),
       enabled: account.enabled !== false,
       credential_raw: account.credential_raw || account.credentialRaw || '',
-      base_url: account.base_url || account.baseURL || DEFAULT_BASE_URL
+      base_url: account.base_url || account.baseURL || DEFAULT_BASE_URL,
+      modelRewriteEnabled: isAPIKeyAccount && modelRewriteSettings.enabled,
+      modelRewriteRules: modelRewriteSettings.rules,
+      modelRewriteRulesRaw
     };
 
     const accountId = resolveAccountId(account);
@@ -236,10 +243,26 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
     const priorityValue = Number.parseInt(accountForm.priority, 10);
     const groupKey = String(accountForm.group_key || '').trim().toLowerCase() || 'primary';
     const baseURL = (accountForm.base_url || DEFAULT_BASE_URL).trim() || DEFAULT_BASE_URL;
+    const originalRewriteSettings = parseCodexModelRewriteSettings(accountForm.modelRewriteRulesRaw || '');
+    const isAPIKeyAccount = isAPIKeyProviderType(providerType);
+    const modelRewriteRules = (() => {
+      if (!isAPIKeyAccount) {
+        return '';
+      }
+      if (accountForm.modelRewriteEnabled) {
+        return buildCodexModelRewriteRules({
+          rules: accountForm.modelRewriteRules
+        });
+      }
+      return originalRewriteSettings.enabled ? '' : String(accountForm.modelRewriteRulesRaw || '').trim();
+    })();
+    if (isAPIKeyAccount && accountForm.modelRewriteEnabled && !modelRewriteRules) {
+      showNotice('error', '请至少填写一条完整的模型兼容规则');
+      return;
+    }
 
     setAccountSubmitting(true);
     try {
-      const isAPIKeyAccount = isAPIKeyProviderType(providerType);
       const payload = {
         ...accountForm,
         auth_method: authMethod,
@@ -255,7 +278,8 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
         priority: Number.isNaN(priorityValue) ? 10 : priorityValue,
         enabled: accountForm.enabled !== false,
         credential_raw: credentialRaw,
-        base_url: baseURL
+        base_url: baseURL,
+        model_rewrite_rules: modelRewriteRules
       };
 
       if (editingAccount) {

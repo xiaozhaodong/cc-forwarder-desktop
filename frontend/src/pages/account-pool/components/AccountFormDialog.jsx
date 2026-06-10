@@ -4,7 +4,7 @@
 // ============================================
 
 import { useEffect, useState } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
 import { Button, CustomSelect } from '@components/ui';
 import { maskSessionId } from '../utils.js';
 import OAuthHelperPanel from './OAuthHelperPanel.jsx';
@@ -13,7 +13,10 @@ import {
   ACCOUNT_GROUP_OPTIONS,
   AUTH_METHOD_OPTIONS,
   DEFAULT_BASE_URL,
+  DEFAULT_MODEL_REWRITE_SOURCE,
+  DEFAULT_MODEL_REWRITE_TARGET,
   authMethodToProviderType,
+  createDefaultModelRewriteRules,
   isAPIKeyProviderType
 } from '../utils.js';
 
@@ -47,6 +50,30 @@ const AccountFormDialog = ({
   if (!open) return null;
 
   const isAPIKeyAccount = isAPIKeyProviderType(accountForm.provider_type || accountForm.auth_method);
+  const modelRewriteRules = (() => {
+    if (Array.isArray(accountForm.modelRewriteRules) && accountForm.modelRewriteRules.length > 0) {
+      return accountForm.modelRewriteRules;
+    }
+    if (accountForm.modelRewriteSource || accountForm.modelRewriteTarget) {
+      return [{
+        source: accountForm.modelRewriteSource || DEFAULT_MODEL_REWRITE_SOURCE,
+        target: accountForm.modelRewriteTarget || DEFAULT_MODEL_REWRITE_TARGET
+      }];
+    }
+    return createDefaultModelRewriteRules();
+  })();
+  const updateModelRewriteRules = (updater) => {
+    setAccountForm(prev => {
+      const current = Array.isArray(prev.modelRewriteRules) && prev.modelRewriteRules.length > 0
+        ? prev.modelRewriteRules
+        : createDefaultModelRewriteRules();
+      const nextRules = typeof updater === 'function' ? updater(current) : updater;
+      return {
+        ...prev,
+        modelRewriteRules: Array.isArray(nextRules) && nextRules.length > 0 ? nextRules : createDefaultModelRewriteRules()
+      };
+    });
+  };
   const maskedCredentialPreview = (() => {
     const raw = String(accountForm.credential_raw || '').trim();
     if (!raw) {
@@ -139,7 +166,9 @@ const AccountFormDialog = ({
                               outputCostMultiplier: '1.0',
                               cacheCreationCostMultiplier: '1.0',
                               cacheCreationCostMultiplier1h: '1.0',
-                              cacheReadCostMultiplier: '1.0'
+                              cacheReadCostMultiplier: '1.0',
+                              modelRewriteEnabled: false,
+                              modelRewriteRules: createDefaultModelRewriteRules()
                             })
                           }));
                           if (option.value !== 'chatgpt_refresh_token') {
@@ -214,6 +243,87 @@ const AccountFormDialog = ({
                 />
                 <span>{editingAccount ? '保持账号启用状态' : '创建后立即启用'}</span>
               </label>
+            </section>
+
+            <section className="space-y-4">
+              <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">模型兼容</h4>
+
+              <label className={`flex items-start gap-2 text-sm ${isAPIKeyAccount ? 'text-slate-700' : 'text-slate-400'}`}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(accountForm.modelRewriteEnabled)}
+                  disabled={!isAPIKeyAccount}
+                  onChange={(event) => setAccountForm(prev => ({
+                    ...prev,
+                    modelRewriteEnabled: event.target.checked,
+                    modelRewriteRules: Array.isArray(prev.modelRewriteRules) && prev.modelRewriteRules.length > 0
+                      ? prev.modelRewriteRules
+                      : createDefaultModelRewriteRules()
+                  }))}
+                  className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span>启用模型兼容改写</span>
+              </label>
+
+              {isAPIKeyAccount && accountForm.modelRewriteEnabled && (
+                <div className="space-y-3">
+                  {modelRewriteRules.map((rule, index) => (
+                    <div key={index} className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_auto]">
+                      <FormField label={`匹配模型${modelRewriteRules.length > 1 ? ` ${index + 1}` : ''}`}>
+                        <input
+                          type="text"
+                          value={rule.source ?? ''}
+                          onChange={(event) => updateModelRewriteRules((rules) => rules.map((item, itemIndex) => (
+                            itemIndex === index ? { ...item, source: event.target.value } : item
+                          )))}
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                          placeholder={DEFAULT_MODEL_REWRITE_SOURCE}
+                        />
+                      </FormField>
+                      <FormField label={`替代模型${modelRewriteRules.length > 1 ? ` ${index + 1}` : ''}`}>
+                        <input
+                          type="text"
+                          value={rule.target ?? ''}
+                          onChange={(event) => updateModelRewriteRules((rules) => rules.map((item, itemIndex) => (
+                            itemIndex === index ? { ...item, target: event.target.value } : item
+                          )))}
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                          placeholder={DEFAULT_MODEL_REWRITE_TARGET}
+                        />
+                      </FormField>
+                      <div>
+                        <div className="mb-1.5 text-xs font-medium text-transparent select-none" aria-hidden="true">删除</div>
+                        <button
+                          type="button"
+                          aria-label={`删除模型兼容规则 ${index + 1}`}
+                          title="删除规则"
+                          disabled={modelRewriteRules.length <= 1}
+                          onClick={() => updateModelRewriteRules((rules) => rules.filter((_, itemIndex) => itemIndex !== index))}
+                          className={`inline-flex h-10 w-10 items-center justify-center rounded-lg border transition-colors ${
+                            modelRewriteRules.length <= 1
+                              ? 'cursor-not-allowed border-slate-100 text-slate-300'
+                              : 'border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-500'
+                          }`}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => updateModelRewriteRules((rules) => [...rules, { source: '', target: '' }])}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
+                  >
+                    <Plus size={15} />
+                    添加规则
+                  </button>
+                </div>
+              )}
+
+              <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+                仅在 Codex /v1/responses 与 /v1/responses/compact 转发前替换请求模型。
+              </div>
             </section>
 
             <section className="space-y-4">

@@ -35,6 +35,10 @@
   - `cache_creation_cost_multiplier`
   - `cache_creation_cost_multiplier_1h`
   - `cache_read_cost_multiplier`
+- Codex 账号池 `api_key` 账号模型兼容改写：
+  - `model_rewrite_rules`
+  - 当前前端支持多条精确匹配规则，例如 `gpt-5.4 -> gpt-5.5`、`gpt-5.4-mini -> gpt-5.5`
+  - 不按渠道自动生成规则，所有改写规则都由前端显式启用并维护
 - Responses 计费口径修正：`/v1/responses` 的 `input_tokens` 已含缓存读，实际输入计费需按 `input_tokens - cache_read_tokens`
 
 ## 关键文件
@@ -196,6 +200,7 @@ cd frontend && npm run build
   - `last_success_at`
   - `quota_status`
   - `quota_refreshed_at`
+  - `model_rewrite_rules`
   - `state`
   - `cost_multiplier / input_cost_multiplier / output_cost_multiplier`
 - OAuth 画像问题优先看：
