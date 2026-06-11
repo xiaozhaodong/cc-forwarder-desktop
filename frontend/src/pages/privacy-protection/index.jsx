@@ -60,6 +60,13 @@ const ModeSegmentedControl = ({ mode, busy, onChange }) => (
 
 // 扫描参数（点击保存生效，避免误触）
 // 注意：调用方通过 key 在 settings 变化时重挂载本组件，初始 state 直接取自 settings
+const ScanSettingField = ({ label, className = '', children }) => (
+  <div className={`space-y-1.5 ${className}`}>
+    <label className="block h-5 text-sm font-semibold leading-5 text-slate-700">{label}</label>
+    <div className="h-10">{children}</div>
+  </div>
+);
+
 const ScanSettingsBar = ({ settings, busy, onSave }) => {
   const [scanMaxBytes, setScanMaxBytes] = useState(settings.scan_max_bytes);
   const [overLimitAction, setOverLimitAction] = useState(settings.over_limit_action);
@@ -70,47 +77,53 @@ const ScanSettingsBar = ({ settings, busy, onSave }) => {
     || onError !== settings.on_error;
 
   return (
-    <div className="flex flex-wrap items-end gap-3">
-      <div className="w-40">
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-[260px_180px_164px_112px] md:items-end">
+      <ScanSettingField label="扫描上限（字节）">
         <Input
-          label="扫描上限（字节）"
           type="number"
           min="1024"
           value={scanMaxBytes}
           onChange={(e) => setScanMaxBytes(e.target.value)}
+          className="h-10 font-semibold tabular-nums text-slate-800"
         />
-      </div>
-      <div className="flex flex-col">
-        <label className="text-sm font-medium text-slate-700 mb-1.5">超限策略</label>
+      </ScanSettingField>
+      <ScanSettingField label="超限策略">
         <CustomSelect
+          size="md"
           options={PRIVACY_OVER_LIMIT_OPTIONS}
           value={overLimitAction}
           onChange={setOverLimitAction}
-          className="w-40"
+          className="w-full [&>button]:h-10 [&>button]:w-full"
         />
-      </div>
-      <div className="flex flex-col">
-        <label className="text-sm font-medium text-slate-700 mb-1.5">出错策略</label>
+      </ScanSettingField>
+      <ScanSettingField label="出错策略">
         <CustomSelect
+          size="md"
           options={PRIVACY_ON_ERROR_OPTIONS}
           value={onError}
           onChange={setOnError}
-          className="w-36"
+          className="w-full [&>button]:h-10 [&>button]:w-full"
         />
+      </ScanSettingField>
+      <div className="space-y-1.5">
+        <div className="h-5" aria-hidden="true" />
+        <div className="h-10">
+          <Button
+            size="md"
+            variant="secondary"
+            icon={Save}
+            disabled={!dirty || busy}
+            className="h-10 w-full"
+            onClick={() => onSave({
+              scan_max_bytes: Number(scanMaxBytes),
+              over_limit_action: overLimitAction,
+              on_error: onError
+            })}
+          >
+            保存
+          </Button>
+        </div>
       </div>
-      <Button
-        size="sm"
-        variant="secondary"
-        icon={Save}
-        disabled={!dirty || busy}
-        onClick={() => onSave({
-          scan_max_bytes: Number(scanMaxBytes),
-          over_limit_action: overLimitAction,
-          on_error: onError
-        })}
-      >
-        保存
-      </Button>
     </div>
   );
 };
