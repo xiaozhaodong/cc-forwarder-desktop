@@ -52,6 +52,8 @@ type Handler struct {
 	sharedSuspensionManager handlers.SuspensionManager
 	// 🚀 [端点自愈] 端点恢复信号管理器
 	recoverySignalManager *EndpointRecoverySignalManager
+	// 🛡️ 出站隐私过滤（可选注入，nil 时不影响原有链路）
+	privacyFilter handlers.PrivacyFilter
 }
 
 type CodexModelListProvider interface {
@@ -402,6 +404,8 @@ func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 			// 🔧 [Critical修复] 使用保存的共享SuspensionManager实例
 			h.sharedSuspensionManager,
 		)
+		// 🛡️ 重建后重新注入隐私过滤依赖，避免热路径丢失
+		h.regularHandler.SetPrivacyFilter(h.privacyFilter)
 	}
 
 	// 重新创建streamingHandler以包含usageTracker
@@ -440,6 +444,18 @@ func (h *Handler) SetEventBus(eventBus events.EventBus) {
 // SetAccountPoolService 设置账号池服务
 func (h *Handler) SetAccountPoolService(service AccountPoolService) {
 	h.accountPoolService = service
+}
+
+// SetPrivacyFilter 注入出站隐私过滤依赖，并传递给 endpoint 常规/流式与账号池链路。
+// 必须在 SetUsageTracker 之后保持有效（SetUsageTracker 重建 handler 时会重新注入）。
+func (h *Handler) SetPrivacyFilter(filter handlers.PrivacyFilter) {
+	h.privacyFilter = filter
+	if h.forwarder != nil {
+		h.forwarder.SetPrivacyFilter(filter)
+	}
+	if h.regularHandler != nil {
+		h.regularHandler.SetPrivacyFilter(filter)
+	}
 }
 
 // SetCodexModelListProvider 设置本地 Codex 模型目录提供器。
@@ -496,6 +512,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			r.Body.Close()
+		}
+
+		// 🛡️ count_tokens 走提前拦截分支，也必须挂载请求级隐私状态。
+		// 这样同一请求在多个支持端点之间尝试时能复用过滤结果，并传递 requestID。
+		if h.privacyFilter != nil {
+			privacyState := handlers.NewPrivacyRequestState(connID)
+			*r = *r.WithContext(handlers.WithPrivacyRequestState(r.Context(), privacyState))
+			ctx = r.Context()
 		}
 
 		// 使用CountTokensHandler处理
@@ -558,6 +582,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		r.Body.Close()
+	}
+
+	// 🛡️ 请求级隐私过滤状态：同一 requestID + scopeFingerprint 重试时复用扫描结果
+	if h.privacyFilter != nil {
+		privacyState := handlers.NewPrivacyRequestState(lifecycleManager.GetRequestID())
+		*r = *r.WithContext(handlers.WithPrivacyRequestState(r.Context(), privacyState))
 	}
 
 	// 异步解析请求体中的模型名称（不阻塞主转发流程）

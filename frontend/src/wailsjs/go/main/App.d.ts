@@ -19,17 +19,23 @@ export function CreateEndpointRecord(arg1:main.CreateEndpointInput):Promise<void
 
 export function CreateModelPricing(arg1:main.CreateModelPricingInput):Promise<void>;
 
+export function CreatePrivacyRule(arg1:main.PrivacyRuleInput):Promise<main.PrivacyRuleInfo>;
+
 export function CreateUpstreamAccount(arg1:main.CreateUpstreamAccountInput):Promise<void>;
 
 export function DeleteEndpointRecord(arg1:string):Promise<void>;
 
 export function DeleteModelPricing(arg1:string):Promise<void>;
 
+export function DeletePrivacyRule(arg1:number):Promise<void>;
+
 export function DeleteUpstreamAccount(arg1:number):Promise<void>;
 
 export function EnableAutomaticAccountSelection():Promise<main.EnableAutomaticAccountSelectionResult>;
 
 export function ExchangeChatGPTOAuthCallback(arg1:main.ExchangeChatGPTOAuthCallbackInput):Promise<main.ExchangeChatGPTOAuthCallbackResult>;
+
+export function ExportPrivacyRules():Promise<main.PrivacyRuleExportInfo>;
 
 export function GenerateChatGPTOAuthLink():Promise<main.GenerateChatGPTOAuthLinkResult>;
 
@@ -75,6 +81,10 @@ export function GetModelPricings():Promise<Array<main.ModelPricingInfo>>;
 
 export function GetPortInfo():Promise<main.PortInfo>;
 
+export function GetPrivacyRuntimeStats():Promise<main.PrivacyRuntimeStatsInfo>;
+
+export function GetPrivacySettings():Promise<main.PrivacySettingsInfo>;
+
 export function GetProxyURL():Promise<string>;
 
 export function GetRecentLogs(arg1:number):Promise<Array<logging.LogEntry>>;
@@ -105,7 +115,13 @@ export function GetUsageStats(arg1:main.UsageStatsQueryParams):Promise<main.Usag
 
 export function GetUsageSummary(arg1:string,arg2:string):Promise<main.UsageSummary>;
 
+export function ImportPrivacyPreset(arg1:string):Promise<Array<main.PrivacyRuleInfo>>;
+
 export function IsProxyRunning():Promise<boolean>;
+
+export function ListPrivacyPresets():Promise<Array<main.PrivacyPresetInfo>>;
+
+export function ListPrivacyRules():Promise<Array<main.PrivacyRuleInfo>>;
 
 export function MergeDefaultCodexModelCatalog():Promise<main.CodexModelCatalogInfo>;
 
@@ -116,6 +132,8 @@ export function PauseGroup(arg1:string):Promise<void>;
 export function PinUpstreamAccountSelection(arg1:number):Promise<main.PinUpstreamAccountSelectionResult>;
 
 export function RefreshUpstreamAccountProfile(arg1:number):Promise<main.RefreshUpstreamAccountProfileResult>;
+
+export function ReorderPrivacyRules(arg1:Array<main.PrivacyRuleOrderInput>):Promise<void>;
 
 export function ResetCategorySettings(arg1:string):Promise<void>;
 
@@ -141,6 +159,8 @@ export function SwapUpstreamAccountGroups(arg1:string,arg2:string):Promise<main.
 
 export function SwitchKey(arg1:string,arg2:string,arg3:number):Promise<main.SwitchKeyResult>;
 
+export function TestPrivacyRules(arg1:main.PrivacyRuleTestInput):Promise<main.PrivacyRuleTestResult>;
+
 export function TestUpstreamAccount(arg1:number):Promise<main.TestUpstreamAccountResult>;
 
 export function ToggleEndpointRecord(arg1:string,arg2:boolean):Promise<void>;
@@ -154,6 +174,10 @@ export function UpdateEndpointRecord(arg1:string,arg2:main.CreateEndpointInput):
 export function UpdateModelPricing(arg1:string,arg2:main.CreateModelPricingInput):Promise<void>;
 
 export function UpdatePreferredPort(arg1:number):Promise<void>;
+
+export function UpdatePrivacyRule(arg1:number,arg2:main.PrivacyRuleInput):Promise<main.PrivacyRuleInfo>;
+
+export function UpdatePrivacySettings(arg1:main.PrivacySettingsInput):Promise<main.PrivacySettingsInfo>;
 
 export function UpdateSetting(arg1:main.UpdateSettingInput):Promise<void>;
 

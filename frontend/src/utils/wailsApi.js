@@ -1897,3 +1897,228 @@ export const checkPortAvailable = async (port) => {
 
   return await WailsApp.CheckPortAvailable(port);
 };
+
+// ============================================
+// 隐私保护 (v6.1+)
+// ============================================
+
+const PRIVACY_SCOPE_KEYS = ['paths', 'upstream_types', 'endpoint_names', 'account_ids', 'provider_types'];
+
+// 解析 scope JSON 为带默认空数组的对象（容错：非法 JSON 返回全空）
+export const parsePrivacyScope = (scopeJson) => {
+  const scope = {};
+  for (const key of PRIVACY_SCOPE_KEYS) {
+    scope[key] = [];
+  }
+  if (!scopeJson || typeof scopeJson !== 'string') {
+    return scope;
+  }
+  try {
+    const parsed = JSON.parse(scopeJson);
+    if (parsed && typeof parsed === 'object') {
+      for (const key of PRIVACY_SCOPE_KEYS) {
+        if (Array.isArray(parsed[key])) {
+          scope[key] = parsed[key];
+        }
+      }
+    }
+  } catch {
+    // 非法 scope JSON 按不限处理，由后端在保存时校验
+  }
+  return scope;
+};
+
+// 将 UI scope 对象编码为 scope_json（空维度省略，保持后端语义“空=不限”）
+export const encodePrivacyScope = (scope = {}) => {
+  const payload = {};
+  for (const key of PRIVACY_SCOPE_KEYS) {
+    const values = scope[key];
+    if (Array.isArray(values) && values.length > 0) {
+      payload[key] = key === 'account_ids'
+        ? values.map((v) => Number(v)).filter((v) => Number.isFinite(v))
+        : values.map((v) => String(v).trim()).filter(Boolean);
+    }
+  }
+  return JSON.stringify(payload);
+};
+
+export const normalizePrivacySettings = (settings = {}) => ({
+  mode: settings.mode ?? settings.Mode ?? 'disabled',
+  scan_max_bytes: Number(settings.scan_max_bytes ?? settings.ScanMaxBytes ?? 4194304),
+  over_limit_action: settings.over_limit_action ?? settings.OverLimitAction ?? 'scan_prefix',
+  on_error: settings.on_error ?? settings.OnError ?? 'fail_open',
+  version: Number(settings.version ?? settings.Version ?? 0),
+  status: settings.status ?? settings.Status ?? 'ok',
+  compile_error: settings.compile_error ?? settings.CompileError ?? '',
+  enabled_rules: Number(settings.enabled_rules ?? settings.EnabledRules ?? 0),
+  updated_at: settings.updated_at ?? settings.UpdatedAt ?? ''
+});
+
+export const normalizePrivacyRule = (rule = {}) => {
+  const scopeJson = rule.scope_json ?? rule.ScopeJSON ?? '{}';
+  return {
+    id: Number(rule.id ?? rule.ID ?? 0),
+    enabled: Boolean(rule.enabled ?? rule.Enabled ?? false),
+    name: rule.name ?? rule.Name ?? '',
+    description: rule.description ?? rule.Description ?? '',
+    priority: Number(rule.priority ?? rule.Priority ?? 100),
+    match_type: rule.match_type ?? rule.MatchType ?? 'regex',
+    pattern: rule.pattern ?? rule.Pattern ?? '',
+    placeholder: rule.placeholder ?? rule.Placeholder ?? '',
+    action: rule.action ?? rule.Action ?? 'redact',
+    scope_json: scopeJson,
+    scope: parsePrivacyScope(scopeJson),
+    source: rule.source ?? rule.Source ?? 'custom',
+    compile_error: rule.compile_error ?? rule.CompileError ?? '',
+    created_at: rule.created_at ?? rule.CreatedAt ?? '',
+    updated_at: rule.updated_at ?? rule.UpdatedAt ?? ''
+  };
+};
+
+// 将 UI 规则对象转换为后端 PrivacyRuleInput
+export const buildPrivacyRulePayload = (input = {}) => ({
+  enabled: Boolean(input.enabled),
+  name: String(input.name ?? '').trim(),
+  description: String(input.description ?? '').trim(),
+  priority: Number.isFinite(Number(input.priority)) ? Number(input.priority) : 100,
+  match_type: String(input.match_type ?? input.matchType ?? 'regex').toLowerCase(),
+  pattern: String(input.pattern ?? ''),
+  placeholder: String(input.placeholder ?? ''),
+  action: String(input.action ?? 'redact').toLowerCase(),
+  scope_json: typeof input.scope_json === 'string' && input.scope_json
+    ? input.scope_json
+    : encodePrivacyScope(input.scope)
+});
+
+export const getPrivacySettings = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('GetPrivacySettings');
+  return normalizePrivacySettings(await method());
+};
+
+export const updatePrivacySettings = async (input = {}) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('UpdatePrivacySettings');
+  const result = await method({
+    mode: String(input.mode ?? 'disabled'),
+    scan_max_bytes: Number(input.scan_max_bytes ?? input.scanMaxBytes ?? 4194304),
+    over_limit_action: String(input.over_limit_action ?? input.overLimitAction ?? 'scan_prefix'),
+    on_error: String(input.on_error ?? input.onError ?? 'fail_open')
+  });
+  return normalizePrivacySettings(result);
+};
+
+export const getPrivacyRules = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('ListPrivacyRules');
+  const result = await method();
+  return (Array.isArray(result) ? result : []).map(normalizePrivacyRule);
+};
+
+export const createPrivacyRule = async (input) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('CreatePrivacyRule');
+  return normalizePrivacyRule(await method(buildPrivacyRulePayload(input)));
+};
+
+export const updatePrivacyRule = async (id, input) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('UpdatePrivacyRule');
+  return normalizePrivacyRule(await method(normalizeEntityId(id), buildPrivacyRulePayload(input)));
+};
+
+export const deletePrivacyRule = async (id) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('DeletePrivacyRule');
+  await method(normalizeEntityId(id));
+  return { success: true };
+};
+
+export const reorderPrivacyRules = async (orders = []) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('ReorderPrivacyRules');
+  await method(orders.map((item) => ({
+    id: Number(item.id),
+    priority: Number(item.priority)
+  })));
+  return { success: true };
+};
+
+// 测试面板：文本只在内存中处理，不写 localStorage、不落日志
+export const testPrivacyRules = async (input = {}) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('TestPrivacyRules');
+  const result = await method({
+    text: String(input.text ?? ''),
+    path: String(input.path ?? ''),
+    upstream_type: String(input.upstream_type ?? input.upstreamType ?? ''),
+    endpoint_name: String(input.endpoint_name ?? input.endpointName ?? ''),
+    account_id: Number(input.account_id ?? input.accountId ?? 0),
+    provider_type: String(input.provider_type ?? input.providerType ?? '')
+  });
+  return {
+    original_length: Number(result?.original_length ?? 0),
+    hit_count: Number(result?.hit_count ?? 0),
+    changed: Boolean(result?.changed),
+    replaced_text: result?.replaced_text ?? '',
+    rule_hits: Array.isArray(result?.rule_hits) ? result.rule_hits : [],
+    scan_duration_ms: Number(result?.scan_duration_ms ?? 0)
+  };
+};
+
+export const listPrivacyPresets = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('ListPrivacyPresets');
+  const result = await method();
+  return Array.isArray(result) ? result : [];
+};
+
+export const importPrivacyPreset = async (presetId) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('ImportPrivacyPreset');
+  const result = await method(String(presetId));
+  return (Array.isArray(result) ? result : []).map(normalizePrivacyRule);
+};
+
+export const exportPrivacyRules = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('ExportPrivacyRules');
+  return await method();
+};
+
+export const getPrivacyRuntimeStats = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('GetPrivacyRuntimeStats');
+  const result = await method();
+  return {
+    scan_count: Number(result?.scan_count ?? 0),
+    hit_count: Number(result?.hit_count ?? 0),
+    blocked_count: Number(result?.blocked_count ?? 0),
+    truncated_count: Number(result?.truncated_count ?? 0),
+    rule_stats: Array.isArray(result?.rule_stats) ? result.rule_stats : []
+  };
+};

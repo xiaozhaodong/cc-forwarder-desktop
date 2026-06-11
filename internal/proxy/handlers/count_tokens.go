@@ -56,7 +56,14 @@ func (h *CountTokensHandler) Handle(ctx context.Context, w http.ResponseWriter, 
 
 	// 2. 如果有，尝试转发
 	if len(supportedEndpoints) > 0 {
-		if result, ok := h.tryForward(ctx, r, bodyBytes, supportedEndpoints, connID); ok {
+		if result, ok, err := h.tryForward(ctx, r, bodyBytes, supportedEndpoints, connID); err != nil {
+			if policyErr := AsPrivacyPolicyError(err); policyErr != nil {
+				slog.Warn(fmt.Sprintf("🛡️ [隐私保护] [%s] count_tokens 被策略拒绝: %s", connID, policyErr.Code))
+				WritePrivacyPolicyErrorResponse(w, policyErr)
+				return
+			}
+			slog.Warn(fmt.Sprintf("⚠️ [Token计数] [%s] 转发前处理失败，降级到本地估算: %v", connID, err))
+		} else if ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			w.Write(result)
@@ -88,10 +95,16 @@ func (h *CountTokensHandler) getSupportedEndpoints(profile endpoint.RouteRequest
 }
 
 // tryForward 尝试转发到支持的端点
-func (h *CountTokensHandler) tryForward(ctx context.Context, r *http.Request, bodyBytes []byte, endpoints []*endpoint.Endpoint, connID string) ([]byte, bool) {
+func (h *CountTokensHandler) tryForward(ctx context.Context, r *http.Request, bodyBytes []byte, endpoints []*endpoint.Endpoint, connID string) ([]byte, bool, error) {
 	for _, ep := range endpoints {
+		// 🛡️ 出站隐私过滤；策略拒绝时由调用方直返 413/422，不降级估算
+		preparedBody, err := ApplyPrivacyFilterForEndpoint(h.forwarder.privacyFilter, r, bodyBytes, ep)
+		if err != nil {
+			return nil, false, err
+		}
+
 		targetURL := ep.Config.URL + "/v1/messages/count_tokens"
-		req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(bodyBytes))
+		req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(preparedBody))
 		if err != nil {
 			continue
 		}
@@ -118,7 +131,7 @@ func (h *CountTokensHandler) tryForward(ctx context.Context, r *http.Request, bo
 		if resp.StatusCode == http.StatusOK {
 			if bodyBytes, err := io.ReadAll(resp.Body); err == nil {
 				slog.Info(fmt.Sprintf("✅ [转发成功] [%s] 端点: %s", connID, ep.Config.Name))
-				return bodyBytes, true
+				return bodyBytes, true, nil
 			}
 			continue
 		}
@@ -131,7 +144,7 @@ func (h *CountTokensHandler) tryForward(ctx context.Context, r *http.Request, bo
 		}
 	}
 
-	return nil, false
+	return nil, false, nil
 }
 
 func isCountTokensUnsupported(statusCode int, body string) bool {

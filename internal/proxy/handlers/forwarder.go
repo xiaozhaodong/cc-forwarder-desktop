@@ -31,6 +31,13 @@ type Forwarder struct {
 	transportOnce   sync.Once
 	transportErr    error
 	httpTransport   *http.Transport
+	// 🛡️ 出站隐私过滤（可选注入，nil 时不影响原有链路）
+	privacyFilter PrivacyFilter
+}
+
+// SetPrivacyFilter 注入出站隐私过滤依赖
+func (f *Forwarder) SetPrivacyFilter(filter PrivacyFilter) {
+	f.privacyFilter = filter
 }
 
 // NewForwarder 创建新的Forwarder实例
@@ -44,6 +51,12 @@ func NewForwarder(cfg *config.Config, endpointManager *endpoint.Manager) *Forwar
 // ForwardRequestToEndpoint 转发请求到指定端点
 func (f *Forwarder) ForwardRequestToEndpoint(ctx context.Context, r *http.Request, bodyBytes []byte, ep *endpoint.Endpoint) (*http.Response, error) {
 	bodyBytes = prepareBodyForEndpoint(bodyBytes, ep)
+
+	// 🛡️ 出站隐私过滤（PolicyError 由调用方短路，不进入 retry/failover）
+	bodyBytes, err := ApplyPrivacyFilterForEndpoint(f.privacyFilter, r, bodyBytes, ep)
+	if err != nil {
+		return nil, err
+	}
 
 	// 创建目标URL
 	targetURL := ep.Config.URL + r.URL.Path
@@ -95,6 +108,13 @@ func (f *Forwarder) ForwardRequestToEndpoint(ctx context.Context, r *http.Reques
 func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes []byte, ep *endpoint.Endpoint) (*http.Response, context.CancelFunc, error) {
 	upstreamCtx, release := context.WithCancel(context.Background())
 	bodyBytes = prepareBodyForEndpoint(bodyBytes, ep)
+
+	// 🛡️ 出站隐私过滤（PolicyError 由调用方短路，不进入 retry/failover）
+	bodyBytes, err := ApplyPrivacyFilterForEndpoint(f.privacyFilter, r, bodyBytes, ep)
+	if err != nil {
+		release()
+		return nil, nil, err
+	}
 
 	// 创建目标URL
 	targetURL := ep.Config.URL + r.URL.Path

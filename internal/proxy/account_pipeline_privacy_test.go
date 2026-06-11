@@ -1,0 +1,339 @@
+package proxy
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+	"time"
+
+	"cc-forwarder/config"
+	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/privacy"
+	servicepkg "cc-forwarder/internal/service"
+	"cc-forwarder/internal/store"
+
+	_ "modernc.org/sqlite"
+)
+
+// stubPrivacyFilter proxy 集成测试用的可编程过滤器
+type stubPrivacyFilter struct {
+	mu         sync.Mutex
+	applyCalls int
+	requests   []privacy.Request
+	redactTo   []byte
+	err        error
+}
+
+func (s *stubPrivacyFilter) Apply(_ context.Context, req privacy.Request, body []byte) (privacy.ApplyResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.applyCalls++
+	s.requests = append(s.requests, req)
+	if s.err != nil {
+		return privacy.ApplyResult{Action: privacy.ModeRedact}, s.err
+	}
+	out := body
+	changed := false
+	if s.redactTo != nil {
+		out = s.redactTo
+		changed = true
+	}
+	return privacy.ApplyResult{Body: out, Changed: changed, Action: privacy.ModeRedact}, nil
+}
+
+func (s *stubPrivacyFilter) SnapshotVersion() int64 { return 1 }
+
+func (s *stubPrivacyFilter) calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.applyCalls
+}
+
+func TestAccountPipeline_PrivacyPolicyErrorShortCircuitsWithoutFailover(t *testing.T) {
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_1","status":"completed","output":[]}`))
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 21, AccountName: "acc-a", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: upstream.URL, Enabled: true},
+			{ID: 22, AccountName: "acc-b", ProviderType: "api_key", CredentialRaw: "sk-b", BaseURL: upstream.URL, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+	handler.SetPrivacyFilter(&stubPrivacyFilter{
+		err: &privacy.PolicyError{StatusCode: 413, Code: privacy.CodeScanBodyTooLarge, Message: "scannable text too large"},
+	})
+
+	rec := performResponsesRequest(t, handler)
+
+	if rec.Code != 413 {
+		t.Fatalf("expected policy status 413, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 0 {
+		t.Fatalf("blocked request must not reach upstream, hits=%d", upstreamHits)
+	}
+	// 不冷却、不软失败、不换号、不鉴权失效
+	if len(service.transientCalls) != 0 {
+		t.Errorf("policy error must not cool down account: %+v", service.transientCalls)
+	}
+	if len(service.softFailureCalls) != 0 {
+		t.Errorf("policy error must not record soft failure: %+v", service.softFailureCalls)
+	}
+	if len(service.authFailCalls) != 0 {
+		t.Errorf("policy error must not mark auth failure: %+v", service.authFailCalls)
+	}
+	// 只尝试第一个账号即短路
+	if len(service.completeCalls) != 1 {
+		t.Fatalf("expected single schedule completion, got %+v", service.completeCalls)
+	}
+	if service.completeCalls[0].outcome != servicepkg.AccountScheduleOutcomePrivacyBlocked {
+		t.Errorf("schedule outcome = %q, want privacy_blocked", service.completeCalls[0].outcome)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(privacy.CodeScanBodyTooLarge)) {
+		t.Errorf("response body missing policy code: %s", rec.Body.String())
+	}
+}
+
+func TestAccountPipeline_PrivacyRedactsBodyBeforeUpstream(t *testing.T) {
+	var receivedBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_1","status":"completed","output":[]}`))
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 31, AccountName: "acc-a", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: upstream.URL, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+	redacted := []byte(`{"model":"gpt-4.1","input":"[已脱敏]"}`)
+	handler.SetPrivacyFilter(&stubPrivacyFilter{redactTo: redacted})
+
+	rec := performResponsesRequest(t, handler)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected success, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Equal(receivedBody, redacted) {
+		t.Errorf("upstream received %s, want redacted body", receivedBody)
+	}
+}
+
+// newPrivacyEndpointTestHandler 构造指向本地上游的 endpoint 链路 Handler
+func newPrivacyEndpointTestHandler(t *testing.T, upstreamURL string) *Handler {
+	t.Helper()
+	cfg := &config.Config{
+		Endpoints: []config.EndpointConfig{
+			{Name: "privacy-ep", URL: upstreamURL, Priority: 1, Timeout: 5 * time.Second, Token: "tok"},
+		},
+		Retry: config.RetryConfig{MaxAttempts: 2, BaseDelay: time.Millisecond, MaxDelay: 2 * time.Millisecond, Multiplier: 1.0},
+	}
+	endpointManager := endpoint.NewManager(cfg)
+	return NewHandler(endpointManager, cfg)
+}
+
+func TestEndpointRegular_PrivacyRedactsBodyBeforeUpstream(t *testing.T) {
+	var receivedBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	handler := newPrivacyEndpointTestHandler(t, upstream.URL)
+	redacted := []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"[已脱敏]"}]}`)
+	handler.SetPrivacyFilter(&stubPrivacyFilter{redactTo: redacted})
+
+	body := bytes.NewBufferString(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"secret"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected success, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Equal(receivedBody, redacted) {
+		t.Errorf("upstream received %s, want redacted body", receivedBody)
+	}
+}
+
+func TestEndpointRegular_PrivacyPolicyErrorShortCircuitsWithoutRetry(t *testing.T) {
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	handler := newPrivacyEndpointTestHandler(t, upstream.URL)
+	filter := &stubPrivacyFilter{
+		err: &privacy.PolicyError{StatusCode: 422, Code: privacy.CodeScanFailed, Message: "scan failed"},
+	}
+	handler.SetPrivacyFilter(filter)
+
+	body := bytes.NewBufferString(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"x"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != 422 {
+		t.Fatalf("expected policy status 422, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 0 {
+		t.Errorf("blocked request must not reach upstream, hits=%d", upstreamHits)
+	}
+	// MaxAttempts=2，但策略错误已缓存且短路，只应扫描一次
+	if filter.calls() != 1 {
+		t.Errorf("apply calls = %d, want 1 (no rescan on retry)", filter.calls())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(privacy.CodeScanFailed)) {
+		t.Errorf("response body missing policy code: %s", rec.Body.String())
+	}
+}
+
+func TestCountTokens_PrivacyPolicyErrorReturnsPolicyStatus(t *testing.T) {
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		_, _ = w.Write([]byte(`{"input_tokens":42}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		TokenCounting: config.TokenCountingConfig{Enabled: true, EstimationRatio: 4},
+		Endpoints: []config.EndpointConfig{
+			{Name: "count-ep", URL: upstream.URL, Priority: 1, Timeout: 5 * time.Second, SupportsCountTokens: true},
+		},
+	}
+	handler := NewHandler(endpoint.NewManager(cfg), cfg)
+	filter := &stubPrivacyFilter{
+		err: &privacy.PolicyError{StatusCode: http.StatusRequestEntityTooLarge, Code: privacy.CodeScanBodyTooLarge, Message: "too large"},
+	}
+	handler.SetPrivacyFilter(filter)
+
+	body := bytes.NewBufferString(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"secret"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", body)
+	req = req.WithContext(context.WithValue(req.Context(), "conn_id", "req-count-tokens-privacy"))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected policy status 413, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 0 {
+		t.Fatalf("policy-blocked count_tokens must not reach upstream, hits=%d", upstreamHits)
+	}
+	if filter.calls() != 1 {
+		t.Fatalf("privacy filter calls = %d, want 1", filter.calls())
+	}
+	filter.mu.Lock()
+	gotRequestID := ""
+	if len(filter.requests) > 0 {
+		gotRequestID = filter.requests[0].RequestID
+	}
+	filter.mu.Unlock()
+	if gotRequestID != "req-count-tokens-privacy" {
+		t.Fatalf("privacy request id = %q, want req-count-tokens-privacy", gotRequestID)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(privacy.CodeScanBodyTooLarge)) {
+		t.Errorf("response body missing policy code: %s", rec.Body.String())
+	}
+}
+
+// TestEndpointRegular_RealPrivacyServiceEndToEnd 用真实 PrivacyService 走通
+// “规则保存 -> 热生效 -> redact 上游 -> 关闭恢复透传” 全链路
+func TestEndpointRegular_RealPrivacyServiceEndToEnd(t *testing.T) {
+	var receivedBodies [][]byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		receivedBodies = append(receivedBodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	svc := newProxyTestPrivacyService(t)
+	ctx := context.Background()
+
+	settings, err := svc.GetSettings(ctx)
+	if err != nil {
+		t.Fatalf("get settings failed: %v", err)
+	}
+	settings.Mode = privacy.ModeRedact
+	if _, err := svc.UpdateSettings(ctx, settings); err != nil {
+		t.Fatalf("update settings failed: %v", err)
+	}
+	if _, err := svc.CreateRule(ctx, &store.PrivacyRuleRecord{
+		Enabled: true, Name: "OpenAI Key", Priority: 100, MatchType: "regex",
+		Pattern: `sk-(?:proj-)?[A-Za-z0-9_-]{20,}`, Placeholder: "[OpenAI密钥]",
+		Action: "redact", ScopeJSON: "{}",
+	}); err != nil {
+		t.Fatalf("create rule failed: %v", err)
+	}
+
+	handler := newPrivacyEndpointTestHandler(t, upstream.URL)
+	handler.SetPrivacyFilter(svc)
+
+	send := func() *httptest.ResponseRecorder {
+		body := bytes.NewBufferString(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"key sk-proj-abcdefghijklmnopqrstuvwxyz123456"}]}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/messages", body)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := send(); rec.Code != http.StatusOK {
+		t.Fatalf("redact request failed: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(receivedBodies) != 1 || !bytes.Contains(receivedBodies[0], []byte("[OpenAI密钥]")) {
+		t.Fatalf("upstream must receive redacted body: %s", receivedBodies[0])
+	}
+	if bytes.Contains(receivedBodies[0], []byte("sk-proj-")) {
+		t.Errorf("original secret leaked to upstream: %s", receivedBodies[0])
+	}
+
+	// 切回 disabled 后恢复透传
+	settings, _ = svc.GetSettings(ctx)
+	settings.Mode = privacy.ModeDisabled
+	if _, err := svc.UpdateSettings(ctx, settings); err != nil {
+		t.Fatalf("disable failed: %v", err)
+	}
+	if rec := send(); rec.Code != http.StatusOK {
+		t.Fatalf("disabled request failed: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(receivedBodies) != 2 || !bytes.Contains(receivedBodies[1], []byte("sk-proj-abcdefghijklmnopqrstuvwxyz123456")) {
+		t.Errorf("disabled mode must passthrough original body: %s", receivedBodies[1])
+	}
+}
+
+func newProxyTestPrivacyService(t *testing.T) *servicepkg.PrivacyService {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite failed: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	svc := servicepkg.NewPrivacyService(store.NewSQLitePrivacyStore(db))
+	if err := svc.Initialize(context.Background()); err != nil {
+		t.Fatalf("initialize privacy service failed: %v", err)
+	}
+	return svc
+}

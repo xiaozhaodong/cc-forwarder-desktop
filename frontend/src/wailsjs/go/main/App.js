@@ -34,6 +34,10 @@ export function CreateModelPricing(arg1) {
   return window['go']['main']['App']['CreateModelPricing'](arg1);
 }
 
+export function CreatePrivacyRule(arg1) {
+  return window['go']['main']['App']['CreatePrivacyRule'](arg1);
+}
+
 export function CreateUpstreamAccount(arg1) {
   return window['go']['main']['App']['CreateUpstreamAccount'](arg1);
 }
@@ -46,6 +50,10 @@ export function DeleteModelPricing(arg1) {
   return window['go']['main']['App']['DeleteModelPricing'](arg1);
 }
 
+export function DeletePrivacyRule(arg1) {
+  return window['go']['main']['App']['DeletePrivacyRule'](arg1);
+}
+
 export function DeleteUpstreamAccount(arg1) {
   return window['go']['main']['App']['DeleteUpstreamAccount'](arg1);
 }
@@ -56,6 +64,10 @@ export function EnableAutomaticAccountSelection() {
 
 export function ExchangeChatGPTOAuthCallback(arg1) {
   return window['go']['main']['App']['ExchangeChatGPTOAuthCallback'](arg1);
+}
+
+export function ExportPrivacyRules() {
+  return window['go']['main']['App']['ExportPrivacyRules']();
 }
 
 export function GenerateChatGPTOAuthLink() {
@@ -146,6 +158,14 @@ export function GetPortInfo() {
   return window['go']['main']['App']['GetPortInfo']();
 }
 
+export function GetPrivacyRuntimeStats() {
+  return window['go']['main']['App']['GetPrivacyRuntimeStats']();
+}
+
+export function GetPrivacySettings() {
+  return window['go']['main']['App']['GetPrivacySettings']();
+}
+
 export function GetProxyURL() {
   return window['go']['main']['App']['GetProxyURL']();
 }
@@ -206,8 +226,20 @@ export function GetUsageSummary(arg1, arg2) {
   return window['go']['main']['App']['GetUsageSummary'](arg1, arg2);
 }
 
+export function ImportPrivacyPreset(arg1) {
+  return window['go']['main']['App']['ImportPrivacyPreset'](arg1);
+}
+
 export function IsProxyRunning() {
   return window['go']['main']['App']['IsProxyRunning']();
+}
+
+export function ListPrivacyPresets() {
+  return window['go']['main']['App']['ListPrivacyPresets']();
+}
+
+export function ListPrivacyRules() {
+  return window['go']['main']['App']['ListPrivacyRules']();
 }
 
 export function MergeDefaultCodexModelCatalog() {
@@ -228,6 +260,10 @@ export function PinUpstreamAccountSelection(arg1) {
 
 export function RefreshUpstreamAccountProfile(arg1) {
   return window['go']['main']['App']['RefreshUpstreamAccountProfile'](arg1);
+}
+
+export function ReorderPrivacyRules(arg1) {
+  return window['go']['main']['App']['ReorderPrivacyRules'](arg1);
 }
 
 export function ResetCategorySettings(arg1) {
@@ -278,6 +314,10 @@ export function SwitchKey(arg1, arg2, arg3) {
   return window['go']['main']['App']['SwitchKey'](arg1, arg2, arg3);
 }
 
+export function TestPrivacyRules(arg1) {
+  return window['go']['main']['App']['TestPrivacyRules'](arg1);
+}
+
 export function TestUpstreamAccount(arg1) {
   return window['go']['main']['App']['TestUpstreamAccount'](arg1);
 }
@@ -304,6 +344,14 @@ export function UpdateModelPricing(arg1, arg2) {
 
 export function UpdatePreferredPort(arg1) {
   return window['go']['main']['App']['UpdatePreferredPort'](arg1);
+}
+
+export function UpdatePrivacyRule(arg1, arg2) {
+  return window['go']['main']['App']['UpdatePrivacyRule'](arg1, arg2);
+}
+
+export function UpdatePrivacySettings(arg1) {
+  return window['go']['main']['App']['UpdatePrivacySettings'](arg1);
 }
 
 export function UpdateSetting(arg1) {

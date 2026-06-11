@@ -1,0 +1,100 @@
+// ============================================
+// 隐私规则作用域编辑器
+// 2026-06-11 (v6.1 新增)
+// scope JSON 由本组件结构化生成，不让用户手写 JSON
+// ============================================
+
+import {
+  PRIVACY_PATH_OPTIONS,
+  PRIVACY_PROVIDER_TYPE_OPTIONS,
+  PRIVACY_UPSTREAM_TYPE_OPTIONS
+} from '../utils/privacyRules.js';
+
+const CheckboxGroup = ({ label, hint, options, values, onChange }) => {
+  const toggle = (value) => {
+    const set = new Set(values);
+    if (set.has(value)) {
+      set.delete(value);
+    } else {
+      set.add(value);
+    }
+    onChange([...set]);
+  };
+
+  return (
+    <div>
+      <div className="flex items-baseline gap-2 mb-1.5">
+        <span className="text-sm font-medium text-slate-700">{label}</span>
+        {hint && <span className="text-xs text-slate-400">{hint}</span>}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((opt) => {
+          const checked = values.includes(opt.value);
+          return (
+            <button
+              key={String(opt.value)}
+              type="button"
+              onClick={() => toggle(opt.value)}
+              className={`px-2.5 py-1 rounded-lg text-xs border transition-colors break-all ${
+                checked
+                  ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                  : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+              }`}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+        {options.length === 0 && (
+          <span className="text-xs text-slate-400">暂无可选项</span>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const PrivacyScopeEditor = ({ scope, onChange, endpointOptions = [], accountOptions = [] }) => {
+  const update = (key, values) => onChange({ ...scope, [key]: values });
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-slate-400">
+        空选项表示不限。多个维度之间是 AND，同一维度内是 OR；路径为精确匹配。
+      </p>
+      <CheckboxGroup
+        label="请求路径"
+        options={PRIVACY_PATH_OPTIONS.map((path) => ({ value: path, label: path }))}
+        values={scope.paths || []}
+        onChange={(values) => update('paths', values)}
+      />
+      <CheckboxGroup
+        label="上游类型"
+        options={PRIVACY_UPSTREAM_TYPE_OPTIONS}
+        values={scope.upstream_types || []}
+        onChange={(values) => update('upstream_types', values)}
+      />
+      <CheckboxGroup
+        label="端点"
+        hint="仅对 CC 端点链路生效"
+        options={endpointOptions}
+        values={scope.endpoint_names || []}
+        onChange={(values) => update('endpoint_names', values)}
+      />
+      <CheckboxGroup
+        label="账号"
+        hint="仅对 Codex 账号池链路生效"
+        options={accountOptions}
+        values={scope.account_ids || []}
+        onChange={(values) => update('account_ids', values)}
+      />
+      <CheckboxGroup
+        label="账号类型"
+        options={PRIVACY_PROVIDER_TYPE_OPTIONS}
+        values={scope.provider_types || []}
+        onChange={(values) => update('provider_types', values)}
+      />
+    </div>
+  );
+};
+
+export default PrivacyScopeEditor;

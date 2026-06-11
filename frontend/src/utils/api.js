@@ -1141,3 +1141,93 @@ export const fetchPortInfo = async () => {
   const data = await fetchWithTimeout('/api/v1/settings/port');
   return data;
 };
+
+// ============================================
+// 隐私保护 (v6.1+，仅桌面版)
+// ============================================
+
+const privacyDesktopOnlyError = () => new Error('隐私保护功能仅在桌面版可用');
+
+export const fetchPrivacySettings = async () => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.getPrivacySettings();
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const updatePrivacySettings = async (input) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.updatePrivacySettings(input);
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const fetchPrivacyRules = async () => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.getPrivacyRules();
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const createPrivacyRule = async (input) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.createPrivacyRule(input);
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const updatePrivacyRule = async (id, input) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.updatePrivacyRule(id, input);
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const deletePrivacyRule = async (id) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.deletePrivacyRule(id);
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const reorderPrivacyRules = async (orders) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.reorderPrivacyRules(orders);
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const testPrivacyRules = async (input) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.testPrivacyRules(input);
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const fetchPrivacyPresets = async () => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.listPrivacyPresets();
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const importPrivacyPreset = async (presetId) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.importPrivacyPreset(presetId);
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const exportPrivacyRules = async () => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.exportPrivacyRules();
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const fetchPrivacyRuntimeStats = async () => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.getPrivacyRuntimeStats();
+  }
+  throw privacyDesktopOnlyError();
+};

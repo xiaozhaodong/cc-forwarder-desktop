@@ -23,6 +23,8 @@ const ConfigPage = lazy(() => import('@pages/config/index.jsx'));
 const LogsPage = lazy(() => import('@pages/log-viewer/index.jsx'));
 // v6.0: 账号池页面
 const AccountPoolPage = lazy(() => import('@pages/account-pool/index.jsx'));
+// v6.1: 隐私保护页面
+const PrivacyProtectionPage = lazy(() => import('@pages/privacy-protection/index.jsx'));
 
 // ============================================
 // App 组件
@@ -59,6 +61,8 @@ function App() {
       // v4.0: 组管理页面已移除
       // groups: <GroupsPage />,
       requests: <RequestsPage />,
+      // v6.1: 隐私保护页面
+      'privacy-protection': <PrivacyProtectionPage />,
       pricing: <PricingPage />,
       'account-pool': <AccountPoolPage />,
       // v5.1: 设置页面（可编辑）

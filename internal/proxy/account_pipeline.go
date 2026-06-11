@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"cc-forwarder/internal/accountauth"
+	"cc-forwarder/internal/privacy"
 	"cc-forwarder/internal/proxy/handlers"
 	svc "cc-forwarder/internal/service"
 	"cc-forwarder/internal/store"
@@ -152,6 +153,14 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		}
 		if forwardErr != nil {
 			releaseUpstream()
+			// 🛡️ 隐私策略短路：本地策略拒绝不是上游失败，
+			// 不冷却账号、不记软失败、不继续换号
+			if policyErr := handlers.AsPrivacyPolicyError(forwardErr); policyErr != nil {
+				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomePrivacyBlocked, policyErr.Code)
+				lifecycleManager.FailRequest(handlers.PrivacyFailureReason(policyErr), policyErr.Message, policyErr.StatusCode)
+				writeAccountPipelineError(w, policyErr.StatusCode, policyErr.Code, policyErr.Message)
+				return
+			}
 			lastErr = forwardErr
 			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, forwardErr.Error(), accountSoftFailureCategoryServerError, 0)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, forwardErr.Error())
@@ -368,6 +377,12 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	}
 	bodyBytes = prepareCodexAccountBodyForUpstream(bodyBytes, acc, r.URL.Path)
 
+	// 🛡️ 出站隐私过滤（PolicyError 由 handleAccountPipeline 短路，不冷却、不换号）
+	bodyBytes, err = h.applyAccountPrivacyFilter(r, bodyBytes, acc)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	requestCtx := ctx
 	var release context.CancelFunc
 	if isSSE {
@@ -418,6 +433,23 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 		return nil, nil, fmt.Errorf("request failed: %w", err)
 	}
 	return resp, release, nil
+}
+
+// applyAccountPrivacyFilter 账号池链路出站隐私过滤。
+// 规则可按 upstream_type=account、账号 ID、provider type、path 生效。
+func (h *Handler) applyAccountPrivacyFilter(r *http.Request, bodyBytes []byte, acc *store.UpstreamAccountRecord) ([]byte, error) {
+	if h == nil || h.privacyFilter == nil || acc == nil || r == nil {
+		return bodyBytes, nil
+	}
+	req := privacy.Request{
+		Path:         r.URL.Path,
+		Method:       r.Method,
+		UpstreamType: privacy.UpstreamTypeAccount,
+		AccountID:    acc.ID,
+		ProviderType: acc.ProviderType,
+		ContentType:  r.Header.Get("Content-Type"),
+	}
+	return handlers.ApplyPrivacyFilter(h.privacyFilter, r, req, bodyBytes)
 }
 
 func prepareCodexAccountBodyForUpstream(bodyBytes []byte, acc *store.UpstreamAccountRecord, path string) []byte {

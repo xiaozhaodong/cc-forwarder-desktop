@@ -384,6 +384,19 @@ restartLoop:
 				}
 				// 🔧 [修复] 保存最后的响应，用于获取真实HTTP状态码
 				lastResp = resp
+
+				// 🛡️ 隐私策略短路：本地策略拒绝不是上游失败，
+				// 不重试当前端点、不切换端点、不标记端点失败
+				if policyErr := AsPrivacyPolicyError(err); policyErr != nil {
+					releaseUpstream()
+					slog.Warn(fmt.Sprintf("🛡️ [隐私保护] [%s] 流式请求被策略拒绝: %s", connID, policyErr.Code))
+					*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", policyErr.StatusCode))
+					lifecycleManager.FailRequest(PrivacyFailureReason(policyErr), policyErr.Message, policyErr.StatusCode)
+					writeStreamingTerminalError(w, flusher, policyErr.StatusCode,
+						fmt.Sprintf("%s: %s", policyErr.Code, policyErr.Message))
+					return
+				}
+
 				if err == nil && IsSuccessStatus(resp.StatusCode) {
 					defer releaseUpstream()
 					// 🔢 [成功计数] 成功的尝试记录到生命周期管理器

@@ -40,6 +40,13 @@
   - 当前前端支持多条精确匹配规则，例如 `gpt-5.4 -> gpt-5.5`、`gpt-5.4-mini -> gpt-5.5`
   - 不按渠道自动生成规则，所有改写规则都由前端显式启用并维护
 - Responses 计费口径修正：`/v1/responses` 的 `input_tokens` 已含缓存读，实际输入计费需按 `input_tokens - cache_read_tokens`
+- 出站隐私保护（v6.1）：
+  - 单一模式字段 `关闭 / 仅检测 / 脱敏转发`，默认关闭
+  - 规则存 SQLite（`privacy_settings` / `privacy_rules`），保存先编译后落库，原子热替换不重启
+  - 按 JSON 文本字段扫描（含 Claude `tool_result` 与 Codex `function_call_output.output`），offset-aware 替换保证零命中 byte-identical
+  - `PrivacyPolicyError` 短路：不进端点重试/failover、不冷却账号、不换号
+  - requestID + scopeFingerprint attempt cache：重试不重复扫描、不重复计命中
+  - 只记录规则名/命中数/耗时，不记录命中原文
 
 ## 关键文件
 
@@ -50,6 +57,11 @@
 - `app_startup_connectivity.go`：启动完成后的端点/账号池异步批量连通性检查
 - `app_api_account_pool.go`：账号池 Wails API
 - `app_api_openai_oauth.go`：ChatGPT OAuth API
+- `app_api_privacy.go`：隐私保护 Wails API
+- `internal/privacy/`：隐私规则纯引擎（编译、JSON walker、span 替换、预设）
+- `internal/service/privacy_service.go`：隐私规则编译先行、原子快照热替换、运行统计
+- `internal/store/privacy_rules.go`：`privacy_settings / privacy_rules` 存储层
+- `internal/proxy/handlers/privacy.go`：PrivacyFilter 接口、attempt cache、策略短路 helper
 - `internal/accountauth/openai_profile.go`：OAuth 画像解析
 - `internal/accountauth/openai_refresh_token.go`：RT -> AT 刷新与缓存
 - `internal/service/account_pool.go`：账号池 CRUD、测试连通性
@@ -71,6 +83,7 @@
 ### 前端
 
 - `frontend/src/pages/account-pool/index.jsx`：账号池页面
+- `frontend/src/pages/privacy-protection/index.jsx`：隐私保护页面（规则表格 / 编辑抽屉 / 测试面板 / 预设导入）
 - `frontend/src/pages/account-pool/components/SchedulerDrawer.jsx`：调度编排抽屉
 - `frontend/src/pages/account-pool/components/GroupBoardCard.jsx`：主组 / 备组 / 冷备运行态卡片
 - `frontend/src/pages/account-pool/utils/dashboardViewModel.js`：账号 inventory 与编排视图模型
@@ -189,6 +202,9 @@ cd frontend && npm run build
 - `internal/accountauth/*`：`go test ./internal/accountauth`
 - `internal/tracking/schema.sql` / `sqlite_adapter.go` / `tracker.go`：`go test ./internal/tracking`
 - `internal/store/account_pool.go`：`go test ./internal/store`
+- `internal/privacy/*` / `internal/service/privacy_service.go` / `internal/store/privacy_rules.go`：`go test ./internal/privacy ./internal/service ./internal/store`
+- `internal/proxy/handlers/privacy.go` / 隐私链路接入点：`go test ./internal/proxy ./internal/proxy/handlers`
+- `frontend/src/pages/privacy-protection/*`：`node --test frontend/src/pages/privacy-protection/utils/privacyRules.test.js`
 
 ## 调试提示
 

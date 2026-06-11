@@ -141,3 +141,111 @@ test('normalizeUpstreamAccount uses alias helpers instead of repeating inline fi
   assert.match(source, /const mirrorAliasedField = \(target,\s*snakeKey,\s*camelKey,\s*value\)/);
   assert.doesNotMatch(source, /provider_type:\s*account\.provider_type \|\| account\.providerType \|\| account\.ProviderType/);
 });
+
+test('parsePrivacyScope returns empty arrays for invalid or empty scope json', async () => {
+  const { parsePrivacyScope } = await import('./wailsApi.js');
+
+  const empty = parsePrivacyScope('');
+  assert.deepEqual(empty.paths, []);
+  assert.deepEqual(empty.account_ids, []);
+
+  const invalid = parsePrivacyScope('{not-json');
+  assert.deepEqual(invalid.upstream_types, []);
+
+  const parsed = parsePrivacyScope('{"paths":["/v1/messages"],"account_ids":[7]}');
+  assert.deepEqual(parsed.paths, ['/v1/messages']);
+  assert.deepEqual(parsed.account_ids, [7]);
+  assert.deepEqual(parsed.provider_types, []);
+});
+
+test('encodePrivacyScope omits empty dimensions and coerces account ids to numbers', async () => {
+  const { encodePrivacyScope } = await import('./wailsApi.js');
+
+  const json = encodePrivacyScope({
+    paths: ['/v1/messages', '  '],
+    upstream_types: [],
+    account_ids: ['7', 'oops', 8]
+  });
+  const parsed = JSON.parse(json);
+  assert.deepEqual(parsed.paths, ['/v1/messages']);
+  assert.deepEqual(parsed.account_ids, [7, 8]);
+  assert.equal('upstream_types' in parsed, false);
+  assert.equal('provider_types' in parsed, false);
+});
+
+test('normalizePrivacyRule mirrors backend fields and parses scope', async () => {
+  const { normalizePrivacyRule } = await import('./wailsApi.js');
+
+  const rule = normalizePrivacyRule({
+    id: '12',
+    enabled: true,
+    name: 'OpenAI Key',
+    priority: '100',
+    match_type: 'regex',
+    pattern: 'sk-.+',
+    placeholder: '[密钥]',
+    action: 'redact',
+    scope_json: '{"paths":["/v1/responses"]}',
+    source: 'preset',
+    compile_error: ''
+  });
+
+  assert.equal(rule.id, 12);
+  assert.equal(rule.priority, 100);
+  assert.equal(rule.action, 'redact');
+  assert.deepEqual(rule.scope.paths, ['/v1/responses']);
+  assert.deepEqual(rule.scope.endpoint_names, []);
+});
+
+test('buildPrivacyRulePayload prefers explicit scope_json and falls back to scope object', async () => {
+  const { buildPrivacyRulePayload } = await import('./wailsApi.js');
+
+  const fromScope = buildPrivacyRulePayload({
+    enabled: true,
+    name: '  规则A  ',
+    priority: '50',
+    matchType: 'LITERAL',
+    pattern: 'secret',
+    placeholder: '[x]',
+    action: 'DETECT',
+    scope: { paths: ['/v1/messages'] }
+  });
+  assert.equal(fromScope.name, '规则A');
+  assert.equal(fromScope.priority, 50);
+  assert.equal(fromScope.match_type, 'literal');
+  assert.equal(fromScope.action, 'detect');
+  assert.deepEqual(JSON.parse(fromScope.scope_json).paths, ['/v1/messages']);
+
+  const fromJson = buildPrivacyRulePayload({
+    name: 'B',
+    pattern: 'x',
+    scope_json: '{"upstream_types":["account"]}',
+    scope: { paths: ['/ignored'] }
+  });
+  assert.deepEqual(JSON.parse(fromJson.scope_json).upstream_types, ['account']);
+  assert.equal('paths' in JSON.parse(fromJson.scope_json), false);
+});
+
+test('normalizePrivacySettings applies safe defaults', async () => {
+  const { normalizePrivacySettings } = await import('./wailsApi.js');
+
+  const defaults = normalizePrivacySettings({});
+  assert.equal(defaults.mode, 'disabled');
+  assert.equal(defaults.scan_max_bytes, 4194304);
+  assert.equal(defaults.over_limit_action, 'scan_prefix');
+  assert.equal(defaults.on_error, 'fail_open');
+
+  const fromBackend = normalizePrivacySettings({
+    mode: 'redact',
+    scan_max_bytes: 1024,
+    over_limit_action: 'fail_closed',
+    on_error: 'fail_closed',
+    version: 3,
+    status: 'degraded',
+    enabled_rules: 5
+  });
+  assert.equal(fromBackend.mode, 'redact');
+  assert.equal(fromBackend.scan_max_bytes, 1024);
+  assert.equal(fromBackend.status, 'degraded');
+  assert.equal(fromBackend.enabled_rules, 5);
+});

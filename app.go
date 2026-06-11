@@ -64,6 +64,10 @@ type App struct {
 	accountPoolStore   store.AccountPoolStore      // 账号池数据持久化
 	accountPoolService *service.AccountPoolService // 账号池业务服务
 
+	// v6.1+ 隐私保护存储 (SQLite)
+	privacyStore   store.PrivacyStore      // 隐私规则数据持久化
+	privacyService *service.PrivacyService // 隐私保护业务服务
+
 	// HTTP 代理服务器 (保留，监听配置的端口)
 	proxyServer *http.Server
 
@@ -162,6 +166,9 @@ func (a *App) startup(ctx context.Context) {
 
 	// 7.7 初始化账号池存储 (v6.0+ SQLite)
 	a.setupAccountPoolStore()
+
+	// 7.75 初始化隐私保护服务 (v6.1+ SQLite)
+	a.setupPrivacyService()
 
 	// 7.6 同步端点倍率到 UsageTracker（用于成本计算）
 	a.syncEndpointMultipliersToTracker(ctx)
@@ -365,6 +372,36 @@ func (a *App) setupEndpointStore() {
 	} else {
 		a.logger.Info("✅ 端点存储已启用 (SQLite)")
 	}
+}
+
+// setupPrivacyService 设置隐私保护服务 (v6.1+ SQLite)
+// 启动时加载规则并编译快照；编译降级不阻塞启动，通过日志与前端状态可见。
+func (a *App) setupPrivacyService() {
+	if a.usageTracker == nil {
+		a.logger.Warn("⚠️ 隐私保护需要使用追踪功能 (usage_tracking.enabled: true)")
+		return
+	}
+	db := a.usageTracker.GetDB()
+	if db == nil {
+		a.logger.Error("❌ 无法获取数据库连接 (隐私保护)")
+		return
+	}
+
+	a.privacyStore = store.NewSQLitePrivacyStore(db)
+	a.privacyService = service.NewPrivacyService(a.privacyStore)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := a.privacyService.Initialize(ctx); err != nil {
+		a.logger.Error("❌ 隐私保护服务初始化失败", "error", err)
+		a.privacyService = nil
+		a.privacyStore = nil
+		return
+	}
+	if a.privacyService.Status() == service.PrivacyStatusDegraded {
+		a.logger.Warn("⚠️ 隐私保护部分规则未激活（编译失败），请在前端检查规则状态")
+	}
+	a.logger.Info("✅ 隐私保护服务已启用 (SQLite)")
 }
 
 // setupModelPricingStore 设置模型定价存储 (v5.0+ SQLite)
@@ -720,6 +757,10 @@ func (a *App) setupProxyHandler() {
 
 	if a.accountPoolService != nil {
 		a.proxyHandler.SetAccountPoolService(a.accountPoolService)
+	}
+	// 🛡️ 注入出站隐私过滤（必须在 SetUsageTracker 之后，重建的 handler 会重新注入）
+	if a.privacyService != nil {
+		a.proxyHandler.SetPrivacyFilter(a.privacyService)
 	}
 	a.proxyHandler.SetCodexModelListProvider(&codexModelListProvider{app: a})
 }

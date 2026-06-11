@@ -32,6 +32,8 @@ type RegularHandler struct {
 	suspensionManagerFactory SuspensionManagerFactory
 	// 🔧 [修复] 共享SuspensionManager实例，确保全局挂起限制生效
 	sharedSuspensionManager SuspensionManager
+	// 🛡️ 出站隐私过滤（可选注入，nil 时不影响原有链路）
+	privacyFilter PrivacyFilter
 }
 
 // NewRegularHandler 创建新的RegularHandler实例
@@ -64,6 +66,11 @@ func NewRegularHandler(
 		// 确保常规请求与流式请求共享同一个全局挂起计数器
 		sharedSuspensionManager: sharedSuspensionManager,
 	}
+}
+
+// SetPrivacyFilter 注入出站隐私过滤依赖
+func (rh *RegularHandler) SetPrivacyFilter(filter PrivacyFilter) {
+	rh.privacyFilter = filter
 }
 
 // getDefaultStatusCodeForFinalStatus 根据最终状态获取默认HTTP状态码
@@ -208,6 +215,16 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 
 				// 执行请求
 				resp, err := rh.executeRequest(ctx, r, bodyBytes, endpoint)
+
+				// 🛡️ 隐私策略短路：本地策略拒绝不是上游失败，
+				// 不重试当前端点、不切换端点、不记失败追踪
+				if policyErr := AsPrivacyPolicyError(err); policyErr != nil {
+					slog.Warn(fmt.Sprintf("🛡️ [隐私保护] [%s] 常规请求被策略拒绝: %s", connID, policyErr.Code))
+					*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", policyErr.StatusCode))
+					lifecycleManager.FailRequest(PrivacyFailureReason(policyErr), policyErr.Message, policyErr.StatusCode)
+					WritePrivacyPolicyErrorResponse(w, policyErr)
+					return
+				}
 
 				if err == nil && IsSuccessStatus(resp.StatusCode) {
 					// ✅ [重试决策] 成功请求的决策日志 - 保持监控完整性
@@ -473,6 +490,12 @@ func (rh *RegularHandler) noteRouteDecision(endpointName string) {
 // executeRequest 执行单个请求
 func (rh *RegularHandler) executeRequest(ctx context.Context, r *http.Request, bodyBytes []byte, endpoint *endpoint.Endpoint) (*http.Response, error) {
 	bodyBytes = prepareBodyForEndpoint(bodyBytes, endpoint)
+
+	// 🛡️ 出站隐私过滤（PolicyError 由 attempt loop 短路，不进入 retry/failover）
+	bodyBytes, err := ApplyPrivacyFilterForEndpoint(rh.privacyFilter, r, bodyBytes, endpoint)
+	if err != nil {
+		return nil, err
+	}
 
 	// 创建目标请求
 	targetURL := endpoint.Config.URL + r.URL.Path

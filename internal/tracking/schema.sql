@@ -331,3 +331,54 @@ CREATE TRIGGER IF NOT EXISTS update_upstream_accounts_timestamp
 BEGIN
     UPDATE upstream_accounts SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
 END;
+
+-- ============================================================================
+-- 隐私保护 (v5.3.0 新增 - 2026-06-11)
+-- 出站请求隐私规则与全局设置；mode 是全局模式唯一真值来源
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS privacy_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    mode TEXT NOT NULL DEFAULT 'disabled',          -- disabled / detect / redact
+    scan_max_bytes INTEGER NOT NULL DEFAULT 4194304,-- 单请求累计扫描文本字节上限
+    over_limit_action TEXT NOT NULL DEFAULT 'scan_prefix', -- scan_prefix / fail_closed
+    on_error TEXT NOT NULL DEFAULT 'fail_open',     -- fail_open / fail_closed
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+);
+
+INSERT OR IGNORE INTO privacy_settings (id) VALUES (1);
+
+CREATE TABLE IF NOT EXISTS privacy_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    priority INTEGER NOT NULL DEFAULT 100,          -- 数字越小优先级越高
+    match_type TEXT NOT NULL,                       -- literal / regex
+    pattern TEXT NOT NULL,
+    placeholder TEXT NOT NULL DEFAULT '[已脱敏]',
+    action TEXT NOT NULL DEFAULT 'redact',          -- detect / redact
+    scope_json TEXT NOT NULL DEFAULT '{}',          -- 作用域 JSON
+    source TEXT NOT NULL DEFAULT 'custom',          -- custom / preset
+    compile_error TEXT DEFAULT '',                  -- 历史规则编译失败信息
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+);
+
+CREATE INDEX IF NOT EXISTS idx_privacy_rules_enabled_priority
+ON privacy_rules(enabled, priority);
+
+CREATE TRIGGER IF NOT EXISTS update_privacy_settings_timestamp
+    AFTER UPDATE ON privacy_settings
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE privacy_settings SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS update_privacy_rules_timestamp
+    AFTER UPDATE ON privacy_rules
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE privacy_rules SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+END;

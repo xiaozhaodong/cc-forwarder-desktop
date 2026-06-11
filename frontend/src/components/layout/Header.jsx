@@ -28,6 +28,8 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
     // v4.0: 组管理入口已移除，配置简化后不再需要独立的组管理页面
     // { name: 'groups', label: '组管理' },
     { name: 'requests', label: '请求追踪' },
+    // v6.1: 隐私保护
+    { name: 'privacy-protection', label: '隐私保护' },
     { name: 'pricing', label: '基础定价' },
     // v5.1: 新增日志页面
     { name: 'logs', label: '系统日志' },

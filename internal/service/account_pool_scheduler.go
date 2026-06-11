@@ -25,6 +25,7 @@ const (
 	AccountScheduleOutcomePassthroughNoAvailableProvider = "passthrough_no_available_providers"
 	AccountScheduleOutcomePassthroughOther4xx            = "passthrough_other_4xx"
 	AccountScheduleOutcomeNoSchedulableAccounts          = "no_schedulable_accounts"
+	AccountScheduleOutcomePrivacyBlocked                 = "privacy_blocked"
 	latestAccountScheduleSnapshotPendingTTL              = 5 * time.Minute
 
 	accountScheduleOutcomeSuccess                        = AccountScheduleOutcomeSuccess
