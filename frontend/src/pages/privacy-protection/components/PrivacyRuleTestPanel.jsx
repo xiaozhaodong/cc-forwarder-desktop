@@ -13,13 +13,14 @@ import {
   PRIVACY_UPSTREAM_TYPE_OPTIONS
 } from '../utils/privacyRules.js';
 
-const PrivacyRuleTestPanel = ({ onTest }) => {
+const PrivacyRuleTestPanel = ({ onTest, variant = 'card', showHeader = true }) => {
   const [text, setText] = useState('');
   const [path, setPath] = useState('/v1/messages');
   const [upstreamType, setUpstreamType] = useState('endpoint');
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+  const isDrawer = variant === 'drawer';
 
   const handleTest = async () => {
     setTesting(true);
@@ -35,40 +36,48 @@ const PrivacyRuleTestPanel = ({ onTest }) => {
   };
 
   return (
-    <div className="border border-slate-200 rounded-xl bg-white p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
-          <FlaskConical size={15} className="text-indigo-500" />
-          规则测试
-        </h3>
-        <span className="text-xs text-slate-400">测试文本不会被记录</span>
-      </div>
+    <div className={isDrawer ? 'space-y-4' : 'border border-slate-200 rounded-xl bg-white p-4 space-y-3'}>
+      {showHeader && (
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
+            <FlaskConical size={15} className="text-indigo-500" />
+            规则测试
+          </h3>
+          <span className="text-xs text-slate-400">测试文本不会被记录</span>
+        </div>
+      )}
 
-      <div className="flex gap-2">
+      <div className={isDrawer ? 'grid grid-cols-1 gap-3 sm:grid-cols-[1fr_160px]' : 'flex gap-2'}>
         <CustomSelect
           options={PRIVACY_PATH_OPTIONS.map((p) => ({ value: p, label: p }))}
           value={path}
           onChange={setPath}
-          className="flex-1"
+          className={isDrawer ? 'w-full [&>button]:h-11' : 'flex-1'}
         />
         <CustomSelect
           options={PRIVACY_UPSTREAM_TYPE_OPTIONS}
           value={upstreamType}
           onChange={setUpstreamType}
-          className="w-32"
+          className={isDrawer ? 'w-full [&>button]:h-11' : 'w-32'}
         />
       </div>
 
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        rows={6}
+        rows={isDrawer ? 9 : 6}
         spellCheck={false}
         placeholder="粘贴一段测试文本，例如包含 API Key 或手机号的内容"
         className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono break-all focus:outline-none focus:ring-2 focus:ring-indigo-500"
       />
 
-      <Button onClick={handleTest} loading={testing} disabled={!text} className="w-full" size="sm">
+      <Button
+        onClick={handleTest}
+        loading={testing}
+        disabled={!text}
+        className={isDrawer ? 'h-10 w-full' : 'w-full'}
+        size={isDrawer ? 'md' : 'sm'}
+      >
         测试
       </Button>
 
@@ -84,7 +93,7 @@ const PrivacyRuleTestPanel = ({ onTest }) => {
 
           <div>
             <div className="text-xs font-medium text-slate-500 mb-1">替换后文本</div>
-            <pre className="text-xs bg-slate-50 border border-slate-100 rounded-lg p-3 whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+            <pre className={`text-xs bg-slate-50 border border-slate-100 rounded-lg p-3 whitespace-pre-wrap break-all overflow-y-auto ${isDrawer ? 'max-h-72' : 'max-h-48'}`}>
               {result.replaced_text || '（空）'}
             </pre>
           </div>

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Download,
+  FlaskConical,
   PackagePlus,
   Plus,
   Save,
@@ -18,7 +19,7 @@ import usePrivacyProtection from './hooks/usePrivacyProtection.js';
 import PrivacyRulesTable from './components/PrivacyRulesTable.jsx';
 import PrivacyRulesToolbar from './components/PrivacyRulesToolbar.jsx';
 import PrivacyRuleDrawer from './components/PrivacyRuleDrawer.jsx';
-import PrivacyRuleTestPanel from './components/PrivacyRuleTestPanel.jsx';
+import PrivacyRuleTestDrawer from './components/PrivacyRuleTestDrawer.jsx';
 import PrivacyPresetDialog from './components/PrivacyPresetDialog.jsx';
 import PrivacyExactSecretsPanel from './components/PrivacyExactSecretsPanel.jsx';
 import PrivacyBuiltinRulesPanel from './components/PrivacyBuiltinRulesPanel.jsx';
@@ -216,6 +217,7 @@ const PrivacyProtectionPage = () => {
   const [drawerRule, setDrawerRule] = useState(null);
   const [drawerSession, setDrawerSession] = useState(0);
   const [presetOpen, setPresetOpen] = useState(false);
+  const [testDrawerOpen, setTestDrawerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [endpointOptions, setEndpointOptions] = useState([]);
@@ -322,6 +324,9 @@ const PrivacyProtectionPage = () => {
         <span className="text-xs text-slate-400">出站请求保护：转发前按规则检测/脱敏请求内容</span>
         <div className="ml-auto flex items-center gap-2">
           <ModeSegmentedControl mode={settings.mode} busy={busy} onChange={handleModeChange} />
+          <Button size="sm" variant="secondary" icon={FlaskConical} onClick={() => setTestDrawerOpen(true)}>
+            规则测试
+          </Button>
           <Button size="sm" variant="secondary" icon={Download} onClick={handleExport} disabled={busy}>
             导出
           </Button>
@@ -355,65 +360,62 @@ const PrivacyProtectionPage = () => {
         <p className="text-sm text-rose-500 break-all">{actionError}</p>
       )}
 
-      {/* 主体两列：规则表 + 测试面板 */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
-        <div className="xl:col-span-2 space-y-3">
-          <PrivacyTabs activeTab={activeTab} onChange={setActiveTab} />
-          {activeTab === 'exact' && (
-            <PrivacyExactSecretsPanel
-              secrets={exactSecrets}
-              busy={busy}
-              onSave={async (form) => {
-                setBusy(true);
-                try {
-                  await saveExactSecret(form);
-                  reloadStats();
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              onDelete={removeExactSecret}
-              onClear={clearExactSecrets}
-              onLoadCandidates={loadImportCandidates}
-              onImportCandidate={async (input) => {
-                await importSecretCandidate(input);
+      {/* 主体：规则配置与管理 */}
+      <div className="space-y-3">
+        <PrivacyTabs activeTab={activeTab} onChange={setActiveTab} />
+        {activeTab === 'exact' && (
+          <PrivacyExactSecretsPanel
+            secrets={exactSecrets}
+            busy={busy}
+            onSave={async (form) => {
+              setBusy(true);
+              try {
+                await saveExactSecret(form);
                 reloadStats();
-              }}
+              } finally {
+                setBusy(false);
+              }
+            }}
+            onDelete={removeExactSecret}
+            onClear={clearExactSecrets}
+            onLoadCandidates={loadImportCandidates}
+            onImportCandidate={async (input) => {
+              await importSecretCandidate(input);
+              reloadStats();
+            }}
+          />
+        )}
+        {activeTab === 'builtin' && (
+          <PrivacyBuiltinRulesPanel
+            rules={builtinRules}
+            busy={busy}
+            onToggle={handleToggle}
+            onEdit={(rule) => openDrawer(ruleToForm(rule))}
+          />
+        )}
+        {activeTab === 'advanced' && (
+          <>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
+              这些规则可能误伤代码、日志、测试数据和工具输出。建议先使用“仅检测”，确认命中质量后再开启“脱敏转发”。
+            </div>
+            <PrivacyRulesToolbar
+              filters={filters}
+              onChange={setFilters}
+              total={advancedRules.length}
+              filtered={filteredRules.length}
             />
-          )}
-          {activeTab === 'builtin' && (
-            <PrivacyBuiltinRulesPanel
-              rules={builtinRules}
+            <PrivacyRulesTable
+              rules={filteredRules}
               busy={busy}
+              reorderEnabled={reorderEnabled}
               onToggle={handleToggle}
               onEdit={(rule) => openDrawer(ruleToForm(rule))}
+              onDuplicate={(rule) => openDrawer(duplicateRuleForm(rule))}
+              onDelete={handleDelete}
+              onMove={handleMove}
             />
-          )}
-          {activeTab === 'advanced' && (
-            <>
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
-                这些规则可能误伤代码、日志、测试数据和工具输出。建议先使用“仅检测”，确认命中质量后再开启“脱敏转发”。
-              </div>
-              <PrivacyRulesToolbar
-                filters={filters}
-                onChange={setFilters}
-                total={advancedRules.length}
-                filtered={filteredRules.length}
-              />
-              <PrivacyRulesTable
-                rules={filteredRules}
-                busy={busy}
-                reorderEnabled={reorderEnabled}
-                onToggle={handleToggle}
-                onEdit={(rule) => openDrawer(ruleToForm(rule))}
-                onDuplicate={(rule) => openDrawer(duplicateRuleForm(rule))}
-                onDelete={handleDelete}
-                onMove={handleMove}
-              />
-            </>
-          )}
-        </div>
-        <PrivacyRuleTestPanel onTest={runTest} />
+          </>
+        )}
       </div>
 
       <PrivacyRuleDrawer
@@ -440,6 +442,12 @@ const PrivacyProtectionPage = () => {
         presets={presets}
         onImport={importPreset}
         onClose={() => setPresetOpen(false)}
+      />
+
+      <PrivacyRuleTestDrawer
+        open={testDrawerOpen}
+        onTest={runTest}
+        onClose={() => setTestDrawerOpen(false)}
       />
     </div>
   );

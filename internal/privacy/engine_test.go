@@ -500,7 +500,13 @@ func TestBuiltinPIIAvoidsCommonFalsePositives(t *testing.T) {
 		"ssh user@example.com",
 		"scp user@example.com:path",
 		"身份证 110105194912310021",
+		"身份证 " + "991105" + "19491231" + "0024",
+		"手机号 14112345678",
+		"手机号 16012345678",
+		"手机号 17406123456",
 		"银行卡 4111111111111112",
+		"go pseudo version v0.0.0-" + "20240101" + "000030" + "-715c2860da7e",
+		"epoch millis " + "170000" + "0000004",
 		"IPv4 192.168.1.100",
 		`AccessToken: cached.accessToken`,
 		`RefreshToken: firstNonEmptyString(...)`,
@@ -510,6 +516,29 @@ func TestBuiltinPIIAvoidsCommonFalsePositives(t *testing.T) {
 	result := snapshot.ApplyToText(claudeRequest(), text)
 	if result.HitCount != 0 || result.Changed {
 		t.Fatalf("default builtin rules must avoid false positives, got %+v body=%s", result, result.Body)
+	}
+}
+
+func TestBuiltinCNMobileUsesMainlandMobileSegments(t *testing.T) {
+	rules := BuiltinPIIRules()
+	for i := range rules {
+		rules[i].ID = int64(i + 1)
+	}
+	snapshot := newTestSnapshot(t, redactSettings(), rules...)
+
+	specialSegment := "1740" + "0123456"
+	normalSegment := "166" + "12345678"
+	invalidSegment := "141" + "12345678"
+	result := snapshot.ApplyToText(claudeRequest(), "mobile "+specialSegment+" "+normalSegment+" "+invalidSegment)
+
+	if result.HitCount != 2 {
+		t.Fatalf("expected two valid mobile segments to hit, got %+v body=%s", result, result.Body)
+	}
+	if bytes.Count(result.Body, []byte("[手机号]")) != 2 {
+		t.Fatalf("expected two mobile placeholders in result: %s", result.Body)
+	}
+	if !bytes.Contains(result.Body, []byte(invalidSegment)) {
+		t.Fatalf("invalid mainland mobile segment must stay visible: %s", result.Body)
 	}
 }
 
@@ -525,6 +554,28 @@ func TestBuiltinPIIValidatesIDCardAndBankCard(t *testing.T) {
 		if !bytes.Contains(result.Body, []byte(want)) {
 			t.Fatalf("expected %s in result: %s", want, result.Body)
 		}
+	}
+}
+
+func TestBuiltinBankCardRequiresKnownIssuerProfile(t *testing.T) {
+	rules := BuiltinPIIRules()
+	for i := range rules {
+		rules[i].ID = int64(i + 1)
+	}
+	snapshot := newTestSnapshot(t, redactSettings(), rules...)
+
+	visaTestNumber := "4111" + "1111" + "1111" + "1111"
+	luhnTimestamp := "20240101" + "000030"
+	result := snapshot.ApplyToText(claudeRequest(), "card "+visaTestNumber+"\nversion "+luhnTimestamp)
+
+	if result.HitCount != 1 {
+		t.Fatalf("expected only known issuer profile to hit, got %+v body=%s", result, result.Body)
+	}
+	if !bytes.Contains(result.Body, []byte("[银行卡]")) {
+		t.Fatalf("expected card placeholder in result: %s", result.Body)
+	}
+	if !bytes.Contains(result.Body, []byte(luhnTimestamp)) {
+		t.Fatalf("unknown-prefix Luhn timestamp must stay visible: %s", result.Body)
 	}
 }
 
