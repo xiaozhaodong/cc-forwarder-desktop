@@ -36,6 +36,13 @@ export const PRIVACY_PROVIDER_TYPE_OPTIONS = [
   { value: 'chatgpt_oauth', label: 'ChatGPT OAuth' }
 ];
 
+export const PRIVACY_EXACT_SECRET_CATEGORY_OPTIONS = [
+  { value: 'api_key', label: 'API Key' },
+  { value: 'token', label: 'Token' },
+  { value: 'password', label: '密码' },
+  { value: 'custom', label: '自定义' }
+];
+
 export const PRIVACY_OVER_LIMIT_OPTIONS = [
   { value: 'scan_prefix', label: '截断扫描并提示' },
   { value: 'fail_closed', label: '超限拒绝' }
@@ -47,6 +54,25 @@ export const PRIVACY_ON_ERROR_OPTIONS = [
 ];
 
 export const DEFAULT_SCAN_MAX_BYTES = 4194304;
+export const ADVANCED_RULE_PRIORITY_BASE = 100;
+
+export const exactSecretCategoryLabel = (category) => {
+  const found = PRIVACY_EXACT_SECRET_CATEGORY_OPTIONS.find((opt) => opt.value === category);
+  return found ? found.label : category || '自定义';
+};
+
+export const sourceLabel = (source) => {
+  if (source === 'exact') return '本地敏感值';
+  if (source === 'builtin') return '内置规则';
+  if (source === 'preset') return '高级预设';
+  return '自定义';
+};
+
+export const exactSecretMinLength = (category) => {
+  if (category === 'api_key' || category === 'token') return 12;
+  if (category === 'password') return 8;
+  return 4;
+};
 
 // 格式化扫描上限为可读字符串
 export const formatScanBytes = (bytes) => {
@@ -105,6 +131,30 @@ export const filterPrivacyRules = (rules = [], filters = {}) => {
   });
 };
 
+export const filterPrivacyExactSecrets = (secrets = [], filters = {}) => {
+  const keyword = String(filters.keyword ?? '').trim().toLowerCase();
+  return secrets.filter((secret) => {
+    if (keyword) {
+      const haystack = [
+        secret.name,
+        secret.description,
+        secret.category,
+        exactSecretCategoryLabel(secret.category),
+        secret.placeholder,
+        secret.masked_value,
+        secret.value_hash_short,
+        secret.source_type,
+        secret.source_ref
+      ].join(' ').toLowerCase();
+      if (!haystack.includes(keyword)) return false;
+    }
+    if (filters.category && secret.category !== filters.category) return false;
+    if (filters.enabled === 'enabled' && !secret.enabled) return false;
+    if (filters.enabled === 'disabled' && secret.enabled) return false;
+    return true;
+  });
+};
+
 // 表单校验（regex 编译校验由后端兜底，这里做基础前端校验）
 export const validatePrivacyRuleForm = (form = {}) => {
   const errors = {};
@@ -143,6 +193,43 @@ export const createEmptyPrivacyRuleForm = () => ({
   }
 });
 
+export const createEmptyExactSecretForm = () => ({
+  id: 0,
+  enabled: true,
+  name: '',
+  secret_value: '',
+  category: 'custom',
+  placeholder: '[敏感值]',
+  source_type: 'manual',
+  source_ref: '',
+  description: ''
+});
+
+export const exactSecretToForm = (secret = {}) => ({
+  ...createEmptyExactSecretForm(),
+  ...secret,
+  secret_value: ''
+});
+
+export const validateExactSecretForm = (form = {}, { requireSecretValue = true } = {}) => {
+  const errors = {};
+  if (!String(form.name ?? '').trim()) {
+    errors.name = '名称不能为空';
+  }
+  const secretValue = String(form.secret_value ?? '').trim();
+  if (requireSecretValue && !secretValue) {
+    errors.secret_value = '敏感值不能为空';
+  }
+  const minLength = exactSecretMinLength(form.category);
+  if (secretValue && secretValue.length < minLength) {
+    errors.secret_value = `当前分类至少 ${minLength} 个字符`;
+  }
+  if (!String(form.placeholder ?? '').trim()) {
+    errors.placeholder = '占位符不能为空';
+  }
+  return errors;
+};
+
 export const ruleToForm = (rule = {}) => ({
   ...createEmptyPrivacyRuleForm(),
   ...rule,
@@ -160,11 +247,11 @@ export const duplicateRuleForm = (rule = {}) => ({
   source: 'custom'
 });
 
-// 上移/下移后重排优先级（步长 10），返回 ReorderPrivacyRules 载荷
-export const buildReorderPayload = (rules = []) =>
+// 上移/下移后重排优先级（步长 10），高级规则默认落在内置 PII 之后。
+export const buildReorderPayload = (rules = [], { start = ADVANCED_RULE_PRIORITY_BASE, step = 10 } = {}) =>
   rules.map((rule, index) => ({
     id: rule.id,
-    priority: (index + 1) * 10
+    priority: start + (index * step)
   }));
 
 // 在数组内移动规则（direction: -1 上移 / 1 下移），返回新数组；越界返回原数组

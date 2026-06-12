@@ -20,14 +20,8 @@ func Presets() []Preset {
 		{
 			ID:          PresetBasicPrivacy,
 			Name:        "基础隐私",
-			Description: "邮箱、中国手机号、身份证、银行卡、IPv4",
-			Rules: []Rule{
-				presetRule("邮箱地址", `[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`, "[邮箱]", 200),
-				presetRule("中国手机号", `\b1[3-9]\d{9}\b`, "[手机号]", 210),
-				presetRule("身份证号", `\b[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b`, "[身份证]", 220),
-				presetRule("银行卡号", `\b[3-6]\d{14,18}\b`, "[银行卡]", 230),
-				presetRule("IPv4 地址", `\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b`, "[IP地址]", 240),
-			},
+			Description: "确定型 PII：邮箱、中国手机号、身份证、银行卡",
+			Rules:       BuiltinPIIRules(),
 		},
 		{
 			ID:          PresetAIAPIKeys,
@@ -51,6 +45,7 @@ func Presets() []Preset {
 				presetRule("Telegram Bot Token", `\b\d{8,10}:[A-Za-z0-9_-]{35}\b`, "[Telegram令牌]", 170),
 				presetRule("JWT", `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}`, "[JWT]", 180),
 				presetRule("私钥块头部", `-----BEGIN [A-Z ]*PRIVATE KEY-----`, "[私钥]", 190),
+				presetRule("IPv4 地址", `\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b`, "[IP地址]", 240),
 			},
 		},
 	}

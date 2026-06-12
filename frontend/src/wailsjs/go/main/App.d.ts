@@ -15,9 +15,13 @@ export function ClearClaudeRoutingOverride():Promise<main.ClaudeRoutingState>;
 
 export function ClearNegativeHitCache(arg1:string):Promise<void>;
 
+export function ClearPrivacyExactSecrets(arg1:string):Promise<void>;
+
 export function CreateEndpointRecord(arg1:main.CreateEndpointInput):Promise<void>;
 
 export function CreateModelPricing(arg1:main.CreateModelPricingInput):Promise<void>;
+
+export function CreatePrivacyExactSecret(arg1:main.PrivacyExactSecretInput):Promise<main.PrivacyExactSecretInfo>;
 
 export function CreatePrivacyRule(arg1:main.PrivacyRuleInput):Promise<main.PrivacyRuleInfo>;
 
@@ -26,6 +30,8 @@ export function CreateUpstreamAccount(arg1:main.CreateUpstreamAccountInput):Prom
 export function DeleteEndpointRecord(arg1:string):Promise<void>;
 
 export function DeleteModelPricing(arg1:string):Promise<void>;
+
+export function DeletePrivacyExactSecret(arg1:number):Promise<void>;
 
 export function DeletePrivacyRule(arg1:number):Promise<void>;
 
@@ -117,11 +123,17 @@ export function GetUsageSummary(arg1:string,arg2:string):Promise<main.UsageSumma
 
 export function ImportPrivacyPreset(arg1:string):Promise<Array<main.PrivacyRuleInfo>>;
 
+export function ImportPrivacySecretCandidate(arg1:main.ImportPrivacySecretCandidateInput):Promise<main.PrivacyExactSecretInfo>;
+
 export function IsProxyRunning():Promise<boolean>;
+
+export function ListPrivacyExactSecrets():Promise<Array<main.PrivacyExactSecretInfo>>;
 
 export function ListPrivacyPresets():Promise<Array<main.PrivacyPresetInfo>>;
 
 export function ListPrivacyRules():Promise<Array<main.PrivacyRuleInfo>>;
+
+export function ListPrivacySecretImportCandidates():Promise<Array<main.PrivacySecretImportCandidateInfo>>;
 
 export function MergeDefaultCodexModelCatalog():Promise<main.CodexModelCatalogInfo>;
 
@@ -174,6 +186,8 @@ export function UpdateEndpointRecord(arg1:string,arg2:main.CreateEndpointInput):
 export function UpdateModelPricing(arg1:string,arg2:main.CreateModelPricingInput):Promise<void>;
 
 export function UpdatePreferredPort(arg1:number):Promise<void>;
+
+export function UpdatePrivacyExactSecret(arg1:number,arg2:main.PrivacyExactSecretInput):Promise<main.PrivacyExactSecretInfo>;
 
 export function UpdatePrivacyRule(arg1:number,arg2:main.PrivacyRuleInput):Promise<main.PrivacyRuleInfo>;
 

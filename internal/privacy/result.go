@@ -22,6 +22,7 @@ type Request struct {
 type RuleHit struct {
 	RuleID   int64  `json:"rule_id"`
 	RuleName string `json:"rule_name"`
+	Source   string `json:"source"`
 	Action   string `json:"action"`
 	Count    int    `json:"count"`
 }

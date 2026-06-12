@@ -1176,6 +1176,55 @@ export const createPrivacyRule = async (input) => {
   throw privacyDesktopOnlyError();
 };
 
+export const fetchPrivacyExactSecrets = async () => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.listPrivacyExactSecrets();
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const createPrivacyExactSecret = async (input) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.createPrivacyExactSecret(input);
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const updatePrivacyExactSecret = async (id, input) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.updatePrivacyExactSecret(id, input);
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const deletePrivacyExactSecret = async (id) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.deletePrivacyExactSecret(id);
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const clearPrivacyExactSecrets = async (confirmText) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.clearPrivacyExactSecrets(confirmText);
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const fetchPrivacySecretImportCandidates = async () => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.listPrivacySecretImportCandidates();
+  }
+  throw privacyDesktopOnlyError();
+};
+
+export const importPrivacySecretCandidate = async (input) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.importPrivacySecretCandidate(input);
+  }
+  throw privacyDesktopOnlyError();
+};
+
 export const updatePrivacyRule = async (id, input) => {
   if (isWailsEnvironment()) {
     return await WailsApi.updatePrivacyRule(id, input);

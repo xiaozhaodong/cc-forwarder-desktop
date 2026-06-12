@@ -179,3 +179,75 @@ func TestPrivacyStoreBatchCreateAndCompileError(t *testing.T) {
 		t.Errorf("compile_error = %q", rule.CompileError)
 	}
 }
+
+func TestPrivacyStoreExactSecretCRUDAndUniqueness(t *testing.T) {
+	store := newTestPrivacyStore(t)
+	ctx := context.Background()
+
+	created, err := store.CreateExactSecret(ctx, &PrivacyExactSecretRecord{
+		Enabled:     true,
+		Name:        "项目 Token",
+		SecretValue: "tok_123456789012",
+		ValueHash:   "hash-a",
+		Placeholder: "[Token]",
+		Category:    "token",
+		SourceType:  "manual",
+		SourceRef:   "",
+		Description: "desc",
+	})
+	if err != nil {
+		t.Fatalf("create exact secret failed: %v", err)
+	}
+	if created.ID <= 0 || created.SecretValue != "tok_123456789012" || created.ValueHash != "hash-a" {
+		t.Fatalf("unexpected created exact secret: %+v", created)
+	}
+
+	if _, err := store.CreateExactSecret(ctx, &PrivacyExactSecretRecord{
+		Enabled: true, Name: "重复", SecretValue: "other",
+		ValueHash: "hash-a", Placeholder: "[Token]", Category: "token", SourceType: "manual",
+	}); err == nil {
+		t.Fatal("duplicate value_hash must fail")
+	}
+
+	found, err := store.FindExactSecretByHash(ctx, "hash-a")
+	if err != nil {
+		t.Fatalf("find exact secret failed: %v", err)
+	}
+	if found == nil || found.ID != created.ID {
+		t.Fatalf("unexpected found record: %+v", found)
+	}
+
+	created.Enabled = false
+	created.Name = "项目 Token v2"
+	created.SecretValue = "tok_abcdefghijkl"
+	created.ValueHash = "hash-b"
+	if err := store.UpdateExactSecret(ctx, created); err != nil {
+		t.Fatalf("update exact secret failed: %v", err)
+	}
+	reloaded, err := store.GetExactSecret(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get exact secret failed: %v", err)
+	}
+	if reloaded.Enabled || reloaded.Name != "项目 Token v2" || reloaded.ValueHash != "hash-b" {
+		t.Fatalf("update not persisted: %+v", reloaded)
+	}
+
+	records, err := store.ListExactSecrets(ctx)
+	if err != nil {
+		t.Fatalf("list exact secrets failed: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("exact secret count = %d, want 1", len(records))
+	}
+
+	if err := store.DeleteExactSecret(ctx, created.ID); err != nil {
+		t.Fatalf("delete exact secret failed: %v", err)
+	}
+	missing, err := store.GetExactSecret(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get deleted exact secret failed: %v", err)
+	}
+	if missing != nil {
+		t.Fatal("exact secret still exists after delete")
+	}
+}

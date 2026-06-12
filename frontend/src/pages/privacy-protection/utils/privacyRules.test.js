@@ -2,12 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  ADVANCED_RULE_PRIORITY_BASE,
   buildReorderPayload,
+  createEmptyExactSecretForm,
   duplicateRuleForm,
+  exactSecretCategoryLabel,
+  exactSecretMinLength,
+  filterPrivacyExactSecrets,
   filterPrivacyRules,
   formatScanBytes,
   moveRuleInList,
+  sourceLabel,
   summarizeScope,
+  validateExactSecretForm,
   validatePrivacyRuleForm
 } from './privacyRules.js';
 
@@ -90,11 +97,91 @@ test('moveRuleInList swaps neighbors and keeps bounds', () => {
   assert.deepEqual(moveRuleInList(rules, 99, 1).map((r) => r.id), [1, 2, 3]);
 });
 
-test('buildReorderPayload assigns step-10 priorities in order', () => {
+test('buildReorderPayload keeps advanced rules after builtin PII by default', () => {
   const payload = buildReorderPayload([{ id: 5 }, { id: 3 }, { id: 8 }]);
   assert.deepEqual(payload, [
-    { id: 5, priority: 10 },
-    { id: 3, priority: 20 },
-    { id: 8, priority: 30 }
+    { id: 5, priority: ADVANCED_RULE_PRIORITY_BASE },
+    { id: 3, priority: ADVANCED_RULE_PRIORITY_BASE + 10 },
+    { id: 8, priority: ADVANCED_RULE_PRIORITY_BASE + 20 }
   ]);
+  assert.deepEqual(buildReorderPayload([{ id: 1 }, { id: 2 }], { start: 200, step: 5 }), [
+    { id: 1, priority: 200 },
+    { id: 2, priority: 205 }
+  ]);
+});
+
+test('exact secret helpers enforce category labels and minimum lengths', () => {
+  assert.equal(exactSecretCategoryLabel('api_key'), 'API Key');
+  assert.equal(exactSecretCategoryLabel('missing'), 'missing');
+  assert.equal(exactSecretMinLength('token'), 12);
+  assert.equal(exactSecretMinLength('password'), 8);
+  assert.equal(exactSecretMinLength('custom'), 4);
+
+  const empty = createEmptyExactSecretForm();
+  assert.equal(empty.enabled, true);
+  assert.equal(empty.category, 'custom');
+  assert.equal(empty.source_type, 'manual');
+});
+
+test('validateExactSecretForm allows metadata-only edits but validates creates', () => {
+  const createErrors = validateExactSecretForm({
+    name: ' ',
+    secret_value: 'abc',
+    category: 'token',
+    placeholder: ''
+  });
+  assert.ok(createErrors.name);
+  assert.ok(createErrors.secret_value);
+  assert.ok(createErrors.placeholder);
+
+  const editErrors = validateExactSecretForm({
+    id: 1,
+    name: '生产 Token',
+    secret_value: '',
+    category: 'token',
+    placeholder: '[Token]'
+  }, { requireSecretValue: false });
+  assert.deepEqual(editErrors, {});
+});
+
+test('filterPrivacyExactSecrets applies keyword, category and status filters', () => {
+  const secrets = [
+    {
+      id: 1,
+      enabled: true,
+      name: '生产 OpenAI Key',
+      description: '主账号',
+      category: 'api_key',
+      placeholder: '[API密钥]',
+      masked_value: 'sk-pro…abcd',
+      value_hash_short: 'aaaabbbb',
+      source_type: 'endpoint_token',
+      source_ref: '3'
+    },
+    {
+      id: 2,
+      enabled: false,
+      name: '内部 Token',
+      description: '',
+      category: 'token',
+      placeholder: '[Token]',
+      masked_value: 'to…en',
+      value_hash_short: 'ccccdddd',
+      source_type: 'manual',
+      source_ref: ''
+    }
+  ];
+
+  assert.deepEqual(filterPrivacyExactSecrets(secrets, { keyword: 'openai' }).map((item) => item.id), [1]);
+  assert.deepEqual(filterPrivacyExactSecrets(secrets, { category: 'token' }).map((item) => item.id), [2]);
+  assert.deepEqual(filterPrivacyExactSecrets(secrets, { enabled: 'enabled' }).map((item) => item.id), [1]);
+  assert.deepEqual(filterPrivacyExactSecrets(secrets, { enabled: 'disabled' }).map((item) => item.id), [2]);
+  assert.equal(filterPrivacyExactSecrets(secrets, {}).length, 2);
+});
+
+test('sourceLabel explains hit sources', () => {
+  assert.equal(sourceLabel('exact'), '本地敏感值');
+  assert.equal(sourceLabel('builtin'), '内置规则');
+  assert.equal(sourceLabel('preset'), '高级预设');
+  assert.equal(sourceLabel('custom'), '自定义');
 });

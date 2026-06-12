@@ -26,12 +26,20 @@ export function ClearNegativeHitCache(arg1) {
   return window['go']['main']['App']['ClearNegativeHitCache'](arg1);
 }
 
+export function ClearPrivacyExactSecrets(arg1) {
+  return window['go']['main']['App']['ClearPrivacyExactSecrets'](arg1);
+}
+
 export function CreateEndpointRecord(arg1) {
   return window['go']['main']['App']['CreateEndpointRecord'](arg1);
 }
 
 export function CreateModelPricing(arg1) {
   return window['go']['main']['App']['CreateModelPricing'](arg1);
+}
+
+export function CreatePrivacyExactSecret(arg1) {
+  return window['go']['main']['App']['CreatePrivacyExactSecret'](arg1);
 }
 
 export function CreatePrivacyRule(arg1) {
@@ -48,6 +56,10 @@ export function DeleteEndpointRecord(arg1) {
 
 export function DeleteModelPricing(arg1) {
   return window['go']['main']['App']['DeleteModelPricing'](arg1);
+}
+
+export function DeletePrivacyExactSecret(arg1) {
+  return window['go']['main']['App']['DeletePrivacyExactSecret'](arg1);
 }
 
 export function DeletePrivacyRule(arg1) {
@@ -230,8 +242,16 @@ export function ImportPrivacyPreset(arg1) {
   return window['go']['main']['App']['ImportPrivacyPreset'](arg1);
 }
 
+export function ImportPrivacySecretCandidate(arg1) {
+  return window['go']['main']['App']['ImportPrivacySecretCandidate'](arg1);
+}
+
 export function IsProxyRunning() {
   return window['go']['main']['App']['IsProxyRunning']();
+}
+
+export function ListPrivacyExactSecrets() {
+  return window['go']['main']['App']['ListPrivacyExactSecrets']();
 }
 
 export function ListPrivacyPresets() {
@@ -240,6 +260,10 @@ export function ListPrivacyPresets() {
 
 export function ListPrivacyRules() {
   return window['go']['main']['App']['ListPrivacyRules']();
+}
+
+export function ListPrivacySecretImportCandidates() {
+  return window['go']['main']['App']['ListPrivacySecretImportCandidates']();
 }
 
 export function MergeDefaultCodexModelCatalog() {
@@ -344,6 +368,10 @@ export function UpdateModelPricing(arg1, arg2) {
 
 export function UpdatePreferredPort(arg1) {
   return window['go']['main']['App']['UpdatePreferredPort'](arg1);
+}
+
+export function UpdatePrivacyExactSecret(arg1, arg2) {
+  return window['go']['main']['App']['UpdatePrivacyExactSecret'](arg1, arg2);
 }
 
 export function UpdatePrivacyRule(arg1, arg2) {

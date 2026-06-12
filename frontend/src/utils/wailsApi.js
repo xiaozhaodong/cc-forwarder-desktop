@@ -1975,6 +1975,33 @@ export const normalizePrivacyRule = (rule = {}) => {
   };
 };
 
+export const normalizePrivacyExactSecret = (secret = {}) => ({
+  id: Number(secret.id ?? secret.ID ?? 0),
+  enabled: Boolean(secret.enabled ?? secret.Enabled ?? false),
+  name: secret.name ?? secret.Name ?? '',
+  category: secret.category ?? secret.Category ?? 'custom',
+  placeholder: secret.placeholder ?? secret.Placeholder ?? '',
+  source_type: secret.source_type ?? secret.SourceType ?? 'manual',
+  source_ref: secret.source_ref ?? secret.SourceRef ?? '',
+  description: secret.description ?? secret.Description ?? '',
+  masked_value: secret.masked_value ?? secret.MaskedValue ?? '',
+  value_length: Number(secret.value_length ?? secret.ValueLength ?? 0),
+  value_hash_short: secret.value_hash_short ?? secret.ValueHashShort ?? '',
+  created_at: secret.created_at ?? secret.CreatedAt ?? '',
+  updated_at: secret.updated_at ?? secret.UpdatedAt ?? ''
+});
+
+export const normalizePrivacyImportCandidate = (candidate = {}) => ({
+  source_type: candidate.source_type ?? candidate.SourceType ?? '',
+  source_ref: candidate.source_ref ?? candidate.SourceRef ?? '',
+  name: candidate.name ?? candidate.Name ?? '',
+  category: candidate.category ?? candidate.Category ?? 'custom',
+  masked_value: candidate.masked_value ?? candidate.MaskedValue ?? '',
+  value_length: Number(candidate.value_length ?? candidate.ValueLength ?? 0),
+  value_hash_short: candidate.value_hash_short ?? candidate.ValueHashShort ?? '',
+  already_exists: Boolean(candidate.already_exists ?? candidate.AlreadyExists ?? false)
+});
+
 // 将 UI 规则对象转换为后端 PrivacyRuleInput
 export const buildPrivacyRulePayload = (input = {}) => ({
   enabled: Boolean(input.enabled),
@@ -1988,6 +2015,17 @@ export const buildPrivacyRulePayload = (input = {}) => ({
   scope_json: typeof input.scope_json === 'string' && input.scope_json
     ? input.scope_json
     : encodePrivacyScope(input.scope)
+});
+
+export const buildPrivacyExactSecretPayload = (input = {}) => ({
+  enabled: input.enabled !== false,
+  name: String(input.name ?? '').trim(),
+  secret_value: String(input.secret_value ?? input.secretValue ?? ''),
+  category: String(input.category ?? 'custom').trim(),
+  placeholder: String(input.placeholder ?? ''),
+  source_type: String(input.source_type ?? input.sourceType ?? 'manual').trim(),
+  source_ref: String(input.source_ref ?? input.sourceRef ?? '').trim(),
+  description: String(input.description ?? '').trim()
 });
 
 export const getPrivacySettings = async () => {
@@ -2019,6 +2057,75 @@ export const getPrivacyRules = async () => {
   const method = getWailsMethod('ListPrivacyRules');
   const result = await method();
   return (Array.isArray(result) ? result : []).map(normalizePrivacyRule);
+};
+
+export const listPrivacyExactSecrets = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('ListPrivacyExactSecrets');
+  const result = await method();
+  return (Array.isArray(result) ? result : []).map(normalizePrivacyExactSecret);
+};
+
+export const createPrivacyExactSecret = async (input) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('CreatePrivacyExactSecret');
+  return normalizePrivacyExactSecret(await method(buildPrivacyExactSecretPayload(input)));
+};
+
+export const updatePrivacyExactSecret = async (id, input) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('UpdatePrivacyExactSecret');
+  return normalizePrivacyExactSecret(await method(normalizeEntityId(id), buildPrivacyExactSecretPayload(input)));
+};
+
+export const deletePrivacyExactSecret = async (id) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('DeletePrivacyExactSecret');
+  await method(normalizeEntityId(id));
+  return { success: true };
+};
+
+export const clearPrivacyExactSecrets = async (confirmText) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('ClearPrivacyExactSecrets');
+  await method(String(confirmText ?? ''));
+  return { success: true };
+};
+
+export const listPrivacySecretImportCandidates = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('ListPrivacySecretImportCandidates');
+  const result = await method();
+  return (Array.isArray(result) ? result : []).map(normalizePrivacyImportCandidate);
+};
+
+export const importPrivacySecretCandidate = async (input = {}) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('ImportPrivacySecretCandidate');
+  const result = await method({
+    source_type: String(input.source_type ?? '').trim(),
+    source_ref: String(input.source_ref ?? '').trim(),
+    name: String(input.name ?? '').trim(),
+    category: String(input.category ?? '').trim(),
+    placeholder: String(input.placeholder ?? ''),
+    description: String(input.description ?? '').trim(),
+    secret_value: String(input.secret_value ?? '')
+  });
+  return normalizePrivacyExactSecret(result);
 };
 
 export const createPrivacyRule = async (input) => {

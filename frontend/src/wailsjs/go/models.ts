@@ -734,6 +734,30 @@ export namespace main {
 	        this.cooldown_remain_ms = source["cooldown_remain_ms"];
 	    }
 	}
+	export class ImportPrivacySecretCandidateInput {
+	    source_type: string;
+	    source_ref: string;
+	    name: string;
+	    category: string;
+	    placeholder: string;
+	    description: string;
+	    secret_value: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ImportPrivacySecretCandidateInput(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source_type = source["source_type"];
+	        this.source_ref = source["source_ref"];
+	        this.name = source["name"];
+	        this.category = source["category"];
+	        this.placeholder = source["placeholder"];
+	        this.description = source["description"];
+	        this.secret_value = source["secret_value"];
+	    }
+	}
 
 	export class KeysOverviewResult {
 	    endpoints: EndpointKeysInfo[];
@@ -927,6 +951,68 @@ export namespace main {
 	        this.was_occupied = source["was_occupied"];
 	    }
 	}
+	export class PrivacyExactSecretInfo {
+	    id: number;
+	    enabled: boolean;
+	    name: string;
+	    category: string;
+	    placeholder: string;
+	    source_type: string;
+	    source_ref: string;
+	    description: string;
+	    masked_value: string;
+	    value_length: number;
+	    value_hash_short: string;
+	    created_at: string;
+	    updated_at: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PrivacyExactSecretInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.enabled = source["enabled"];
+	        this.name = source["name"];
+	        this.category = source["category"];
+	        this.placeholder = source["placeholder"];
+	        this.source_type = source["source_type"];
+	        this.source_ref = source["source_ref"];
+	        this.description = source["description"];
+	        this.masked_value = source["masked_value"];
+	        this.value_length = source["value_length"];
+	        this.value_hash_short = source["value_hash_short"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	    }
+	}
+	export class PrivacyExactSecretInput {
+	    enabled: boolean;
+	    name: string;
+	    secret_value: string;
+	    category: string;
+	    placeholder: string;
+	    source_type: string;
+	    source_ref: string;
+	    description: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PrivacyExactSecretInput(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.name = source["name"];
+	        this.secret_value = source["secret_value"];
+	        this.category = source["category"];
+	        this.placeholder = source["placeholder"];
+	        this.source_type = source["source_type"];
+	        this.source_ref = source["source_ref"];
+	        this.description = source["description"];
+	    }
+	}
 	export class PrivacyPresetInfo {
 	    id: string;
 	    name: string;
@@ -1048,6 +1134,7 @@ export namespace main {
 	export class PrivacyRuleHitInfo {
 	    rule_id: number;
 	    rule_name: string;
+	    source: string;
 	    action: string;
 	    count: number;
 
@@ -1059,6 +1146,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.rule_id = source["rule_id"];
 	        this.rule_name = source["rule_name"];
+	        this.source = source["source"];
 	        this.action = source["action"];
 	        this.count = source["count"];
 	    }
@@ -1205,6 +1293,32 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class PrivacySecretImportCandidateInfo {
+	    source_type: string;
+	    source_ref: string;
+	    name: string;
+	    category: string;
+	    masked_value: string;
+	    value_length: number;
+	    value_hash_short: string;
+	    already_exists: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new PrivacySecretImportCandidateInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source_type = source["source_type"];
+	        this.source_ref = source["source_ref"];
+	        this.name = source["name"];
+	        this.category = source["category"];
+	        this.masked_value = source["masked_value"];
+	        this.value_length = source["value_length"];
+	        this.value_hash_short = source["value_hash_short"];
+	        this.already_exists = source["already_exists"];
+	    }
 	}
 
 	export class PrivacySettingsInput {

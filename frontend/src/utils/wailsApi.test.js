@@ -249,3 +249,51 @@ test('normalizePrivacySettings applies safe defaults', async () => {
   assert.equal(fromBackend.status, 'degraded');
   assert.equal(fromBackend.enabled_rules, 5);
 });
+
+test('normalizePrivacyExactSecret and import candidate do not require raw values', async () => {
+  const {
+    normalizePrivacyExactSecret,
+    normalizePrivacyImportCandidate,
+    buildPrivacyExactSecretPayload
+  } = await import('./wailsApi.js');
+
+  const secret = normalizePrivacyExactSecret({
+    ID: '7',
+    Enabled: true,
+    Name: '生产 Key',
+    Category: 'api_key',
+    Placeholder: '[API密钥]',
+    SourceType: 'endpoint_token',
+    SourceRef: '3',
+    MaskedValue: 'sk-pro…abcd',
+    ValueLength: '42',
+    ValueHashShort: 'abcdef12'
+  });
+  assert.equal(secret.id, 7);
+  assert.equal(secret.enabled, true);
+  assert.equal(secret.source_type, 'endpoint_token');
+  assert.equal(secret.masked_value, 'sk-pro…abcd');
+  assert.equal(secret.value_length, 42);
+  assert.equal('secret_value' in secret, false);
+
+  const candidate = normalizePrivacyImportCandidate({
+    SourceType: 'upstream_account',
+    SourceRef: '11',
+    Name: '账号 Key',
+    Category: 'api_key',
+    AlreadyExists: true
+  });
+  assert.equal(candidate.source_type, 'upstream_account');
+  assert.equal(candidate.already_exists, true);
+
+  const payload = buildPrivacyExactSecretPayload({
+    enabled: true,
+    name: '  Token  ',
+    secretValue: ' raw-token ',
+    category: 'token',
+    placeholder: '[Token]'
+  });
+  assert.equal(payload.name, 'Token');
+  assert.equal(payload.secret_value, ' raw-token ');
+  assert.equal(payload.source_type, 'manual');
+});

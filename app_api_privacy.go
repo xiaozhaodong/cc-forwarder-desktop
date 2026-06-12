@@ -84,6 +84,7 @@ type PrivacyRuleTestInput struct {
 type PrivacyRuleHitInfo struct {
 	RuleID   int64  `json:"rule_id"`
 	RuleName string `json:"rule_name"`
+	Source   string `json:"source"`
 	Action   string `json:"action"`
 	Count    int    `json:"count"`
 }
@@ -286,7 +287,7 @@ func (a *App) TestPrivacyRules(input PrivacyRuleTestInput) (PrivacyRuleTestResul
 	hits := make([]PrivacyRuleHitInfo, 0, len(result.RuleHits))
 	for _, hit := range result.RuleHits {
 		hits = append(hits, PrivacyRuleHitInfo{
-			RuleID: hit.RuleID, RuleName: hit.RuleName, Action: hit.Action, Count: hit.Count,
+			RuleID: hit.RuleID, RuleName: hit.RuleName, Source: hit.Source, Action: hit.Action, Count: hit.Count,
 		})
 	}
 	return PrivacyRuleTestResult{
@@ -304,6 +305,9 @@ func (a *App) ListPrivacyPresets() ([]PrivacyPresetInfo, error) {
 	presets := privacy.Presets()
 	out := make([]PrivacyPresetInfo, 0, len(presets))
 	for _, preset := range presets {
+		if preset.ID == privacy.PresetBasicPrivacy {
+			continue
+		}
 		out = append(out, PrivacyPresetInfo{
 			ID:          preset.ID,
 			Name:        preset.Name,
@@ -375,7 +379,7 @@ func (a *App) GetPrivacyRuntimeStats() (PrivacyRuntimeStatsInfo, error) {
 	ruleStats := make([]PrivacyRuleHitInfo, 0, len(stats.RuleStats))
 	for _, item := range stats.RuleStats {
 		ruleStats = append(ruleStats, PrivacyRuleHitInfo{
-			RuleID: item.RuleID, RuleName: item.RuleName, Count: int(item.HitCount),
+			RuleID: item.RuleID, RuleName: item.RuleName, Source: item.Source, Count: int(item.HitCount),
 		})
 	}
 	return PrivacyRuntimeStatsInfo{

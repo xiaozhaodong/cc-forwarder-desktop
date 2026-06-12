@@ -6,8 +6,8 @@ import (
 )
 
 // TestInitSchemaCreatesPrivacyTables 隐私保护表回归测试：
-// schema.sql 全量执行后 privacy_settings / privacy_rules 必须存在，
-// 且 privacy_settings 默认行（id=1, mode=disabled）已就位。
+// schema.sql 全量执行后 privacy_settings / privacy_rules / privacy_exact_secrets 必须存在，
+// 且 privacy_settings 默认行（id=1, mode=disabled）和 builtin PII 行已就位。
 func TestInitSchemaCreatesPrivacyTables(t *testing.T) {
 	adapter, err := NewSQLiteAdapter(DatabaseConfig{DatabasePath: ":memory:"})
 	if err != nil {
@@ -25,7 +25,7 @@ func TestInitSchemaCreatesPrivacyTables(t *testing.T) {
 	db := adapter.GetDB()
 	ctx := context.Background()
 
-	for _, table := range []string{"privacy_settings", "privacy_rules"} {
+	for _, table := range []string{"privacy_settings", "privacy_rules", "privacy_exact_secrets"} {
 		var name string
 		err := db.QueryRowContext(ctx,
 			`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name)
@@ -62,5 +62,16 @@ func TestInitSchemaCreatesPrivacyTables(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("privacy_settings row count = %d, want 1", count)
+	}
+
+	var builtinCount int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM privacy_rules
+		WHERE source = 'builtin' AND match_type = 'builtin'
+	`).Scan(&builtinCount); err != nil {
+		t.Fatalf("count builtin rules failed: %v", err)
+	}
+	if builtinCount != 4 {
+		t.Errorf("builtin privacy rule count = %d, want 4", builtinCount)
 	}
 }

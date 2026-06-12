@@ -8,9 +8,16 @@ import {
   fetchPrivacySettings,
   updatePrivacySettings,
   fetchPrivacyRules,
+  fetchPrivacyExactSecrets,
   createPrivacyRule,
   updatePrivacyRule,
   deletePrivacyRule,
+  createPrivacyExactSecret,
+  updatePrivacyExactSecret,
+  deletePrivacyExactSecret,
+  clearPrivacyExactSecrets,
+  fetchPrivacySecretImportCandidates,
+  importPrivacySecretCandidate,
   reorderPrivacyRules,
   testPrivacyRules,
   fetchPrivacyPresets,
@@ -21,6 +28,7 @@ import {
 const usePrivacyProtection = () => {
   const [settings, setSettings] = useState(null);
   const [rules, setRules] = useState([]);
+  const [exactSecrets, setExactSecrets] = useState([]);
   const [presets, setPresets] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -29,12 +37,14 @@ const usePrivacyProtection = () => {
   const reloadAll = useCallback(async () => {
     setError(null);
     try {
-      const [nextSettings, nextRules] = await Promise.all([
+      const [nextSettings, nextRules, nextExactSecrets] = await Promise.all([
         fetchPrivacySettings(),
-        fetchPrivacyRules()
+        fetchPrivacyRules(),
+        fetchPrivacyExactSecrets()
       ]);
       setSettings(nextSettings);
       setRules(nextRules);
+      setExactSecrets(nextExactSecrets);
     } catch (err) {
       setError(err.message || String(err));
     } finally {
@@ -79,6 +89,32 @@ const usePrivacyProtection = () => {
     await reloadAll();
   }, [reloadAll]);
 
+  const saveExactSecret = useCallback(async (form) => {
+    const saved = form.id > 0
+      ? await updatePrivacyExactSecret(form.id, form)
+      : await createPrivacyExactSecret(form);
+    await reloadAll();
+    return saved;
+  }, [reloadAll]);
+
+  const removeExactSecret = useCallback(async (id) => {
+    await deletePrivacyExactSecret(id);
+    await reloadAll();
+  }, [reloadAll]);
+
+  const clearExactSecrets = useCallback(async (confirmText) => {
+    await clearPrivacyExactSecrets(confirmText);
+    await reloadAll();
+  }, [reloadAll]);
+
+  const loadImportCandidates = useCallback(async () => fetchPrivacySecretImportCandidates(), []);
+
+  const importSecretCandidate = useCallback(async (input) => {
+    const imported = await importPrivacySecretCandidate(input);
+    await reloadAll();
+    return imported;
+  }, [reloadAll]);
+
   // 启用开关：toggle 后立即保存并热生效
   const toggleRule = useCallback(async (rule, enabled) => {
     await updatePrivacyRule(rule.id, { ...rule, enabled });
@@ -102,6 +138,7 @@ const usePrivacyProtection = () => {
   return {
     settings,
     rules,
+    exactSecrets,
     presets,
     stats,
     loading,
@@ -111,6 +148,11 @@ const usePrivacyProtection = () => {
     saveSettings,
     saveRule,
     removeRule,
+    saveExactSecret,
+    removeExactSecret,
+    clearExactSecrets,
+    loadImportCandidates,
+    importSecretCandidate,
     toggleRule,
     reorderRules,
     importPreset,

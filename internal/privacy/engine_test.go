@@ -479,12 +479,65 @@ func TestBasicPrivacyPresetCoversCorePII(t *testing.T) {
 	}
 	snapshot := newTestSnapshot(t, redactSettings(), rules...)
 
-	text := "手机号 13812345678 身份证 110105199001011234 银行卡 6222020202020202"
+	text := "手机号 13812345678 身份证 11010519491231002X 银行卡 4111111111111111"
 	result := snapshot.ApplyToText(claudeRequest(), text)
 	for _, want := range []string{"[手机号]", "[身份证]", "[银行卡]"} {
 		if !bytes.Contains(result.Body, []byte(want)) {
 			t.Errorf("expected %s in result: %s", want, result.Body)
 		}
+	}
+}
+
+func TestBuiltinPIIAvoidsCommonFalsePositives(t *testing.T) {
+	rules := BuiltinPIIRules()
+	for i := range rules {
+		rules[i].ID = int64(i + 1)
+	}
+	snapshot := newTestSnapshot(t, redactSettings(), rules...)
+
+	text := strings.Join([]string{
+		"git@github.com:org/repo.git",
+		"ssh user@example.com",
+		"scp user@example.com:path",
+		"身份证 110105194912310021",
+		"银行卡 4111111111111112",
+		"IPv4 192.168.1.100",
+		`AccessToken: cached.accessToken`,
+		`RefreshToken: firstNonEmptyString(...)`,
+		`password = "SuperSecret123"`,
+		`sk-proj-abcdefghijklmnopqrstuvwxyz123456`,
+	}, "\n")
+	result := snapshot.ApplyToText(claudeRequest(), text)
+	if result.HitCount != 0 || result.Changed {
+		t.Fatalf("default builtin rules must avoid false positives, got %+v body=%s", result, result.Body)
+	}
+}
+
+func TestBuiltinPIIValidatesIDCardAndBankCard(t *testing.T) {
+	rules := BuiltinPIIRules()
+	for i := range rules {
+		rules[i].ID = int64(i + 1)
+	}
+	snapshot := newTestSnapshot(t, redactSettings(), rules...)
+
+	result := snapshot.ApplyToText(claudeRequest(), "身份证 11010519491231002X 银行卡 4111111111111111 邮箱 a@example.com")
+	for _, want := range []string{"[身份证]", "[银行卡]", "[邮箱]"} {
+		if !bytes.Contains(result.Body, []byte(want)) {
+			t.Fatalf("expected %s in result: %s", want, result.Body)
+		}
+	}
+}
+
+func TestBuiltinEmailKeepsOrdinaryAddressBeforeColon(t *testing.T) {
+	rules := BuiltinPIIRules()
+	for i := range rules {
+		rules[i].ID = int64(i + 1)
+	}
+	snapshot := newTestSnapshot(t, redactSettings(), rules...)
+
+	result := snapshot.ApplyToText(claudeRequest(), "contact alice@example.com: ready")
+	if !bytes.Contains(result.Body, []byte("[邮箱]: ready")) {
+		t.Fatalf("ordinary email before colon should be redacted: %s", result.Body)
 	}
 }
 

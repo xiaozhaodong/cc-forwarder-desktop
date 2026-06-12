@@ -28,6 +28,7 @@ const PrivacyRuleDrawer = ({
   const [form, setForm] = useState(() => ruleToForm(rule || {}));
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState('');
+  const isBuiltin = form.match_type === 'builtin';
 
   if (!open) return null;
 
@@ -64,7 +65,7 @@ const PrivacyRuleDrawer = ({
       <div className="relative w-full max-w-xl h-full bg-white shadow-2xl flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h3 className="text-base font-semibold text-slate-800">
-            {form.id > 0 ? '编辑规则' : '新增规则'}
+            {isBuiltin ? '编辑内置规则' : (form.id > 0 ? '编辑规则' : '新增规则')}
           </h3>
           <button
             type="button"
@@ -77,32 +78,45 @@ const PrivacyRuleDrawer = ({
 
         <form onSubmit={handleSubmit} className="flex-1 min-h-0 flex flex-col">
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
-            <div className="grid grid-cols-2 gap-4">
-              <Input
-                label="规则名 *"
-                value={form.name}
-                error={errors.name}
-                onChange={(e) => update({ name: e.target.value })}
-                placeholder="例如 OpenAI API Key"
-              />
-              <Input
-                label="优先级（越小越先匹配）"
-                type="number"
-                value={form.priority}
-                error={errors.priority}
-                onChange={(e) => update({ priority: e.target.value })}
-              />
-            </div>
+            {isBuiltin ? (
+              <div className="rounded-lg border border-indigo-100 bg-indigo-50/50 px-3 py-2">
+                <div className="text-xs font-medium text-indigo-500">内置规则</div>
+                <div className="mt-1 text-sm font-semibold text-slate-800">{form.name}</div>
+                {form.description && (
+                  <div className="mt-1 text-xs leading-5 text-slate-500">{form.description}</div>
+                )}
+                <div className="mt-1 text-xs text-slate-400">优先级 {form.priority}</div>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <Input
+                    label="规则名 *"
+                    value={form.name}
+                    error={errors.name}
+                    onChange={(e) => update({ name: e.target.value })}
+                    placeholder="例如 OpenAI API Key"
+                  />
+                  <Input
+                    label="优先级（越小越先匹配）"
+                    type="number"
+                    value={form.priority}
+                    error={errors.priority}
+                    onChange={(e) => update({ priority: e.target.value })}
+                  />
+                </div>
 
-            <div className="flex flex-col">
-              <label className="text-sm font-medium text-slate-700 mb-1.5">描述</label>
-              <textarea
-                value={form.description}
-                onChange={(e) => update({ description: e.target.value })}
-                rows={2}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
+                <div className="flex flex-col">
+                  <label className="text-sm font-medium text-slate-700 mb-1.5">描述</label>
+                  <textarea
+                    value={form.description}
+                    onChange={(e) => update({ description: e.target.value })}
+                    rows={2}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </>
+            )}
 
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-slate-700">启用</span>
@@ -121,13 +135,21 @@ const PrivacyRuleDrawer = ({
               </button>
             </div>
 
-            <PrivacyPatternEditor
-              matchType={form.match_type}
-              pattern={form.pattern}
-              error={errors.pattern}
-              onMatchTypeChange={(value) => update({ match_type: value })}
-              onPatternChange={(value) => update({ pattern: value })}
-            />
+            {isBuiltin ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="text-sm font-medium text-slate-700">内置规则 ID</div>
+                <div className="mt-1 font-mono text-sm text-slate-600">{form.pattern}</div>
+                <div className="mt-1 text-xs text-slate-400">内置规则的匹配器由代码提供，只能调整启用、动作、占位符和作用域。</div>
+              </div>
+            ) : (
+              <PrivacyPatternEditor
+                matchType={form.match_type}
+                pattern={form.pattern}
+                error={errors.pattern}
+                onMatchTypeChange={(value) => update({ match_type: value })}
+                onPatternChange={(value) => update({ pattern: value })}
+              />
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col">

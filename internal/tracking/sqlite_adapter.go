@@ -409,6 +409,9 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		}
 	}
 
+	if err := s.ensurePrivacyExactSecretsSchema(ctx); err != nil {
+		return err
+	}
 	if err := s.migrateDeprecatedAccountPoolSchema(ctx); err != nil {
 		return err
 	}
@@ -416,6 +419,42 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		return err
 	}
 
+	return nil
+}
+
+func (s *SQLiteAdapter) ensurePrivacyExactSecretsSchema(ctx context.Context) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS privacy_exact_secrets (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			enabled BOOLEAN NOT NULL DEFAULT TRUE,
+			name TEXT NOT NULL,
+			secret_value TEXT NOT NULL,
+			value_hash TEXT NOT NULL,
+			placeholder TEXT NOT NULL DEFAULT '[敏感值]',
+			category TEXT NOT NULL DEFAULT 'custom',
+			source_type TEXT NOT NULL DEFAULT 'manual',
+			source_ref TEXT NOT NULL DEFAULT '',
+			description TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+			updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_privacy_exact_secrets_value_hash
+			ON privacy_exact_secrets(value_hash)`,
+		`CREATE TRIGGER IF NOT EXISTS update_privacy_exact_secrets_timestamp
+			AFTER UPDATE ON privacy_exact_secrets
+			FOR EACH ROW
+			WHEN NEW.updated_at = OLD.updated_at
+		BEGIN
+			UPDATE privacy_exact_secrets
+			SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'
+			WHERE id = NEW.id;
+		END`,
+	}
+	for _, stmt := range statements {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("failed to ensure privacy exact secrets schema: %w", err)
+		}
+	}
 	return nil
 }
 

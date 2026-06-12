@@ -14,6 +14,7 @@ type CompiledRule struct {
 	Rule
 	regex       *regexp.Regexp
 	redactGroup int
+	builtin     builtinMatcher
 }
 
 // Snapshot 编译后的规则快照，热路径只读。
@@ -31,13 +32,20 @@ func CompileRule(rule Rule) (CompiledRule, error) {
 		return CompiledRule{}, err
 	}
 	compiled := CompiledRule{Rule: rule}
-	if rule.MatchType == MatchTypeRegex {
+	switch rule.MatchType {
+	case MatchTypeRegex:
 		re, err := regexp.Compile(rule.Pattern)
 		if err != nil {
 			return CompiledRule{}, fmt.Errorf("compile rule %q failed: %w", rule.Name, err)
 		}
 		compiled.regex = re
 		compiled.redactGroup = redactCaptureGroup(re)
+	case MatchTypeBuiltin:
+		matcher, err := compileBuiltinMatcher(rule.Pattern)
+		if err != nil {
+			return CompiledRule{}, fmt.Errorf("compile builtin rule %q failed: %w", rule.Name, err)
+		}
+		compiled.builtin = matcher
 	}
 	return compiled, nil
 }
@@ -216,7 +224,7 @@ func (s *Snapshot) scanSegments(req Request, result *ApplyResult, candidates []i
 			rule := &s.Rules[span.ruleIdx]
 			hit := hits[rule.ID]
 			if hit == nil {
-				hit = &RuleHit{RuleID: rule.ID, RuleName: rule.Name, Action: rule.Action}
+				hit = &RuleHit{RuleID: rule.ID, RuleName: rule.Name, Source: rule.Source, Action: rule.Action}
 				hits[rule.ID] = hit
 			}
 			hit.Count++
@@ -253,6 +261,9 @@ func (s *Snapshot) collectMatchSpans(candidates []int, text string) []matchSpan 
 
 // findRuleMatches 返回规则在文本中的所有命中区间（字节偏移）
 func findRuleMatches(rule *CompiledRule, text string) [][2]int {
+	if rule.builtin != nil {
+		return rule.builtin(text)
+	}
 	if rule.regex != nil {
 		if rule.redactGroup > 0 {
 			locs := rule.regex.FindAllStringSubmatchIndex(text, -1)
@@ -380,7 +391,7 @@ func (s *Snapshot) ApplyToText(req Request, text string) ApplyResult {
 		rule := &s.Rules[span.ruleIdx]
 		hit := hits[rule.ID]
 		if hit == nil {
-			hit = &RuleHit{RuleID: rule.ID, RuleName: rule.Name, Action: rule.Action}
+			hit = &RuleHit{RuleID: rule.ID, RuleName: rule.Name, Source: rule.Source, Action: rule.Action}
 			hits[rule.ID] = hit
 		}
 		hit.Count++

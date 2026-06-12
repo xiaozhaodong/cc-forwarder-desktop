@@ -3,6 +3,8 @@
 // 2026-06-11 (v6.1 新增)
 // ============================================
 
+import { sourceLabel } from '../utils/privacyRules.js';
+
 const PrivacyHitList = ({ hits = [] }) => {
   if (!hits.length) {
     return <p className="text-xs text-slate-400">无命中规则</p>;
@@ -14,6 +16,7 @@ const PrivacyHitList = ({ hits = [] }) => {
         <thead>
           <tr className="bg-slate-50 text-left text-slate-500">
             <th className="px-3 py-1.5 font-medium">规则</th>
+            <th className="px-3 py-1.5 font-medium w-20">来源</th>
             <th className="px-3 py-1.5 font-medium w-16">动作</th>
             <th className="px-3 py-1.5 font-medium w-16 text-right">命中数</th>
           </tr>
@@ -22,6 +25,7 @@ const PrivacyHitList = ({ hits = [] }) => {
           {hits.map((hit) => (
             <tr key={hit.rule_id} className="border-t border-slate-100">
               <td className="px-3 py-1.5 text-slate-700 break-all">{hit.rule_name}</td>
+              <td className="px-3 py-1.5 text-slate-500">{sourceLabel(hit.source)}</td>
               <td className="px-3 py-1.5 text-slate-500">{hit.action === 'detect' ? '仅检测' : '脱敏'}</td>
               <td className="px-3 py-1.5 text-right tabular-nums text-slate-700">{hit.count}</td>
             </tr>

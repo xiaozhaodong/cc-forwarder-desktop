@@ -20,6 +20,8 @@ import PrivacyRulesToolbar from './components/PrivacyRulesToolbar.jsx';
 import PrivacyRuleDrawer from './components/PrivacyRuleDrawer.jsx';
 import PrivacyRuleTestPanel from './components/PrivacyRuleTestPanel.jsx';
 import PrivacyPresetDialog from './components/PrivacyPresetDialog.jsx';
+import PrivacyExactSecretsPanel from './components/PrivacyExactSecretsPanel.jsx';
+import PrivacyBuiltinRulesPanel from './components/PrivacyBuiltinRulesPanel.jsx';
 import {
   PRIVACY_MODE_OPTIONS,
   PRIVACY_ON_ERROR_OPTIONS,
@@ -174,13 +176,41 @@ const StatusBand = ({ settings, stats }) => {
   );
 };
 
+const PRIVACY_TABS = [
+  { id: 'exact', label: '本地敏感值' },
+  { id: 'builtin', label: '内置规则' },
+  { id: 'advanced', label: '高级预设' }
+];
+
+const PrivacyTabs = ({ activeTab, onChange }) => (
+  <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm">
+    {PRIVACY_TABS.map((tab) => (
+      <button
+        key={tab.id}
+        type="button"
+        onClick={() => onChange(tab.id)}
+        className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+          activeTab === tab.id
+            ? 'bg-slate-800 text-white shadow-sm'
+            : 'text-slate-500 hover:text-slate-800'
+        }`}
+      >
+        {tab.label}
+      </button>
+    ))}
+  </div>
+);
+
 const PrivacyProtectionPage = () => {
   const {
-    settings, rules, presets, stats, loading, error,
+    settings, rules, exactSecrets, presets, stats, loading, error,
     reloadAll, reloadStats, saveSettings, saveRule, removeRule,
+    saveExactSecret, removeExactSecret, clearExactSecrets,
+    loadImportCandidates, importSecretCandidate,
     toggleRule, reorderRules, importPreset, runTest
   } = usePrivacyProtection();
 
+  const [activeTab, setActiveTab] = useState('exact');
   const [filters, setFilters] = useState({});
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerRule, setDrawerRule] = useState(null);
@@ -209,9 +239,11 @@ const PrivacyProtectionPage = () => {
       .catch(() => setAccountOptions([]));
   }, []);
 
-  const filteredRules = useMemo(() => filterPrivacyRules(rules, filters), [rules, filters]);
+  const builtinRules = useMemo(() => rules.filter((rule) => rule.source === 'builtin'), [rules]);
+  const advancedRules = useMemo(() => rules.filter((rule) => rule.source !== 'builtin'), [rules]);
+  const filteredRules = useMemo(() => filterPrivacyRules(advancedRules, filters), [advancedRules, filters]);
   // 未筛选时才允许调序，避免对部分列表重排造成误解
-  const reorderEnabled = filteredRules.length === rules.length;
+  const reorderEnabled = filteredRules.length === advancedRules.length;
 
   const runAction = async (action) => {
     setBusy(true);
@@ -229,8 +261,8 @@ const PrivacyProtectionPage = () => {
   const handleScanSettingsSave = (patch) => runAction(() => saveSettings({ ...settings, ...patch }));
   const handleToggle = (rule, enabled) => runAction(() => toggleRule(rule, enabled));
   const handleMove = (rule, direction) => runAction(async () => {
-    const next = moveRuleInList(rules, rule.id, direction);
-    if (next !== rules) {
+    const next = moveRuleInList(advancedRules, rule.id, direction);
+    if (next !== advancedRules) {
       await reorderRules(buildReorderPayload(next));
     }
   });
@@ -293,12 +325,16 @@ const PrivacyProtectionPage = () => {
           <Button size="sm" variant="secondary" icon={Download} onClick={handleExport} disabled={busy}>
             导出
           </Button>
-          <Button size="sm" variant="secondary" icon={PackagePlus} onClick={() => setPresetOpen(true)} disabled={busy}>
-            导入预设
-          </Button>
-          <Button size="sm" icon={Plus} onClick={() => openDrawer(createEmptyPrivacyRuleForm())} disabled={busy}>
-            新增规则
-          </Button>
+          {activeTab === 'advanced' && (
+            <>
+              <Button size="sm" variant="secondary" icon={PackagePlus} onClick={() => setPresetOpen(true)} disabled={busy}>
+                导入预设
+              </Button>
+              <Button size="sm" icon={Plus} onClick={() => openDrawer(createEmptyPrivacyRuleForm())} disabled={busy}>
+                新增规则
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -321,23 +357,61 @@ const PrivacyProtectionPage = () => {
 
       {/* 主体两列：规则表 + 测试面板 */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
-        <div className="xl:col-span-2">
-          <PrivacyRulesToolbar
-            filters={filters}
-            onChange={setFilters}
-            total={rules.length}
-            filtered={filteredRules.length}
-          />
-          <PrivacyRulesTable
-            rules={filteredRules}
-            busy={busy}
-            reorderEnabled={reorderEnabled}
-            onToggle={handleToggle}
-            onEdit={(rule) => openDrawer(ruleToForm(rule))}
-            onDuplicate={(rule) => openDrawer(duplicateRuleForm(rule))}
-            onDelete={handleDelete}
-            onMove={handleMove}
-          />
+        <div className="xl:col-span-2 space-y-3">
+          <PrivacyTabs activeTab={activeTab} onChange={setActiveTab} />
+          {activeTab === 'exact' && (
+            <PrivacyExactSecretsPanel
+              secrets={exactSecrets}
+              busy={busy}
+              onSave={async (form) => {
+                setBusy(true);
+                try {
+                  await saveExactSecret(form);
+                  reloadStats();
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              onDelete={removeExactSecret}
+              onClear={clearExactSecrets}
+              onLoadCandidates={loadImportCandidates}
+              onImportCandidate={async (input) => {
+                await importSecretCandidate(input);
+                reloadStats();
+              }}
+            />
+          )}
+          {activeTab === 'builtin' && (
+            <PrivacyBuiltinRulesPanel
+              rules={builtinRules}
+              busy={busy}
+              onToggle={handleToggle}
+              onEdit={(rule) => openDrawer(ruleToForm(rule))}
+            />
+          )}
+          {activeTab === 'advanced' && (
+            <>
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
+                这些规则可能误伤代码、日志、测试数据和工具输出。建议先使用“仅检测”，确认命中质量后再开启“脱敏转发”。
+              </div>
+              <PrivacyRulesToolbar
+                filters={filters}
+                onChange={setFilters}
+                total={advancedRules.length}
+                filtered={filteredRules.length}
+              />
+              <PrivacyRulesTable
+                rules={filteredRules}
+                busy={busy}
+                reorderEnabled={reorderEnabled}
+                onToggle={handleToggle}
+                onEdit={(rule) => openDrawer(ruleToForm(rule))}
+                onDuplicate={(rule) => openDrawer(duplicateRuleForm(rule))}
+                onDelete={handleDelete}
+                onMove={handleMove}
+              />
+            </>
+          )}
         </div>
         <PrivacyRuleTestPanel onTest={runTest} />
       </div>

@@ -31,6 +31,7 @@ const (
 const (
 	MatchTypeLiteral = "literal"
 	MatchTypeRegex   = "regex"
+	MatchTypeBuiltin = "builtin"
 )
 
 // 规则动作（block 仅预留，不在第一版 UI 暴露）
@@ -47,8 +48,10 @@ const (
 
 // 规则来源
 const (
-	SourceCustom = "custom"
-	SourcePreset = "preset"
+	SourceCustom  = "custom"
+	SourcePreset  = "preset"
+	SourceBuiltin = "builtin"
+	SourceExact   = "exact"
 )
 
 // DefaultScanMaxBytes 单请求累计扫描文本字节上限默认值（4MB）
@@ -131,7 +134,7 @@ func ValidateRule(r Rule) error {
 		return fmt.Errorf("rule pattern is required")
 	}
 	switch r.MatchType {
-	case MatchTypeLiteral, MatchTypeRegex:
+	case MatchTypeLiteral, MatchTypeRegex, MatchTypeBuiltin:
 	default:
 		return fmt.Errorf("invalid match_type: %q", r.MatchType)
 	}

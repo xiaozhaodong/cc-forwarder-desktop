@@ -139,8 +139,10 @@ func TestPrivacyServiceInvalidRegexRejectedWithoutSnapshotSwap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list rules failed: %v", err)
 	}
-	if len(rules) != 1 {
-		t.Errorf("invalid rule must not be persisted, got %d rules", len(rules))
+	for _, rule := range rules {
+		if rule.Name == "Broken" {
+			t.Fatal("invalid rule must not be persisted")
+		}
 	}
 
 	// 现有规则仍然生效
@@ -218,8 +220,8 @@ func TestPrivacyServiceStartupDegradedOnInvalidEnabledRule(t *testing.T) {
 			t.Error("compile_error must be written back for broken enabled rule")
 		}
 	}
-	if len(svc.CurrentSnapshot().Rules) != 1 {
-		t.Errorf("active rules = %d, want 1", len(svc.CurrentSnapshot().Rules))
+	if len(svc.CurrentSnapshot().Rules) != 5 {
+		t.Errorf("active rules = %d, want builtin rules plus valid custom rule", len(svc.CurrentSnapshot().Rules))
 	}
 }
 
@@ -360,8 +362,121 @@ func TestPrivacyServiceExportRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export failed: %v", err)
 	}
-	if export.Settings == nil || len(export.Rules) != 1 {
+	if export.Settings == nil || len(export.Rules) != 5 {
 		t.Errorf("unexpected export: %+v", export)
+	}
+}
+
+func TestPrivacyServiceExactSecretHotReload(t *testing.T) {
+	svc := newTestPrivacyService(t)
+	ctx := context.Background()
+	enableRedactMode(t, svc)
+
+	body := []byte(`{"messages":[{"role":"user","content":"key sk-proj-abcdefghijklmnopqrstuvwxyz123456"}]}`)
+	result, err := svc.Apply(ctx, privacy.Request{Path: "/v1/messages"}, body)
+	if err != nil {
+		t.Fatalf("apply before exact failed: %v", err)
+	}
+	if result.Changed {
+		t.Fatal("unregistered fake key must not be redacted by default")
+	}
+
+	created, err := svc.CreateExactSecret(ctx, &store.PrivacyExactSecretRecord{
+		Enabled:     true,
+		Name:        "项目 OpenAI Key",
+		SecretValue: "sk-proj-abcdefghijklmnopqrstuvwxyz123456",
+		Category:    "api_key",
+		Placeholder: "[OpenAI密钥]",
+		SourceType:  "manual",
+	})
+	if err != nil {
+		t.Fatalf("create exact secret failed: %v", err)
+	}
+	result, err = svc.Apply(ctx, privacy.Request{Path: "/v1/messages"}, body)
+	if err != nil {
+		t.Fatalf("apply after exact failed: %v", err)
+	}
+	if !result.Changed || !bytes.Contains(result.Body, []byte("[OpenAI密钥]")) {
+		t.Fatalf("exact secret must redact after hot reload: %s", result.Body)
+	}
+	if len(result.RuleHits) != 1 || result.RuleHits[0].Source != privacy.SourceExact {
+		t.Fatalf("hit source must be exact: %+v", result.RuleHits)
+	}
+
+	created.Enabled = false
+	if _, err := svc.UpdateExactSecret(ctx, created.ID, created); err != nil {
+		t.Fatalf("disable exact secret failed: %v", err)
+	}
+	result, err = svc.Apply(ctx, privacy.Request{Path: "/v1/messages"}, body)
+	if err != nil {
+		t.Fatalf("apply after disable failed: %v", err)
+	}
+	if result.Changed {
+		t.Fatal("disabled exact secret must stop redacting")
+	}
+}
+
+func TestPrivacyServiceExactSecretDetectModeCountsOnly(t *testing.T) {
+	svc := newTestPrivacyService(t)
+	ctx := context.Background()
+	settings, err := svc.GetSettings(ctx)
+	if err != nil {
+		t.Fatalf("get settings failed: %v", err)
+	}
+	settings.Mode = privacy.ModeDetect
+	if _, err := svc.UpdateSettings(ctx, settings); err != nil {
+		t.Fatalf("enable detect mode failed: %v", err)
+	}
+	if _, err := svc.CreateExactSecret(ctx, &store.PrivacyExactSecretRecord{
+		Enabled: true, Name: "Token", SecretValue: "tok_123456789012",
+		Category: "token", Placeholder: "[Token]", SourceType: "manual",
+	}); err != nil {
+		t.Fatalf("create exact secret failed: %v", err)
+	}
+	body := []byte(`{"messages":[{"role":"user","content":"tok_123456789012"}]}`)
+	result, err := svc.Apply(ctx, privacy.Request{Path: "/v1/messages"}, body)
+	if err != nil {
+		t.Fatalf("apply failed: %v", err)
+	}
+	if result.Changed || !bytes.Equal(result.Body, body) || result.HitCount != 1 {
+		t.Fatalf("detect mode must count without replacing: %+v", result)
+	}
+}
+
+func TestPrivacyServiceExactSecretDuplicateAndMask(t *testing.T) {
+	svc := newTestPrivacyService(t)
+	ctx := context.Background()
+	secret := "short-token12"
+	created, err := svc.CreateExactSecret(ctx, &store.PrivacyExactSecretRecord{
+		Enabled: true, Name: "短 Token", SecretValue: " " + secret + " ",
+		Category: "token", Placeholder: "[Token]", SourceType: "manual",
+	})
+	if err != nil {
+		t.Fatalf("create exact secret failed: %v", err)
+	}
+	if created.SecretValue != secret {
+		t.Fatalf("secret value must be trimmed, got %q", created.SecretValue)
+	}
+	if _, err := svc.CreateExactSecret(ctx, &store.PrivacyExactSecretRecord{
+		Enabled: true, Name: "重复 Token", SecretValue: secret,
+		Category: "token", Placeholder: "[Token]", SourceType: "manual",
+	}); err != ErrPrivacyExactSecretExists {
+		t.Fatalf("duplicate must return ErrPrivacyExactSecretExists, got %v", err)
+	}
+	masked := MaskPrivacySecretValue(created.SecretValue, created.ValueHash)
+	if strings.Contains(masked, secret[:4]) {
+		t.Fatalf("short secret mask must not leak prefix, got %q", masked)
+	}
+}
+
+func TestPrivacyServiceExactSecretRejectsTooShortValue(t *testing.T) {
+	svc := newTestPrivacyService(t)
+	_, err := svc.CreateExactSecret(context.Background(), &store.PrivacyExactSecretRecord{
+		Enabled: true, Name: "短密码", SecretValue: "1234567",
+		Category: "password", Placeholder: "[密码]", SourceType: "manual",
+	})
+	if err == nil {
+		t.Fatal("short password exact secret must be rejected")
 	}
 }
 

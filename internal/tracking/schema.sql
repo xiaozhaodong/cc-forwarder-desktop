@@ -353,12 +353,12 @@ CREATE TABLE IF NOT EXISTS privacy_rules (
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
     priority INTEGER NOT NULL DEFAULT 100,          -- 数字越小优先级越高
-    match_type TEXT NOT NULL,                       -- literal / regex
+    match_type TEXT NOT NULL,                       -- literal / regex / builtin
     pattern TEXT NOT NULL,
     placeholder TEXT NOT NULL DEFAULT '[已脱敏]',
     action TEXT NOT NULL DEFAULT 'redact',          -- detect / redact
     scope_json TEXT NOT NULL DEFAULT '{}',          -- 作用域 JSON
-    source TEXT NOT NULL DEFAULT 'custom',          -- custom / preset
+    source TEXT NOT NULL DEFAULT 'custom',          -- custom / preset / builtin
     compile_error TEXT DEFAULT '',                  -- 历史规则编译失败信息
     created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
     updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
@@ -366,6 +366,56 @@ CREATE TABLE IF NOT EXISTS privacy_rules (
 
 CREATE INDEX IF NOT EXISTS idx_privacy_rules_enabled_priority
 ON privacy_rules(enabled, priority);
+
+INSERT INTO privacy_rules (
+    enabled, name, description, priority, match_type, pattern, placeholder, action, scope_json, source
+)
+SELECT TRUE, '中国身份证号', '18 位格式、合法出生日期与校验位', 20, 'builtin', 'builtin:cn_id_card', '[身份证]', 'redact', '{}', 'builtin'
+WHERE NOT EXISTS (
+    SELECT 1 FROM privacy_rules WHERE source = 'builtin' AND pattern = 'builtin:cn_id_card'
+);
+
+INSERT INTO privacy_rules (
+    enabled, name, description, priority, match_type, pattern, placeholder, action, scope_json, source
+)
+SELECT TRUE, '银行卡号', '13-19 位数字并通过 Luhn 校验', 30, 'builtin', 'builtin:bank_card_luhn', '[银行卡]', 'redact', '{}', 'builtin'
+WHERE NOT EXISTS (
+    SELECT 1 FROM privacy_rules WHERE source = 'builtin' AND pattern = 'builtin:bank_card_luhn'
+);
+
+INSERT INTO privacy_rules (
+    enabled, name, description, priority, match_type, pattern, placeholder, action, scope_json, source
+)
+SELECT TRUE, '中国手机号', '中国大陆手机号，支持 +86 前缀', 40, 'builtin', 'builtin:cn_mobile', '[手机号]', 'redact', '{}', 'builtin'
+WHERE NOT EXISTS (
+    SELECT 1 FROM privacy_rules WHERE source = 'builtin' AND pattern = 'builtin:cn_mobile'
+);
+
+INSERT INTO privacy_rules (
+    enabled, name, description, priority, match_type, pattern, placeholder, action, scope_json, source
+)
+SELECT TRUE, '邮箱地址', '基础邮箱格式，排除 git/ssh/scp 命令上下文', 50, 'builtin', 'builtin:email', '[邮箱]', 'redact', '{}', 'builtin'
+WHERE NOT EXISTS (
+    SELECT 1 FROM privacy_rules WHERE source = 'builtin' AND pattern = 'builtin:email'
+);
+
+CREATE TABLE IF NOT EXISTS privacy_exact_secrets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    name TEXT NOT NULL,
+    secret_value TEXT NOT NULL,
+    value_hash TEXT NOT NULL,
+    placeholder TEXT NOT NULL DEFAULT '[敏感值]',
+    category TEXT NOT NULL DEFAULT 'custom',
+    source_type TEXT NOT NULL DEFAULT 'manual',
+    source_ref TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_privacy_exact_secrets_value_hash
+ON privacy_exact_secrets(value_hash);
 
 CREATE TRIGGER IF NOT EXISTS update_privacy_settings_timestamp
     AFTER UPDATE ON privacy_settings
@@ -381,4 +431,12 @@ CREATE TRIGGER IF NOT EXISTS update_privacy_rules_timestamp
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
     UPDATE privacy_rules SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS update_privacy_exact_secrets_timestamp
+    AFTER UPDATE ON privacy_exact_secrets
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE privacy_exact_secrets SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
 END;

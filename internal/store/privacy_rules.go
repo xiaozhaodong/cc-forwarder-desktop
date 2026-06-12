@@ -36,6 +36,23 @@ type PrivacyRuleRecord struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+// PrivacyExactSecretRecord 本地精确敏感值记录。
+// SecretValue 仅供本机扫描使用，不允许出现在列表响应或普通日志中。
+type PrivacyExactSecretRecord struct {
+	ID          int64     `json:"id"`
+	Enabled     bool      `json:"enabled"`
+	Name        string    `json:"name"`
+	SecretValue string    `json:"secret_value"`
+	ValueHash   string    `json:"value_hash"`
+	Placeholder string    `json:"placeholder"`
+	Category    string    `json:"category"`
+	SourceType  string    `json:"source_type"`
+	SourceRef   string    `json:"source_ref"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 // PrivacyStore 隐私规则存储接口
 type PrivacyStore interface {
 	GetSettings(ctx context.Context) (*PrivacySettingsRecord, error)
@@ -48,6 +65,13 @@ type PrivacyStore interface {
 	UpdateRulePriorities(ctx context.Context, priorities map[int64]int) error
 	SetRuleCompileError(ctx context.Context, id int64, compileError string) error
 	CreateRules(ctx context.Context, records []*PrivacyRuleRecord) ([]*PrivacyRuleRecord, error)
+	ListExactSecrets(ctx context.Context) ([]*PrivacyExactSecretRecord, error)
+	GetExactSecret(ctx context.Context, id int64) (*PrivacyExactSecretRecord, error)
+	FindExactSecretByHash(ctx context.Context, valueHash string) (*PrivacyExactSecretRecord, error)
+	CreateExactSecret(ctx context.Context, record *PrivacyExactSecretRecord) (*PrivacyExactSecretRecord, error)
+	UpdateExactSecret(ctx context.Context, record *PrivacyExactSecretRecord) error
+	DeleteExactSecret(ctx context.Context, id int64) error
+	ClearExactSecrets(ctx context.Context) error
 }
 
 // SQLitePrivacyStore SQLite 隐私规则存储实现
@@ -96,6 +120,31 @@ func (s *SQLitePrivacyStore) ensureSchema(ctx context.Context) error {
 				updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
 			)`,
 			`CREATE INDEX IF NOT EXISTS idx_privacy_rules_enabled_priority ON privacy_rules(enabled, priority)`,
+			`CREATE TABLE IF NOT EXISTS privacy_exact_secrets (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				name TEXT NOT NULL,
+				secret_value TEXT NOT NULL,
+				value_hash TEXT NOT NULL,
+				placeholder TEXT NOT NULL DEFAULT '[敏感值]',
+				category TEXT NOT NULL DEFAULT 'custom',
+				source_type TEXT NOT NULL DEFAULT 'manual',
+				source_ref TEXT NOT NULL DEFAULT '',
+				description TEXT NOT NULL DEFAULT '',
+				created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+				updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+			)`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_privacy_exact_secrets_value_hash
+				ON privacy_exact_secrets(value_hash)`,
+			`CREATE TRIGGER IF NOT EXISTS update_privacy_exact_secrets_timestamp
+				AFTER UPDATE ON privacy_exact_secrets
+				FOR EACH ROW
+				WHEN NEW.updated_at = OLD.updated_at
+			BEGIN
+				UPDATE privacy_exact_secrets
+				SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'
+				WHERE id = NEW.id;
+			END`,
 		}
 		for _, stmt := range statements {
 			if _, err := s.db.ExecContext(ctx, stmt); err != nil {

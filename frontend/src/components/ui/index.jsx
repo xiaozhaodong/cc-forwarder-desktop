@@ -501,7 +501,7 @@ export const CustomSelect = ({
         onClick={() => !disabled && setIsOpen(!isOpen)}
         disabled={disabled}
         className={`
-          group inline-flex items-center justify-between bg-white border rounded-lg
+          group inline-flex w-full items-center justify-between bg-white border rounded-lg
           transition-all duration-200 font-medium
           ${sizeClasses[size]}
           ${disabled

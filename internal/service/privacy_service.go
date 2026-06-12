@@ -29,6 +29,7 @@ const privacyStatsDedupeWindow = 4096
 type PrivacyRuleRuntimeStats struct {
 	RuleID   int64  `json:"rule_id"`
 	RuleName string `json:"rule_name"`
+	Source   string `json:"source"`
 	HitCount int64  `json:"hit_count"`
 }
 
@@ -274,7 +275,10 @@ func (s *PrivacyService) ImportPreset(ctx context.Context, presetID string) ([]*
 			Placeholder: rule.Placeholder,
 			Action:      rule.Action,
 			ScopeJSON:   scopeJSON,
-			Source:      privacy.SourcePreset,
+			Source:      rule.Source,
+		}
+		if candidate.Source == "" {
+			candidate.Source = privacy.SourcePreset
 		}
 		existingRule := existingByName[rule.Name]
 		if existingRule == nil {
@@ -510,6 +514,17 @@ func (s *PrivacyService) rebuildSnapshotLocked(ctx context.Context, markCompileE
 	if err != nil {
 		return err
 	}
+	if err := s.ensureBuiltinRulesLocked(ctx, records); err != nil {
+		return err
+	}
+	records, err = s.store.ListRules(ctx)
+	if err != nil {
+		return err
+	}
+	exactSecrets, err := s.store.ListExactSecrets(ctx)
+	if err != nil {
+		return err
+	}
 
 	var (
 		activeRules    []privacy.Rule
@@ -541,6 +556,7 @@ func (s *PrivacyService) rebuildSnapshotLocked(ctx context.Context, markCompileE
 			}
 		}
 	}
+	activeRules = append(activeRules, exactSecretRules(exactSecrets)...)
 
 	compiled, err := privacy.CompileRules(activeRules)
 	if err != nil {
@@ -607,7 +623,7 @@ func (s *PrivacyService) recordStats(req privacy.Request, result privacy.ApplyRe
 		s.hitCount += int64(hit.Count)
 		entry := s.ruleHits[hit.RuleID]
 		if entry == nil {
-			entry = &PrivacyRuleRuntimeStats{RuleID: hit.RuleID, RuleName: hit.RuleName}
+			entry = &PrivacyRuleRuntimeStats{RuleID: hit.RuleID, RuleName: hit.RuleName, Source: hit.Source}
 			s.ruleHits[hit.RuleID] = entry
 		}
 		entry.HitCount += int64(hit.Count)
