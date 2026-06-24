@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"cc-forwarder/internal/accountauth"
@@ -354,12 +355,37 @@ func newFallbackAccountScheduleRequestID() string {
 	return fmt.Sprintf("account-schedule-%d-%s", time.Now().UnixNano(), hex.EncodeToString(suffix[:]))
 }
 
-func (h *Handler) newAccountStreamForwardContext() (context.Context, context.CancelFunc) {
-	timeout := 300 * time.Second
-	if h != nil && h.config != nil && h.config.GlobalTimeout > 0 {
-		timeout = h.config.GlobalTimeout
+func (h *Handler) newAccountStreamForwardContext(parent context.Context) (context.Context, context.CancelFunc) {
+	requestCtx, cancel := context.WithCancel(context.Background())
+	tailDrain := h.accountStreamTailDrainTimeout()
+	if tailDrain <= 0 {
+		tailDrain = time.Second
 	}
-	return context.WithTimeout(context.Background(), timeout)
+
+	done := make(chan struct{})
+	if parent != nil {
+		go func() {
+			select {
+			case <-parent.Done():
+				timer := time.NewTimer(tailDrain)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+					cancel()
+				case <-done:
+				}
+			case <-done:
+			}
+		}()
+	}
+
+	var once sync.Once
+	return requestCtx, func() {
+		once.Do(func() {
+			close(done)
+			cancel()
+		})
+	}
 }
 
 func (h *Handler) newAccountSuccessContext() (context.Context, context.CancelFunc) {
@@ -386,7 +412,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	requestCtx := ctx
 	var release context.CancelFunc
 	if isSSE {
-		requestCtx, release = h.newAccountStreamForwardContext()
+		requestCtx, release = h.newAccountStreamForwardContext(ctx)
 	}
 
 	req, err := http.NewRequestWithContext(requestCtx, r.Method, targetURL, bytes.NewReader(bodyBytes))

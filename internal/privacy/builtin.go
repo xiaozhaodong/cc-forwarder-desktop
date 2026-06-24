@@ -18,10 +18,11 @@ const (
 type builtinMatcher func(text string) [][2]int
 
 var (
-	emailBuiltinRe    = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
-	cnMobileBuiltinRe = regexp.MustCompile(`(?:\+86)?(?:1740[0-5]\d{6}|1(?:[38]\d|4[57]|[59][0-35-9]|6[25-7]|7[0-35-8])\d{8})`)
-	cnIDCardBuiltinRe = regexp.MustCompile(`[1-9]\d{5}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]`)
-	bankCardBuiltinRe = regexp.MustCompile(`\d{13,19}`)
+	emailBuiltinRe               = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+	emailImageScaleAssetSuffixRe = regexp.MustCompile(`(?i)@[1-9][0-9]*(?:\.[0-9]+)?x\.(?:png|jpe?g|webp|gif|svg|avif|heic|heif|bmp|tiff?)$`)
+	cnMobileBuiltinRe            = regexp.MustCompile(`(?:\+86)?(?:1740[0-5]\d{6}|1(?:[38]\d|4[57]|[59][0-35-9]|6[25-7]|7[0-35-8])\d{8})`)
+	cnIDCardBuiltinRe            = regexp.MustCompile(`[1-9]\d{5}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]`)
+	bankCardBuiltinRe            = regexp.MustCompile(`\d{13,19}`)
 )
 
 // BuiltinPIIRules 返回默认确定型 PII 内置规则定义。
@@ -30,7 +31,6 @@ func BuiltinPIIRules() []Rule {
 		builtinRule("中国身份证号", "18 位格式、省级地址码、合法出生日期与校验位", BuiltinCNIDCard, "[身份证]", 20),
 		builtinRule("银行卡号", "主流卡组织前缀/长度匹配，并通过 Luhn 校验", BuiltinBankCardLuhn, "[银行卡]", 30),
 		builtinRule("中国手机号", "中国大陆手机号段格式，支持 +86 前缀", BuiltinCNMobile, "[手机号]", 40),
-		builtinRule("邮箱地址", "基础邮箱格式，排除 git/ssh/scp 命令上下文", BuiltinEmail, "[邮箱]", 50),
 	}
 }
 
@@ -70,9 +70,16 @@ func matchBuiltinEmail(text string) [][2]int {
 		if isCommandAddressContext(text, loc[0], loc[1]) {
 			continue
 		}
+		if isImageScaleAssetName(text[loc[0]:loc[1]]) {
+			continue
+		}
 		out = append(out, [2]int{loc[0], loc[1]})
 	}
 	return out
+}
+
+func isImageScaleAssetName(value string) bool {
+	return emailImageScaleAssetSuffixRe.MatchString(value)
 }
 
 func isCommandAddressContext(text string, start, end int) bool {

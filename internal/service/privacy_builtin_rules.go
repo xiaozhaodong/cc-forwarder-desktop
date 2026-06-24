@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	"cc-forwarder/internal/privacy"
 	"cc-forwarder/internal/store"
 )
+
+const retiredBuiltinEmailDescription = "已停用：邮箱格式误报风险高，请按需创建自定义规则"
 
 func (s *PrivacyService) ensureBuiltinRulesLocked(ctx context.Context, existing []*store.PrivacyRuleRecord) error {
 	existingBuiltin := make(map[string]struct{}, len(existing))
@@ -45,6 +48,27 @@ func (s *PrivacyService) ensureBuiltinRulesLocked(ctx context.Context, existing 
 	}
 	if _, err := s.store.CreateRules(ctx, missing); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *PrivacyService) retireLegacyBuiltinRulesLocked(ctx context.Context, existing []*store.PrivacyRuleRecord) error {
+	for _, record := range existing {
+		if record == nil || record.Source != privacy.SourceBuiltin ||
+			record.MatchType != privacy.MatchTypeBuiltin || record.Pattern != privacy.BuiltinEmail {
+			continue
+		}
+		if !record.Enabled && record.Description == retiredBuiltinEmailDescription {
+			continue
+		}
+		updated := *record
+		updated.Enabled = false
+		if updated.Description == "" || strings.Contains(updated.Description, "邮箱") {
+			updated.Description = retiredBuiltinEmailDescription
+		}
+		if err := s.store.UpdateRule(ctx, &updated); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -514,6 +514,11 @@ func (s *PrivacyService) rebuildSnapshotLocked(ctx context.Context, markCompileE
 	if err != nil {
 		return err
 	}
+	if markCompileErrors {
+		if err := s.retireLegacyBuiltinRulesLocked(ctx, records); err != nil {
+			return err
+		}
+	}
 	if err := s.ensureBuiltinRulesLocked(ctx, records); err != nil {
 		return err
 	}

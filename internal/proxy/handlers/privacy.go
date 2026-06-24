@@ -207,7 +207,7 @@ func WritePrivacyPolicyErrorResponse(w http.ResponseWriter, policyErr *privacy.P
 	})
 }
 
-// logPrivacyApplyResult 记录命中摘要：规则名、命中数、耗时、跳过原因，不含命中原文
+// logPrivacyApplyResult 记录命中摘要：规则名、命中数、耗时、跳过原因。
 func logPrivacyApplyResult(req privacy.Request, result privacy.ApplyResult, err error) {
 	if err != nil {
 		slog.Warn(fmt.Sprintf("🛡️ [隐私保护] [%s] 请求被策略拒绝: %v (path=%s upstream=%s)",
@@ -222,9 +222,23 @@ func logPrivacyApplyResult(req privacy.Request, result privacy.ApplyResult, err 
 		for _, hit := range result.RuleHits {
 			names = append(names, fmt.Sprintf("%s(%d)", hit.RuleName, hit.Count))
 		}
-		slog.Info(fmt.Sprintf("🛡️ [隐私保护] [%s] action=%s hits=%d rules=[%s] changed=%t truncated=%t skipped=%q duration=%s path=%s upstream=%s/%s",
+		debugMatches := formatPrivacyDebugMatches(result.RuleHits)
+		if debugMatches != "" {
+			debugMatches = fmt.Sprintf(" matches=[%s]", debugMatches)
+		}
+		slog.Info(fmt.Sprintf("🛡️ [隐私保护] [%s] action=%s hits=%d rules=[%s] changed=%t truncated=%t skipped=%q duration=%s path=%s upstream=%s/%s%s",
 			req.RequestID, result.Action, result.HitCount, strings.Join(names, ","),
 			result.Changed, result.Truncated, result.SkippedReason, result.ScanDuration,
-			req.Path, req.UpstreamType, req.EndpointName))
+			req.Path, req.UpstreamType, req.EndpointName, debugMatches))
 	}
+}
+
+func formatPrivacyDebugMatches(hits []privacy.RuleHit) string {
+	var parts []string
+	for _, hit := range hits {
+		for _, match := range hit.Matches {
+			parts = append(parts, fmt.Sprintf("%s:%s", hit.RuleName, strconv.Quote(match)))
+		}
+	}
+	return strings.Join(parts, ",")
 }

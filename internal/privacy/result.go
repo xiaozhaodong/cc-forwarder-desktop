@@ -18,13 +18,15 @@ type Request struct {
 	ContentType  string `json:"content_type"`
 }
 
-// RuleHit 单条规则的命中统计（不含命中原文）
+// RuleHit 单条规则的命中统计。
 type RuleHit struct {
 	RuleID   int64  `json:"rule_id"`
 	RuleName string `json:"rule_name"`
 	Source   string `json:"source"`
 	Action   string `json:"action"`
 	Count    int    `json:"count"`
+	// Matches 临时用于本地误判调试，禁止通过 API JSON 回传给前端。
+	Matches []string `json:"-"`
 }
 
 // 跳过原因

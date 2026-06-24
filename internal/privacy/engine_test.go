@@ -42,6 +42,20 @@ func openAIKeyRule() Rule {
 	}
 }
 
+func builtinEmailRule() Rule {
+	return Rule{
+		ID:          1,
+		Enabled:     true,
+		Name:        "邮箱地址",
+		Priority:    50,
+		MatchType:   MatchTypeBuiltin,
+		Pattern:     BuiltinEmail,
+		Placeholder: "[邮箱]",
+		Action:      ActionRedact,
+		Source:      SourceBuiltin,
+	}
+}
+
 func claudeRequest() Request {
 	return Request{
 		RequestID:    "req-test0001",
@@ -98,6 +112,9 @@ func TestApplyDetectModeCountsButDoesNotModify(t *testing.T) {
 	}
 	if len(result.RuleHits) != 1 || result.RuleHits[0].RuleName != "OpenAI Key" {
 		t.Errorf("unexpected rule hits: %+v", result.RuleHits)
+	}
+	if len(result.RuleHits[0].Matches) != 1 || result.RuleHits[0].Matches[0] != "sk-proj-abcdefghijklmnopqrstuvwxyz123456" {
+		t.Errorf("unexpected debug matches: %+v", result.RuleHits[0].Matches)
 	}
 }
 
@@ -550,10 +567,13 @@ func TestBuiltinPIIValidatesIDCardAndBankCard(t *testing.T) {
 	snapshot := newTestSnapshot(t, redactSettings(), rules...)
 
 	result := snapshot.ApplyToText(claudeRequest(), "身份证 11010519491231002X 银行卡 4111111111111111 邮箱 a@example.com")
-	for _, want := range []string{"[身份证]", "[银行卡]", "[邮箱]"} {
+	for _, want := range []string{"[身份证]", "[银行卡]"} {
 		if !bytes.Contains(result.Body, []byte(want)) {
 			t.Fatalf("expected %s in result: %s", want, result.Body)
 		}
+	}
+	if bytes.Contains(result.Body, []byte("[邮箱]")) || !bytes.Contains(result.Body, []byte("a@example.com")) {
+		t.Fatalf("builtin PII rules must not include email by default: %s", result.Body)
 	}
 }
 
@@ -580,15 +600,27 @@ func TestBuiltinBankCardRequiresKnownIssuerProfile(t *testing.T) {
 }
 
 func TestBuiltinEmailKeepsOrdinaryAddressBeforeColon(t *testing.T) {
-	rules := BuiltinPIIRules()
-	for i := range rules {
-		rules[i].ID = int64(i + 1)
-	}
-	snapshot := newTestSnapshot(t, redactSettings(), rules...)
+	snapshot := newTestSnapshot(t, redactSettings(), builtinEmailRule())
 
 	result := snapshot.ApplyToText(claudeRequest(), "contact alice@example.com: ready")
 	if !bytes.Contains(result.Body, []byte("[邮箱]: ready")) {
 		t.Fatalf("ordinary email before colon should be redacted: %s", result.Body)
+	}
+}
+
+func TestBuiltinEmailIgnoresImageScaleAssetNames(t *testing.T) {
+	snapshot := newTestSnapshot(t, redactSettings(), builtinEmailRule())
+
+	text := "screenshots 20.58.51@2x.png avatar@3x.webp contact alice@example.com"
+	result := snapshot.ApplyToText(claudeRequest(), text)
+
+	if result.HitCount != 1 {
+		t.Fatalf("expected only the real email to hit, got %+v body=%s", result, result.Body)
+	}
+	for _, want := range []string{"20.58.51@2x.png", "avatar@3x.webp", "contact [邮箱]"} {
+		if !bytes.Contains(result.Body, []byte(want)) {
+			t.Fatalf("expected %q to remain in result: %s", want, result.Body)
+		}
 	}
 }
 

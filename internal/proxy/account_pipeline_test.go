@@ -465,6 +465,35 @@ func TestHandler_GetAccountHTTPClient_ReusesSharedTransport(t *testing.T) {
 	}
 }
 
+func TestAccountPipeline_StreamForwardContextDoesNotUseGlobalTimeout(t *testing.T) {
+	handler := newAccountPipelineTestHandlerWithEnabled(t, "https://example.com", nil, true)
+	handler.config.GlobalTimeout = 10 * time.Millisecond
+
+	parent, parentCancel := context.WithCancel(context.Background())
+	defer parentCancel()
+
+	streamCtx, release := handler.newAccountStreamForwardContext(parent)
+	defer release()
+
+	if _, ok := streamCtx.Deadline(); ok {
+		t.Fatal("expected account SSE forward context to have no global timeout deadline")
+	}
+
+	select {
+	case <-streamCtx.Done():
+		t.Fatalf("expected stream context to outlive global_timeout, got %v", streamCtx.Err())
+	case <-time.After(30 * time.Millisecond):
+	}
+
+	parentCancel()
+
+	select {
+	case <-streamCtx.Done():
+	case <-time.After(handler.accountStreamTailDrainTimeout() + 500*time.Millisecond):
+		t.Fatal("expected stream context to be cancelled after parent cancel tail drain")
+	}
+}
+
 func TestAccountPipeline_PreparesAndCompletesLatestScheduleSnapshot(t *testing.T) {
 	upstreamHits := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

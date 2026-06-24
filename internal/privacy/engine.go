@@ -228,6 +228,7 @@ func (s *Snapshot) scanSegments(req Request, result *ApplyResult, candidates []i
 				hits[rule.ID] = hit
 			}
 			hit.Count++
+			hit.Matches = append(hit.Matches, text[span.start:span.end])
 			result.HitCount++
 			if s.Settings.Mode == ModeRedact && rule.Action == ActionRedact {
 				redactSpans = append(redactSpans, span)
@@ -395,6 +396,7 @@ func (s *Snapshot) ApplyToText(req Request, text string) ApplyResult {
 			hits[rule.ID] = hit
 		}
 		hit.Count++
+		hit.Matches = append(hit.Matches, text[span.start:span.end])
 		result.HitCount++
 		if rule.Action == ActionRedact {
 			redactSpans = append(redactSpans, span)

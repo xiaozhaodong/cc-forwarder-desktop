@@ -391,14 +391,6 @@ WHERE NOT EXISTS (
     SELECT 1 FROM privacy_rules WHERE source = 'builtin' AND pattern = 'builtin:cn_mobile'
 );
 
-INSERT INTO privacy_rules (
-    enabled, name, description, priority, match_type, pattern, placeholder, action, scope_json, source
-)
-SELECT TRUE, '邮箱地址', '基础邮箱格式，排除 git/ssh/scp 命令上下文', 50, 'builtin', 'builtin:email', '[邮箱]', 'redact', '{}', 'builtin'
-WHERE NOT EXISTS (
-    SELECT 1 FROM privacy_rules WHERE source = 'builtin' AND pattern = 'builtin:email'
-);
-
 CREATE TABLE IF NOT EXISTS privacy_exact_secrets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,

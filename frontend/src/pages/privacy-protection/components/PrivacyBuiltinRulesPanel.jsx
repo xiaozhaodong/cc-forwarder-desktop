@@ -27,7 +27,7 @@ const PrivacyBuiltinRulesPanel = ({ rules = [], busy, onToggle, onEdit }) => {
       <EmptyState
         icon={ShieldCheck}
         title="暂无内置规则"
-        description="启动后会自动补齐邮箱、手机号、身份证和银行卡内置规则"
+        description="启动后会自动补齐手机号、身份证和银行卡内置规则"
       />
     );
   }

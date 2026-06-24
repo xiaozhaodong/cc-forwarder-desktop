@@ -71,7 +71,7 @@ func TestInitSchemaCreatesPrivacyTables(t *testing.T) {
 	`).Scan(&builtinCount); err != nil {
 		t.Fatalf("count builtin rules failed: %v", err)
 	}
-	if builtinCount != 4 {
-		t.Errorf("builtin privacy rule count = %d, want 4", builtinCount)
+	if builtinCount != 3 {
+		t.Errorf("builtin privacy rule count = %d, want 3", builtinCount)
 	}
 }

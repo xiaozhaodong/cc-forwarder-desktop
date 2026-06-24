@@ -20,7 +20,7 @@ func Presets() []Preset {
 		{
 			ID:          PresetBasicPrivacy,
 			Name:        "基础隐私",
-			Description: "确定型 PII：邮箱、中国手机号、身份证、银行卡",
+			Description: "确定型 PII：中国手机号、身份证、银行卡",
 			Rules:       BuiltinPIIRules(),
 		},
 		{

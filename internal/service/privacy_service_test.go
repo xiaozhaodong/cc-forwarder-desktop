@@ -220,8 +220,57 @@ func TestPrivacyServiceStartupDegradedOnInvalidEnabledRule(t *testing.T) {
 			t.Error("compile_error must be written back for broken enabled rule")
 		}
 	}
-	if len(svc.CurrentSnapshot().Rules) != 5 {
+	if len(svc.CurrentSnapshot().Rules) != 4 {
 		t.Errorf("active rules = %d, want builtin rules plus valid custom rule", len(svc.CurrentSnapshot().Rules))
+	}
+}
+
+func TestPrivacyServiceInitializeRetiresLegacyBuiltinEmailRule(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite failed: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := store.NewSQLitePrivacyStore(db)
+	ctx := context.Background()
+
+	if _, err := st.CreateRule(ctx, &store.PrivacyRuleRecord{
+		Enabled: true, Name: "邮箱地址", Description: "基础邮箱格式",
+		Priority: 50, MatchType: privacy.MatchTypeBuiltin, Pattern: privacy.BuiltinEmail,
+		Placeholder: "[邮箱]", Action: privacy.ActionRedact, ScopeJSON: "{}", Source: privacy.SourceBuiltin,
+	}); err != nil {
+		t.Fatalf("seed legacy email rule failed: %v", err)
+	}
+
+	svc := NewPrivacyService(st)
+	if err := svc.Initialize(ctx); err != nil {
+		t.Fatalf("initialize failed: %v", err)
+	}
+
+	rules, err := st.ListRules(ctx)
+	if err != nil {
+		t.Fatalf("list rules failed: %v", err)
+	}
+	var emailRule *store.PrivacyRuleRecord
+	for _, rule := range rules {
+		if rule.Pattern == privacy.BuiltinEmail {
+			emailRule = rule
+			break
+		}
+	}
+	if emailRule == nil {
+		t.Fatal("legacy email rule should remain visible but disabled")
+	}
+	if emailRule.Enabled {
+		t.Fatalf("legacy email rule must be disabled after initialize: %+v", emailRule)
+	}
+	if !strings.Contains(emailRule.Description, "误报风险高") {
+		t.Fatalf("legacy email rule should explain retirement, got %q", emailRule.Description)
+	}
+
+	result := svc.TestText(privacy.Request{Path: "/v1/messages"}, "contact alice@example.com")
+	if result.HitCount != 0 || strings.Contains(string(result.Body), "[邮箱]") {
+		t.Fatalf("retired email rule must not be active: %+v body=%s", result, result.Body)
 	}
 }
 
@@ -362,7 +411,7 @@ func TestPrivacyServiceExportRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export failed: %v", err)
 	}
-	if export.Settings == nil || len(export.Rules) != 5 {
+	if export.Settings == nil || len(export.Rules) != 4 {
 		t.Errorf("unexpected export: %+v", export)
 	}
 }
