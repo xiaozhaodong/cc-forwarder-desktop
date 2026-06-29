@@ -1116,6 +1116,7 @@ export const getRequests = async (params = {}) => {
     duration_ms: r.response_time,
     duration: r.response_time,
     first_token_ms: r.first_token_ms ?? null,
+    completion_ms: r.completion_ms ?? null,
     is_streaming: r.is_streaming,
     total_cost_usd: r.cost,
     cost: r.cost,

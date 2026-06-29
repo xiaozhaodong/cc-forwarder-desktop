@@ -383,6 +383,39 @@ func TestStreamProcessor_ProcessStreamWithRetry_RecordsFirstResponseEventOnce(t 
 	}
 }
 
+func TestStreamProcessor_ProcessSSELine_RecordsFirstRawDataResponse(t *testing.T) {
+	tokenParser := NewTokenParserWithRequestID("test-raw-data-first-response")
+	writer := &mockResponseWriter{}
+	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-raw-data-first-response", "endpoint")
+
+	callCount := 0
+	processor.SetFirstTokenRecorder(func() { callCount++ })
+
+	processor.processSSELine("data: ping")
+	processor.processSSELine("data: another")
+
+	if callCount != 1 {
+		t.Fatalf("expected raw data response recorder to be called once, got %d", callCount)
+	}
+}
+
+func TestStreamProcessor_ProcessSSELine_IgnoresDoneAndEmptyDataForFirstResponse(t *testing.T) {
+	tokenParser := NewTokenParserWithRequestID("test-empty-data-first-response")
+	writer := &mockResponseWriter{}
+	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-empty-data-first-response", "endpoint")
+
+	callCount := 0
+	processor.SetFirstTokenRecorder(func() { callCount++ })
+
+	processor.processSSELine("data:   ")
+	processor.processSSELine("data: [DONE]")
+	processor.processSSELine(": keep-alive")
+
+	if callCount != 0 {
+		t.Fatalf("expected no first response record for empty/DONE/comment lines, got %d", callCount)
+	}
+}
+
 func TestStreamProcessor_IsNetworkError(t *testing.T) {
 	processor := &StreamProcessor{}
 	// 创建错误恢复管理器用于测试

@@ -58,8 +58,9 @@ type StreamProcessor struct {
 
 	// 完成状态跟踪
 	completionRecorded bool // 是否已经记录完成状态，防止重复记录
-	firstTokenRecorded bool // 是否已记录首个流式业务事件到达耗时
-	firstTokenRecorder func()
+	firstTokenRecorded bool // 是否已记录首个有效流式响应耗时
+	firstTokenRecorder func() bool
+	completionRecorder func()
 
 	// 🔍 [调试缓冲区] 轻量级调试数据收集（仅在token解析失败时使用）
 	debugLines []string // SSE行数据收集，默认最多保存DebugLineLimit行
@@ -110,10 +111,23 @@ func (sp *StreamProcessor) EnableDownstreamTailDrain(timeout time.Duration, canc
 	sp.cancelUpstreamRead = cancelUpstream
 }
 
-// SetFirstTokenRecorder 设置首字耗时记录回调。
+// SetFirstTokenRecorder 设置首响耗时记录回调。
 // 回调由生命周期管理器提供，确保耗时基于请求开始时间而不是流处理器创建时间。
 func (sp *StreamProcessor) SetFirstTokenRecorder(recorder func()) {
-	sp.firstTokenRecorder = recorder
+	if recorder == nil {
+		sp.firstTokenRecorder = nil
+		return
+	}
+	sp.firstTokenRecorder = func() bool {
+		recorder()
+		return true
+	}
+}
+
+// SetStreamTimingRecorders 设置首响与首响后完成耗时记录回调。
+func (sp *StreamProcessor) SetStreamTimingRecorders(firstTokenRecorder func() bool, completionRecorder func()) {
+	sp.firstTokenRecorder = firstTokenRecorder
+	sp.completionRecorder = completionRecorder
 }
 
 func (sp *StreamProcessor) beginDownstreamTailDrain(trigger string) {
@@ -309,12 +323,16 @@ func (sp *StreamProcessor) processSSELine(line string) {
 	// 🔍 [调试数据收集] 轻量级收集SSE行数据（无性能影响）
 	sp.appendDebugLine(line)
 
+	if isFirstResponseDataLine(line) {
+		sp.recordFirstStreamResponse()
+	}
+
 	// ✅ 使用V2架构进行解析
 	result := sp.tokenParser.ParseSSELineV2(line)
 
 	if result != nil {
 		if result.HasStreamOutput || result.HasVisibleText || result.HasFallbackOutput {
-			sp.recordFirstVisibleText()
+			sp.recordFirstStreamResponse()
 		}
 
 		// ✅ 检查是否有错误信息
@@ -363,15 +381,25 @@ func (sp *StreamProcessor) processSSELine(line string) {
 	}
 }
 
-func (sp *StreamProcessor) recordFirstVisibleText() {
+func isFirstResponseDataLine(line string) bool {
+	if !strings.HasPrefix(line, "data:") {
+		return false
+	}
+	data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	return data != "" && !strings.HasPrefix(data, "[DONE]")
+}
+
+func (sp *StreamProcessor) recordFirstStreamResponse() {
 	if sp.firstTokenRecorded {
 		return
 	}
 
-	sp.firstTokenRecorded = true
 	if sp.firstTokenRecorder != nil {
-		sp.firstTokenRecorder()
+		if !sp.firstTokenRecorder() {
+			return
+		}
 	}
+	sp.firstTokenRecorded = true
 }
 
 func (sp *StreamProcessor) appendDebugLine(line string) {
@@ -532,6 +560,9 @@ func (sp *StreamProcessor) ProcessStreamWithRetry(ctx context.Context, resp *htt
 		if !completeness.IsComplete {
 			// 流不完整，返回结构化错误让上层设置 failure_reason
 			slog.Warn(fmt.Sprintf("⚠️ [流不完整] [%s] %s", sp.requestID, completeness.Reason))
+			if sp.completionRecorder != nil {
+				sp.completionRecorder()
+			}
 
 			// 🔧 [结构化错误] 2025-12-11: 使用 StreamIncompleteError 替代字符串格式
 			streamErr := &StreamIncompleteError{
@@ -543,6 +574,9 @@ func (sp *StreamProcessor) ProcessStreamWithRetry(ctx context.Context, resp *htt
 		}
 
 		// 处理成功且流完整
+		if sp.completionRecorder != nil {
+			sp.completionRecorder()
+		}
 		return finalTokenUsage, modelName, nil
 	}
 

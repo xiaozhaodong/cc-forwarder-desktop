@@ -309,7 +309,7 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 	requestStmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO request_logs (
 			request_id, client_ip, user_agent, method, path,
-			start_time, end_time, duration_ms, first_token_ms,
+			start_time, end_time, duration_ms, first_token_ms, completion_ms,
 			channel, endpoint_name, group_name, model_name,
 			upstream_type, upstream_source_name, upstream_name, upstream_id,
 			route_mode, requested_endpoint, effective_endpoint, fallback_reason, route_decision_at,
@@ -322,7 +322,7 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			input_cost_usd, output_cost_usd,
 			cache_creation_cost_usd, cache_creation_5m_cost_usd, cache_creation_1h_cost_usd,
 			cache_read_cost_usd, total_cost_usd
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare request_logs statement: %w", err)
@@ -368,6 +368,7 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			endTime,
 			req.DurationMs,
 			req.FirstTokenMs,
+			req.CompletionMs,
 			req.Channel,
 			req.EndpointName,
 			req.GroupName,

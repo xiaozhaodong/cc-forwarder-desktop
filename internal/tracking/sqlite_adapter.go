@@ -192,7 +192,13 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 			table:       "request_logs",
 			checkColumn: "first_token_ms",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN first_token_ms INTEGER",
-			description: "首个可见文本输出耗时字段",
+			description: "上游首响耗时字段",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "completion_ms",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN completion_ms INTEGER",
+			description: "流式首响后完成耗时字段",
 		},
 		{
 			table:       "request_logs",
@@ -409,6 +415,9 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		}
 	}
 
+	if err := s.backfillCompletionMs(ctx); err != nil {
+		return err
+	}
 	if err := s.ensurePrivacyExactSecretsSchema(ctx); err != nil {
 		return err
 	}
@@ -419,6 +428,28 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		return err
 	}
 
+	return nil
+}
+
+func (s *SQLiteAdapter) backfillCompletionMs(ctx context.Context) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE request_logs
+		SET completion_ms = CASE
+			WHEN duration_ms - first_token_ms < 0 THEN 0
+			ELSE duration_ms - first_token_ms
+		END
+		WHERE completion_ms IS NULL
+			AND duration_ms IS NOT NULL
+			AND first_token_ms IS NOT NULL
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to backfill completion_ms: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err == nil && rowsAffected > 0 {
+		s.logger.Info(fmt.Sprintf("✅ [数据库迁移] completion_ms 历史数据回填完成: %d 条", rowsAffected))
+	}
 	return nil
 }
 

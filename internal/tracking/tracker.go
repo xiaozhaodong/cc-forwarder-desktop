@@ -344,7 +344,8 @@ type UpdateOptions struct {
 	ModelName          *string        // 模型名称
 	EndTime            *time.Time     // 结束时间
 	Duration           *time.Duration // 持续时间
-	FirstTokenMs       *int64         // 首个流式业务事件到达耗时(毫秒)
+	FirstTokenMs       *int64         // 上游请求写完到首个有效流式响应耗时(毫秒)
+	CompletionMs       *int64         // 首个有效流式响应到流式完成耗时(毫秒)
 	FailureReason      *string        // 失败原因（用于中间过程记录）
 	RouteMode          *string        // Claude 路由模式
 	RequestedEndpoint  *string        // 手动指定端点
@@ -913,6 +914,10 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 			if opts.FirstTokenMs != nil && *opts.FirstTokenMs >= 0 && req.FirstTokenMs == nil {
 				firstTokenMs := *opts.FirstTokenMs
 				req.FirstTokenMs = &firstTokenMs
+			}
+			if opts.CompletionMs != nil && *opts.CompletionMs >= 0 && req.CompletionMs == nil {
+				completionMs := *opts.CompletionMs
+				req.CompletionMs = &completionMs
 			}
 			if opts.FailureReason != nil {
 				req.FailureReason = *opts.FailureReason
@@ -1946,6 +1951,7 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 	var endTime *time.Time
 	var durationMs *int64
 	var firstTokenMs *int64
+	var completionMs *int64
 	var httpStatus *int
 
 	if req.EndTime != nil {
@@ -1956,6 +1962,9 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 	}
 	if req.FirstTokenMs != nil {
 		firstTokenMs = req.FirstTokenMs
+	}
+	if req.CompletionMs != nil {
+		completionMs = req.CompletionMs
 	}
 	if req.HTTPStatus > 0 {
 		httpStatus = &req.HTTPStatus
@@ -2010,6 +2019,7 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 		EndTime:               endTime,
 		DurationMs:            durationMs,
 		FirstTokenMs:          firstTokenMs,
+		CompletionMs:          completionMs,
 		EndpointName:          req.EndpointName,
 		Channel:               req.Channel, // v5.0: 渠道标签
 		GroupName:             req.GroupName,

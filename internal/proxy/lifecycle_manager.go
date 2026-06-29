@@ -66,6 +66,9 @@ type RequestLifecycleManager struct {
 	modelUpdatedInDB      bool                           // 标记是否已在数据库中更新过模型
 	modelUpdateMu         sync.Mutex                     // 保护模型更新标记
 	firstTokenOnce        sync.Once                      // 确保首响耗时仅记录一次
+	firstTokenStartTime   time.Time                      // 首响计时起点，默认请求开始；账号链路可改为上游请求写完
+	firstTokenAt          time.Time                      // 首个有效流式响应到达时间
+	timingMu              sync.RWMutex                   // 保护首响计时字段
 	attemptCounter        int                            // 内部尝试计数器（语义修复：统一重试计数）
 	attemptMu             sync.Mutex                     // 保护尝试计数器的互斥锁
 	pendingErrorContext   *ErrorContext                  // 预先计算的错误上下文，仅对下一个HandleError有效
@@ -108,7 +111,7 @@ func (rlm *RequestLifecycleManager) snapshotState() lifecycleStateSnapshot {
 
 // NewRequestLifecycleManager 创建新的请求生命周期管理器
 func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringMiddleware MonitoringMiddlewareInterface, requestID string, eventBus events.EventBus) *RequestLifecycleManager {
-	return &RequestLifecycleManager{
+	manager := &RequestLifecycleManager{
 		usageTracker:         usageTracker,
 		monitoringMiddleware: monitoringMiddleware,
 		errorRecovery:        NewErrorRecoveryManager(usageTracker),
@@ -118,11 +121,13 @@ func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringM
 		lastStatus:           "pending",
 		upstreamType:         "endpoint",
 	}
+	manager.firstTokenStartTime = manager.startTime
+	return manager
 }
 
 // NewRequestLifecycleManagerWithRecoverySignal 创建带端点恢复信号管理器的生命周期管理器
 func NewRequestLifecycleManagerWithRecoverySignal(usageTracker *tracking.UsageTracker, monitoringMiddleware MonitoringMiddlewareInterface, requestID string, eventBus events.EventBus, recoverySignalManager *EndpointRecoverySignalManager) *RequestLifecycleManager {
-	return &RequestLifecycleManager{
+	manager := &RequestLifecycleManager{
 		usageTracker:          usageTracker,
 		monitoringMiddleware:  monitoringMiddleware,
 		errorRecovery:         NewErrorRecoveryManager(usageTracker),
@@ -133,6 +138,8 @@ func NewRequestLifecycleManagerWithRecoverySignal(usageTracker *tracking.UsageTr
 		lastStatus:            "pending",
 		upstreamType:          "endpoint",
 	}
+	manager.firstTokenStartTime = manager.startTime
+	return manager
 }
 
 // StartRequest 开始请求跟踪
@@ -670,22 +677,81 @@ func (rlm *RequestLifecycleManager) GetDuration() time.Duration {
 	return time.Since(rlm.startTime)
 }
 
-// RecordFirstToken 记录首个流式业务事件到达耗时（首响）。
+// SetFirstTokenStartTime 设置首响计时起点。
+// 账号池上游请求写完后会把起点更新到该时刻，使 first_token_ms 更接近服务端 FRT。
+func (rlm *RequestLifecycleManager) SetFirstTokenStartTime(start time.Time) {
+	if start.IsZero() {
+		return
+	}
+	rlm.timingMu.Lock()
+	defer rlm.timingMu.Unlock()
+	if !rlm.firstTokenAt.IsZero() {
+		return
+	}
+	rlm.firstTokenStartTime = start
+}
+
+// RecordFirstToken 记录首个有效流式响应到达耗时（首响）。
 // 该方法只会生效一次，用于流式请求展示“首响 / 耗时”。
 func (rlm *RequestLifecycleManager) RecordFirstToken() {
+	rlm.RecordFirstTokenAndReturn()
+}
+
+// RecordFirstTokenAndReturn 记录首响并返回本次调用是否首次记录成功。
+func (rlm *RequestLifecycleManager) RecordFirstTokenAndReturn() bool {
+	recorded := false
 	rlm.firstTokenOnce.Do(func() {
 		if rlm.usageTracker == nil || rlm.requestID == "" {
 			return
 		}
 
-		firstTokenMs := time.Since(rlm.startTime).Milliseconds()
+		now := time.Now()
+		rlm.timingMu.Lock()
+		start := rlm.firstTokenStartTime
+		if start.IsZero() {
+			start = rlm.startTime
+		}
+		firstTokenMs := now.Sub(start).Milliseconds()
+		if firstTokenMs < 0 {
+			firstTokenMs = 0
+		}
+		rlm.firstTokenAt = now
+		rlm.timingMu.Unlock()
+
 		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
 			FirstTokenMs: &firstTokenMs,
 		})
+		recorded = true
 
-		slog.Info(fmt.Sprintf("📝 [首响耗时] [%s] 记录首个流式业务事件耗时: %dms",
+		slog.Info(fmt.Sprintf("📝 [首响耗时] [%s] 记录上游首个有效流式响应耗时: %dms",
 			rlm.requestID, firstTokenMs))
 	})
+	return recorded
+}
+
+// RecordStreamCompletion 记录首响后到流式完成的耗时。
+func (rlm *RequestLifecycleManager) RecordStreamCompletion() {
+	if rlm.usageTracker == nil || rlm.requestID == "" {
+		return
+	}
+
+	rlm.timingMu.RLock()
+	firstTokenAt := rlm.firstTokenAt
+	rlm.timingMu.RUnlock()
+	if firstTokenAt.IsZero() {
+		return
+	}
+
+	completionMs := time.Since(firstTokenAt).Milliseconds()
+	if completionMs < 0 {
+		completionMs = 0
+	}
+	rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
+		CompletionMs: &completionMs,
+	})
+
+	slog.Info(fmt.Sprintf("📝 [生成耗时] [%s] 记录首响后流式完成耗时: %dms",
+		rlm.requestID, completionMs))
 }
 
 // GetLastStatus 获取最后状态

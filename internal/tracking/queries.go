@@ -21,7 +21,7 @@ const (
 const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(client_ip, '') as client_ip,
 	COALESCE(user_agent, '') as user_agent,
-	method, path, start_time, end_time, duration_ms, first_token_ms,
+	method, path, start_time, end_time, duration_ms, first_token_ms, completion_ms,
 	COALESCE(channel, '') as channel,
 	COALESCE(endpoint_name, '') as endpoint_name,
 	COALESCE(group_name, '') as group_name,
@@ -173,7 +173,7 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 		err := rows.Scan(
 			&detail.ID, &detail.RequestID,
 			&detail.ClientIP, &detail.UserAgent, &detail.Method, &detail.Path,
-			&detail.StartTime, &detail.EndTime, &detail.DurationMs, &detail.FirstTokenMs,
+			&detail.StartTime, &detail.EndTime, &detail.DurationMs, &detail.FirstTokenMs, &detail.CompletionMs,
 			&detail.Channel, &detail.EndpointName, &detail.GroupName,
 			&detail.UpstreamType, &detail.UpstreamSourceName, &detail.UpstreamName, &detail.UpstreamID,
 			&detail.RouteMode, &detail.RequestedEndpoint, &detail.EffectiveEndpoint, &detail.FallbackReason, &detail.RouteDecisionAt,
@@ -318,6 +318,7 @@ type RequestDetail struct {
 	EndTime      *time.Time `json:"end_time"`
 	DurationMs   *int64     `json:"duration_ms"`
 	FirstTokenMs *int64     `json:"first_token_ms"`
+	CompletionMs *int64     `json:"completion_ms"`
 
 	Channel            string     `json:"channel"` // 渠道标签
 	EndpointName       string     `json:"endpoint_name"`

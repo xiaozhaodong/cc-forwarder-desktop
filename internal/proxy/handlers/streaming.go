@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"strings"
 	"time"
@@ -225,6 +226,18 @@ func (sh *StreamingHandler) tailDrainTimeout() time.Duration {
 	return defaultClaudeStreamingTailDrainTimeout
 }
 
+func withWroteRequestTrace(ctx context.Context, onWroteRequest func(time.Time)) context.Context {
+	if onWroteRequest == nil {
+		return ctx
+	}
+	trace := &httptrace.ClientTrace{
+		WroteRequest: func(httptrace.WroteRequestInfo) {
+			onWroteRequest(time.Now())
+		},
+	}
+	return httptrace.WithClientTrace(ctx, trace)
+}
+
 // setStreamingHeaders 设置流式响应头
 func (sh *StreamingHandler) setStreamingHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -372,9 +385,10 @@ restartLoop:
 				var resp *http.Response
 				var err error
 				if tailDrainEnabled {
-					resp, upstreamCancel, err = sh.forwarder.ForwardStreamingRequestToEndpoint(r, bodyBytes, ep)
+					resp, upstreamCancel, err = sh.forwarder.ForwardStreamingRequestToEndpoint(r, bodyBytes, ep, lifecycleManager.SetFirstTokenStartTime)
 				} else {
-					resp, err = sh.forwarder.ForwardRequestToEndpoint(ctx, r, bodyBytes, ep)
+					forwardCtx := withWroteRequestTrace(ctx, lifecycleManager.SetFirstTokenStartTime)
+					resp, err = sh.forwarder.ForwardRequestToEndpoint(forwardCtx, r, bodyBytes, ep)
 				}
 				releaseUpstream := func() {
 					if upstreamCancel != nil {
@@ -423,7 +437,7 @@ restartLoop:
 					// 创建Token解析器和流式处理器
 					tokenParser := sh.tokenParserFactory.NewTokenParserWithUsageTracker(connID, sh.usageTracker)
 					processor := sh.streamProcessorFactory.NewStreamProcessor(tokenParser, sh.usageTracker, w, flusher, connID, ep.Config.Name)
-					processor.SetFirstTokenRecorder(lifecycleManager.RecordFirstToken)
+					processor.SetStreamTimingRecorders(lifecycleManager.RecordFirstTokenAndReturn, lifecycleManager.RecordStreamCompletion)
 					if tailDrainEnabled {
 						processor.EnableDownstreamTailDrain(sh.tailDrainTimeout(), upstreamCancel)
 					}

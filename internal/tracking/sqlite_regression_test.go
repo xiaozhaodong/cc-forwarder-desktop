@@ -79,6 +79,7 @@ func TestSQLiteSchemaInit_OldRequestLogsWithoutUpstreamColumns(t *testing.T) {
 	// 校验迁移后列存在
 	requiredColumns := []string{
 		"first_token_ms",
+		"completion_ms",
 		"upstream_type",
 		"upstream_source_name",
 		"upstream_name",
@@ -107,6 +108,97 @@ func TestSQLiteSchemaInit_OldRequestLogsWithoutUpstreamColumns(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equalf(t, 1, count, "index %s should exist after migration", idx)
 	}
+}
+
+func TestSQLiteSchemaInit_BackfillsCompletionMsForExistingRows(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "completion-backfill.db")
+
+	rawDB, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = rawDB.Exec(`
+		CREATE TABLE IF NOT EXISTS request_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			request_id TEXT UNIQUE NOT NULL,
+			client_ip TEXT,
+			user_agent TEXT,
+			method TEXT DEFAULT 'POST',
+			path TEXT DEFAULT '/v1/messages',
+			start_time DATETIME NOT NULL,
+			end_time DATETIME,
+			duration_ms INTEGER,
+			first_token_ms INTEGER,
+			completion_ms INTEGER,
+			channel TEXT DEFAULT '',
+			endpoint_name TEXT,
+			group_name TEXT,
+			model_name TEXT,
+			is_streaming BOOLEAN DEFAULT FALSE,
+			status TEXT NOT NULL DEFAULT 'pending',
+			http_status_code INTEGER,
+			retry_count INTEGER DEFAULT 0,
+			failure_reason TEXT,
+			last_failure_reason TEXT,
+			cancel_reason TEXT,
+			input_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			cache_creation_tokens INTEGER DEFAULT 0,
+			cache_read_tokens INTEGER DEFAULT 0,
+			input_cost_usd REAL DEFAULT 0,
+			output_cost_usd REAL DEFAULT 0,
+			cache_creation_cost_usd REAL DEFAULT 0,
+			cache_read_cost_usd REAL DEFAULT 0,
+			total_cost_usd REAL DEFAULT 0,
+			created_at DATETIME,
+			updated_at DATETIME
+		);
+		INSERT INTO request_logs (request_id, start_time, duration_ms, first_token_ms, completion_ms, status)
+		VALUES
+			('req-backfill', CURRENT_TIMESTAMP, 26000, 6000, NULL, 'success'),
+			('req-clamp', CURRENT_TIMESTAMP, 6000, 26000, NULL, 'success'),
+			('req-existing', CURRENT_TIMESTAMP, 26000, 6000, 12345, 'success'),
+			('req-missing-first', CURRENT_TIMESTAMP, 26000, NULL, NULL, 'success');
+	`)
+	require.NoError(t, err)
+	require.NoError(t, rawDB.Close())
+
+	cfg := &Config{
+		Enabled:         true,
+		DatabasePath:    dbPath,
+		BufferSize:      10,
+		BatchSize:       5,
+		FlushInterval:   100 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
+	}
+
+	tracker, err := NewUsageTracker(cfg)
+	require.NoError(t, err, "旧库 completion_ms 回填初始化不应失败")
+	defer tracker.Close()
+
+	db := tracker.GetReadDB()
+	require.NotNil(t, db)
+
+	assertCompletionMs := func(requestID string, expected *int64) {
+		t.Helper()
+		var value sql.NullInt64
+		err := db.QueryRow(`SELECT completion_ms FROM request_logs WHERE request_id = ?`, requestID).Scan(&value)
+		require.NoError(t, err)
+		if expected == nil {
+			assert.False(t, value.Valid, "request %s should keep completion_ms NULL", requestID)
+			return
+		}
+		require.True(t, value.Valid, "request %s should have completion_ms", requestID)
+		assert.Equal(t, *expected, value.Int64)
+	}
+
+	backfilled := int64(20000)
+	clamped := int64(0)
+	existing := int64(12345)
+	assertCompletionMs("req-backfill", &backfilled)
+	assertCompletionMs("req-clamp", &clamped)
+	assertCompletionMs("req-existing", &existing)
+	assertCompletionMs("req-missing-first", nil)
 }
 
 func TestSQLiteAccountRequestsArchiveIntoRequestLogs(t *testing.T) {

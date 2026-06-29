@@ -342,6 +342,7 @@ export const fetchRequests = async (params = {}) => {
     group: request.group_name || request.group || request.upstream_source_name || request.upstreamSourceName || 'default',
     duration: request.duration_ms || request.duration || 0,
     firstTokenMs: request.first_token_ms ?? request.firstTokenMs ?? null,
+    completionMs: request.completion_ms ?? request.completionMs ?? null,
     inputTokens: request.input_tokens || request.inputTokens || 0,
     outputTokens: request.output_tokens || request.outputTokens || 0,
     cacheCreationTokens: request.cache_creation_tokens || request.cacheCreationTokens || 0,

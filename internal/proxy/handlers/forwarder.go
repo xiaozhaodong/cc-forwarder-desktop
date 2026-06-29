@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"sync"
@@ -105,8 +106,16 @@ func (f *Forwarder) ForwardRequestToEndpoint(ctx context.Context, r *http.Reques
 
 // ForwardStreamingRequestToEndpoint 为流式请求创建独立的 upstream context。
 // 这样下游客户端断开后，调用方仍可短时继续 drain 上游尾部，以补齐终止事件和 usage。
-func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes []byte, ep *endpoint.Endpoint) (*http.Response, context.CancelFunc, error) {
+func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes []byte, ep *endpoint.Endpoint, onWroteRequest ...func(time.Time)) (*http.Response, context.CancelFunc, error) {
 	upstreamCtx, release := context.WithCancel(context.Background())
+	if len(onWroteRequest) > 0 && onWroteRequest[0] != nil {
+		trace := &httptrace.ClientTrace{
+			WroteRequest: func(httptrace.WroteRequestInfo) {
+				onWroteRequest[0](time.Now())
+			},
+		}
+		upstreamCtx = httptrace.WithClientTrace(upstreamCtx, trace)
+	}
 	bodyBytes = prepareBodyForEndpoint(bodyBytes, ep)
 
 	// 🛡️ 出站隐私过滤（PolicyError 由调用方短路，不进入 retry/failover）

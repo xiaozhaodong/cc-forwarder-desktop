@@ -144,7 +144,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		lifecycleManager.UpdateStatus("forwarding", idx, 0)
 		attemptStartedAt := time.Now()
 
-		resp, upstreamCancel, forwardErr := h.forwardRequestToAccount(ctx, r, bodyBytes, acc, isSSE)
+		resp, upstreamCancel, forwardErr := h.forwardRequestToAccount(ctx, r, bodyBytes, acc, isSSE, lifecycleManager)
 		// upstreamCancel 同时可能被 releaseUpstream 和 tail-drain 超时回调持有；context.CancelFunc 幂等，重复调用是安全的。
 		releaseUpstream := func() {
 			if upstreamCancel != nil {
@@ -396,7 +396,7 @@ func (h *Handler) accountStreamTailDrainTimeout() time.Duration {
 	return defaultAccountStreamTailDrainTimeout
 }
 
-func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, bodyBytes []byte, acc *store.UpstreamAccountRecord, isSSE bool) (*http.Response, context.CancelFunc, error) {
+func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, bodyBytes []byte, acc *store.UpstreamAccountRecord, isSSE bool, lifecycleManager *RequestLifecycleManager) (*http.Response, context.CancelFunc, error) {
 	targetURL, err := resolveAccountTargetURL(acc, r.URL.Path, r.URL.RawQuery)
 	if err != nil {
 		return nil, nil, err
@@ -413,6 +413,9 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	var release context.CancelFunc
 	if isSSE {
 		requestCtx, release = h.newAccountStreamForwardContext(ctx)
+	}
+	if lifecycleManager != nil {
+		requestCtx = withWroteRequestTrace(requestCtx, lifecycleManager.SetFirstTokenStartTime)
 	}
 
 	req, err := http.NewRequestWithContext(requestCtx, r.Method, targetURL, bytes.NewReader(bodyBytes))
@@ -868,7 +871,7 @@ func (h *Handler) processAccountStreamingResponse(ctx context.Context, w http.Re
 
 	tokenParser := NewTokenParserWithUsageTracker(lifecycleManager.GetRequestID(), h.usageTracker)
 	processor := NewStreamProcessor(tokenParser, h.usageTracker, w, flusher, lifecycleManager.GetRequestID(), endpointName)
-	processor.SetFirstTokenRecorder(lifecycleManager.RecordFirstToken)
+	processor.SetStreamTimingRecorders(lifecycleManager.RecordFirstTokenAndReturn, lifecycleManager.RecordStreamCompletion)
 	if upstreamCancel != nil {
 		processor.EnableDownstreamTailDrain(h.accountStreamTailDrainTimeout(), upstreamCancel)
 	}

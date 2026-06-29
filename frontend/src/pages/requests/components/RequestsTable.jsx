@@ -5,6 +5,7 @@
 // ============================================
 
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { Waves, RefreshCw } from 'lucide-react';
 import { LoadingSpinner } from '@components/ui';
 import { formatCost, formatTimestamp } from '@utils/api.js';
@@ -12,21 +13,93 @@ import RequestStatusBadge from './RequestStatusBadge.jsx';
 import ModelTag from './ModelTag.jsx';
 import Pagination from './Pagination.jsx';
 import { copyTextToClipboard } from './clipboard.js';
-import { formatTimingBadge, getTimingPillClassName } from '../utils/timing.js';
+import {
+  calculateTokensPerSecond,
+  formatOptionalTimingBadge,
+  formatTimingBadge,
+  formatTpsBadge,
+  getTimingPillClassName,
+  resolveCompletionMs
+} from '../utils/timing.js';
+
+const RequestStreamIcon = ({ request }) => {
+  const StreamIcon = request.isStreaming ? Waves : RefreshCw;
+  const streamTitle = request.isStreaming ? '流式请求' : '常规请求';
+  const iconColor = request.isStreaming ? 'text-blue-500' : 'text-slate-400';
+
+  return <StreamIcon className={`w-3 h-3 ${iconColor} flex-shrink-0`} title={streamTitle} />;
+};
+
+const TimingTooltip = ({ anchorRect, items }) => {
+  if (!anchorRect) {
+    return null;
+  }
+
+  const style = {
+    left: `${anchorRect.left + anchorRect.width / 2}px`,
+    top: `${anchorRect.bottom + 6}px`
+  };
+
+  return createPortal(
+    <div
+      className="pointer-events-none fixed z-[10001] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 shadow-lg shadow-slate-900/10 ring-1 ring-black/5"
+      style={style}
+    >
+      <div className="grid grid-cols-[auto_auto] gap-x-3 gap-y-1">
+        {items.map(item => (
+          <React.Fragment key={item.label}>
+            <span className="text-slate-400">{item.label}</span>
+            <span className="text-right font-mono font-semibold text-slate-700">{item.value}</span>
+          </React.Fragment>
+        ))}
+      </div>
+    </div>,
+    document.body
+  );
+};
 
 const RequestTimingCell = ({ request }) => {
+  const [tooltipAnchor, setTooltipAnchor] = React.useState(null);
   const hasFirstToken = request.isStreaming && Number.isFinite(request.firstTokenMs);
+  const completionMs = hasFirstToken
+    ? resolveCompletionMs(request.completionMs, request.duration, request.firstTokenMs)
+    : null;
+  const tokensPerSecond = calculateTokensPerSecond(request.outputTokens, completionMs);
+  const timingTooltipItems = [
+    { label: '总耗', value: formatTimingBadge(request.duration) },
+    { label: 'TPS', value: formatTpsBadge(tokensPerSecond) }
+  ];
+
+  const showTooltip = (event) => {
+    setTooltipAnchor(event.currentTarget.getBoundingClientRect());
+  };
+
+  const hideTooltip = () => {
+    setTooltipAnchor(null);
+  };
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div
+      className="inline-flex items-center gap-1.5"
+      onMouseEnter={showTooltip}
+      onMouseMove={showTooltip}
+      onMouseLeave={hideTooltip}
+      onFocus={showTooltip}
+      onBlur={hideTooltip}
+    >
       {hasFirstToken && (
-        <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('first', request.firstTokenMs)}`}>
+        <span
+          className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('first', request.firstTokenMs)}`}
+        >
           {formatTimingBadge(request.firstTokenMs)}
         </span>
       )}
-      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('duration', request.duration)}`}>
-        {formatTimingBadge(request.duration)}
+      <span
+        className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('duration', completionMs ?? request.duration)}`}
+      >
+        {formatOptionalTimingBadge(completionMs)}
       </span>
+      <TimingTooltip anchorRect={tooltipAnchor} items={timingTooltipItems} />
     </div>
   );
 };
@@ -37,12 +110,9 @@ const RequestTimingCell = ({ request }) => {
 const renderCell = (columnId, request) => {
   switch (columnId) {
     case 'requestId':
-      const StreamIcon = request.isStreaming ? Waves : RefreshCw;
-      const streamTitle = request.isStreaming ? '流式请求' : '常规请求';
-      const iconColor = request.isStreaming ? 'text-blue-500' : 'text-slate-400';
       return (
         <div className="flex items-center gap-1.5 text-blue-600 font-mono text-xs group-hover:text-indigo-600 transition-colors">
-          <StreamIcon className={`w-3 h-3 ${iconColor} flex-shrink-0`} title={streamTitle} />
+          <RequestStreamIcon request={request} />
           <span className="truncate">{request.requestId}</span>
         </div>
       );

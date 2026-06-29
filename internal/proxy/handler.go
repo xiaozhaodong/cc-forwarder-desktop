@@ -105,6 +105,10 @@ func (spa *StreamProcessorAdapter) SetFirstTokenRecorder(recorder func()) {
 	spa.innerProcessor.SetFirstTokenRecorder(recorder)
 }
 
+func (spa *StreamProcessorAdapter) SetStreamTimingRecorders(firstTokenRecorder func() bool, completionRecorder func()) {
+	spa.innerProcessor.SetStreamTimingRecorders(firstTokenRecorder, completionRecorder)
+}
+
 // ErrorRecoveryManagerAdapter 适配*ErrorRecoveryManager到handlers.ErrorRecoveryManager
 type ErrorRecoveryManagerAdapter struct {
 	innerManager *ErrorRecoveryManager
@@ -671,7 +675,7 @@ func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w htt
 		}
 
 		attemptStartedAt := time.Now()
-		resp, upstreamCancel, err := h.forwardRequestToAccount(ctx, r, nil, acc, false)
+		resp, upstreamCancel, err := h.forwardRequestToAccount(ctx, r, nil, acc, false, nil)
 		releaseUpstream := func() {
 			if upstreamCancel != nil {
 				upstreamCancel()

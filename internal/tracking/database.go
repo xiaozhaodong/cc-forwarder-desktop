@@ -530,6 +530,10 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 		setParts = append(setParts, "first_token_ms = COALESCE(first_token_ms, ?)")
 		args = append(args, *opts.FirstTokenMs)
 	}
+	if opts.CompletionMs != nil {
+		setParts = append(setParts, "completion_ms = COALESCE(completion_ms, ?)")
+		args = append(args, *opts.CompletionMs)
+	}
 	if opts.FailureReason != nil {
 		setParts = append(setParts, "failure_reason = ?")
 		args = append(args, *opts.FailureReason)

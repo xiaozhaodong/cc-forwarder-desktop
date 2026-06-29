@@ -50,6 +50,7 @@ type ActiveRequest struct {
 	EndTime      *time.Time `json:"end_time,omitempty"`
 	DurationMs   int64      `json:"duration_ms"`
 	FirstTokenMs *int64     `json:"first_token_ms,omitempty"`
+	CompletionMs *int64     `json:"completion_ms,omitempty"`
 	TotalCostUSD float64    `json:"total_cost_usd"`
 
 	RouteDecisionAt *time.Time `json:"route_decision_at,omitempty"`

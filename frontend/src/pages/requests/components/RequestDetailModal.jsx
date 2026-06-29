@@ -29,7 +29,14 @@ import ModelTag from './ModelTag.jsx';
 import { formatCost, formatTimestamp } from '@utils/api.js';
 import { lockAppScroll } from '@utils/scrollLock.js';
 import { copyTextToClipboard } from './clipboard.js';
-import { formatTimingBadge, getTimingPillClassName } from '../utils/timing.js';
+import {
+  calculateTokensPerSecond,
+  formatOptionalTimingBadge,
+  formatTimingBadge,
+  formatTpsBadge,
+  getTimingPillClassName,
+  resolveCompletionMs
+} from '../utils/timing.js';
 
 /**
  * 信息行组件
@@ -120,16 +127,24 @@ const formatRouteMode = (mode) => {
 
 const RequestTimingValue = ({ request }) => {
   const hasFirstToken = request.isStreaming && Number.isFinite(request.firstTokenMs);
+  const completionMs = hasFirstToken
+    ? resolveCompletionMs(request.completionMs, request.duration, request.firstTokenMs)
+    : null;
+  const tokensPerSecond = calculateTokensPerSecond(request.outputTokens, completionMs);
 
   return (
-    <span className="inline-flex items-center justify-end gap-2">
-      {hasFirstToken && (
-        <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('first', request.firstTokenMs)}`}>
-          首响 {formatTimingBadge(request.firstTokenMs)}
-        </span>
-      )}
+    <span className="inline-flex items-center justify-end gap-1.5 flex-wrap">
+      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${hasFirstToken ? getTimingPillClassName('first', request.firstTokenMs) : 'bg-slate-50 text-slate-400 border-slate-100'}`}>
+        首响 {formatOptionalTimingBadge(hasFirstToken ? request.firstTokenMs : null)}
+      </span>
+      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all bg-slate-50 text-slate-600 border-slate-100">
+        生成 {formatOptionalTimingBadge(completionMs)}
+      </span>
       <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('duration', request.duration)}`}>
-        耗时 {formatTimingBadge(request.duration)}
+        总耗 {formatTimingBadge(request.duration)}
+      </span>
+      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all bg-slate-50 text-slate-600 border-slate-100">
+        TPS {formatTpsBadge(tokensPerSecond)}
       </span>
     </span>
   );
@@ -263,7 +278,7 @@ const RequestDetailModal = ({ isOpen, onClose, request }) => {
                 <div className="p-4">
                   <InfoRow icon={FileText} label="请求 ID" value={request.requestId} copyable />
                   <InfoRow icon={Calendar} label="时间戳" value={formatTimestamp(request.timestamp)} />
-                  <InfoRow icon={Clock} label={request.isStreaming ? '首响 / 持续时间' : '持续时间'} value={<RequestTimingValue request={request} />} />
+                  <InfoRow icon={Clock} label="耗时指标" value={<RequestTimingValue request={request} />} />
                   <InfoRow icon={Server} label="端点" value={request.endpoint} />
                   <InfoRow icon={Layers} label="渠道" value={request.channel || request.group} />
                   <InfoRow icon={Activity} label="路由模式" value={formatRouteMode(request.routeMode)} />
