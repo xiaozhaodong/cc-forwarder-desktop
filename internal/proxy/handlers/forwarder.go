@@ -18,11 +18,14 @@ import (
 )
 
 const (
-	coderelayChannel     = "coderelay"
-	mywechatEndpointName = "mywechat"
-	cacheControlKey      = "cache_control"
-	cacheControlScopeKey = "scope"
-	contextManagementKey = "context_management"
+	anyrouteChannel         = "anyroute"
+	coderelayChannel        = "coderelay"
+	anthropicBetaHeader     = "anthropic-beta"
+	anyrouteContextBetaFlag = "context-1m-2025-08-07"
+	mywechatEndpointName    = "mywechat"
+	cacheControlKey         = "cache_control"
+	cacheControlScopeKey    = "scope"
+	contextManagementKey    = "context_management"
 )
 
 // Forwarder 负责HTTP请求转发和头部处理
@@ -345,6 +348,9 @@ func (f *Forwarder) CopyHeaders(src *http.Request, dst *http.Request, ep *endpoi
 	for key, value := range ep.Config.Headers {
 		dst.Header.Set(key, value)
 	}
+	if strings.EqualFold(strings.TrimSpace(ep.Config.Channel), anyrouteChannel) {
+		ensureBetaFlag(dst.Header, anyrouteContextBetaFlag)
+	}
 
 	// Remove hop-by-hop headers
 	hopByHopHeaders := []string{
@@ -361,4 +367,20 @@ func (f *Forwarder) CopyHeaders(src *http.Request, dst *http.Request, ep *endpoi
 	for _, header := range hopByHopHeaders {
 		dst.Header.Del(header)
 	}
+}
+
+// ensureBetaFlag 确保 anthropic-beta 头包含指定标志：
+// 头不存在时直接设置；已存在但缺该标志时追加，保留客户端原有标志；已包含则不动。
+func ensureBetaFlag(header http.Header, flag string) {
+	existing := header.Get(anthropicBetaHeader)
+	if existing == "" {
+		header.Set(anthropicBetaHeader, flag)
+		return
+	}
+	for _, part := range strings.Split(existing, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), flag) {
+			return
+		}
+	}
+	header.Set(anthropicBetaHeader, existing+","+flag)
 }

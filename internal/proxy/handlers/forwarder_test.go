@@ -562,7 +562,7 @@ func TestForwarder_CopyHeaders(t *testing.T) {
 	}
 }
 
-func TestForwarder_CopyHeaders_DoesNotAddAnyrouteBetaHeaderByDefault(t *testing.T) {
+func TestForwarder_CopyHeaders_AddsAnyrouteBetaHeader(t *testing.T) {
 	cfg := &config.Config{}
 	endpointManager := endpoint.NewManager(cfg)
 	forwarder := NewForwarder(cfg, endpointManager)
@@ -577,12 +577,32 @@ func TestForwarder_CopyHeaders_DoesNotAddAnyrouteBetaHeaderByDefault(t *testing.
 
 	forwarder.CopyHeaders(srcReq, dstReq, ep)
 
-	if got := dstReq.Header.Get("anthropic-beta"); got != "" {
-		t.Fatalf("Expected anyroute anthropic-beta header to be empty by default, got %q", got)
+	if got := dstReq.Header.Get("anthropic-beta"); got != "context-1m-2025-08-07" {
+		t.Fatalf("Expected anyroute anthropic-beta header, got %q", got)
 	}
 }
 
-func TestForwarder_CopyHeaders_CopiesConfiguredAnthropicBetaHeader(t *testing.T) {
+func TestForwarder_CopyHeaders_AddsAnyrouteBetaHeaderWithCaseInsensitiveChannel(t *testing.T) {
+	cfg := &config.Config{}
+	endpointManager := endpoint.NewManager(cfg)
+	forwarder := NewForwarder(cfg, endpointManager)
+
+	ep := &endpoint.Endpoint{Config: config.EndpointConfig{
+		Name:    "anyroute-endpoint",
+		URL:     "https://anyrouter.top",
+		Channel: " AnyRoute ",
+	}}
+	srcReq := httptest.NewRequest("POST", "/v1/messages", nil)
+	dstReq := httptest.NewRequest("POST", "https://anyrouter.top/v1/messages", nil)
+
+	forwarder.CopyHeaders(srcReq, dstReq, ep)
+
+	if got := dstReq.Header.Get("anthropic-beta"); got != "context-1m-2025-08-07" {
+		t.Fatalf("Expected anyroute anthropic-beta header, got %q", got)
+	}
+}
+
+func TestForwarder_CopyHeaders_AppendsAnyrouteBetaFlagToConfiguredHeader(t *testing.T) {
 	cfg := &config.Config{}
 	endpointManager := endpoint.NewManager(cfg)
 	forwarder := NewForwarder(cfg, endpointManager)
@@ -600,7 +620,51 @@ func TestForwarder_CopyHeaders_CopiesConfiguredAnthropicBetaHeader(t *testing.T)
 
 	forwarder.CopyHeaders(srcReq, dstReq, ep)
 
-	if got := dstReq.Header.Get("anthropic-beta"); got != "custom-beta" {
-		t.Fatalf("Expected configured anthropic-beta header to be preserved, got %q", got)
+	if got := dstReq.Header.Get("anthropic-beta"); got != "custom-beta,context-1m-2025-08-07" {
+		t.Fatalf("Expected anyroute beta flag appended to configured header, got %q", got)
+	}
+}
+
+func TestForwarder_CopyHeaders_AppendsAnyrouteBetaFlagToClientHeader(t *testing.T) {
+	cfg := &config.Config{}
+	endpointManager := endpoint.NewManager(cfg)
+	forwarder := NewForwarder(cfg, endpointManager)
+
+	ep := &endpoint.Endpoint{Config: config.EndpointConfig{
+		Name:    "anyroute-endpoint",
+		URL:     "https://anyrouter.top",
+		Channel: "anyroute",
+	}}
+	srcReq := httptest.NewRequest("POST", "/v1/messages", nil)
+	srcReq.Header.Set("anthropic-beta", "claude-code-20250219,interleaved-thinking-2025-05-14")
+	dstReq := httptest.NewRequest("POST", "https://anyrouter.top/v1/messages", nil)
+
+	forwarder.CopyHeaders(srcReq, dstReq, ep)
+
+	want := "claude-code-20250219,interleaved-thinking-2025-05-14,context-1m-2025-08-07"
+	if got := dstReq.Header.Get("anthropic-beta"); got != want {
+		t.Fatalf("Expected anyroute beta flag appended to client header, got %q", got)
+	}
+}
+
+func TestForwarder_CopyHeaders_DoesNotDuplicateAnyrouteBetaFlag(t *testing.T) {
+	cfg := &config.Config{}
+	endpointManager := endpoint.NewManager(cfg)
+	forwarder := NewForwarder(cfg, endpointManager)
+
+	ep := &endpoint.Endpoint{Config: config.EndpointConfig{
+		Name:    "anyroute-endpoint",
+		URL:     "https://anyrouter.top",
+		Channel: "anyroute",
+	}}
+	srcReq := httptest.NewRequest("POST", "/v1/messages", nil)
+	srcReq.Header.Set("anthropic-beta", "claude-code-20250219, Context-1M-2025-08-07")
+	dstReq := httptest.NewRequest("POST", "https://anyrouter.top/v1/messages", nil)
+
+	forwarder.CopyHeaders(srcReq, dstReq, ep)
+
+	want := "claude-code-20250219, Context-1M-2025-08-07"
+	if got := dstReq.Header.Get("anthropic-beta"); got != want {
+		t.Fatalf("Expected anthropic-beta header unchanged when flag already present, got %q", got)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -143,6 +144,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		lifecycleManager.SetEndpoint(accountName, "", "account-pool")
 		lifecycleManager.UpdateStatus("forwarding", idx, 0)
 		attemptStartedAt := time.Now()
+		hasNextAccount := idx < len(accounts)-1
 
 		resp, upstreamCancel, forwardErr := h.forwardRequestToAccount(ctx, r, bodyBytes, acc, isSSE, lifecycleManager)
 		// upstreamCancel 同时可能被 releaseUpstream 和 tail-drain 超时回调持有；context.CancelFunc 幂等，重复调用是安全的。
@@ -164,6 +166,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			lastErr = forwardErr
 			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, forwardErr.Error(), accountSoftFailureCategoryServerError, 0)
+			logAccountPipelineAttemptFailure(requestID, acc, 0, "forward_error", forwardErr.Error(), shouldFailover && hasNextAccount)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, forwardErr.Error())
 			if !shouldFailover {
 				break
@@ -175,6 +178,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			lastErr = fmt.Errorf("empty response from account %d", acc.ID)
 			releaseUpstream()
 			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, lastErr.Error(), accountSoftFailureCategoryServerError, 0)
+			logAccountPipelineAttemptFailure(requestID, acc, 0, "empty_response", lastErr.Error(), shouldFailover && hasNextAccount)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, lastErr.Error())
 			if !shouldFailover {
 				break
@@ -190,6 +194,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			lastErr = fmt.Errorf("auth failed: %s", detail)
 			_ = h.accountPoolService.MarkAccountAuthFailed(ctx, acc.ID, detail)
+			logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, "auth_failed", detail, hasNextAccount)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeAuthFailed, detail)
 			continue
 		}
@@ -220,10 +225,12 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
 			if usageLimit, ok := parseAccountUsageLimitWindow(detail, time.Now()); ok {
 				_ = h.accountPoolService.MarkAccountUsageLimitExceeded(ctx, acc.ID, detail, usageLimit.planType, usageLimit.resetAt)
+				logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, "usage_limit", detail, hasNextAccount)
 				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
 				continue
 			}
 			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryRateLimit, retryAfter)
+			logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, "rate_limited", detail, shouldFailover && hasNextAccount)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
 			if !shouldFailover {
 				break
@@ -239,6 +246,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
 			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryServerError, 0)
+			logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, "server_error", detail, shouldFailover && hasNextAccount)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
 			if !shouldFailover {
 				break
@@ -249,6 +257,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		// 其余 4xx 视为客户端请求问题，直接透传，不进行账号切换
 		if resp.StatusCode >= 400 {
 			detail := fmt.Sprintf("upstream returned %d", resp.StatusCode)
+			logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, "client_error_passthrough", detail, false)
 			if writeErr := h.writeRawResponse(w, resp); writeErr != nil {
 				releaseUpstream()
 				lifecycleManager.FailRequest("account_pipeline_response_write_error", writeErr.Error(), resp.StatusCode)
@@ -338,6 +347,43 @@ func (h *Handler) shouldFailOverAfterSoftFailure(ctx context.Context, accountID 
 		return true
 	}
 	return shouldFailover
+}
+
+func logAccountPipelineAttemptFailure(requestID string, acc *store.UpstreamAccountRecord, statusCode int, reasonType, detail string, willTryNext bool) {
+	accountID := int64(0)
+	accountName := ""
+	providerType := ""
+	if acc != nil {
+		accountID = acc.ID
+		accountName = acc.AccountName
+		providerType = acc.ProviderType
+	}
+	action := "stop"
+	if willTryNext {
+		action = "try_next_account"
+	}
+	if statusCode > 0 {
+		slog.Warn("账号池上游失败",
+			"request_id", requestID,
+			"account_id", accountID,
+			"account_name", accountName,
+			"provider_type", providerType,
+			"status_code", statusCode,
+			"reason_type", reasonType,
+			"action", action,
+			"reason", detail,
+		)
+		return
+	}
+	slog.Warn("账号池上游失败",
+		"request_id", requestID,
+		"account_id", accountID,
+		"account_name", accountName,
+		"provider_type", providerType,
+		"reason_type", reasonType,
+		"action", action,
+		"reason", detail,
+	)
 }
 
 func (h *Handler) completeAccountScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, outcome, finalError string) error {
