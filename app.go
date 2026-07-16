@@ -440,6 +440,13 @@ func (a *App) setupModelPricingStore() {
 		a.initDefaultModelPricing(ctx)
 	}
 
+	inserted, err := a.ensureGPT56ModelPricing(ctx)
+	if err != nil {
+		a.logger.Warn("⚠️ 补齐 GPT-5.6 模型定价失败", "error", err)
+	} else if inserted > 0 {
+		a.logger.Info("✅ 已补齐 GPT-5.6 模型定价", "count", inserted)
+	}
+
 	// 加载缓存
 	if err := a.modelPricingService.LoadCache(ctx); err != nil {
 		a.logger.Warn("⚠️ 加载模型定价缓存失败", "error", err)
@@ -447,6 +454,9 @@ func (a *App) setupModelPricingStore() {
 
 	// 同步定价到 UsageTracker（用于成本计算）
 	a.syncPricingToTracker(ctx)
+	if latestCount, countErr := a.modelPricingService.GetPricingCount(ctx); countErr == nil {
+		count = latestCount
+	}
 
 	a.logger.Info("✅ 模型定价存储已启用 (SQLite)", "count", count)
 }

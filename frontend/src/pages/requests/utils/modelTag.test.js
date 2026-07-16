@@ -10,6 +10,14 @@ test('getModelColorClasses supports new model families used in request tracking'
   assert.match(getModelColorClasses(' Claude-Sonnet-5 '), /amber/);
 });
 
+test('getModelColorClasses distinguishes GPT-5.6 model tiers', () => {
+  assert.match(getModelColorClasses('gpt-5.6'), /yellow/);
+  assert.match(getModelColorClasses('gpt-5.6-sol'), /yellow/);
+  assert.match(getModelColorClasses('gpt-5.6-sol-2026-07-09'), /yellow/);
+  assert.match(getModelColorClasses('gpt-5.6-terra'), /lime/);
+  assert.match(getModelColorClasses('gpt-5.6-luna'), /sky/);
+});
+
 test('getModelColorClasses keeps existing model color mappings', () => {
   assert.match(getModelColorClasses('claude-sonnet-4'), /orange/);
   assert.match(getModelColorClasses('claude-3-5-haiku'), /green/);

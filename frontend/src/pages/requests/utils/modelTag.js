@@ -32,6 +32,18 @@ const MODEL_COLOR_RULES = [
     classes: 'bg-purple-50 text-purple-700 border-purple-200'
   },
   {
+    matches: (modelName) => modelName === 'gpt-5.6' || modelName.startsWith('gpt-5.6-sol'),
+    classes: 'bg-yellow-50 text-yellow-800 border-yellow-200'
+  },
+  {
+    matches: (modelName) => modelName.startsWith('gpt-5.6-terra'),
+    classes: 'bg-lime-50 text-lime-800 border-lime-200'
+  },
+  {
+    matches: (modelName) => modelName.startsWith('gpt-5.6-luna'),
+    classes: 'bg-sky-50 text-sky-700 border-sky-200'
+  },
+  {
     matches: (modelName) => modelName.includes('gpt-'),
     classes: 'bg-indigo-50 text-indigo-700 border-indigo-200'
   }
