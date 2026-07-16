@@ -28,25 +28,30 @@ const EndpointContextKey = contextKey("endpoint")
 
 // Handler handles HTTP proxy requests
 type Handler struct {
-	endpointManager      *endpoint.Manager
-	config               *config.Config
-	retryHandler         *RetryHandler
-	usageTracker         *tracking.UsageTracker
-	accountPoolService   AccountPoolService
-	codexModelsProvider  CodexModelListProvider
-	monitoringMiddleware *middleware.MonitoringMiddleware
-	responseProcessor    *response.Processor
-	tokenAnalyzer        *response.TokenAnalyzer
-	forwarder            *handlers.Forwarder
-	refreshTokenManager  *accountauth.OpenAIRefreshTokenManager
-	regularHandler       *handlers.RegularHandler
-	streamingHandler     *handlers.StreamingHandler
-	eventBus             events.EventBus // EventBus事件总线
-	accountHTTPInitOnce  sync.Once
-	accountHTTPInitErr   error
-	accountHTTPTransport *http.Transport
-	accountHTTPClient    *http.Client
-	accountSSEHTTPClient *http.Client
+	endpointManager               *endpoint.Manager
+	config                        *config.Config
+	retryHandler                  *RetryHandler
+	usageTracker                  *tracking.UsageTracker
+	accountPoolService            AccountPoolService
+	codexModelsProvider           CodexModelListProvider
+	imageGenerationConfigProvider ImageGenerationConfigProvider
+	monitoringMiddleware          *middleware.MonitoringMiddleware
+	responseProcessor             *response.Processor
+	tokenAnalyzer                 *response.TokenAnalyzer
+	forwarder                     *handlers.Forwarder
+	refreshTokenManager           *accountauth.OpenAIRefreshTokenManager
+	regularHandler                *handlers.RegularHandler
+	streamingHandler              *handlers.StreamingHandler
+	eventBus                      events.EventBus // EventBus事件总线
+	accountHTTPInitOnce           sync.Once
+	accountHTTPInitErr            error
+	accountHTTPTransport          *http.Transport
+	accountHTTPClient             *http.Client
+	accountSSEHTTPClient          *http.Client
+	imageHTTPInitOnce             sync.Once
+	imageHTTPInitErr              error
+	imageHTTPTransport            *http.Transport
+	imageHTTPClient               *http.Client
 	// 🔧 [Critical修复] 保存共享的SuspensionManager实例的引用
 	// 确保在SetUsageTracker中重建Handler时保持共享状态
 	sharedSuspensionManager handlers.SuspensionManager
@@ -58,6 +63,11 @@ type Handler struct {
 
 type CodexModelListProvider interface {
 	GetCodexModelListResponse(ctx context.Context) ([]byte, bool, error)
+}
+
+// ImageGenerationConfigProvider 提供独立图像生成上游配置。
+type ImageGenerationConfigProvider interface {
+	GetImageGenerationConfig(ctx context.Context) (ImageGenerationConfig, error)
 }
 
 // TokenParserProviderImpl 实现TokenParserProvider接口
@@ -467,11 +477,16 @@ func (h *Handler) SetCodexModelListProvider(provider CodexModelListProvider) {
 	h.codexModelsProvider = provider
 }
 
+// SetImageGenerationConfigProvider 设置独立图像生成配置提供器。
+func (h *Handler) SetImageGenerationConfigProvider(provider ImageGenerationConfigProvider) {
+	h.imageGenerationConfigProvider = provider
+}
+
 // extractModelFromRequestBody 从请求体中提取模型名称
 // 仅对已知会携带 model 字段的路径进行解析，避免不必要的JSON解析开销
 func (h *Handler) extractModelFromRequestBody(bodyBytes []byte, path string) string {
-	// 仅对 Claude /v1/messages 与 Codex /v1/responses 尝试解析模型
-	if !strings.Contains(path, "/v1/messages") && !h.isAccountPipelinePath(path) {
+	// 仅对已知携带 model 的请求尝试解析
+	if !strings.Contains(path, "/v1/messages") && !h.isAccountPipelinePath(path) && path != openAIImagesGenerationsPath {
 		return ""
 	}
 
@@ -549,7 +564,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 创建统一的请求生命周期管理器
 	lifecycleManager := NewRequestLifecycleManagerWithRecoverySignal(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus, h.recoverySignalManager)
 	// Codex /v1/responses 链路分离，不挂载 endpoint 失败追踪语义
-	if !h.isAccountPipelinePath(r.URL.Path) {
+	if !h.isAccountPipelinePath(r.URL.Path) && r.URL.Path != openAIImagesGenerationsPath {
 		// 📊 [失败追踪] 设置端点管理器，用于记录成功/失败
 		lifecycleManager.SetEndpointManager(h.endpointManager)
 	}
@@ -606,6 +621,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 开始请求跟踪（传递流式标记）
 	startTrackedRequest(isSSE)
+
+	if r.URL.Path == openAIImagesGenerationsPath {
+		h.handleImageGeneration(ctx, w, r, bodyBytes, lifecycleManager)
+		return
+	}
 
 	// Codex /v1/responses 仅由账号池链路处理，不回退到 endpoint
 	if h.shouldUseAccountPipeline(r.URL.Path) {

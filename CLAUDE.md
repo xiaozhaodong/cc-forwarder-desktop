@@ -15,6 +15,7 @@
 - 多端点智能路由、健康检查、故障转移与自愈
 - 桌面端启动完成后异步执行端点与账号池批量连通性检查
 - 请求生命周期追踪、Token/成本统计、SQLite 持久化
+- 独立图像生成代理：设置页维护单一 OpenAI 兼容生图 URL / API Key / 每次固定价格，`POST /v1/images/generations` 不进入端点或账号池调度，但保留请求追踪、成本与 prompt 隐私扫描
 - Codex `/v1/responses/compact` 已接入账号池路由、请求追踪与 OAuth compact 上游透传
 - Claude `/v1/messages` 与 Codex `/v1/responses` 流式尾部断连保护：
   - 独立 upstream context
@@ -58,10 +59,12 @@
 - `app_api_account_pool.go`：账号池 Wails API
 - `app_api_openai_oauth.go`：ChatGPT OAuth API
 - `app_api_privacy.go`：隐私保护 Wails API
+- `app_image_generation.go`：图像生成设置校验与代理配置提供器
 - `internal/privacy/`：隐私规则纯引擎（编译、JSON walker、span 替换、预设）
 - `internal/service/privacy_service.go`：隐私规则编译先行、原子快照热替换、运行统计
 - `internal/store/privacy_rules.go`：`privacy_settings / privacy_rules` 存储层
 - `internal/proxy/handlers/privacy.go`：PrivacyFilter 接口、attempt cache、策略短路 helper
+- `internal/proxy/image_generation.go`：独立 `/v1/images/generations` 原样转发、错误处理与请求追踪
 - `internal/accountauth/openai_profile.go`：OAuth 画像解析
 - `internal/accountauth/openai_refresh_token.go`：RT -> AT 刷新与缓存
 - `internal/service/account_pool.go`：账号池 CRUD、测试连通性

@@ -17,7 +17,8 @@ import {
   Clock,
   Lock,
   Hash,
-  Archive
+  Archive,
+  ImageIcon
 } from 'lucide-react';
 import { Button, LoadingSpinner, ErrorMessage } from '@components/ui';
 import { SettingItem, SettingsSection, PortInfo } from './components';
@@ -46,7 +47,8 @@ const CATEGORY_ICONS = {
   request: Clock,
   auth: Lock,
   token_counting: Hash,
-  retention: Archive
+  retention: Archive,
+  image_generation: ImageIcon
 };
 
 // ============================================

@@ -49,6 +49,9 @@ const SettingItem = ({
   );
 
   const config = VALUE_TYPE_CONFIG[valueType] || VALUE_TYPE_CONFIG.string;
+  const inputPlaceholder = valueType === 'password' && setting.secret_configured
+    ? '已配置，留空则保持不变'
+    : config.placeholder;
 
   // 显示标签（优先使用 label，没有则使用 key）
   const displayLabel = setting.label || setting.key;
@@ -194,17 +197,20 @@ const SettingItem = ({
       </div>
       <input
         type={config.type}
+        autoComplete={valueType === 'password' ? 'new-password' : undefined}
         value={localValue}
         onChange={handleChange}
         disabled={disabled}
-        step={config.step}
-        placeholder={config.placeholder}
+        step={setting.key === 'fixed_price_usd' ? 0.001 : config.step}
+        placeholder={inputPlaceholder}
         className={`
           w-32 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700
           font-mono text-right
           focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500
           ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
           ${setting.key === 'token' ? 'w-48' : ''}
+          ${setting.key === 'endpoint_url' ? 'w-72 max-w-[58%]' : ''}
+          ${setting.key === 'api_key' || setting.key === 'model' ? 'w-56 max-w-[50%]' : ''}
         `}
       />
     </div>

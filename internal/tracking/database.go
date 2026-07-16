@@ -598,6 +598,9 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 
 	pricing := ut.GetPricing(data.ModelName)
 	costBreakdown := CalculateCostV2(tokens, &pricing, nil, data.Path)
+	if data.CostOverrideUSD != nil {
+		costBreakdown = CostBreakdown{TotalCost: *data.CostOverrideUSD}
+	}
 
 	// 🔧 [方案A补充] 支持 failure_reason 写入（用于数据质量标记，如 stream_truncated）
 	query := fmt.Sprintf(`UPDATE request_logs SET

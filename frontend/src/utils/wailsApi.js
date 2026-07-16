@@ -1696,6 +1696,7 @@ export const getAllSettings = async () => {
     description: s.description,
     display_order: s.display_order,
     requires_restart: s.requires_restart,
+    secret_configured: s.secret_configured || false,
     created_at: s.created_at,
     updated_at: s.updated_at
   }));
@@ -1721,6 +1722,7 @@ export const getSettingsByCategory = async (category) => {
     description: s.description,
     display_order: s.display_order,
     requires_restart: s.requires_restart,
+    secret_configured: s.secret_configured || false,
     created_at: s.created_at,
     updated_at: s.updated_at
   }));
@@ -1747,6 +1749,7 @@ export const getSetting = async (category, key) => {
     description: s.description,
     display_order: s.display_order,
     requires_restart: s.requires_restart,
+    secret_configured: s.secret_configured || false,
     created_at: s.created_at,
     updated_at: s.updated_at
   };

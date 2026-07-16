@@ -1570,6 +1570,7 @@ export namespace main {
 	    description: string;
 	    display_order: number;
 	    requires_restart: boolean;
+	    secret_configured: boolean;
 	    created_at: string;
 	    updated_at: string;
 
@@ -1588,6 +1589,7 @@ export namespace main {
 	        this.description = source["description"];
 	        this.display_order = source["display_order"];
 	        this.requires_restart = source["requires_restart"];
+	        this.secret_configured = source["secret_configured"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
 	    }

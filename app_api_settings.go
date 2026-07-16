@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"cc-forwarder/internal/service"
@@ -20,17 +21,18 @@ import (
 
 // SettingInfo 设置信息（给前端用的结构体）
 type SettingInfo struct {
-	ID              int64  `json:"id"`
-	Category        string `json:"category"`
-	Key             string `json:"key"`
-	Value           string `json:"value"`
-	ValueType       string `json:"value_type"`
-	Label           string `json:"label"`
-	Description     string `json:"description"`
-	DisplayOrder    int    `json:"display_order"`
-	RequiresRestart bool   `json:"requires_restart"`
-	CreatedAt       string `json:"created_at"`
-	UpdatedAt       string `json:"updated_at"`
+	ID               int64  `json:"id"`
+	Category         string `json:"category"`
+	Key              string `json:"key"`
+	Value            string `json:"value"`
+	ValueType        string `json:"value_type"`
+	Label            string `json:"label"`
+	Description      string `json:"description"`
+	DisplayOrder     int    `json:"display_order"`
+	RequiresRestart  bool   `json:"requires_restart"`
+	SecretConfigured bool   `json:"secret_configured"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
 }
 
 // CategoryInfo 分类信息
@@ -212,6 +214,17 @@ func (a *App) UpdateSetting(input UpdateSettingInput) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if input.Category == service.CategoryImageGeneration {
+		if err := a.validateImageGenerationSettingUpdates(ctx, []UpdateSettingInput{input}); err != nil {
+			return err
+		}
+	}
+	if input.Category == service.CategoryImageGeneration && input.Key == "api_key" && input.Value == "" {
+		return nil
+	}
+	if input.Category == service.CategoryImageGeneration {
+		input.Value = strings.TrimSpace(input.Value)
+	}
 
 	if err := a.settingsService.Set(ctx, input.Category, input.Key, input.Value); err != nil {
 		return fmt.Errorf("更新设置失败: %w", err)
@@ -235,17 +248,30 @@ func (a *App) BatchUpdateSettings(input BatchUpdateSettingsInput) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if err := a.validateImageGenerationSettingUpdates(ctx, input.Settings); err != nil {
+		return err
+	}
 
 	// 转换为 store.SettingRecord
 	records := make([]*store.SettingRecord, 0, len(input.Settings))
 	for _, s := range input.Settings {
+		if s.Category == service.CategoryImageGeneration && s.Key == "api_key" && s.Value == "" {
+			continue
+		}
+		value := s.Value
+		if s.Category == service.CategoryImageGeneration {
+			value = strings.TrimSpace(value)
+		}
 		records = append(records, &store.SettingRecord{
 			Category: s.Category,
 			Key:      s.Key,
-			Value:    s.Value,
+			Value:    value,
 		})
 	}
 
+	if len(records) == 0 {
+		return nil
+	}
 	if err := a.settingsService.UpdateAndApply(ctx, records); err != nil {
 		return fmt.Errorf("批量更新设置失败: %w", err)
 	}
@@ -356,6 +382,10 @@ func (a *App) settingRecordToInfo(r *store.SettingRecord) SettingInfo {
 		Description:     r.Description,
 		DisplayOrder:    r.DisplayOrder,
 		RequiresRestart: r.RequiresRestart,
+	}
+	if r.ValueType == service.ValueTypePassword {
+		info.SecretConfigured = r.Value != ""
+		info.Value = ""
 	}
 
 	if !r.CreatedAt.IsZero() {

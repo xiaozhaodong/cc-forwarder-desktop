@@ -47,11 +47,12 @@ type ActiveRequest struct {
 	CacheReadTokens       int64 `json:"cache_read_tokens"`
 
 	// 完成信息（只在结束时填充）
-	EndTime      *time.Time `json:"end_time,omitempty"`
-	DurationMs   int64      `json:"duration_ms"`
-	FirstTokenMs *int64     `json:"first_token_ms,omitempty"`
-	CompletionMs *int64     `json:"completion_ms,omitempty"`
-	TotalCostUSD float64    `json:"total_cost_usd"`
+	EndTime         *time.Time `json:"end_time,omitempty"`
+	DurationMs      int64      `json:"duration_ms"`
+	FirstTokenMs    *int64     `json:"first_token_ms,omitempty"`
+	CompletionMs    *int64     `json:"completion_ms,omitempty"`
+	TotalCostUSD    float64    `json:"total_cost_usd"`
+	CostOverrideUSD *float64   `json:"cost_override_usd,omitempty"`
 
 	RouteDecisionAt *time.Time `json:"route_decision_at,omitempty"`
 

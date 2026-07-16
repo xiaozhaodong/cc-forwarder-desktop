@@ -98,6 +98,7 @@ type RequestCompleteData struct {
 	CacheReadTokens       int64         `json:"cache_read_tokens"`
 	Duration              time.Duration `json:"duration"`
 	FailureReason         string        `json:"failure_reason,omitempty"` // 可选：失败原因
+	CostOverrideUSD       *float64      `json:"cost_override_usd,omitempty"`
 }
 
 // TokenUsage token使用统计
@@ -965,6 +966,19 @@ func (ut *UsageTracker) RecordRequestSuccess(requestID, modelName string, tokens
 // 🔧 [方案A实现] 2025-12-20: 原子操作，在 CompleteAndArchive 中一次性设置所有字段包括 failureReason
 // 一次性更新所有成功相关字段：status='completed', end_time, duration_ms, Token、成本信息和可选的 failure_reason
 func (ut *UsageTracker) RecordRequestSuccessWithQuality(requestID, modelName string, tokens *TokenUsage, duration time.Duration, failureReason string) {
+	ut.recordRequestSuccessWithQualityAndCost(requestID, modelName, tokens, duration, failureReason, nil)
+}
+
+// RecordRequestSuccessWithCost 以调用方提供的固定成本完成请求。
+// 用于图像生成等不按 Token 计价的请求。
+func (ut *UsageTracker) RecordRequestSuccessWithCost(requestID, modelName string, duration time.Duration, costUSD float64) {
+	if costUSD < 0 {
+		costUSD = 0
+	}
+	ut.recordRequestSuccessWithQualityAndCost(requestID, modelName, nil, duration, "", &costUSD)
+}
+
+func (ut *UsageTracker) recordRequestSuccessWithQualityAndCost(requestID, modelName string, tokens *TokenUsage, duration time.Duration, failureReason string, costOverrideUSD *float64) {
 	if ut.config == nil || !ut.config.Enabled {
 		return
 	}
@@ -1008,6 +1022,7 @@ func (ut *UsageTracker) RecordRequestSuccessWithQuality(requestID, modelName str
 			// 🔧 [方案A实现] 2025-12-20: 显式覆盖 failureReason（无论是否为空）
 			// 避免之前中途错误设置的旧值残留，导致"成功但带失败原因"的误标
 			req.FailureReason = failureReason
+			req.CostOverrideUSD = costOverrideUSD
 			// 成本在归档时计算
 		})
 		if err != nil {
@@ -1015,13 +1030,13 @@ func (ut *UsageTracker) RecordRequestSuccessWithQuality(requestID, modelName str
 			slog.Debug("🔥 热池完成请求失败，降级到事件队列模式",
 				"request_id", requestID,
 				"error", err)
-			ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason)
+			ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason, costOverrideUSD)
 		}
 		return
 	}
 
 	// 传统模式：发送事件到队列
-	ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason)
+	ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason, costOverrideUSD)
 }
 
 // recordRequestSuccessLegacy 传统模式记录请求成功
@@ -1031,6 +1046,7 @@ func (ut *UsageTracker) recordRequestSuccessLegacy(
 	inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens int64,
 	duration time.Duration,
 	failureReason string,
+	costOverrideUSD *float64,
 ) {
 	path := ""
 	if ut.hotPoolEnabled && ut.hotPool != nil {
@@ -1057,6 +1073,7 @@ func (ut *UsageTracker) recordRequestSuccessLegacy(
 			CacheReadTokens:       cacheReadTokens,
 			Duration:              duration,
 			FailureReason:         failureReason,
+			CostOverrideUSD:       costOverrideUSD,
 		},
 	}
 
@@ -1976,7 +1993,9 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 
 	// 计算成本（使用公共函数消除重复代码）
 	var cost CostBreakdown
-	if ut.pricing != nil {
+	if req.CostOverrideUSD != nil {
+		cost.TotalCost = *req.CostOverrideUSD
+	} else if ut.pricing != nil {
 		pricing, exists := ut.pricing[req.ModelName]
 		if !exists {
 			pricing, exists = ut.pricing["_default"]

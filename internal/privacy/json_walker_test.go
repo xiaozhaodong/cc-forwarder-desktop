@@ -122,6 +122,15 @@ func TestCodexWalkerInputString(t *testing.T) {
 	}
 }
 
+func TestImageGenerationWalkerOnlyCollectsPrompt(t *testing.T) {
+	body := `{"model":"gpt-image-2","prompt":"sensitive prompt","metadata":{"note":"not scanned"}}`
+	segments := mustCollect(t, body, "/v1/images/generations")
+	got := segmentValues(segments)
+	if len(got) != 1 || got[0] != "sensitive prompt" {
+		t.Fatalf("got %v, want [sensitive prompt]", got)
+	}
+}
+
 func TestReplaceSegmentsKeepsUntouchedBytesIdentical(t *testing.T) {
 	body := `{"model":"m-1.5",  "big": 9007199254740993, "messages":[{"role":"user","content":"secret"}], "stream":false, "temp": 0.30}`
 	segments := mustCollect(t, body, "/v1/messages")

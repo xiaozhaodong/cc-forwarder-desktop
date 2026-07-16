@@ -14,17 +14,18 @@ import (
 
 // SettingCategory 设置分类常量
 const (
-	CategoryStrategy      = "strategy"
-	CategoryRetry         = "retry"
-	CategoryHealth        = "health"
-	CategoryRequest       = "request"
-	CategoryStreaming     = "streaming"
-	CategoryAuth          = "auth"
-	CategoryTokenCounting = "token_counting"
-	CategoryRetention     = "retention"
-	CategoryHotPool       = "hot_pool"
-	CategoryServer        = "server"
-	CategoryClaudeRouting = "claude_routing"
+	CategoryStrategy        = "strategy"
+	CategoryRetry           = "retry"
+	CategoryHealth          = "health"
+	CategoryRequest         = "request"
+	CategoryStreaming       = "streaming"
+	CategoryAuth            = "auth"
+	CategoryTokenCounting   = "token_counting"
+	CategoryRetention       = "retention"
+	CategoryHotPool         = "hot_pool"
+	CategoryServer          = "server"
+	CategoryClaudeRouting   = "claude_routing"
+	CategoryImageGeneration = "image_generation"
 )
 
 // SettingValueType 设置值类型常量
@@ -35,6 +36,7 @@ const (
 	ValueTypeBool     = "bool"
 	ValueTypeDuration = "duration"
 	ValueTypeJSON     = "json"
+	ValueTypePassword = "password"
 )
 
 // CategoryInfo 分类信息
@@ -115,6 +117,13 @@ func NewSettingsService(store store.SettingsStore) *SettingsService {
 				Description: "记录 Claude 端点手动切换状态",
 				Icon:        "🧭",
 				Order:       8,
+			},
+			CategoryImageGeneration: {
+				Name:        CategoryImageGeneration,
+				Label:       "图像生成",
+				Description: "配置内置 Image Gen 使用的单一 OpenAI 兼容上游",
+				Icon:        "🖼️",
+				Order:       9,
 			},
 			CategoryServer: {
 				Name:        CategoryServer,
@@ -363,6 +372,9 @@ func (s *SettingsService) GetAllDefaults() []*store.SettingRecord {
 	// ClaudeRouting 设置
 	defaults = append(defaults, s.getDefaultsForCategory(CategoryClaudeRouting)...)
 
+	// Image Generation 设置
+	defaults = append(defaults, s.getDefaultsForCategory(CategoryImageGeneration)...)
+
 	return defaults
 }
 
@@ -443,6 +455,16 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 			{Category: CategoryClaudeRouting, Key: "set_by", Value: "", ValueType: ValueTypeString, Label: "设置来源", Description: "最近一次路由模式修改来源", DisplayOrder: 3},
 			{Category: CategoryClaudeRouting, Key: "set_at", Value: "", ValueType: ValueTypeString, Label: "设置时间", Description: "最近一次路由模式修改时间", DisplayOrder: 4},
 			{Category: CategoryClaudeRouting, Key: "fallback_enabled", Value: "true", ValueType: ValueTypeBool, Label: "允许回退", Description: "手动优选模式下允许失败后回退其他端点", DisplayOrder: 5},
+		}
+
+	case CategoryImageGeneration:
+		return []*store.SettingRecord{
+			{Category: CategoryImageGeneration, Key: "enabled", Value: "false", ValueType: ValueTypeBool, Label: "启用图像生成", Description: "接管 POST /v1/images/generations 并转发到下方配置的上游", DisplayOrder: 1},
+			{Category: CategoryImageGeneration, Key: "endpoint_url", Value: "", ValueType: ValueTypeString, Label: "完整请求 URL", Description: "例如 https://api.duckcoding.ai/v1/images/generations", DisplayOrder: 2},
+			{Category: CategoryImageGeneration, Key: "api_key", Value: "", ValueType: ValueTypePassword, Label: "API Key", Description: "仅保存在本机数据库且不会回显；重置本分类可清除", DisplayOrder: 3},
+			{Category: CategoryImageGeneration, Key: "model", Value: "gpt-image-2", ValueType: ValueTypeString, Label: "默认模型", Description: "请求未提供 model 时使用；通常为 gpt-image-2", DisplayOrder: 4},
+			{Category: CategoryImageGeneration, Key: "fixed_price_usd", Value: "0", ValueType: ValueTypeFloat, Label: "每次生图价格（USD）", Description: "每个成功的生图请求固定记录这一笔成本；0 表示暂不计费", DisplayOrder: 5},
+			{Category: CategoryImageGeneration, Key: "timeout", Value: "300s", ValueType: ValueTypeDuration, Label: "请求超时", Description: "单次生图请求的最长等待时间", DisplayOrder: 6},
 		}
 
 	case CategoryHotPool:

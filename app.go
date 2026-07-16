@@ -773,6 +773,7 @@ func (a *App) setupProxyHandler() {
 		a.proxyHandler.SetPrivacyFilter(a.privacyService)
 	}
 	a.proxyHandler.SetCodexModelListProvider(&codexModelListProvider{app: a})
+	a.proxyHandler.SetImageGenerationConfigProvider(&imageGenerationConfigProvider{app: a})
 }
 
 // startProxyServer 启动 HTTP 代理服务器

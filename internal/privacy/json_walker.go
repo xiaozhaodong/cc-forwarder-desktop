@@ -35,9 +35,16 @@ func walkerForPath(requestPath string) segmentMatcher {
 		return matchClaudeMessagesTextPath
 	case "/v1/responses", "/v1/responses/compact":
 		return matchCodexResponsesTextPath
+	case "/v1/images/generations":
+		return matchOpenAIImagesGenerationsTextPath
 	default:
 		return nil
 	}
+}
+
+// matchOpenAIImagesGenerationsTextPath 匹配 Image API 的 prompt 字段。
+func matchOpenAIImagesGenerationsTextPath(path []pathElem) bool {
+	return len(path) == 1 && path[0].Key == "prompt" && path[0].Index < 0
 }
 
 // matchClaudeMessagesTextPath 匹配 Claude /v1/messages 可扫描文本字段：

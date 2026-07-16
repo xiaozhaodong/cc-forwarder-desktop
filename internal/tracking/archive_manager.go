@@ -416,6 +416,9 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 
 // calculateCostV2 计算请求成本（v5.0.1+: 支持分开的 5m/1h 缓存）
 func (am *ArchiveManager) calculateCostV2(req *ActiveRequest) CostBreakdown {
+	if req != nil && req.CostOverrideUSD != nil {
+		return CostBreakdown{TotalCost: *req.CostOverrideUSD}
+	}
 	am.cacheMu.RLock()
 	defer am.cacheMu.RUnlock()
 

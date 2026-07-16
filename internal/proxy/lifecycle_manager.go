@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -406,6 +407,26 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 
 	// 调用统一的状态通知方法
 	rlm.notifyStatusChange("completed", state.retryCount, 200)
+}
+
+// CompleteRequestWithCost 完成不按 Token 计价的请求，并记录调用方计算的固定成本。
+func (rlm *RequestLifecycleManager) CompleteRequestWithCost(costUSD float64) {
+	duration := time.Since(rlm.startTime)
+	state := rlm.snapshotState()
+	modelName := rlm.GetModelName()
+	if modelName == "" {
+		modelName = "unknown"
+	}
+	if rlm.usageTracker != nil && rlm.requestID != "" {
+		rlm.usageTracker.RecordRequestSuccessWithCost(rlm.requestID, modelName, duration, costUSD)
+		slog.Info("✅ [固定成本请求完成]",
+			"request_id", rlm.requestID,
+			"endpoint", state.endpointName,
+			"model", modelName,
+			"cost_usd", costUSD,
+			"duration_ms", duration.Milliseconds())
+	}
+	rlm.notifyStatusChange("completed", state.retryCount, http.StatusOK)
 }
 
 // CompleteRequestWithQuality 完成请求并标记数据质量问题
