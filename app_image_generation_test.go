@@ -46,6 +46,23 @@ func TestValidateImageGenerationSettingUpdates_RequiresURLAndKeyWhenEnabled(t *t
 	}
 }
 
+func TestImageGenerationConfigProvider_ReadsDirectConnect(t *testing.T) {
+	app := newImageGenerationSettingsTestApp(t)
+	if err := app.settingsService.Set(context.Background(), service.CategoryImageGeneration, "direct_connect", "true"); err != nil {
+		t.Fatalf("set direct_connect failed: %v", err)
+	}
+	config, err := (&imageGenerationConfigProvider{app: app}).GetImageGenerationConfig(context.Background())
+	if err != nil {
+		t.Fatalf("get image generation config failed: %v", err)
+	}
+	if !config.DirectConnect {
+		t.Fatal("expected direct image connection to be enabled")
+	}
+	if config.DirectPortMin != 31080 || config.DirectPortMax != 31179 {
+		t.Fatalf("unexpected direct source port range: %d-%d", config.DirectPortMin, config.DirectPortMax)
+	}
+}
+
 func newImageGenerationSettingsTestApp(t *testing.T) *App {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")

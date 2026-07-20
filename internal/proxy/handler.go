@@ -52,6 +52,7 @@ type Handler struct {
 	imageHTTPInitErr              error
 	imageHTTPTransport            *http.Transport
 	imageHTTPClient               *http.Client
+	imageDirectHTTPClientFactory  func(int, int) (*http.Client, func(), error)
 	// 🔧 [Critical修复] 保存共享的SuspensionManager实例的引用
 	// 确保在SetUsageTracker中重建Handler时保持共享状态
 	sharedSuspensionManager handlers.SuspensionManager

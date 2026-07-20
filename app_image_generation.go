@@ -10,6 +10,7 @@ import (
 
 	"cc-forwarder/internal/proxy"
 	"cc-forwarder/internal/service"
+	"cc-forwarder/internal/transport"
 )
 
 type imageGenerationConfigProvider struct {
@@ -21,8 +22,20 @@ func (p *imageGenerationConfigProvider) GetImageGenerationConfig(ctx context.Con
 		return proxy.ImageGenerationConfig{}, nil
 	}
 	settings := p.app.settingsService
+	directConnect := settings.GetBool(ctx, service.CategoryImageGeneration, "direct_connect", false)
+	var directPortMin, directPortMax int
+	if directConnect {
+		var err error
+		directPortMin, directPortMax, err = transport.ParseSourcePortRange(p.app.getSettingString(ctx, service.CategoryImageGeneration, "direct_source_port_range", "31080-31179"))
+		if err != nil {
+			return proxy.ImageGenerationConfig{}, err
+		}
+	}
 	return proxy.ImageGenerationConfig{
 		Enabled:       settings.GetBool(ctx, service.CategoryImageGeneration, "enabled", false),
+		DirectConnect: directConnect,
+		DirectPortMin: directPortMin,
+		DirectPortMax: directPortMax,
 		EndpointURL:   strings.TrimSpace(p.app.getSettingString(ctx, service.CategoryImageGeneration, "endpoint_url", "")),
 		APIKey:        strings.TrimSpace(p.app.getSettingString(ctx, service.CategoryImageGeneration, "api_key", "")),
 		Model:         strings.TrimSpace(p.app.getSettingString(ctx, service.CategoryImageGeneration, "model", "gpt-image-2")),
@@ -36,7 +49,7 @@ func (a *App) validateImageGenerationSettingUpdates(ctx context.Context, updates
 		return nil
 	}
 	values := map[string]string{}
-	for _, key := range []string{"enabled", "endpoint_url", "api_key", "model", "fixed_price_usd", "timeout"} {
+	for _, key := range []string{"enabled", "direct_connect", "direct_source_port_range", "endpoint_url", "api_key", "model", "fixed_price_usd", "timeout"} {
 		value, err := a.settingsService.GetValue(ctx, service.CategoryImageGeneration, key)
 		if err != nil {
 			return fmt.Errorf("读取图像生成设置失败: %w", err)
@@ -69,6 +82,9 @@ func (a *App) validateImageGenerationSettingUpdates(ctx context.Context, updates
 		if err != nil || timeout <= 0 || timeout > 30*time.Minute {
 			return fmt.Errorf("图像生成请求超时必须在 0 到 30 分钟之间，例如 300s")
 		}
+	}
+	if _, _, err := transport.ParseSourcePortRange(values["direct_source_port_range"]); err != nil {
+		return err
 	}
 	if values["model"] == "" {
 		return fmt.Errorf("图像生成默认模型不能为空")

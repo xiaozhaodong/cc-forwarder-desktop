@@ -45,6 +45,10 @@ func TestImageGeneration_ForwardsConfiguredProviderAndTracksRequest(t *testing.T
 	handler := NewHandler(endpointManager, &config.Config{})
 	handler.SetMonitoringMiddleware(middleware.NewMonitoringMiddleware(endpointManager))
 	handler.SetUsageTracker(tracker)
+	handler.imageDirectHTTPClientFactory = func(int, int) (*http.Client, func(), error) {
+		t.Fatal("default image generation route must not use direct client")
+		return nil, nil, nil
+	}
 	handler.SetImageGenerationConfigProvider(staticImageGenerationConfigProvider{config: ImageGenerationConfig{
 		Enabled:       true,
 		EndpointURL:   upstream.URL + openAIImagesGenerationsPath,
@@ -102,6 +106,49 @@ func TestImageGeneration_ForwardsConfiguredProviderAndTracksRequest(t *testing.T
 		return
 	}
 	t.Fatal("expected image generation request in request tracking")
+}
+
+func TestImageGeneration_DirectConnectUsesDedicatedClient(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"b64_json":"aW1hZ2U="}]}`))
+	}))
+	defer upstream.Close()
+
+	directClientUsed := false
+	directPortMin := 0
+	directPortMax := 0
+	handler := NewHandler(endpoint.NewManager(&config.Config{}), &config.Config{})
+	handler.imageDirectHTTPClientFactory = func(startPort, endPort int) (*http.Client, func(), error) {
+		directClientUsed = true
+		directPortMin = startPort
+		directPortMax = endPort
+		return upstream.Client(), func() {}, nil
+	}
+	handler.SetImageGenerationConfigProvider(staticImageGenerationConfigProvider{config: ImageGenerationConfig{
+		Enabled:       true,
+		DirectConnect: true,
+		DirectPortMin: 31080,
+		DirectPortMax: 31179,
+		EndpointURL:   upstream.URL + openAIImagesGenerationsPath,
+		APIKey:        "secret-key",
+		Model:         "gpt-image-2",
+		Timeout:       5 * time.Second,
+	}})
+
+	req := httptest.NewRequest(http.MethodPost, openAIImagesGenerationsPath, strings.NewReader(`{"prompt":"direct test"}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !directClientUsed {
+		t.Fatal("expected dedicated direct image client to be used")
+	}
+	if directPortMin != 31080 || directPortMax != 31179 {
+		t.Fatalf("unexpected direct source port range: %d-%d", directPortMin, directPortMax)
+	}
 }
 
 func TestImageGeneration_DisabledReturnsExplicitErrorWithoutEndpointFallback(t *testing.T) {

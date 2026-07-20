@@ -460,11 +460,13 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 	case CategoryImageGeneration:
 		return []*store.SettingRecord{
 			{Category: CategoryImageGeneration, Key: "enabled", Value: "false", ValueType: ValueTypeBool, Label: "启用图像生成", Description: "接管 POST /v1/images/generations 并转发到下方配置的上游", DisplayOrder: 1},
-			{Category: CategoryImageGeneration, Key: "endpoint_url", Value: "", ValueType: ValueTypeString, Label: "完整请求 URL", Description: "例如 https://api.duckcoding.ai/v1/images/generations", DisplayOrder: 2},
-			{Category: CategoryImageGeneration, Key: "api_key", Value: "", ValueType: ValueTypePassword, Label: "API Key", Description: "仅保存在本机数据库且不会回显；重置本分类可清除", DisplayOrder: 3},
-			{Category: CategoryImageGeneration, Key: "model", Value: "gpt-image-2", ValueType: ValueTypeString, Label: "默认模型", Description: "请求未提供 model 时使用；通常为 gpt-image-2", DisplayOrder: 4},
-			{Category: CategoryImageGeneration, Key: "fixed_price_usd", Value: "0", ValueType: ValueTypeFloat, Label: "每次生图价格（USD）", Description: "每个成功的生图请求固定记录这一笔成本；0 表示暂不计费", DisplayOrder: 5},
-			{Category: CategoryImageGeneration, Key: "timeout", Value: "300s", ValueType: ValueTypeDuration, Label: "请求超时", Description: "单次生图请求的最长等待时间", DisplayOrder: 6},
+			{Category: CategoryImageGeneration, Key: "direct_connect", Value: "false", ValueType: ValueTypeBool, Label: "生图直连", Description: "开启后仅生图连接使用下方专用源端口；需在 Surge 规则中将同一 SRC-PORT 范围设为 DIRECT", DisplayOrder: 2},
+			{Category: CategoryImageGeneration, Key: "direct_source_port_range", Value: "31080-31179", ValueType: ValueTypeString, Label: "直连源端口范围", Description: "Surge 规则示例：SRC-PORT,31080-31179,DIRECT；必须放在 MyAiCode 等域名规则之前", DisplayOrder: 3},
+			{Category: CategoryImageGeneration, Key: "endpoint_url", Value: "", ValueType: ValueTypeString, Label: "完整请求 URL", Description: "例如 https://api.duckcoding.ai/v1/images/generations", DisplayOrder: 4},
+			{Category: CategoryImageGeneration, Key: "api_key", Value: "", ValueType: ValueTypePassword, Label: "API Key", Description: "仅保存在本机数据库且不会回显；重置本分类可清除", DisplayOrder: 5},
+			{Category: CategoryImageGeneration, Key: "model", Value: "gpt-image-2", ValueType: ValueTypeString, Label: "默认模型", Description: "请求未提供 model 时使用；通常为 gpt-image-2", DisplayOrder: 6},
+			{Category: CategoryImageGeneration, Key: "fixed_price_usd", Value: "0", ValueType: ValueTypeFloat, Label: "每次生图价格（USD）", Description: "每个成功的生图请求固定记录这一笔成本；0 表示暂不计费", DisplayOrder: 7},
+			{Category: CategoryImageGeneration, Key: "timeout", Value: "300s", ValueType: ValueTypeDuration, Label: "请求超时", Description: "单次生图请求的最长等待时间", DisplayOrder: 8},
 		}
 
 	case CategoryHotPool:

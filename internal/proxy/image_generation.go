@@ -22,6 +22,9 @@ const openAIImagesGenerationsPath = "/v1/images/generations"
 // ImageGenerationConfig 是独立、单上游的图像生成配置。
 type ImageGenerationConfig struct {
 	Enabled       bool
+	DirectConnect bool
+	DirectPortMin int
+	DirectPortMax int
 	EndpointURL   string
 	APIKey        string
 	Model         string
@@ -96,11 +99,12 @@ func (h *Handler) handleImageGeneration(ctx context.Context, w http.ResponseWrit
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	upstreamReq.Header.Set("Accept", "application/json")
 
-	client, err := h.getImageGenerationHTTPClient()
+	client, releaseClient, err := h.getImageGenerationHTTPClient(config)
 	if err != nil {
 		h.failImageGenerationRequest(w, lifecycleManager, http.StatusInternalServerError, "image_generation_transport_error", err.Error())
 		return
 	}
+	defer releaseClient()
 	lifecycleManager.UpdateStatus("forwarding", 0, 0)
 	resp, err := client.Do(upstreamReq)
 	if err != nil {
@@ -146,7 +150,19 @@ func (h *Handler) loadImageGenerationConfig(ctx context.Context) (ImageGeneratio
 	return h.imageGenerationConfigProvider.GetImageGenerationConfig(ctx)
 }
 
-func (h *Handler) getImageGenerationHTTPClient() (*http.Client, error) {
+func (h *Handler) getImageGenerationHTTPClient(config ImageGenerationConfig) (*http.Client, func(), error) {
+	if config.DirectConnect {
+		if h.imageDirectHTTPClientFactory != nil {
+			return h.imageDirectHTTPClientFactory(config.DirectPortMin, config.DirectPortMax)
+		}
+		directTransport, err := transport.CreateSourcePortTransport(config.DirectPortMin, config.DirectPortMax)
+		if err != nil {
+			return nil, nil, err
+		}
+		directTransport.DisableCompression = true
+		client := &http.Client{Transport: directTransport}
+		return client, directTransport.CloseIdleConnections, nil
+	}
 	h.imageHTTPInitOnce.Do(func() {
 		if h.config == nil {
 			h.imageHTTPInitErr = fmt.Errorf("handler config is nil")
@@ -159,7 +175,7 @@ func (h *Handler) getImageGenerationHTTPClient() (*http.Client, error) {
 		h.imageHTTPTransport.DisableCompression = true
 		h.imageHTTPClient = &http.Client{Transport: h.imageHTTPTransport}
 	})
-	return h.imageHTTPClient, h.imageHTTPInitErr
+	return h.imageHTTPClient, func() {}, h.imageHTTPInitErr
 }
 
 func prepareImageGenerationRequestBody(bodyBytes []byte, defaultModel string) ([]byte, string, error) {

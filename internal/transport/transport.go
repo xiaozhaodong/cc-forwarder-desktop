@@ -14,17 +14,7 @@ import (
 
 // CreateTransport creates an HTTP transport with optional proxy support
 func CreateTransport(cfg *config.Config) (*http.Transport, error) {
-	transport := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
+	transport := newBaseTransport()
 
 	// If proxy is not enabled, return default transport
 	if !cfg.Proxy.Enabled {
@@ -49,6 +39,20 @@ func CreateTransport(cfg *config.Config) (*http.Transport, error) {
 		return createSOCKS5ProxyTransport(cfg, transport)
 	default:
 		return nil, fmt.Errorf("unsupported proxy type: %s", cfg.Proxy.Type)
+	}
+}
+
+func newBaseTransport() *http.Transport {
+	return &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
 	}
 }
 
