@@ -88,7 +88,7 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
               <Command size={16} strokeWidth={3} />
             </div>
             <span className="font-bold text-base xl:text-lg tracking-tight text-slate-900 whitespace-nowrap">
-              Claude Request Forwarder
+              CC Gateway
             </span>
           </div>
 
