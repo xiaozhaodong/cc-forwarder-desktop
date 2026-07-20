@@ -35,7 +35,7 @@ func walkerForPath(requestPath string) segmentMatcher {
 		return matchClaudeMessagesTextPath
 	case "/v1/responses", "/v1/responses/compact":
 		return matchCodexResponsesTextPath
-	case "/v1/images/generations":
+	case "/v1/images/generations", "/v1/images/edits":
 		return matchOpenAIImagesGenerationsTextPath
 	default:
 		return nil

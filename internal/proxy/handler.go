@@ -565,7 +565,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 创建统一的请求生命周期管理器
 	lifecycleManager := NewRequestLifecycleManagerWithRecoverySignal(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus, h.recoverySignalManager)
 	// Codex /v1/responses 链路分离，不挂载 endpoint 失败追踪语义
-	if !h.isAccountPipelinePath(r.URL.Path) && r.URL.Path != openAIImagesGenerationsPath {
+	if !h.isAccountPipelinePath(r.URL.Path) && !isImageAPIPath(r.URL.Path) {
 		// 📊 [失败追踪] 设置端点管理器，用于记录成功/失败
 		lifecycleManager.SetEndpointManager(h.endpointManager)
 	}
@@ -625,6 +625,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Path == openAIImagesGenerationsPath {
 		h.handleImageGeneration(ctx, w, r, bodyBytes, lifecycleManager)
+		return
+	}
+	if r.URL.Path == openAIImagesEditsPath {
+		h.handleImageEdit(ctx, w, r, bodyBytes, lifecycleManager)
 		return
 	}
 
@@ -1015,6 +1019,9 @@ func (h *Handler) detectSSERequest(r *http.Request, bodyBytes []byte) bool {
 	// 3. 请求体包含stream参数为true（Anthropic/OpenAI常见格式）
 	bodyStr := string(bodyBytes)
 	if strings.Contains(bodyStr, `"stream":true`) || strings.Contains(bodyStr, `"stream": true`) {
+		return true
+	}
+	if r.URL.Path == openAIImagesEditsPath && imageEditMultipartStreamEnabled(bodyBytes, r.Header.Get("Content-Type")) {
 		return true
 	}
 

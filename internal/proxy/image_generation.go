@@ -17,7 +17,10 @@ import (
 	"cc-forwarder/internal/transport"
 )
 
-const openAIImagesGenerationsPath = "/v1/images/generations"
+const (
+	openAIImagesGenerationsPath = "/v1/images/generations"
+	openAIImagesEditsPath       = "/v1/images/edits"
+)
 
 // ImageGenerationConfig 是独立、单上游的图像生成配置。
 type ImageGenerationConfig struct {
@@ -37,7 +40,25 @@ type imageGenerationRequest struct {
 	Prompt string `json:"prompt"`
 }
 
+type preparedImageAPIRequest struct {
+	Body        []byte
+	ContentType string
+	Model       string
+}
+
+func isImageAPIPath(path string) bool {
+	return path == openAIImagesGenerationsPath || path == openAIImagesEditsPath
+}
+
 func (h *Handler) handleImageGeneration(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, lifecycleManager *RequestLifecycleManager) {
+	h.handleImageAPIRequest(ctx, w, r, bodyBytes, lifecycleManager)
+}
+
+func (h *Handler) handleImageEdit(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, lifecycleManager *RequestLifecycleManager) {
+	h.handleImageAPIRequest(ctx, w, r, bodyBytes, lifecycleManager)
+}
+
+func (h *Handler) handleImageAPIRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, lifecycleManager *RequestLifecycleManager) {
 	lifecycleManager.SetUpstream("endpoint", "image_generation", "image-generation", 0)
 	lifecycleManager.SetEndpoint("image-generation", "", "image")
 	if r.Method != http.MethodPost {
@@ -58,19 +79,20 @@ func (h *Handler) handleImageGeneration(ctx context.Context, w http.ResponseWrit
 		h.failImageGenerationRequest(w, lifecycleManager, http.StatusServiceUnavailable, "image_generation_not_configured", "image generation provider is not configured or enabled")
 		return
 	}
-	if err := validateImageGenerationEndpoint(config.EndpointURL); err != nil {
+	upstreamURL, err := resolveImageAPIEndpoint(config.EndpointURL, r.URL.Path)
+	if err != nil {
 		h.failImageGenerationRequest(w, lifecycleManager, http.StatusServiceUnavailable, "image_generation_invalid_config", err.Error())
 		return
 	}
 
-	requestBody, model, err := prepareImageGenerationRequestBody(bodyBytes, config.Model)
+	prepared, err := prepareImageAPIRequest(r, bodyBytes, config.Model)
 	if err != nil {
 		h.failImageGenerationRequest(w, lifecycleManager, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
-	lifecycleManager.SetModel(model)
+	lifecycleManager.SetModel(prepared.Model)
 
-	requestBody, err = h.applyImageGenerationPrivacyFilter(r, requestBody, providerName)
+	prepared.Body, err = h.applyImageAPIPrivacyFilter(r, prepared, providerName)
 	if err != nil {
 		if policyErr := handlers.AsPrivacyPolicyError(err); policyErr != nil {
 			lifecycleManager.FailRequest(handlers.PrivacyFailureReason(policyErr), policyErr.Message, policyErr.StatusCode)
@@ -89,15 +111,17 @@ func (h *Handler) handleImageGeneration(ctx context.Context, w http.ResponseWrit
 	defer cancel()
 	requestCtx = withWroteRequestTrace(requestCtx, lifecycleManager.SetFirstTokenStartTime)
 
-	upstreamReq, err := http.NewRequestWithContext(requestCtx, http.MethodPost, config.EndpointURL, bytes.NewReader(requestBody))
+	upstreamReq, err := http.NewRequestWithContext(requestCtx, http.MethodPost, upstreamURL, bytes.NewReader(prepared.Body))
 	if err != nil {
 		h.failImageGenerationRequest(w, lifecycleManager, http.StatusInternalServerError, "image_generation_request_error", err.Error())
 		return
 	}
-	copyImageGenerationRequestHeaders(r, upstreamReq)
+	copyImageAPIRequestHeaders(r, upstreamReq)
 	upstreamReq.Header.Set("Authorization", "Bearer "+config.APIKey)
-	upstreamReq.Header.Set("Content-Type", "application/json")
-	upstreamReq.Header.Set("Accept", "application/json")
+	upstreamReq.Header.Set("Content-Type", prepared.ContentType)
+	if upstreamReq.Header.Get("Accept") == "" {
+		upstreamReq.Header.Set("Accept", "application/json")
+	}
 
 	client, releaseClient, err := h.getImageGenerationHTTPClient(config)
 	if err != nil {
@@ -136,11 +160,30 @@ func (h *Handler) handleImageGeneration(ctx context.Context, w http.ResponseWrit
 	}
 
 	w.WriteHeader(resp.StatusCode)
-	if _, err := io.Copy(w, resp.Body); err != nil {
+	isEventStream := strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
+	if err := copyImageAPIResponse(w, resp.Body, isEventStream); err != nil {
 		lifecycleManager.FailRequest("image_generation_response_write_error", err.Error(), resp.StatusCode)
 		return
 	}
 	lifecycleManager.CompleteRequestWithCost(config.FixedPriceUSD)
+}
+
+func prepareImageAPIRequest(r *http.Request, bodyBytes []byte, defaultModel string) (preparedImageAPIRequest, error) {
+	if r == nil || r.URL == nil {
+		return preparedImageAPIRequest{}, fmt.Errorf("image API request is missing URL")
+	}
+	switch r.URL.Path {
+	case openAIImagesGenerationsPath:
+		body, model, err := prepareImageGenerationRequestBody(bodyBytes, defaultModel)
+		if err != nil {
+			return preparedImageAPIRequest{}, err
+		}
+		return preparedImageAPIRequest{Body: body, ContentType: "application/json", Model: model}, nil
+	case openAIImagesEditsPath:
+		return prepareImageEditRequestBody(bodyBytes, r.Header.Get("Content-Type"), defaultModel)
+	default:
+		return preparedImageAPIRequest{}, fmt.Errorf("unsupported image API path: %s", r.URL.Path)
+	}
 }
 
 func (h *Handler) loadImageGenerationConfig(ctx context.Context) (ImageGenerationConfig, error) {
@@ -208,24 +251,27 @@ func prepareImageGenerationRequestBody(bodyBytes []byte, defaultModel string) ([
 	return encoded, model, nil
 }
 
-func (h *Handler) applyImageGenerationPrivacyFilter(r *http.Request, bodyBytes []byte, providerName string) ([]byte, error) {
+func (h *Handler) applyImageAPIPrivacyFilter(r *http.Request, prepared preparedImageAPIRequest, providerName string) ([]byte, error) {
 	if h == nil || h.privacyFilter == nil {
-		return bodyBytes, nil
+		return prepared.Body, nil
+	}
+	if r.URL.Path == openAIImagesEditsPath && isMultipartImageEditContentType(prepared.ContentType) {
+		return h.applyMultipartImageEditPrivacyFilter(r, prepared.Body, prepared.ContentType, providerName)
 	}
 	request := privacy.Request{
-		Path:         openAIImagesGenerationsPath,
+		Path:         r.URL.Path,
 		Method:       http.MethodPost,
 		UpstreamType: privacy.UpstreamTypeEndpoint,
 		EndpointName: providerName,
-		ContentType:  r.Header.Get("Content-Type"),
+		ContentType:  prepared.ContentType,
 	}
-	return handlers.ApplyPrivacyFilter(h.privacyFilter, r, request, bodyBytes)
+	return handlers.ApplyPrivacyFilter(h.privacyFilter, r, request, prepared.Body)
 }
 
-func copyImageGenerationRequestHeaders(src, dst *http.Request) {
+func copyImageAPIRequestHeaders(src, dst *http.Request) {
 	for key, values := range src.Header {
 		switch strings.ToLower(key) {
-		case "host", "authorization", "x-api-key", "cookie", "content-length", "accept", "content-type":
+		case "host", "authorization", "x-api-key", "cookie", "content-length", "content-type":
 			continue
 		}
 		for _, value := range values {
@@ -240,6 +286,29 @@ func validateImageGenerationEndpoint(raw string) error {
 		return fmt.Errorf("image generation endpoint must be a valid http/https URL")
 	}
 	return nil
+}
+
+func resolveImageAPIEndpoint(raw, requestPath string) (string, error) {
+	if err := validateImageGenerationEndpoint(raw); err != nil {
+		return "", err
+	}
+	trimmed := strings.TrimSpace(raw)
+	if requestPath == openAIImagesGenerationsPath {
+		return trimmed, nil
+	}
+	if requestPath != openAIImagesEditsPath {
+		return "", fmt.Errorf("unsupported image API path: %s", requestPath)
+	}
+
+	parsed, _ := url.Parse(trimmed)
+	cleanPath := strings.TrimSuffix(parsed.Path, "/")
+	const generationSuffix = "/images/generations"
+	if !strings.HasSuffix(cleanPath, generationSuffix) {
+		return "", fmt.Errorf("image generation endpoint must end with /images/generations to derive /images/edits")
+	}
+	parsed.Path = strings.TrimSuffix(cleanPath, generationSuffix) + "/images/edits"
+	parsed.RawPath = ""
+	return parsed.String(), nil
 }
 
 func imageGenerationProviderName(raw string) string {
@@ -281,4 +350,32 @@ func summarizeImageGenerationUpstreamError(body []byte, status int) string {
 		return envelope.Error.Message
 	}
 	return fmt.Sprintf("image generation upstream returned HTTP %d", status)
+}
+
+func copyImageAPIResponse(w http.ResponseWriter, body io.Reader, flush bool) error {
+	if !flush {
+		_, err := io.Copy(w, body)
+		return err
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		_, err := io.Copy(w, body)
+		return err
+	}
+	buffer := make([]byte, 32*1024)
+	for {
+		readCount, readErr := body.Read(buffer)
+		if readCount > 0 {
+			if _, writeErr := w.Write(buffer[:readCount]); writeErr != nil {
+				return writeErr
+			}
+			flusher.Flush()
+		}
+		if readErr == io.EOF {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
 }

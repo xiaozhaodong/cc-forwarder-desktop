@@ -15,7 +15,7 @@
 - 多端点智能路由、健康检查、故障转移与自愈
 - 桌面端启动完成后异步执行端点与账号池批量连通性检查
 - 请求生命周期追踪、Token/成本统计、SQLite 持久化
-- 独立图像生成代理：设置页维护单一 OpenAI 兼容生图 URL / API Key / 每次固定价格，`POST /v1/images/generations` 不进入端点或账号池调度，但保留请求追踪、成本与 prompt 隐私扫描
+- 独立图像 API 代理：设置页维护单一 OpenAI 兼容生图 URL / API Key / 每次固定价格，`POST /v1/images/generations` 与 `POST /v1/images/edits` 不进入端点或账号池调度，但保留请求追踪、成本与 prompt 隐私扫描
 - Codex `/v1/responses/compact` 已接入账号池路由、请求追踪与 OAuth compact 上游透传
 - Claude `/v1/messages` 与 Codex `/v1/responses` 流式尾部断连保护：
   - 独立 upstream context
@@ -64,7 +64,8 @@
 - `internal/service/privacy_service.go`：隐私规则编译先行、原子快照热替换、运行统计
 - `internal/store/privacy_rules.go`：`privacy_settings / privacy_rules` 存储层
 - `internal/proxy/handlers/privacy.go`：PrivacyFilter 接口、attempt cache、策略短路 helper
-- `internal/proxy/image_generation.go`：独立 `/v1/images/generations` 原样转发、错误处理与请求追踪
+- `internal/proxy/image_generation.go`：独立 Image API 共享转发、错误处理与请求追踪
+- `internal/proxy/image_edits.go`：`/v1/images/edits` JSON / multipart 请求适配、默认模型注入与 prompt 隐私处理
 - `internal/accountauth/openai_profile.go`：OAuth 画像解析
 - `internal/accountauth/openai_refresh_token.go`：RT -> AT 刷新与缓存
 - `internal/service/account_pool.go`：账号池 CRUD、测试连通性

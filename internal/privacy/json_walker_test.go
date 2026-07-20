@@ -131,6 +131,14 @@ func TestImageGenerationWalkerOnlyCollectsPrompt(t *testing.T) {
 	}
 }
 
+func TestImageEditJSONWalkerOnlyCollectsPrompt(t *testing.T) {
+	body := `{"model":"gpt-image-2","prompt":"sensitive edit prompt","images":[{"image_url":"https://example.com/source.png"}],"metadata":{"note":"not scanned"}}`
+	segments := mustCollect(t, body, "/v1/images/edits")
+	if len(segments) != 1 || segments[0].Value != "sensitive edit prompt" {
+		t.Fatalf("unexpected image edit segments: %+v", segments)
+	}
+}
+
 func TestReplaceSegmentsKeepsUntouchedBytesIdentical(t *testing.T) {
 	body := `{"model":"m-1.5",  "big": 9007199254740993, "messages":[{"role":"user","content":"secret"}], "stream":false, "temp": 0.30}`
 	segments := mustCollect(t, body, "/v1/messages")
