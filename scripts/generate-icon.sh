@@ -1,5 +1,5 @@
 #!/bin/bash
-# 生成 macOS 风格的 CC-Forwarder 应用图标（彩色版本）
+# 生成 macOS 风格的 AI-Switchboard 应用图标（彩色版本）
 
 OUTPUT="build/appicon.png"
 

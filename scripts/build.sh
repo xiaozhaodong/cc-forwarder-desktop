@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# CC-Forwarder 本地构建测试脚本
+# AI-Switchboard 本地构建测试脚本
 # 用于在推送标签前测试构建过程
 
 set -e
@@ -12,7 +12,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}🚀 CC-Forwarder 本地构建测试${NC}"
+echo -e "${BLUE}🚀 AI-Switchboard 本地构建测试${NC}"
 echo "======================================"
 
 # 检查Go环境
@@ -57,11 +57,11 @@ do
     GOARCH=${PLATFORM#*/}
     
     # 设置二进制文件名
-    BINARY_NAME="cc-forwarder"
-    ARCHIVE_NAME="cc-forwarder-${GOOS}-${GOARCH}"
+    BINARY_NAME="ai-switchboard"
+    ARCHIVE_NAME="ai-switchboard-${GOOS}-${GOARCH}"
     
     if [ "$GOOS" = "windows" ]; then
-        BINARY_NAME="cc-forwarder.exe"
+        BINARY_NAME="ai-switchboard.exe"
     fi
     
     echo -e "${YELLOW}📦 构建 ${GOOS}/${GOARCH}...${NC}"
@@ -113,7 +113,7 @@ EOF
     if [ "$GOOS" = "windows" ]; then
         cat > "dist/${ARCHIVE_NAME}/start.bat" << 'EOF'
 @echo off
-echo 🚀 CC-Forwarder 启动检查...
+echo 🚀 AI-Switchboard 启动检查...
 
 if not exist "config\config.yaml" (
     echo ⚠️ 配置文件不存在，请先复制 config\example.yaml 到 config\config.yaml
@@ -132,14 +132,14 @@ echo 📊 数据库位置: data\usage.db
 echo 🌐 Web界面: http://localhost:8010 (如已启用)
 echo.
 
-echo 🚀 启动 CC-Forwarder...
-cc-forwarder.exe -config config\config.yaml
+echo 🚀 启动 AI-Switchboard...
+ai-switchboard.exe -config config\config.yaml
 pause
 EOF
     else
         cat > "dist/${ARCHIVE_NAME}/start.sh" << 'EOF'
 #!/bin/bash
-echo "🚀 CC-Forwarder 启动检查..."
+echo "🚀 AI-Switchboard 启动检查..."
 
 if [ ! -f "config/config.yaml" ]; then
     echo "⚠️ 配置文件不存在，请先复制 config/example.yaml 到 config/config.yaml"
@@ -162,8 +162,8 @@ echo "📊 数据库位置: data/usage.db"
 echo "🌐 Web界面: http://localhost:8010 (如已启用)"
 echo ""
 
-echo "🚀 启动 CC-Forwarder..."
-./cc-forwarder -config config/config.yaml
+echo "🚀 启动 AI-Switchboard..."
+./ai-switchboard -config config/config.yaml
 EOF
         chmod +x "dist/${ARCHIVE_NAME}/start.sh"
         chmod +x "dist/${ARCHIVE_NAME}/${BINARY_NAME}"
@@ -194,10 +194,10 @@ ls -la dist/
 
 echo ""
 echo -e "${BLUE}🧪 测试版本信息:${NC}"
-if [ -f "dist/cc-forwarder-$(uname -s | tr '[:upper:]' '[:lower:]')-amd64/cc-forwarder" ]; then
-    dist/cc-forwarder-$(uname -s | tr '[:upper:]' '[:lower:]')-amd64/cc-forwarder -version
-elif [ -f "dist/cc-forwarder-darwin-arm64/cc-forwarder" ] && [ "$(uname -m)" = "arm64" ]; then
-    dist/cc-forwarder-darwin-arm64/cc-forwarder -version
+if [ -f "dist/ai-switchboard-$(uname -s | tr '[:upper:]' '[:lower:]')-amd64/ai-switchboard" ]; then
+    dist/ai-switchboard-$(uname -s | tr '[:upper:]' '[:lower:]')-amd64/ai-switchboard -version
+elif [ -f "dist/ai-switchboard-darwin-arm64/ai-switchboard" ] && [ "$(uname -m)" = "arm64" ]; then
+    dist/ai-switchboard-darwin-arm64/ai-switchboard -version
 else
     echo "请手动运行对应平台的二进制文件测试版本信息"
 fi

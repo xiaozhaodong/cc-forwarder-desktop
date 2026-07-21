@@ -5,10 +5,10 @@
   "info": {
     "0000": {
       "ProductVersion": "5.0.0",
-      "CompanyName": "CC-Forwarder",
+      "CompanyName": "AI Switchboard",
       "FileDescription": "Claude/OpenAI API 本地代理转发服务",
-      "LegalCopyright": "Copyright © 2025 CC-Forwarder",
-      "ProductName": "CC-Forwarder",
+      "LegalCopyright": "Copyright © 2025 AI Switchboard",
+      "ProductName": "AI Switchboard",
       "Comments": "高性能 API 代理转发与管理工具"
     }
   }

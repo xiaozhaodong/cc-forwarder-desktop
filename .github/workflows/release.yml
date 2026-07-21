@@ -65,14 +65,14 @@ jobs:
           cd build/bin
 
           # 创建 ZIP
-          if [ -d "CC-Forwarder.app" ]; then
-            zip -r "CC-Forwarder-darwin-${ARCH}.zip" "CC-Forwarder.app"
+          if [ -d "AI-Switchboard.app" ]; then
+            zip -r "AI-Switchboard-darwin-${ARCH}.zip" "AI-Switchboard.app"
           fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cc-forwarder-darwin-${{ matrix.platform == 'darwin/amd64' && 'amd64' || 'arm64' }}
+          name: ai-switchboard-darwin-${{ matrix.platform == 'darwin/amd64' && 'amd64' || 'arm64' }}
           path: build/bin/*.zip
 
   build-windows:
@@ -115,12 +115,12 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          Compress-Archive -Path "build/bin/CC-Forwarder.exe" -DestinationPath "build/bin/CC-Forwarder-windows-amd64.zip"
+          Compress-Archive -Path "build/bin/AI-Switchboard.exe" -DestinationPath "build/bin/AI-Switchboard-windows-amd64.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cc-forwarder-windows-amd64
+          name: ai-switchboard-windows-amd64
           path: build/bin/*.zip
 
   build-linux:
@@ -167,12 +167,12 @@ jobs:
       - name: Package
         run: |
           cd build/bin
-          tar -czf "CC-Forwarder-linux-amd64.tar.gz" "CC-Forwarder"
+          tar -czf "AI-Switchboard-linux-amd64.tar.gz" "AI-Switchboard"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cc-forwarder-linux-amd64
+          name: ai-switchboard-linux-amd64
           path: build/bin/*.tar.gz
 
   release:
@@ -205,24 +205,24 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: CC-Forwarder ${{ env.VERSION }}
+          name: AI-Switchboard ${{ env.VERSION }}
           body: |
-            ## CC-Forwarder ${{ env.VERSION }}
+            ## AI-Switchboard ${{ env.VERSION }}
 
             ### 下载
 
             | 平台 | 文件 |
             |------|------|
-            | macOS (Intel) | `CC-Forwarder-darwin-amd64.zip` |
-            | macOS (Apple Silicon) | `CC-Forwarder-darwin-arm64.zip` |
-            | Windows | `CC-Forwarder-windows-amd64.zip` |
-            | Linux | `CC-Forwarder-linux-amd64.tar.gz` |
+            | macOS (Intel) | `AI-Switchboard-darwin-amd64.zip` |
+            | macOS (Apple Silicon) | `AI-Switchboard-darwin-arm64.zip` |
+            | Windows | `AI-Switchboard-windows-amd64.zip` |
+            | Linux | `AI-Switchboard-linux-amd64.tar.gz` |
 
             ### 安装说明
 
-            **macOS**: 解压后将 `CC-Forwarder.app` 拖入应用程序文件夹
-            **Windows**: 解压后运行 `CC-Forwarder.exe`
-            **Linux**: 解压后运行 `CC-Forwarder`
+            **macOS**: 解压后将 `AI-Switchboard.app` 拖入应用程序文件夹
+            **Windows**: 解压后运行 `AI-Switchboard.exe`
+            **Linux**: 解压后运行 `AI-Switchboard`
 
             ### 校验
 

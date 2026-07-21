@@ -2,7 +2,7 @@
 # 更新 wails dev 开发模式下的应用图标
 
 PNG_ICON="build/appicon.png"
-APP_ICON="build/bin/cc-forwarder.app/Contents/Resources/iconfile.icns"
+APP_ICON="build/bin/AI-Switchboard.app/Contents/Resources/iconfile.icns"
 ICONSET_DIR="build/tmp.iconset"
 
 echo "🎨 更新开发模式应用图标..."
