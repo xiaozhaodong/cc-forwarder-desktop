@@ -75,11 +75,10 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
   return (
     <nav className={`sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-slate-200/60 supports-[backdrop-filter]:bg-white/60 ${titlebarPadding}`}
          style={isWails ? { WebkitAppRegion: 'drag' } : {}}>
-      <div className="max-w-7xl mx-auto px-4 xl:px-6 h-16 flex items-center justify-between gap-4 xl:gap-6"
+      <div className="max-w-7xl mx-auto px-4 xl:px-6 h-16 flex items-center gap-4 xl:gap-6"
            style={isWails ? { WebkitAppRegion: 'no-drag' } : {}}>
-        {/* 左侧：Logo + 导航 */}
-        <div className="flex min-w-0 flex-1 items-center gap-4 xl:gap-8 overflow-hidden">
-          {/* Logo */}
+        {/* 左侧：Logo（flex-1 与右侧等宽撑开，保证中间导航居中） */}
+        <div className="flex flex-1 items-center justify-start">
           <div
             className="flex items-center space-x-2.5 group cursor-pointer"
             onClick={() => onTabChange('overview')}
@@ -91,22 +90,22 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
               CC Gateway
             </span>
           </div>
+        </div>
 
-          {/* 导航标签 */}
-          <div className="hidden md:flex min-w-0 flex-1 xl:flex-none xl:w-auto items-center overflow-x-auto xl:overflow-visible bg-slate-100/50 p-1 rounded-full border border-slate-200/60 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {tabs.map(tab => (
-              <NavItem
-                key={tab.name}
-                label={tab.label}
-                active={activeTab === tab.name}
-                onClick={() => onTabChange(tab.name)}
-              />
-            ))}
-          </div>
+        {/* 中间：导航标签 */}
+        <div className="hidden md:flex min-w-0 items-center overflow-x-auto xl:overflow-visible bg-slate-100/50 p-1 rounded-full border border-slate-200/60 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {tabs.map(tab => (
+            <NavItem
+              key={tab.name}
+              label={tab.label}
+              active={activeTab === tab.name}
+              onClick={() => onTabChange(tab.name)}
+            />
+          ))}
         </div>
 
         {/* 右侧：状态指示器 + 头像 */}
-        <div className="shrink-0 flex items-center space-x-3 lg:space-x-4">
+        <div className="flex flex-1 items-center justify-end space-x-3 lg:space-x-4">
           {/* 连接状态 */}
           <div className="hidden sm:flex items-center px-3 py-1.5 bg-white border border-slate-200 rounded-md shadow-sm text-xs text-slate-500">
             <span className="relative flex h-2 w-2 mr-2">
