@@ -77,6 +77,8 @@ export function GetKeysOverview():Promise<main.KeysOverviewResult>;
 
 export function GetLatestAccountScheduleSnapshot():Promise<main.LatestAccountScheduleSnapshotInfo>;
 
+export function GetLatestEndpointScheduleSnapshot():Promise<main.LatestEndpointScheduleSnapshotInfo>;
+
 export function GetLogStreamStatus():Promise<boolean>;
 
 export function GetModelPricing(arg1:string):Promise<main.ModelPricingInfo>;

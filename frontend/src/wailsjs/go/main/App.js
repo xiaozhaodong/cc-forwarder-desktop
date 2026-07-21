@@ -150,6 +150,10 @@ export function GetLatestAccountScheduleSnapshot() {
   return window['go']['main']['App']['GetLatestAccountScheduleSnapshot']();
 }
 
+export function GetLatestEndpointScheduleSnapshot() {
+  return window['go']['main']['App']['GetLatestEndpointScheduleSnapshot']();
+}
+
 export function GetLogStreamStatus() {
   return window['go']['main']['App']['GetLogStreamStatus']();
 }

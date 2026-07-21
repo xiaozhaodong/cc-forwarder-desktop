@@ -626,6 +626,28 @@ export namespace main {
 	        this.cooldown_reason = source["cooldown_reason"];
 	    }
 	}
+	export class EndpointScheduleDecisionInfo {
+	    name: string;
+	    decision: string;
+	    reason: string;
+	    available_at: string;
+	    runtime_outcome?: string;
+	    runtime_error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new EndpointScheduleDecisionInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.decision = source["decision"];
+	        this.reason = source["reason"];
+	        this.available_at = source["available_at"];
+	        this.runtime_outcome = source["runtime_outcome"];
+	        this.runtime_error = source["runtime_error"];
+	    }
+	}
 	export class EndpointStorageStatus {
 	    enabled: boolean;
 	    storage_type: string;
@@ -831,6 +853,64 @@ export namespace main {
 	        this.final_error = source["final_error"];
 	        this.summary = source["summary"];
 	        this.candidates = this.convertValues(source["candidates"], AccountScheduleCandidateDecisionInfo);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class LatestEndpointScheduleSnapshotInfo {
+	    has_snapshot: boolean;
+	    request_id?: string;
+	    captured_at: string;
+	    updated_at: string;
+	    request_path: string;
+	    active_endpoint_at_selection: string;
+	    selected_endpoint: string;
+	    route_mode: string;
+	    route_endpoint_name: string;
+	    route_fallback_enabled: boolean;
+	    failover_enabled: boolean;
+	    final_outcome: string;
+	    final_error: string;
+	    summary: string;
+	    decisions: EndpointScheduleDecisionInfo[];
+	
+	    static createFrom(source: any = {}) {
+	        return new LatestEndpointScheduleSnapshotInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.has_snapshot = source["has_snapshot"];
+	        this.request_id = source["request_id"];
+	        this.captured_at = source["captured_at"];
+	        this.updated_at = source["updated_at"];
+	        this.request_path = source["request_path"];
+	        this.active_endpoint_at_selection = source["active_endpoint_at_selection"];
+	        this.selected_endpoint = source["selected_endpoint"];
+	        this.route_mode = source["route_mode"];
+	        this.route_endpoint_name = source["route_endpoint_name"];
+	        this.route_fallback_enabled = source["route_fallback_enabled"];
+	        this.failover_enabled = source["failover_enabled"];
+	        this.final_outcome = source["final_outcome"];
+	        this.final_error = source["final_error"];
+	        this.summary = source["summary"];
+	        this.decisions = this.convertValues(source["decisions"], EndpointScheduleDecisionInfo);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

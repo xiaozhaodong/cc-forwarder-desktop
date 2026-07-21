@@ -55,6 +55,27 @@ const reasonLabels = {
   manual_fixed_failure_threshold_tripped: '手动固定目标触发失败阈值'
 };
 
+const negativeCacheLabels = {
+  model_unsupported: '模型不支持',
+  schema_incompatible: '请求 schema 不兼容',
+  payload_too_large: '请求体过大',
+  count_tokens_unsupported: '不支持 count_tokens',
+  client_cancel: '客户端取消'
+};
+
+const resolveReasonLabel = (reason) => {
+  if (!reason) return '-';
+  if (reasonLabels[reason]) return reasonLabels[reason];
+  if (reason.startsWith('manual_fixed_')) {
+    return `手动固定目标：${resolveReasonLabel(reason.slice('manual_fixed_'.length))}`;
+  }
+  if (reason.startsWith('negative_cache_')) {
+    const failureClass = reason.slice('negative_cache_'.length);
+    return `路由负缓存：${negativeCacheLabels[failureClass] || failureClass}`;
+  }
+  return reason;
+};
+
 const routeModeLabels = {
   auto: '自动调度',
   manual_preferred: '手动优选',
@@ -185,7 +206,7 @@ const EndpointScheduleSnapshotCard = ({ snapshot = {}, unsupported = false }) =>
                                     </span>
                                   )}
                                 </div>
-                                <div className="mt-1 text-xs text-slate-500">{reasonLabels[decision.reason] || decision.reason || '-'}</div>
+                                <div className="mt-1 text-xs text-slate-500">{resolveReasonLabel(decision.reason)}</div>
                               </div>
                             </div>
                             {decision.availableAt && (
