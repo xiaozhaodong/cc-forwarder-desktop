@@ -348,7 +348,11 @@ func (s *AccountPoolService) TryEnqueueQuotaRefresh(id int64) bool {
 // ===== 调度/状态回写（供 proxy 使用） =====
 
 func (s *AccountPoolService) ListSchedulableAccounts(ctx context.Context) ([]*store.UpstreamAccountRecord, error) {
-	return s.prepareSchedulableAccounts(ctx, "", "")
+	result, err := s.prepareSchedulableAccounts(ctx, "", "")
+	if err != nil {
+		return nil, err
+	}
+	return result.Accounts, nil
 }
 
 func (s *AccountPoolService) MarkAccountSuccess(ctx context.Context, id int64) error {

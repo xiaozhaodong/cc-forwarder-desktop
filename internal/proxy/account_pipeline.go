@@ -116,13 +116,14 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 	if strings.TrimSpace(requestID) == "" {
 		requestID = newFallbackAccountScheduleRequestID()
 	}
-	accounts, err := h.accountPoolService.PrepareSchedulableAccounts(ctx, requestID, r.URL.Path)
+	schedule, err := h.accountPoolService.PrepareSchedulableAccounts(ctx, requestID, r.URL.Path)
 	if err != nil {
 		lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
 		lifecycleManager.FailRequest("account_pool_load_failed", err.Error(), http.StatusServiceUnavailable)
 		writeAccountPipelineError(w, http.StatusServiceUnavailable, "account_pool_unavailable", "failed to load schedulable accounts")
 		return
 	}
+	accounts := schedule.Accounts
 	if len(accounts) == 0 {
 		_ = h.completeAccountScheduleSnapshot(ctx, requestID, 0, "", svc.AccountScheduleOutcomeNoSchedulableAccounts, "no schedulable account")
 		lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
@@ -146,7 +147,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		attemptStartedAt := time.Now()
 		hasNextAccount := idx < len(accounts)-1
 
-		resp, upstreamCancel, forwardErr := h.forwardRequestToAccount(ctx, r, bodyBytes, acc, isSSE, lifecycleManager)
+		resp, upstreamCancel, traceState, forwardErr := h.forwardRequestToAccount(ctx, r, bodyBytes, acc, isSSE, lifecycleManager)
 		// upstreamCancel 同时可能被 releaseUpstream 和 tail-drain 超时回调持有；context.CancelFunc 幂等，重复调用是安全的。
 		releaseUpstream := func() {
 			if upstreamCancel != nil {
@@ -166,6 +167,14 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			lastErr = forwardErr
 			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, forwardErr.Error(), accountSoftFailureCategoryServerError, 0)
+			// WroteHeaders 前失败 = 请求确定未发出，重放安全；非 pinned 账号立即换
+			// 同层下一候选（软失败计数已照记）。pinned 账号维持穿透语义，保住
+			// 「固定直到严格不可用」：达阈值冷却后由后续请求降级，pin 保留。
+			if !traceState.WroteHeaders() && !schedule.Pinned {
+				logAccountPipelineAttemptFailure(requestID, acc, 0, "connection_failed_before_wrote_headers", forwardErr.Error(), hasNextAccount)
+				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, forwardErr.Error())
+				continue
+			}
 			logAccountPipelineAttemptFailure(requestID, acc, 0, "forward_error", forwardErr.Error(), shouldFailover && hasNextAccount)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, forwardErr.Error())
 			if !shouldFailover {
@@ -442,17 +451,17 @@ func (h *Handler) accountStreamTailDrainTimeout() time.Duration {
 	return defaultAccountStreamTailDrainTimeout
 }
 
-func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, bodyBytes []byte, acc *store.UpstreamAccountRecord, isSSE bool, lifecycleManager *RequestLifecycleManager) (*http.Response, context.CancelFunc, error) {
+func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, bodyBytes []byte, acc *store.UpstreamAccountRecord, isSSE bool, lifecycleManager *RequestLifecycleManager) (*http.Response, context.CancelFunc, *upstreamTraceState, error) {
 	targetURL, err := resolveAccountTargetURL(acc, r.URL.Path, r.URL.RawQuery)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	bodyBytes = prepareCodexAccountBodyForUpstream(bodyBytes, acc, r.URL.Path)
 
 	// 🛡️ 出站隐私过滤（PolicyError 由 handleAccountPipeline 短路，不冷却、不换号）
 	bodyBytes, err = h.applyAccountPrivacyFilter(r, bodyBytes, acc)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	requestCtx := ctx
@@ -460,16 +469,18 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	if isSSE {
 		requestCtx, release = h.newAccountStreamForwardContext(ctx)
 	}
+	var onWroteRequest func(time.Time)
 	if lifecycleManager != nil {
-		requestCtx = withWroteRequestTrace(requestCtx, lifecycleManager.SetFirstTokenStartTime)
+		onWroteRequest = lifecycleManager.SetFirstTokenStartTime
 	}
+	requestCtx, traceState := withUpstreamTrace(requestCtx, onWroteRequest)
 
 	req, err := http.NewRequestWithContext(requestCtx, r.Method, targetURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		if release != nil {
 			release()
 		}
-		return nil, nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, nil, traceState, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	copyRequestHeadersForAccount(r, req)
@@ -477,14 +488,14 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 		if release != nil {
 			release()
 		}
-		return nil, nil, fmt.Errorf("failed to apply account auth: %w", err)
+		return nil, nil, traceState, fmt.Errorf("failed to apply account auth: %w", err)
 	}
 	if accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
 		if accountauth.ExtractChatGPTAccountID(acc.CredentialRaw) == "" {
 			if release != nil {
 				release()
 			}
-			return nil, nil, fmt.Errorf("chatgpt_account_id is missing from credential")
+			return nil, nil, traceState, fmt.Errorf("chatgpt_account_id is missing from credential")
 		}
 		if r.URL.Path == "/v1/models" {
 			applyOpenAIChatGPTModelsHeaders(req, acc.CredentialRaw)
@@ -498,16 +509,16 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 		if release != nil {
 			release()
 		}
-		return nil, nil, err
+		return nil, nil, traceState, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
 		if release != nil {
 			release()
 		}
-		return nil, nil, fmt.Errorf("request failed: %w", err)
+		return nil, nil, traceState, fmt.Errorf("request failed: %w", err)
 	}
-	return resp, release, nil
+	return resp, release, traceState, nil
 }
 
 // applyAccountPrivacyFilter 账号池链路出站隐私过滤。

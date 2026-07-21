@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -77,6 +78,7 @@ func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 type mockAccountPoolService struct {
 	accounts []*store.UpstreamAccountRecord
 	listErr  error
+	pinned   bool
 
 	mu                sync.Mutex
 	previewCalls      []string
@@ -95,18 +97,26 @@ type mockAccountPoolService struct {
 	softFailureShouldFailover *bool
 }
 
-func (m *mockAccountPoolService) PrepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) ([]*store.UpstreamAccountRecord, error) {
+func (m *mockAccountPoolService) PrepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) (servicepkg.AccountScheduleResult, error) {
 	m.mu.Lock()
 	m.prepareCalls = append(m.prepareCalls, accountSchedulePrepareCall{requestID: requestID, requestPath: requestPath})
 	m.mu.Unlock()
-	return m.ListSchedulableAccounts(ctx)
+	accounts, err := m.ListSchedulableAccounts(ctx)
+	if err != nil {
+		return servicepkg.AccountScheduleResult{}, err
+	}
+	return servicepkg.AccountScheduleResult{Accounts: accounts, Pinned: m.pinned}, nil
 }
 
-func (m *mockAccountPoolService) PreviewSchedulableAccounts(ctx context.Context, requestPath string) ([]*store.UpstreamAccountRecord, error) {
+func (m *mockAccountPoolService) PreviewSchedulableAccounts(ctx context.Context, requestPath string) (servicepkg.AccountScheduleResult, error) {
 	m.mu.Lock()
 	m.previewCalls = append(m.previewCalls, requestPath)
 	m.mu.Unlock()
-	return m.ListSchedulableAccounts(ctx)
+	accounts, err := m.ListSchedulableAccounts(ctx)
+	if err != nil {
+		return servicepkg.AccountScheduleResult{}, err
+	}
+	return servicepkg.AccountScheduleResult{Accounts: accounts, Pinned: m.pinned}, nil
 }
 
 func (m *mockAccountPoolService) ListSchedulableAccounts(ctx context.Context) ([]*store.UpstreamAccountRecord, error) {
@@ -919,6 +929,143 @@ func TestAccountPipeline_Generic503RecordedAsServerSoftFailure(t *testing.T) {
 	}
 	if len(service.successCalls) != 0 {
 		t.Fatalf("expected second account not to be attempted on first generic 503, got %+v", service.successCalls)
+	}
+}
+
+// newRefusedConnectionURL 返回一个已释放端口的 URL，对其发起连接会得到
+// connection refused（WroteHeaders 前失败，重放安全类）。
+func newRefusedConnectionURL(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen for refused url failed: %v", err)
+	}
+	addr := listener.Addr().String()
+	_ = listener.Close()
+	return "http://" + addr
+}
+
+func TestAccountPipeline_ConnectionFailureBeforeWroteHeaders_FailsOverImmediatelyWhenNotPinned(t *testing.T) {
+	secondHits := 0
+	secondServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_replay_safe_failover","status":"completed","output":[]}`))
+	}))
+	defer secondServer.Close()
+
+	noFailover := false
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 1, ProviderType: "api_key", AccountName: "refused-main", CredentialRaw: "sk-main", BaseURL: newRefusedConnectionURL(t), Enabled: true, State: "active"},
+			{ID: 2, ProviderType: "api_key", AccountName: "same-tier-backup", CredentialRaw: "sk-backup", BaseURL: secondServer.URL, Enabled: true, State: "active"},
+		},
+		softFailureShouldFailover: &noFailover,
+	}
+	handler := newAccountPipelineTestHandler(t, secondServer.URL, service)
+
+	rec := performResponsesRequest(t, handler)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected replay-safe connection failure to fail over immediately despite below-threshold decision, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if secondHits != 1 {
+		t.Fatalf("expected backup account to serve the request, got hits=%d", secondHits)
+	}
+
+	service.mu.Lock()
+	softFailureCalls := append([]accountSoftFailureCall(nil), service.softFailureCalls...)
+	service.mu.Unlock()
+	if len(softFailureCalls) != 1 || softFailureCalls[0].id != 1 {
+		t.Fatalf("expected exactly one soft failure recorded for refused account, got %+v", softFailureCalls)
+	}
+}
+
+func TestAccountPipeline_ConnectionFailureBeforeWroteHeaders_PinnedAccountDoesNotFailOver(t *testing.T) {
+	secondHits := 0
+	secondServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_should_not_serve","status":"completed","output":[]}`))
+	}))
+	defer secondServer.Close()
+
+	noFailover := false
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 1, ProviderType: "api_key", AccountName: "pinned-refused", CredentialRaw: "sk-main", BaseURL: newRefusedConnectionURL(t), Enabled: true, State: "active"},
+			{ID: 2, ProviderType: "api_key", AccountName: "same-tier-backup", CredentialRaw: "sk-backup", BaseURL: secondServer.URL, Enabled: true, State: "active"},
+		},
+		pinned:                    true,
+		softFailureShouldFailover: &noFailover,
+	}
+	handler := newAccountPipelineTestHandler(t, secondServer.URL, service)
+
+	rec := performResponsesRequest(t, handler)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected pinned account to pass through below-threshold connection failure without failover, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if secondHits != 0 {
+		t.Fatalf("expected backup account not attempted while pinned, got hits=%d", secondHits)
+	}
+
+	service.mu.Lock()
+	softFailureCalls := append([]accountSoftFailureCall(nil), service.softFailureCalls...)
+	service.mu.Unlock()
+	if len(softFailureCalls) != 1 || softFailureCalls[0].id != 1 {
+		t.Fatalf("expected soft failure still recorded for pinned account, got %+v", softFailureCalls)
+	}
+}
+
+func TestAccountPipeline_FailureAfterWroteHeaders_KeepsThresholdSemantics(t *testing.T) {
+	firstHits := 0
+	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstHits++
+		_, _ = io.ReadAll(r.Body)
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Errorf("response writer does not support hijack")
+			return
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("hijack failed: %v", err)
+			return
+		}
+		_ = conn.Close()
+	}))
+	defer firstServer.Close()
+
+	secondHits := 0
+	secondServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_should_not_serve","status":"completed","output":[]}`))
+	}))
+	defer secondServer.Close()
+
+	noFailover := false
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 1, ProviderType: "api_key", AccountName: "drops-after-request", CredentialRaw: "sk-main", BaseURL: firstServer.URL, Enabled: true, State: "active"},
+			{ID: 2, ProviderType: "api_key", AccountName: "same-tier-backup", CredentialRaw: "sk-backup", BaseURL: secondServer.URL, Enabled: true, State: "active"},
+		},
+		softFailureShouldFailover: &noFailover,
+	}
+	handler := newAccountPipelineTestHandler(t, secondServer.URL, service)
+
+	rec := performResponsesRequest(t, handler)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected ambiguous failure after WroteHeaders to keep below-threshold passthrough, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if firstHits != 1 || secondHits != 0 {
+		t.Fatalf("expected no failover for post-WroteHeaders failure below threshold, got first=%d second=%d", firstHits, secondHits)
+	}
+
+	service.mu.Lock()
+	softFailureCalls := append([]accountSoftFailureCall(nil), service.softFailureCalls...)
+	service.mu.Unlock()
+	if len(softFailureCalls) != 1 || softFailureCalls[0].id != 1 {
+		t.Fatalf("expected soft failure recorded for dropped connection, got %+v", softFailureCalls)
 	}
 }
 

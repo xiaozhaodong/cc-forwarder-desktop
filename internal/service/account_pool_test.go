@@ -215,10 +215,14 @@ func TestPrepareSchedulableAccounts_DoesNotExposeManualSelectionForAutomaticChoi
 		t.Fatalf("create second account failed: %v", err)
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-auto-selection", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-auto-selection", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	if orderedSchedule.Pinned {
+		t.Fatal("expected automatic scheduling result not to report pinned selection")
+	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{first.ID, second.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected automatic ranking: got %v want %v", got, want)
 	}
@@ -452,10 +456,11 @@ func TestSwapAccountGroups_ExchangesPrimaryAndBackupGroups(t *testing.T) {
 		t.Fatalf("expected primary-b to remain second backup account, got %+v", accounts[2])
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-after-group-swap", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-after-group-swap", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{backupA.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected promoted backup group to become primary selection, got %v want %v", got, want)
 	}
@@ -611,10 +616,11 @@ func TestSwapAccountGroups_BackupAndColdPreservesPreferredPrimaryAccount(t *test
 		t.Fatalf("expected preferred primary account to remain selected, got ok=%v accountID=%d", ok, accountID)
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-after-preserving-primary-preferred", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-after-preserving-primary-preferred", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{primaryB.ID, primaryA.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected preferred primary account to stay ahead after swap, got %v want %v", got, want)
 	}
@@ -688,10 +694,11 @@ func TestSetGroupActiveAccount_PrefersChosenBackupAccountWithoutPinningRecovered
 		t.Fatal("expected setting backup preferred account to report changed")
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-backup-preferred", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-backup-preferred", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts during primary cooldown failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{backupB.ID, backupA.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected chosen backup account to lead backup group, got %v want %v", got, want)
 	}
@@ -700,10 +707,11 @@ func TestSetGroupActiveAccount_PrefersChosenBackupAccountWithoutPinningRecovered
 		t.Fatal("expected primary account recovery to update runtime state")
 	}
 
-	ordered, err = svc.PrepareSchedulableAccounts(ctx, "req-primary-recovered", "/v1/responses")
+	recoveredSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-primary-recovered", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts after primary recovery failed: %v", err)
 	}
+	ordered = recoveredSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{primaryA.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected scheduler to return to primary group after recovery, got %v want %v", got, want)
 	}
@@ -746,10 +754,11 @@ func TestSetGroupActiveAccount_PrefersChosenPrimaryAccountWithinPrimaryGroup(t *
 		t.Fatal("expected setting primary preferred account to report changed")
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-primary-preferred", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-primary-preferred", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{primaryB.ID, primaryA.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected chosen primary account to lead primary group, got %v want %v", got, want)
 	}
@@ -841,10 +850,11 @@ func TestMoveAccountToTier_ChangingPrimaryAccountWithinSameTierDoesNotCreateManu
 		t.Fatal("expected switching within the same primary group not to create manual selection")
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-same-tier-manual-switch", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-same-tier-manual-switch", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{first.ID, second.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected automatic scheduling order to remain unchanged within the same primary group, got %v want %v", got, want)
 	}
@@ -904,10 +914,11 @@ func TestUpdateAccount_PreservesPinnedSelectionWhenPinnedAccountPriorityChanges(
 		t.Fatalf("UpdateAccount first failed: %v", err)
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-pinned-priority-edit", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-pinned-priority-edit", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{first.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected pinned account to remain selected after priority edit, got %v want %v", got, want)
 	}
@@ -1004,10 +1015,11 @@ func TestPinAccountSelection_PreservesPinnedTargetAcrossTransientCooldown(t *tes
 		t.Fatalf("expected manual selection to stay pinned on primary during cooldown, got ok=%v accountID=%d", ok, accountID)
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-manual-cooldown-degrade", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-manual-cooldown-degrade", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{backup.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected cooled-down primary to be skipped until cooldown ends, got %v want %v", got, want)
 	}
@@ -1041,10 +1053,11 @@ func TestPinAccountSelection_PreservesPinnedTargetAcrossTransientCooldown(t *tes
 		t.Fatalf("reloadAccountIntoCache primary failed: %v", err)
 	}
 
-	ordered, err = svc.PrepareSchedulableAccounts(ctx, "req-manual-cooldown-recovered", "/v1/responses")
+	cooldownRecoveredSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-manual-cooldown-recovered", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts after cooldown failed: %v", err)
 	}
+	ordered = cooldownRecoveredSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{primary.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected manual pinned primary to take effect after cooldown ends, got %v want %v", got, want)
 	}
@@ -1105,10 +1118,11 @@ func TestManualPinnedSelection_IsNotOverwrittenByLaterSuccessFromAnotherAccount(
 		t.Fatalf("expected manual pinned selection to remain on primary, got ok=%v accountID=%d", ok, accountID)
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-manual-pin-not-overwritten", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-manual-pin-not-overwritten", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{primary.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected manual pinned selection to remain effective after backup success, got %v want %v", got, want)
 	}
@@ -1143,10 +1157,11 @@ func TestMoveAccountToTier_MovingSinglePrimaryAccountToBackupKeepsAutoMode(t *te
 		t.Fatalf("create second account failed: %v", err)
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-before-single-tier-backup", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-before-single-tier-backup", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts before backup no-op failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{first.ID, second.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected baseline selected accounts: got %v want %v", got, want)
 	}
@@ -1175,10 +1190,11 @@ func TestMoveAccountToTier_MovingSinglePrimaryAccountToBackupKeepsAutoMode(t *te
 		t.Fatalf("expected latest snapshot to be cleared after explicit backup move, got before=%+v after=%+v", snapshotBefore, snapshotAfter)
 	}
 
-	ordered, err = svc.PrepareSchedulableAccounts(ctx, "req-after-single-tier-backup", "/v1/responses")
+	afterBackupSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-after-single-tier-backup", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts after backup move failed: %v", err)
 	}
+	ordered = afterBackupSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{first.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected auto scheduling to remain on primary group after moving another account to backup, got %v want %v", got, want)
 	}
@@ -1252,10 +1268,11 @@ func TestMoveAccountToTier_MovingToBackupKeepsOtherColdAccountsInPlaceWithoutLea
 		t.Fatal("expected moving third account into backup group to change scheduling state")
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-after-backup-move", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-after-backup-move", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{first.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected auto scheduling to remain on primary group after moving a cold account to backup, got %v want %v", got, want)
 	}
@@ -1352,10 +1369,11 @@ func TestMoveAccountToTier_ChangingBackupAccountWithinSameTierDoesNotCreateManua
 		t.Fatal("expected switching within the same backup group not to create manual selection")
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-same-tier-backup-switch", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-same-tier-backup-switch", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{primary.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected auto mode to keep selecting the primary group, got %v want %v", got, want)
 	}
@@ -1428,10 +1446,11 @@ func TestMoveAccountToTier_PreservesExistingManualPinnedSelectionWhenReorderingG
 		t.Fatalf("expected existing manual pin to be preserved, got ok=%v accountID=%d", ok, accountID)
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-preserve-existing-manual-pin", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-preserve-existing-manual-pin", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{backup.ID, cold.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected existing manual pin to remain effective after group move while still exposing same-group fallbacks, got %v want %v", got, want)
 	}
@@ -1474,10 +1493,14 @@ func TestPinAccountSelection_PinsSpecificAccountWithoutChangingTierPriorities(t 
 		t.Fatal("expected pinning backup account to change runtime selection")
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-pinned-backup", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-pinned-backup", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	if !orderedSchedule.Pinned {
+		t.Fatal("expected schedule result to report pinned selection after PinAccountSelection")
+	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{backup.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected pinned backup account to be selected before higher priority tier, got %v want %v", got, want)
 	}

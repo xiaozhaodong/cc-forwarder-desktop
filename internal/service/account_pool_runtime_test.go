@@ -965,10 +965,11 @@ func TestToggleAccount_FailedPersistRestoresPinnedSelectionState(t *testing.T) {
 		t.Fatalf("expected pinned selection to be restored, got ok=%v activeAccountID=%d", ok, activeAccountID)
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-toggle-rollback-selection", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-toggle-rollback-selection", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{second.ID, first.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected pinned account order restored after failed toggle persist, got %v want %v", got, want)
 	}

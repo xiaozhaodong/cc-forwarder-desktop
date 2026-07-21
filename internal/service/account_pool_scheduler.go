@@ -224,18 +224,26 @@ func cloneLatestAccountScheduleSnapshot(snapshot *LatestAccountScheduleSnapshot)
 	return &clone
 }
 
-func (s *AccountPoolService) PrepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) ([]*store.UpstreamAccountRecord, error) {
+// AccountScheduleResult 单次调度的公开结果契约。
+// Pinned 表示本次调度命中全局固定账号；转发管线只使用该调度时刻的
+// 不可变快照值判定 pinned 行为，不得事后回查 runtime cache（避免调度后 pin/unpin 竞态）。
+type AccountScheduleResult struct {
+	Accounts []*store.UpstreamAccountRecord
+	Pinned   bool
+}
+
+func (s *AccountPoolService) PrepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) (AccountScheduleResult, error) {
 	return s.prepareSchedulableAccounts(ctx, requestID, requestPath)
 }
 
-func (s *AccountPoolService) PreviewSchedulableAccounts(ctx context.Context, requestPath string) ([]*store.UpstreamAccountRecord, error) {
+func (s *AccountPoolService) PreviewSchedulableAccounts(ctx context.Context, requestPath string) (AccountScheduleResult, error) {
 	if err := s.ensureRuntimeCache(ctx); err != nil {
-		return nil, err
+		return AccountScheduleResult{}, err
 	}
 	now := time.Now()
 	accounts := s.runtimeCache.listSchedulable(now)
-	ordered, _ := s.rankSchedulableAccounts(accounts, now, "", requestPath)
-	return ordered, nil
+	ordered, _, pinned := s.rankSchedulableAccounts(accounts, now, "", requestPath)
+	return AccountScheduleResult{Accounts: ordered, Pinned: pinned}, nil
 }
 
 func (s *AccountPoolService) GetLatestAccountScheduleSnapshot(ctx context.Context) (*LatestAccountScheduleSnapshot, error) {
@@ -255,20 +263,20 @@ func (s *AccountPoolService) CompleteLatestScheduleSnapshot(ctx context.Context,
 	return nil
 }
 
-func (s *AccountPoolService) prepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) ([]*store.UpstreamAccountRecord, error) {
+func (s *AccountPoolService) prepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) (AccountScheduleResult, error) {
 	if err := s.ensureRuntimeCache(ctx); err != nil {
-		return nil, err
+		return AccountScheduleResult{}, err
 	}
 	now := time.Now()
 	accounts := s.runtimeCache.listSchedulable(now)
-	ordered, snapshot := s.rankSchedulableAccounts(accounts, now, requestID, requestPath)
+	ordered, snapshot, pinned := s.rankSchedulableAccounts(accounts, now, requestID, requestPath)
 	if s.scheduleSnapshots != nil && snapshot != nil {
 		s.scheduleSnapshots.saveDraft(snapshot)
 	}
-	return ordered, nil
+	return AccountScheduleResult{Accounts: ordered, Pinned: pinned}, nil
 }
 
-func (s *AccountPoolService) rankSchedulableAccounts(accounts []*store.UpstreamAccountRecord, now time.Time, requestID, requestPath string) ([]*store.UpstreamAccountRecord, *LatestAccountScheduleSnapshot) {
+func (s *AccountPoolService) rankSchedulableAccounts(accounts []*store.UpstreamAccountRecord, now time.Time, requestID, requestPath string) ([]*store.UpstreamAccountRecord, *LatestAccountScheduleSnapshot, bool) {
 	preparedTiers := preparePriorityTiers(accounts, now)
 	snapshot := &LatestAccountScheduleSnapshot{
 		RequestID:   requestID,
@@ -292,7 +300,7 @@ func (s *AccountPoolService) rankSchedulableAccounts(accounts []*store.UpstreamA
 		for _, tier := range preparedTiers {
 			appendSkippedCandidates(snapshot, tier, tier.skipped)
 		}
-		return nil, snapshot
+		return nil, snapshot, false
 	}
 
 	snapshot.SelectedPriority = selectedTier.priority
@@ -344,7 +352,7 @@ func (s *AccountPoolService) rankSchedulableAccounts(accounts []*store.UpstreamA
 		appendSkippedCandidates(snapshot, tier, tier.skipped)
 	}
 
-	return ordered, snapshot
+	return ordered, snapshot, selectedSource == accountSelectionSourcePinned
 }
 
 func selectedTierEligibleOrder(eligible []*rankedSchedulableAccount, selectedIndex int) []*rankedSchedulableAccount {

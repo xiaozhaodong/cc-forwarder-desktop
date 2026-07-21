@@ -109,7 +109,7 @@ func (h *Handler) handleImageAPIRequest(ctx context.Context, w http.ResponseWrit
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	requestCtx = withWroteRequestTrace(requestCtx, lifecycleManager.SetFirstTokenStartTime)
+	requestCtx, _ = withUpstreamTrace(requestCtx, lifecycleManager.SetFirstTokenStartTime)
 
 	upstreamReq, err := http.NewRequestWithContext(requestCtx, http.MethodPost, upstreamURL, bytes.NewReader(prepared.Body))
 	if err != nil {

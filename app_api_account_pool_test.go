@@ -311,10 +311,11 @@ func TestSetGroupActiveAccount_PrefersChosenAccountWithinRequestedGroup(t *testi
 		t.Fatalf("expected setting group preferred account to report changed, got %+v", result)
 	}
 
-	ordered, err := app.accountPoolService.PrepareSchedulableAccounts(ctx, "req-app-group-preferred", "/v1/responses")
+	orderedSchedule, err := app.accountPoolService.PrepareSchedulableAccounts(ctx, "req-app-group-preferred", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if len(ordered) == 0 || ordered[0] == nil || ordered[0].ID != primaryB.ID {
 		t.Fatalf("expected chosen group account to lead selected group, got %+v want first=%d", ordered, primaryB.ID)
 	}

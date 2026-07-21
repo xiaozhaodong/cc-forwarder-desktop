@@ -52,10 +52,11 @@ func TestPrepareSchedulableAccounts_SelectsHighestPriorityTierOnly(t *testing.T)
 		t.Fatalf("create backup account failed: %v", err)
 	}
 
-	accounts, err := svc.PrepareSchedulableAccounts(ctx, "req-select-main", "/v1/responses")
+	accountsSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-select-main", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	accounts := accountsSchedule.Accounts
 	if got, want := collectAccountIDs(accounts), []int64{mainOAuth.ID, mainAPI.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected selected tier accounts: got %v want %v", got, want)
 	}
@@ -114,10 +115,11 @@ func TestPrepareSchedulableAccounts_DegradesWhenHigherTierTemporarilyExhausted(t
 		t.Fatalf("create backup account failed: %v", err)
 	}
 
-	accounts, err := svc.PrepareSchedulableAccounts(ctx, "req-degrade", "/v1/responses")
+	accountsSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-degrade", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	accounts := accountsSchedule.Accounts
 	if got, want := collectAccountIDs(accounts), []int64{backup.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected degraded selection: got %v want %v", got, want)
 	}
@@ -177,10 +179,11 @@ func TestPrepareSchedulableAccounts_RetainsSuccessfulAccountWithinTierUntilSigni
 		t.Fatalf("create challenger account failed: %v", err)
 	}
 
-	initial, err := svc.PrepareSchedulableAccounts(ctx, "req-sticky-initial", "/v1/responses")
+	initialSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-sticky-initial", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts initial failed: %v", err)
 	}
+	initial := initialSchedule.Accounts
 	if got, want := collectAccountIDs(initial), []int64{sticky.ID, challenger.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected initial same-tier ranking: got %v want %v", got, want)
 	}
@@ -210,10 +213,11 @@ func TestPrepareSchedulableAccounts_RetainsSuccessfulAccountWithinTierUntilSigni
 		t.Fatalf("reloadAccountIntoCache challenger failed: %v", err)
 	}
 
-	next, err := svc.PrepareSchedulableAccounts(ctx, "req-sticky-next", "/v1/responses")
+	nextSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-sticky-next", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts next failed: %v", err)
 	}
+	next := nextSchedule.Accounts
 	if got, want := collectAccountIDs(next), []int64{sticky.ID, challenger.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected recent successful account to remain selected when challenger improvement is not significant, got %v want %v", got, want)
 	}
@@ -263,10 +267,11 @@ func TestPrepareSchedulableAccounts_SwitchesWithinTierAfterSignificantImprovemen
 		t.Fatalf("create challenger account failed: %v", err)
 	}
 
-	initial, err := svc.PrepareSchedulableAccounts(ctx, "req-significant-initial", "/v1/responses")
+	initialSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-significant-initial", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts initial failed: %v", err)
 	}
+	initial := initialSchedule.Accounts
 	if got, want := collectAccountIDs(initial), []int64{sticky.ID, challenger.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected initial same-tier ranking: got %v want %v", got, want)
 	}
@@ -294,10 +299,11 @@ func TestPrepareSchedulableAccounts_SwitchesWithinTierAfterSignificantImprovemen
 		t.Fatalf("reloadAccountIntoCache challenger failed: %v", err)
 	}
 
-	next, err := svc.PrepareSchedulableAccounts(ctx, "req-significant-next", "/v1/responses")
+	nextSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-significant-next", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts next failed: %v", err)
 	}
+	next := nextSchedule.Accounts
 	if got, want := collectAccountIDs(next), []int64{challenger.ID, sticky.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected challenger to replace sticky account after significant improvement, got %v want %v", got, want)
 	}
@@ -347,10 +353,11 @@ func TestPrepareSchedulableAccounts_SwitchesWithinTierWhenRetainedAccountFails(t
 		t.Fatalf("create challenger account failed: %v", err)
 	}
 
-	initial, err := svc.PrepareSchedulableAccounts(ctx, "req-failure-initial", "/v1/responses")
+	initialSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-failure-initial", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts initial failed: %v", err)
 	}
+	initial := initialSchedule.Accounts
 	if got, want := collectAccountIDs(initial), []int64{sticky.ID, challenger.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected initial same-tier ranking: got %v want %v", got, want)
 	}
@@ -365,10 +372,11 @@ func TestPrepareSchedulableAccounts_SwitchesWithinTierWhenRetainedAccountFails(t
 		t.Fatalf("MarkAccountTransientFailure sticky failed: %v", err)
 	}
 
-	next, err := svc.PrepareSchedulableAccounts(ctx, "req-failure-next", "/v1/responses")
+	nextSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-failure-next", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts next failed: %v", err)
 	}
+	next := nextSchedule.Accounts
 	if got, want := collectAccountIDs(next), []int64{challenger.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected challenger to replace failed sticky account, got %v want %v", got, want)
 	}
@@ -409,10 +417,11 @@ func TestPrepareSchedulableAccounts_DoesNotRetainOnConnectivityStyleSuccessWrite
 		t.Fatalf("create challenger account failed: %v", err)
 	}
 
-	initial, err := svc.PrepareSchedulableAccounts(ctx, "req-connectivity-initial", "/v1/responses")
+	initialSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-connectivity-initial", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts initial failed: %v", err)
 	}
+	initial := initialSchedule.Accounts
 	if got, want := collectAccountIDs(initial), []int64{sticky.ID, challenger.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected initial same-tier ranking: got %v want %v", got, want)
 	}
@@ -421,10 +430,11 @@ func TestPrepareSchedulableAccounts_DoesNotRetainOnConnectivityStyleSuccessWrite
 		t.Fatalf("MarkAccountSuccess challenger failed: %v", err)
 	}
 
-	next, err := svc.PrepareSchedulableAccounts(ctx, "req-connectivity-next", "/v1/responses")
+	nextSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-connectivity-next", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts next failed: %v", err)
 	}
+	next := nextSchedule.Accounts
 	if got, want := collectAccountIDs(next), []int64{sticky.ID, challenger.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected connectivity-style success writes not to alter automatic retain selection, got %v want %v", got, want)
 	}
@@ -468,10 +478,11 @@ func TestPrepareSchedulableAccounts_AutoReturnsToHigherTierAfterRecovery(t *test
 		t.Fatalf("create backup account failed: %v", err)
 	}
 
-	degraded, err := svc.PrepareSchedulableAccounts(ctx, "req-degrade-sticky", "/v1/responses")
+	degradedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-degrade-sticky", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts degraded failed: %v", err)
 	}
+	degraded := degradedSchedule.Accounts
 	if got, want := collectAccountIDs(degraded), []int64{backup.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected initial degrade to backup, got %v want %v", got, want)
 	}
@@ -495,10 +506,11 @@ func TestPrepareSchedulableAccounts_AutoReturnsToHigherTierAfterRecovery(t *test
 		t.Fatalf("reloadAccountIntoCache primary failed: %v", err)
 	}
 
-	stillBackup, err := svc.PrepareSchedulableAccounts(ctx, "req-still-backup", "/v1/responses")
+	stillBackupSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-still-backup", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts after recovery failed: %v", err)
 	}
+	stillBackup := stillBackupSchedule.Accounts
 	if got, want := collectAccountIDs(stillBackup), []int64{primary.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected recovered primary tier to be selected again, got %v want %v", got, want)
 	}
@@ -558,10 +570,11 @@ func TestMoveAccountToTier_OverridesDegradedSelectionEvenWhenPriorityUnchanged(t
 		t.Fatalf("create backup account failed: %v", err)
 	}
 
-	degraded, err := svc.PrepareSchedulableAccounts(ctx, "req-before-manual-switch", "/v1/responses")
+	degradedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-before-manual-switch", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts degraded failed: %v", err)
 	}
+	degraded := degradedSchedule.Accounts
 	if got, want := collectAccountIDs(degraded), []int64{backup.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected initial degrade to sticky backup, got %v want %v", got, want)
 	}
@@ -601,10 +614,11 @@ func TestMoveAccountToTier_OverridesDegradedSelectionEvenWhenPriorityUnchanged(t
 		t.Fatalf("expected stale schedule snapshot to be cleared after manual switch, got %+v", snapshot)
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-after-manual-switch", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-after-manual-switch", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts after manual switch failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{primary.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected manual pin to force primary account selection, got %v want %v", got, want)
 	}
@@ -675,10 +689,11 @@ func TestPrepareSchedulableAccounts_FallsBackToRecoveredHigherPriorityTierWhenPi
 		t.Fatalf("reloadAccountIntoCache backup failed: %v", err)
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-pinned-backup-unavailable", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-pinned-backup-unavailable", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{primary.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected scheduler to fall back to recovered higher-priority tier, got %v want %v", got, want)
 	}
@@ -769,10 +784,11 @@ func TestMoveAccountToTier_MovingAccountToPrimaryGroupPinsClickedAccountWithoutD
 		t.Fatalf("expected untouched backup account to remain backup, got %+v", updatedBackupA)
 	}
 
-	ordered, err := svc.PrepareSchedulableAccounts(ctx, "req-after-tier-promotion", "/v1/responses")
+	orderedSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-after-tier-promotion", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts after primary group move failed: %v", err)
 	}
+	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{primaryA.ID, primaryB.ID, backupB.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected automatic scheduling to use primary-group auto ranking after group move, got %v want %v", got, want)
 	}
@@ -885,10 +901,11 @@ func TestPrepareSchedulableAccounts_RanksByUtilizationThenHealthWithinTier(t *te
 		t.Fatalf("create api fallback account failed: %v", err)
 	}
 
-	accounts, err := svc.PrepareSchedulableAccounts(ctx, "req-rank", "/v1/responses")
+	accountsSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-rank", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	accounts := accountsSchedule.Accounts
 	if got, want := collectAccountIDs(accounts), []int64{expiringSoon.ID, smallUrgent.ID, weeklyGuarded.ID, stableHigh.ID, unknown.ID, apiFallback.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected ranked order: got %v want %v", got, want)
 	}
@@ -955,10 +972,11 @@ func TestPrepareSchedulableAccounts_UsesSingleCompleteQuotaWindowWhenScoring(t *
 		t.Fatalf("create api fallback account failed: %v", err)
 	}
 
-	accounts, err := svc.PrepareSchedulableAccounts(ctx, "req-single-window", "/v1/responses")
+	accountsSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-single-window", "/v1/responses")
 	if err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
+	accounts := accountsSchedule.Accounts
 	if got, want := collectAccountIDs(accounts), []int64{single5H.ID, singleWeekly.ID, noReset.ID, apiFallback.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected single-window ranking: got %v want %v", got, want)
 	}

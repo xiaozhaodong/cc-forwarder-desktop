@@ -683,11 +683,12 @@ func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w htt
 		return true
 	}
 
-	accounts, err := h.accountPoolService.PreviewSchedulableAccounts(ctx, r.URL.Path)
+	preview, err := h.accountPoolService.PreviewSchedulableAccounts(ctx, r.URL.Path)
 	if err != nil {
 		writeCodexModelsError(w, http.StatusServiceUnavailable, "account_pool_unavailable", "failed to load schedulable account for Codex /v1/models")
 		return true
 	}
+	accounts := preview.Accounts
 	if len(accounts) == 0 {
 		writeCodexModelsError(w, http.StatusServiceUnavailable, "account_pool_unavailable", "no schedulable account for Codex /v1/models")
 		return true
@@ -700,7 +701,7 @@ func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w htt
 		}
 
 		attemptStartedAt := time.Now()
-		resp, upstreamCancel, err := h.forwardRequestToAccount(ctx, r, nil, acc, false, nil)
+		resp, upstreamCancel, _, err := h.forwardRequestToAccount(ctx, r, nil, acc, false, nil)
 		releaseUpstream := func() {
 			if upstreamCancel != nil {
 				upstreamCancel()
