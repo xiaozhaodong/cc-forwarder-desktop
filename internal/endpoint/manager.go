@@ -69,19 +69,20 @@ func (e *Endpoint) IsPaused() bool {
 
 // Manager manages endpoints and their health status
 type Manager struct {
-	endpoints      []*Endpoint
-	endpointsMu    sync.RWMutex // v5.0+: 保护 endpoints 切片的并发访问
-	configMu       sync.RWMutex
-	config         *config.Config
-	client         *http.Client
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	fastTester     *FastTester
-	keyManager     *KeyManager     // 管理多 API Key 状态
-	failureTracker *FailureTracker // 失败追踪器，用于检测端点持续故障
-	routeOverride  *RouteOverride
-	routeState     *RouteState
+	endpoints         []*Endpoint
+	endpointsMu       sync.RWMutex // v5.0+: 保护 endpoints 切片的并发访问
+	configMu          sync.RWMutex
+	config            *config.Config
+	client            *http.Client
+	ctx               context.Context
+	cancel            context.CancelFunc
+	wg                sync.WaitGroup
+	fastTester        *FastTester
+	keyManager        *KeyManager     // 管理多 API Key 状态
+	failureTracker    *FailureTracker // 失败追踪器，用于检测端点持续故障
+	routeOverride     *RouteOverride
+	routeState        *RouteState
+	scheduleSnapshots *endpointScheduleSnapshotStore
 	// EventBus for decoupled event publishing
 	eventBus events.EventBus
 	// 健康检查完成回调（用于推送 Wails 事件）
@@ -116,12 +117,13 @@ func NewManager(cfg *config.Config) *Manager {
 			Timeout:   cfg.Health.Timeout,
 			Transport: httpTransport,
 		},
-		ctx:           ctx,
-		cancel:        cancel,
-		fastTester:    NewFastTester(cfg),
-		keyManager:    NewKeyManager(), // 初始化 Key 管理器
-		routeOverride: NewRouteOverride(),
-		routeState:    NewRouteState(),
+		ctx:               ctx,
+		cancel:            cancel,
+		fastTester:        NewFastTester(cfg),
+		keyManager:        NewKeyManager(), // 初始化 Key 管理器
+		routeOverride:     NewRouteOverride(),
+		routeState:        NewRouteState(),
+		scheduleSnapshots: newEndpointScheduleSnapshotStore(),
 		failureTracker: NewFailureTracker(
 			cfg.FailureTracker.Enabled,
 			cfg.FailureTracker.TimeWindow,

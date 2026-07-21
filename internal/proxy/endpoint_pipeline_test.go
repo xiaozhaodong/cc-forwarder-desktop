@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/privacy"
 )
 
 func newEndpointPipelineTestHandler(t *testing.T, endpoints ...config.EndpointConfig) (*Handler, *endpoint.Manager) {
@@ -72,6 +74,7 @@ func performEndpointPipelineRequest(t *testing.T, handler *Handler, streaming bo
 		body = `{"model":"claude-test","messages":[],"stream":true}`
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewBufferString(body))
+	req = req.WithContext(context.WithValue(req.Context(), "conn_id", "req-endpoint-pipeline"))
 	req.Header.Set("Content-Type", "application/json")
 	if streaming {
 		req.Header.Set("Accept", "text/event-stream")
@@ -80,6 +83,21 @@ func performEndpointPipelineRequest(t *testing.T, handler *Handler, streaming bo
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
 	return recorder
+}
+
+func requireLatestEndpointScheduleSnapshot(t *testing.T, manager *endpoint.Manager, outcome, selectedEndpoint string) *endpoint.EndpointScheduleSnapshot {
+	t.Helper()
+	snapshot := manager.GetLatestEndpointScheduleSnapshot()
+	if snapshot == nil {
+		t.Fatal("expected latest endpoint schedule snapshot")
+	}
+	if snapshot.RequestID != "req-endpoint-pipeline" || snapshot.RequestPath != "/v1/messages" {
+		t.Fatalf("unexpected snapshot request metadata: %+v", snapshot)
+	}
+	if snapshot.FinalOutcome != outcome || snapshot.SelectedEndpoint != selectedEndpoint {
+		t.Fatalf("unexpected snapshot final state: %+v", snapshot)
+	}
+	return snapshot
 }
 
 func TestEndpointPipeline_ConnectionFailureBeforeWroteHeaders_FailsOverAndMigratesActive(t *testing.T) {
@@ -109,6 +127,10 @@ func TestEndpointPipeline_ConnectionFailureBeforeWroteHeaders_FailsOverAndMigrat
 	}
 	if got := manager.GetFailureStats()["primary"]; got != 1 {
 		t.Fatalf("expected primary failure count 1, got %d", got)
+	}
+	snapshot := requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomeSuccess, "backup")
+	if snapshot.ActiveEndpointAtSelection != "primary" || snapshot.Decisions[0].RuntimeOutcome != endpoint.EndpointScheduleRuntimeTryNext || snapshot.Decisions[1].RuntimeOutcome != endpoint.EndpointScheduleOutcomeSuccess {
+		t.Fatalf("unexpected failover attempt decisions: %+v", snapshot.Decisions)
 	}
 }
 
@@ -187,6 +209,7 @@ func TestEndpointPipeline_Generic5xx_ReturnsRetryableErrorWithoutFailover(t *tes
 	if got := manager.GetFailureStats()["primary"]; got != 1 {
 		t.Fatalf("expected primary failure count 1, got %d", got)
 	}
+	requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomePassthroughError, "primary")
 }
 
 func TestEndpointPipeline_NotFound_PassesThroughWithoutFailover(t *testing.T) {
@@ -232,6 +255,7 @@ func TestEndpointPipeline_NotFound_PassesThroughWithoutFailover(t *testing.T) {
 	if got := manager.GetFailureStats()["primary"]; got != 0 {
 		t.Fatalf("expected 404 not to count as endpoint failure, got %d", got)
 	}
+	requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomePassthroughRaw, "primary")
 }
 
 func TestEndpointPipeline_QualityIncomplete_DoesNotMigrateActive(t *testing.T) {
@@ -265,4 +289,48 @@ func TestEndpointPipeline_QualityIncomplete_DoesNotMigrateActive(t *testing.T) {
 	if active, _ := manager.GetActiveEndpointSelection(); active != "primary" {
 		t.Fatalf("expected QualityIncomplete not to migrate active endpoint, got %q", active)
 	}
+	snapshot := requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomeQualityIncomplete, "backup")
+	if snapshot.FinalError == "" {
+		t.Fatal("expected incomplete stream reason in snapshot")
+	}
+}
+
+func TestEndpointPipeline_NoCandidatesRecordsSnapshot(t *testing.T) {
+	handler, manager := newEndpointPipelineTestHandler(t)
+
+	recorder := performEndpointPipelineRequest(t, handler, false)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 without candidates, got status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	snapshot := requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomeNoCandidates, "")
+	if len(snapshot.Decisions) != 0 {
+		t.Fatalf("expected no candidate decisions, got %+v", snapshot.Decisions)
+	}
+}
+
+func TestEndpointPipeline_PrivacyBlockRecordsSnapshotWithoutFailover(t *testing.T) {
+	var upstreamHits int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&upstreamHits, 1)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	handler, manager := newEndpointPipelineTestHandler(t,
+		endpointPipelineConfig("primary", upstream.URL, 1),
+		endpointPipelineConfig("backup", upstream.URL, 2),
+	)
+	manager.RestoreActiveEndpoint("primary")
+	handler.SetPrivacyFilter(&stubPrivacyFilter{
+		err: &privacy.PolicyError{StatusCode: http.StatusRequestEntityTooLarge, Code: privacy.CodeScanBodyTooLarge, Message: "scannable text too large"},
+	})
+
+	recorder := performEndpointPipelineRequest(t, handler, false)
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected privacy 413, got status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := atomic.LoadInt32(&upstreamHits); got != 0 {
+		t.Fatalf("privacy block must not reach upstream, hits=%d", got)
+	}
+	requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomePrivacyBlocked, "primary")
 }

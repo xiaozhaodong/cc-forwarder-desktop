@@ -2,7 +2,9 @@ package endpoint
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -13,10 +15,12 @@ import (
 
 // EndpointScheduleDecision 单个端点的调度决策记录
 type EndpointScheduleDecision struct {
-	Name        string    `json:"name"`
-	Decision    string    `json:"decision"` // candidate / skipped
-	Reason      string    `json:"reason"`
-	AvailableAt time.Time `json:"available_at,omitempty"` // skipped 时的预计可用时间（零值=未知）
+	Name           string    `json:"name"`
+	Decision       string    `json:"decision"` // candidate / skipped
+	Reason         string    `json:"reason"`
+	AvailableAt    time.Time `json:"available_at,omitempty"` // skipped 时的预计可用时间（零值=未知）
+	RuntimeOutcome string    `json:"runtime_outcome,omitempty"`
+	RuntimeError   string    `json:"runtime_error,omitempty"`
 }
 
 const (
@@ -24,10 +28,285 @@ const (
 	endpointDecisionSkipped   = "skipped"
 )
 
+// 端点调度快照运行态与终态。字符串作为 Wails/UI 稳定契约。
+const (
+	EndpointScheduleRuntimeAttempting = "attempting"
+	EndpointScheduleRuntimeTryNext    = "try_next"
+
+	EndpointScheduleOutcomePending                  = "pending"
+	EndpointScheduleOutcomeSuccess                  = "success"
+	EndpointScheduleOutcomeQualityIncomplete        = "quality_incomplete"
+	EndpointScheduleOutcomeFailedAfterCommit        = "failed_after_commit"
+	EndpointScheduleOutcomeCancelled                = "cancelled"
+	EndpointScheduleOutcomePrivacyBlocked           = "privacy_blocked"
+	EndpointScheduleOutcomePassthroughError         = "passthrough_error"
+	EndpointScheduleOutcomePassthroughRaw           = "passthrough_raw"
+	EndpointScheduleOutcomeNoCandidates             = "no_candidates"
+	EndpointScheduleOutcomeManualFixedBlocked       = "manual_fixed_blocked"
+	EndpointScheduleOutcomeAllCandidatesFailed      = "all_candidates_failed"
+	EndpointScheduleOutcomeRejectedByFailureTracker = "rejected_by_failure_tracker"
+	endpointScheduleSnapshotPendingTTL              = 5 * time.Minute
+)
+
 // EndpointScheduleSnapshot 一次调度的完整决策快照（§4.5 观测）
 type EndpointScheduleSnapshot struct {
-	CapturedAt time.Time                  `json:"captured_at"`
-	Decisions  []EndpointScheduleDecision `json:"decisions"`
+	RequestID                 string                     `json:"request_id"`
+	CapturedAt                time.Time                  `json:"captured_at"`
+	UpdatedAt                 time.Time                  `json:"updated_at"`
+	RequestPath               string                     `json:"request_path"`
+	ActiveEndpointAtSelection string                     `json:"active_endpoint_at_selection"`
+	SelectedEndpoint          string                     `json:"selected_endpoint"`
+	RouteMode                 string                     `json:"route_mode"`
+	RouteEndpointName         string                     `json:"route_endpoint_name"`
+	RouteFallbackEnabled      bool                       `json:"route_fallback_enabled"`
+	FailoverEnabled           bool                       `json:"failover_enabled"`
+	FinalOutcome              string                     `json:"final_outcome"`
+	FinalError                string                     `json:"final_error"`
+	Summary                   string                     `json:"summary"`
+	Decisions                 []EndpointScheduleDecision `json:"decisions"`
+}
+
+type endpointScheduleSnapshotEntry struct {
+	sequence uint64
+	snapshot *EndpointScheduleSnapshot
+}
+
+// endpointScheduleSnapshotStore 保存最近一次请求和并发中的请求草稿。
+// sequence 保证较早请求稍后完成时不会覆盖更晚开始的 latest。
+type endpointScheduleSnapshotStore struct {
+	mu             sync.RWMutex
+	nextSequence   uint64
+	latestSequence uint64
+	latest         *EndpointScheduleSnapshot
+	pending        map[string]endpointScheduleSnapshotEntry
+}
+
+func newEndpointScheduleSnapshotStore() *endpointScheduleSnapshotStore {
+	return &endpointScheduleSnapshotStore{
+		pending: make(map[string]endpointScheduleSnapshotEntry),
+	}
+}
+
+func (s *endpointScheduleSnapshotStore) saveDraft(requestID, requestPath string, snapshot *EndpointScheduleSnapshot) {
+	if s == nil || snapshot == nil {
+		return
+	}
+
+	clone := cloneEndpointScheduleSnapshot(snapshot)
+	now := time.Now()
+	if clone.CapturedAt.IsZero() {
+		clone.CapturedAt = now
+	}
+	clone.RequestID = requestID
+	clone.RequestPath = requestPath
+	clone.UpdatedAt = now
+	if clone.FinalOutcome == "" {
+		clone.FinalOutcome = EndpointScheduleOutcomePending
+	}
+	clone.Summary = endpointScheduleSummary(clone)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cutoff := now.Add(-endpointScheduleSnapshotPendingTTL)
+	for id, entry := range s.pending {
+		if entry.snapshot == nil || entry.snapshot.CapturedAt.Before(cutoff) {
+			delete(s.pending, id)
+		}
+	}
+
+	s.nextSequence++
+	entry := endpointScheduleSnapshotEntry{
+		sequence: s.nextSequence,
+		snapshot: cloneEndpointScheduleSnapshot(clone),
+	}
+	if requestID != "" {
+		s.pending[requestID] = entry
+	}
+	s.latestSequence = entry.sequence
+	s.latest = clone
+}
+
+func (s *endpointScheduleSnapshotStore) updateAttempt(requestID, endpointName, outcome, runtimeError string) {
+	if s == nil || endpointName == "" {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.pending[requestID]
+	if requestID == "" {
+		ok = s.latest != nil && s.latest.RequestID == ""
+		entry = endpointScheduleSnapshotEntry{sequence: s.latestSequence, snapshot: cloneEndpointScheduleSnapshot(s.latest)}
+	}
+	if !ok || entry.snapshot == nil {
+		return
+	}
+
+	snapshot := entry.snapshot
+	snapshot.SelectedEndpoint = endpointName
+	snapshot.UpdatedAt = time.Now()
+	for idx := range snapshot.Decisions {
+		decision := &snapshot.Decisions[idx]
+		if decision.Name != endpointName || decision.Decision != endpointDecisionCandidate {
+			continue
+		}
+		decision.RuntimeOutcome = outcome
+		decision.RuntimeError = runtimeError
+		break
+	}
+	snapshot.Summary = endpointScheduleSummary(snapshot)
+	entry.snapshot = cloneEndpointScheduleSnapshot(snapshot)
+	if requestID != "" {
+		s.pending[requestID] = entry
+	}
+	if entry.sequence == s.latestSequence {
+		s.latest = cloneEndpointScheduleSnapshot(snapshot)
+	}
+}
+
+func (s *endpointScheduleSnapshotStore) complete(requestID, endpointName, outcome, finalError string) {
+	if s == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.pending[requestID]
+	if requestID == "" {
+		ok = s.latest != nil && s.latest.RequestID == ""
+		entry = endpointScheduleSnapshotEntry{sequence: s.latestSequence, snapshot: cloneEndpointScheduleSnapshot(s.latest)}
+	}
+	if !ok || entry.snapshot == nil {
+		return
+	}
+	if requestID != "" {
+		delete(s.pending, requestID)
+	}
+
+	snapshot := entry.snapshot
+	if endpointName != "" {
+		snapshot.SelectedEndpoint = endpointName
+	}
+	if outcome != "" {
+		snapshot.FinalOutcome = outcome
+	}
+	snapshot.FinalError = finalError
+	snapshot.UpdatedAt = time.Now()
+	if endpointName != "" {
+		for idx := range snapshot.Decisions {
+			decision := &snapshot.Decisions[idx]
+			if decision.Name != endpointName || decision.Decision != endpointDecisionCandidate {
+				continue
+			}
+			decision.RuntimeOutcome = outcome
+			decision.RuntimeError = finalError
+			break
+		}
+	}
+	snapshot.Summary = endpointScheduleSummary(snapshot)
+
+	if entry.sequence == s.latestSequence {
+		s.latest = cloneEndpointScheduleSnapshot(snapshot)
+	}
+}
+
+func (s *endpointScheduleSnapshotStore) getLatest() *EndpointScheduleSnapshot {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneEndpointScheduleSnapshot(s.latest)
+}
+
+func cloneEndpointScheduleSnapshot(snapshot *EndpointScheduleSnapshot) *EndpointScheduleSnapshot {
+	if snapshot == nil {
+		return nil
+	}
+	clone := *snapshot
+	if len(snapshot.Decisions) > 0 {
+		clone.Decisions = make([]EndpointScheduleDecision, len(snapshot.Decisions))
+		copy(clone.Decisions, snapshot.Decisions)
+	}
+	return &clone
+}
+
+func endpointScheduleSummary(snapshot *EndpointScheduleSnapshot) string {
+	if snapshot == nil {
+		return ""
+	}
+	switch snapshot.FinalOutcome {
+	case EndpointScheduleOutcomePending:
+		if snapshot.SelectedEndpoint != "" {
+			return fmt.Sprintf("正在尝试端点 %s", snapshot.SelectedEndpoint)
+		}
+		return "调度处理中"
+	case EndpointScheduleOutcomeSuccess:
+		return fmt.Sprintf("成功命中端点 %s", snapshot.SelectedEndpoint)
+	case EndpointScheduleOutcomeQualityIncomplete:
+		return fmt.Sprintf("端点 %s 返回了不完整响应", snapshot.SelectedEndpoint)
+	case EndpointScheduleOutcomePassthroughRaw:
+		return fmt.Sprintf("原样返回端点 %s 的客户端错误", snapshot.SelectedEndpoint)
+	case EndpointScheduleOutcomeNoCandidates, EndpointScheduleOutcomeManualFixedBlocked:
+		return "本次请求没有可路由端点"
+	case EndpointScheduleOutcomeAllCandidatesFailed:
+		return "全部候选端点均失败"
+	case EndpointScheduleOutcomeCancelled:
+		return "请求已取消"
+	default:
+		if snapshot.SelectedEndpoint != "" {
+			return fmt.Sprintf("端点 %s 调度结束：%s", snapshot.SelectedEndpoint, snapshot.FinalOutcome)
+		}
+		return snapshot.FinalOutcome
+	}
+}
+
+// BeginEndpointScheduleSnapshot 保存本次调度草稿。传入 nil 时用于记录调度前置拒绝。
+func (m *Manager) BeginEndpointScheduleSnapshot(requestID, requestPath string, snapshot *EndpointScheduleSnapshot) {
+	if m == nil || m.scheduleSnapshots == nil {
+		return
+	}
+	if snapshot == nil {
+		cfg := m.getConfigSnapshot()
+		override := m.routeOverride.Snapshot()
+		active, _ := m.GetActiveEndpointSelection()
+		snapshot = &EndpointScheduleSnapshot{
+			CapturedAt:                time.Now(),
+			ActiveEndpointAtSelection: active,
+			RouteMode:                 override.Mode,
+			RouteEndpointName:         override.EndpointName,
+			RouteFallbackEnabled:      override.FallbackEnabled,
+			FailoverEnabled:           cfg.Failover.Enabled,
+		}
+	}
+	m.scheduleSnapshots.saveDraft(requestID, requestPath, snapshot)
+}
+
+// RecordEndpointScheduleAttempt 更新候选端点的运行结果。
+func (m *Manager) RecordEndpointScheduleAttempt(requestID, endpointName, outcome, runtimeError string) {
+	if m == nil || m.scheduleSnapshots == nil {
+		return
+	}
+	m.scheduleSnapshots.updateAttempt(requestID, endpointName, outcome, runtimeError)
+}
+
+// CompleteEndpointScheduleSnapshot 写入最终 Outcome。
+func (m *Manager) CompleteEndpointScheduleSnapshot(requestID, endpointName, outcome, finalError string) {
+	if m == nil || m.scheduleSnapshots == nil {
+		return
+	}
+	m.scheduleSnapshots.complete(requestID, endpointName, outcome, finalError)
+}
+
+// GetLatestEndpointScheduleSnapshot 返回深拷贝，避免 UI 读取与管线更新产生竞态。
+func (m *Manager) GetLatestEndpointScheduleSnapshot() *EndpointScheduleSnapshot {
+	if m == nil || m.scheduleSnapshots == nil {
+		return nil
+	}
+	return m.scheduleSnapshots.getLatest()
 }
 
 // EarliestAvailableAt 返回被跳过端点中最早的可用时间（零值=无已知恢复时间）。
@@ -75,7 +354,15 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 		ActiveEndpointAtSelection: activeName,
 		ActiveRevision:            activeRevision,
 		RouteOverrideRevision:     override.Revision,
-		Snapshot:                  &EndpointScheduleSnapshot{CapturedAt: time.Now()},
+		Snapshot: &EndpointScheduleSnapshot{
+			CapturedAt:                time.Now(),
+			ActiveEndpointAtSelection: activeName,
+			RouteMode:                 override.Mode,
+			RouteEndpointName:         override.EndpointName,
+			RouteFallbackEnabled:      override.FallbackEnabled,
+			FailoverEnabled:           cfg.Failover.Enabled,
+			FinalOutcome:              EndpointScheduleOutcomePending,
+		},
 	}
 
 	record := func(name, decision, reason string, availableAt time.Time) {
@@ -163,7 +450,44 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 
 	// manual_preferred：目标端点提到候选序最前（保持其余相对顺序）
 	result.Candidates = m.applyRouteOverrideOrder(candidates)
+	result.Snapshot.Decisions = orderEndpointScheduleDecisions(result.Snapshot.Decisions, result.Candidates)
 	return result
+}
+
+// orderEndpointScheduleDecisions 让候选决策顺序与实际尝试顺序一致，
+// 跳过项保持原解释顺序并排在候选项之后。
+func orderEndpointScheduleDecisions(decisions []EndpointScheduleDecision, candidates []*Endpoint) []EndpointScheduleDecision {
+	if len(decisions) == 0 || len(candidates) == 0 {
+		return decisions
+	}
+	byName := make(map[string]EndpointScheduleDecision, len(decisions))
+	for _, decision := range decisions {
+		if decision.Decision == endpointDecisionCandidate {
+			byName[decision.Name] = decision
+		}
+	}
+
+	ordered := make([]EndpointScheduleDecision, 0, len(decisions))
+	for _, candidate := range candidates {
+		if candidate == nil {
+			continue
+		}
+		if decision, ok := byName[candidate.Config.Name]; ok {
+			ordered = append(ordered, decision)
+			delete(byName, candidate.Config.Name)
+		}
+	}
+	for _, decision := range decisions {
+		if decision.Decision != endpointDecisionCandidate {
+			ordered = append(ordered, decision)
+			continue
+		}
+		if _, ok := byName[decision.Name]; ok {
+			ordered = append(ordered, decision)
+			delete(byName, decision.Name)
+		}
+	}
+	return ordered
 }
 
 // classifyEndpointRoutable 判定端点是否可路由；不可路由时给出原因与预计可用时间。

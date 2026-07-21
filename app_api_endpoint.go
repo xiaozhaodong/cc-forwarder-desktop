@@ -27,6 +27,35 @@ type EndpointInfo struct {
 	ConsecutiveFail int     `json:"consecutive_fail"`
 }
 
+// EndpointScheduleDecisionInfo 最近一次端点调度中的单端点决策。
+type EndpointScheduleDecisionInfo struct {
+	Name           string `json:"name"`
+	Decision       string `json:"decision"`
+	Reason         string `json:"reason"`
+	AvailableAt    string `json:"available_at"`
+	RuntimeOutcome string `json:"runtime_outcome,omitempty"`
+	RuntimeError   string `json:"runtime_error,omitempty"`
+}
+
+// LatestEndpointScheduleSnapshotInfo 最近一次端点调度快照。
+type LatestEndpointScheduleSnapshotInfo struct {
+	HasSnapshot               bool                           `json:"has_snapshot"`
+	RequestID                 string                         `json:"request_id,omitempty"`
+	CapturedAt                string                         `json:"captured_at"`
+	UpdatedAt                 string                         `json:"updated_at"`
+	RequestPath               string                         `json:"request_path"`
+	ActiveEndpointAtSelection string                         `json:"active_endpoint_at_selection"`
+	SelectedEndpoint          string                         `json:"selected_endpoint"`
+	RouteMode                 string                         `json:"route_mode"`
+	RouteEndpointName         string                         `json:"route_endpoint_name"`
+	RouteFallbackEnabled      bool                           `json:"route_fallback_enabled"`
+	FailoverEnabled           bool                           `json:"failover_enabled"`
+	FinalOutcome              string                         `json:"final_outcome"`
+	FinalError                string                         `json:"final_error"`
+	Summary                   string                         `json:"summary"`
+	Decisions                 []EndpointScheduleDecisionInfo `json:"decisions"`
+}
+
 // GetEndpoints 获取所有端点状态
 func (a *App) GetEndpoints() []EndpointInfo {
 	a.mu.RLock()
@@ -72,6 +101,54 @@ func (a *App) GetEndpoints() []EndpointInfo {
 	}
 
 	return result
+}
+
+// GetLatestEndpointScheduleSnapshot 获取最近一次端点调度快照（Phase 5 观测 API）。
+func (a *App) GetLatestEndpointScheduleSnapshot() (LatestEndpointScheduleSnapshotInfo, error) {
+	a.mu.RLock()
+	manager := a.endpointManager
+	a.mu.RUnlock()
+
+	if manager == nil {
+		return LatestEndpointScheduleSnapshotInfo{}, fmt.Errorf("端点管理器未初始化")
+	}
+
+	snapshot := manager.GetLatestEndpointScheduleSnapshot()
+	if snapshot == nil {
+		return LatestEndpointScheduleSnapshotInfo{
+			HasSnapshot: false,
+			Decisions:   []EndpointScheduleDecisionInfo{},
+		}, nil
+	}
+
+	out := LatestEndpointScheduleSnapshotInfo{
+		HasSnapshot:               true,
+		RequestID:                 snapshot.RequestID,
+		CapturedAt:                formatTime(snapshot.CapturedAt),
+		UpdatedAt:                 formatTime(snapshot.UpdatedAt),
+		RequestPath:               snapshot.RequestPath,
+		ActiveEndpointAtSelection: snapshot.ActiveEndpointAtSelection,
+		SelectedEndpoint:          snapshot.SelectedEndpoint,
+		RouteMode:                 snapshot.RouteMode,
+		RouteEndpointName:         snapshot.RouteEndpointName,
+		RouteFallbackEnabled:      snapshot.RouteFallbackEnabled,
+		FailoverEnabled:           snapshot.FailoverEnabled,
+		FinalOutcome:              snapshot.FinalOutcome,
+		FinalError:                snapshot.FinalError,
+		Summary:                   snapshot.Summary,
+		Decisions:                 make([]EndpointScheduleDecisionInfo, 0, len(snapshot.Decisions)),
+	}
+	for _, decision := range snapshot.Decisions {
+		out.Decisions = append(out.Decisions, EndpointScheduleDecisionInfo{
+			Name:           decision.Name,
+			Decision:       decision.Decision,
+			Reason:         decision.Reason,
+			AvailableAt:    formatTime(decision.AvailableAt),
+			RuntimeOutcome: decision.RuntimeOutcome,
+			RuntimeError:   decision.RuntimeError,
+		})
+	}
+	return out, nil
 }
 
 // SetEndpointPriority 设置端点优先级

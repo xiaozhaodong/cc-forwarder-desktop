@@ -3,7 +3,7 @@
 // 2025-11-28 (Updated 2025-12-24 for card layout)
 // ============================================
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Activity,
   RefreshCw,
@@ -24,6 +24,8 @@ import {
   DeleteConfirmDialog,
   groupEndpointsByChannel
 } from './components';
+import EndpointScheduleSnapshotCard from './components/EndpointScheduleSnapshotCard.jsx';
+import { fetchLatestEndpointScheduleSnapshot } from '@utils/endpointScheduleApi.js';
 import {
   getEndpointStorageStatus,
   getEndpointRecords,
@@ -67,6 +69,9 @@ const EndpointsPage = () => {
     fallbackEnabled: true
   });
   const [routingActionLoading, setRoutingActionLoading] = useState(false);
+  const [scheduleSnapshot, setScheduleSnapshot] = useState({ hasSnapshot: false, decisions: [] });
+  const [scheduleSnapshotUnsupported, setScheduleSnapshotUnsupported] = useState(false);
+  const [scheduleSnapshotLoading, setScheduleSnapshotLoading] = useState(false);
 
   // 表单状态
   const [showForm, setShowForm] = useState(false);
@@ -113,6 +118,46 @@ const EndpointsPage = () => {
   useEffect(() => {
     loadClaudeRoutingState();
   }, [loadClaudeRoutingState]);
+
+  const loadEndpointScheduleSnapshot = useCallback(async ({ silent = false } = {}) => {
+    try {
+      const snapshot = await fetchLatestEndpointScheduleSnapshot();
+      setScheduleSnapshotUnsupported(snapshot?.unsupported === true);
+      setScheduleSnapshot(snapshot && typeof snapshot === 'object'
+        ? snapshot
+        : { hasSnapshot: false, decisions: [] });
+    } catch (err) {
+      if (!silent) {
+        console.error('获取端点调度快照失败:', err);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    loadEndpointScheduleSnapshot({ silent: true });
+  }, [loadEndpointScheduleSnapshot]);
+
+  useEffect(() => {
+    if (scheduleSnapshotUnsupported || typeof document === 'undefined') return undefined;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadEndpointScheduleSnapshot({ silent: true });
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [loadEndpointScheduleSnapshot, scheduleSnapshotUnsupported]);
+
+  useEffect(() => {
+    if (scheduleSnapshotUnsupported) return undefined;
+    const timer = setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        loadEndpointScheduleSnapshot({ silent: true });
+      }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [loadEndpointScheduleSnapshot, scheduleSnapshotUnsupported]);
 
   // SQLite 模式下监听 Wails 事件，实时刷新端点数据
   const isSqliteModeRef = useRef(false);
@@ -195,6 +240,19 @@ const EndpointsPage = () => {
       setRoutingActionLoading(false);
     }
   }, [isSqliteMode, loadClaudeRoutingState, loadStorageStatus, refresh]);
+
+  const handleRefreshAll = useCallback(async () => {
+    setScheduleSnapshotLoading(true);
+    try {
+      await Promise.all([
+        isSqliteMode ? loadStorageStatus() : refresh(),
+        loadClaudeRoutingState(),
+        loadEndpointScheduleSnapshot()
+      ]);
+    } finally {
+      setScheduleSnapshotLoading(false);
+    }
+  }, [isSqliteMode, loadClaudeRoutingState, loadEndpointScheduleSnapshot, loadStorageStatus, refresh]);
 
   // 计算统计数据
   const displayStats = isSqliteMode
@@ -332,8 +390,8 @@ const EndpointsPage = () => {
             variant="ghost"
             size="sm"
             icon={RefreshCw}
-            onClick={isSqliteMode ? loadStorageStatus : refresh}
-            loading={loading}
+            onClick={handleRefreshAll}
+            loading={loading || scheduleSnapshotLoading}
           >
             刷新
           </Button>
@@ -386,6 +444,11 @@ const EndpointsPage = () => {
           </Button>
         </div>
       )}
+
+      <EndpointScheduleSnapshotCard
+        snapshot={scheduleSnapshot}
+        unsupported={scheduleSnapshotUnsupported}
+      />
 
       {/* 统计卡片 */}
       <div className="grid grid-cols-5 gap-4 mb-6">

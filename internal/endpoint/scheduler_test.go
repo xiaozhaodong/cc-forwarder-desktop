@@ -154,6 +154,12 @@ func TestPrepareRouteCandidates_ManualFixedOnlyTarget(t *testing.T) {
 	if result.RouteOverrideRevision == 0 {
 		t.Fatal("expected route override revision captured")
 	}
+	if result.Snapshot.RouteMode != RouteModeManualFixed || result.Snapshot.RouteEndpointName != "c" {
+		t.Fatalf("expected manual fixed metadata in snapshot, got %+v", result.Snapshot)
+	}
+	if !result.Snapshot.FailoverEnabled {
+		t.Fatal("expected global failover flag in snapshot")
+	}
 
 	// 目标冷却：空候选而非静默转移
 	target := manager.GetEndpointByNameAny("c")
@@ -170,6 +176,72 @@ func TestPrepareRouteCandidates_ManualFixedOnlyTarget(t *testing.T) {
 	}
 }
 
+func TestEndpointScheduleSnapshot_RecordsAttemptsAndFinalOutcome(t *testing.T) {
+	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "primary", "backup"))
+	manager.RestoreActiveEndpoint("primary")
+
+	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
+	manager.BeginEndpointScheduleSnapshot("req-snapshot", "/v1/messages", result.Snapshot)
+
+	// 验证 store 持有深拷贝，而不是调度器返回值本身。
+	result.Snapshot.Decisions[0].Reason = "mutated-after-save"
+	manager.RecordEndpointScheduleAttempt("req-snapshot", "primary", EndpointScheduleRuntimeTryNext, "dial failed")
+	manager.RecordEndpointScheduleAttempt("req-snapshot", "backup", EndpointScheduleRuntimeAttempting, "")
+	manager.CompleteEndpointScheduleSnapshot("req-snapshot", "backup", EndpointScheduleOutcomeSuccess, "")
+
+	snapshot := manager.GetLatestEndpointScheduleSnapshot()
+	if snapshot == nil {
+		t.Fatal("expected latest endpoint schedule snapshot")
+	}
+	if snapshot.RequestID != "req-snapshot" || snapshot.RequestPath != "/v1/messages" {
+		t.Fatalf("unexpected request metadata: %+v", snapshot)
+	}
+	if snapshot.ActiveEndpointAtSelection != "primary" || snapshot.SelectedEndpoint != "backup" {
+		t.Fatalf("unexpected endpoint selection metadata: %+v", snapshot)
+	}
+	if snapshot.FinalOutcome != EndpointScheduleOutcomeSuccess || snapshot.FinalError != "" {
+		t.Fatalf("unexpected final outcome: %+v", snapshot)
+	}
+	if snapshot.UpdatedAt.Before(snapshot.CapturedAt) {
+		t.Fatalf("updated_at must not precede captured_at: %+v", snapshot)
+	}
+	if got := snapshot.Decisions[0]; got.Reason == "mutated-after-save" || got.RuntimeOutcome != EndpointScheduleRuntimeTryNext || got.RuntimeError != "dial failed" {
+		t.Fatalf("unexpected primary decision: %+v", got)
+	}
+	if got := snapshot.Decisions[1]; got.RuntimeOutcome != EndpointScheduleOutcomeSuccess || got.RuntimeError != "" {
+		t.Fatalf("unexpected backup decision: %+v", got)
+	}
+
+	// GetLatest 同样必须返回副本。
+	snapshot.Decisions[0].RuntimeError = "mutated-read"
+	if got := manager.GetLatestEndpointScheduleSnapshot().Decisions[0].RuntimeError; got != "dial failed" {
+		t.Fatalf("latest snapshot leaked mutable decision slice: %q", got)
+	}
+}
+
+func TestEndpointScheduleSnapshot_OlderCompletionDoesNotReplaceNewerRequest(t *testing.T) {
+	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "a", "b"))
+	manager.RestoreActiveEndpoint("a")
+
+	oldResult := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
+	manager.BeginEndpointScheduleSnapshot("req-old", "/v1/messages", oldResult.Snapshot)
+
+	newResult := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
+	manager.BeginEndpointScheduleSnapshot("req-new", "/v1/messages", newResult.Snapshot)
+
+	manager.CompleteEndpointScheduleSnapshot("req-old", "a", EndpointScheduleOutcomeSuccess, "")
+	latest := manager.GetLatestEndpointScheduleSnapshot()
+	if latest == nil || latest.RequestID != "req-new" || latest.FinalOutcome != EndpointScheduleOutcomePending {
+		t.Fatalf("older completion replaced newer latest snapshot: %+v", latest)
+	}
+
+	manager.CompleteEndpointScheduleSnapshot("req-new", "b", EndpointScheduleOutcomePassthroughError, "upstream 503")
+	latest = manager.GetLatestEndpointScheduleSnapshot()
+	if latest.RequestID != "req-new" || latest.SelectedEndpoint != "b" || latest.FinalOutcome != EndpointScheduleOutcomePassthroughError {
+		t.Fatalf("newer completion not reflected: %+v", latest)
+	}
+}
+
 func TestPrepareRouteCandidates_ManualPreferredMovesTargetFirst(t *testing.T) {
 	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "a", "b", "c"))
 	manager.RestoreActiveEndpoint("a")
@@ -178,6 +250,9 @@ func TestPrepareRouteCandidates_ManualPreferredMovesTargetFirst(t *testing.T) {
 	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
 	if got := candidateNames(result); len(got) != 3 || got[0] != "c" {
 		t.Fatalf("expected preferred target first, got %v", got)
+	}
+	if len(result.Snapshot.Decisions) < 3 || result.Snapshot.Decisions[0].Name != "c" {
+		t.Fatalf("expected snapshot candidate order to match actual attempts, got %+v", result.Snapshot.Decisions)
 	}
 }
 
