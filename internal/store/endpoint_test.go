@@ -621,3 +621,96 @@ func TestDuplicateName(t *testing.T) {
 		t.Error("创建重复名称的端点应该失败")
 	}
 }
+
+// TestActivateExclusive 单事务「禁用其余 + 启用目标」
+func TestActivateExclusive(t *testing.T) {
+	db, cleanup := createTestDB(t)
+	defer cleanup()
+
+	store := NewSQLiteEndpointStore(db)
+	ctx := context.Background()
+
+	for i, name := range []string{"ep-a", "ep-b", "ep-c"} {
+		if _, err := store.Create(ctx, &EndpointRecord{
+			Channel: "test", Name: name, URL: "https://" + name + ".example.com",
+			Priority: i + 1, TimeoutSeconds: 300, Enabled: name == "ep-a",
+		}); err != nil {
+			t.Fatalf("创建端点 %s 失败: %v", name, err)
+		}
+	}
+
+	if err := store.ActivateExclusive(ctx, "ep-b"); err != nil {
+		t.Fatalf("ActivateExclusive 失败: %v", err)
+	}
+
+	records, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("List 失败: %v", err)
+	}
+	for _, record := range records {
+		wantEnabled := record.Name == "ep-b"
+		if record.Enabled != wantEnabled {
+			t.Errorf("端点 %s enabled=%v, want %v", record.Name, record.Enabled, wantEnabled)
+		}
+	}
+}
+
+// TestActivateExclusive_MissingTargetRollsBack 事务第二步失败整笔回滚：
+// 目标不存在时不得留下"全部禁用"的中间态
+func TestActivateExclusive_MissingTargetRollsBack(t *testing.T) {
+	db, cleanup := createTestDB(t)
+	defer cleanup()
+
+	store := NewSQLiteEndpointStore(db)
+	ctx := context.Background()
+
+	if _, err := store.Create(ctx, &EndpointRecord{
+		Channel: "test", Name: "ep-a", URL: "https://a.example.com",
+		Priority: 1, TimeoutSeconds: 300, Enabled: true,
+	}); err != nil {
+		t.Fatalf("创建端点失败: %v", err)
+	}
+
+	if err := store.ActivateExclusive(ctx, "no-such-endpoint"); err == nil {
+		t.Fatal("激活不存在端点应当失败")
+	}
+
+	record, err := store.Get(ctx, "ep-a")
+	if err != nil {
+		t.Fatalf("Get 失败: %v", err)
+	}
+	if !record.Enabled {
+		t.Fatal("事务失败后 ep-a 的 enabled 状态必须回滚为 true")
+	}
+}
+
+// TestSetEnabled 单端点启用状态更新
+func TestSetEnabled(t *testing.T) {
+	db, cleanup := createTestDB(t)
+	defer cleanup()
+
+	store := NewSQLiteEndpointStore(db)
+	ctx := context.Background()
+
+	if _, err := store.Create(ctx, &EndpointRecord{
+		Channel: "test", Name: "ep-a", URL: "https://a.example.com",
+		Priority: 1, TimeoutSeconds: 300, Enabled: true,
+	}); err != nil {
+		t.Fatalf("创建端点失败: %v", err)
+	}
+
+	if err := store.SetEnabled(ctx, "ep-a", false); err != nil {
+		t.Fatalf("SetEnabled 失败: %v", err)
+	}
+	record, err := store.Get(ctx, "ep-a")
+	if err != nil {
+		t.Fatalf("Get 失败: %v", err)
+	}
+	if record.Enabled {
+		t.Fatal("期望 ep-a 已停用")
+	}
+
+	if err := store.SetEnabled(ctx, "no-such", true); err == nil {
+		t.Fatal("更新不存在端点应当失败")
+	}
+}

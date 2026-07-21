@@ -155,6 +155,14 @@ func (rs *RouteState) HasNegativeHit(endpointName string, profile RouteRequestPr
 	return rs.negativeHits.Has(endpointName, profile)
 }
 
+// NegativeHitWithExpiry 同 HasNegativeHit，并返回命中条目的过期时间（availableAt 来源）
+func (rs *RouteState) NegativeHitWithExpiry(endpointName string, profile RouteRequestProfile) (bool, string, time.Time) {
+	if rs == nil || rs.negativeHits == nil || endpointName == "" {
+		return false, "", time.Time{}
+	}
+	return rs.negativeHits.HasWithExpiry(endpointName, profile)
+}
+
 func (rs *RouteState) ClearNegativeHits(endpointName string) {
 	if rs == nil || rs.negativeHits == nil {
 		return
@@ -355,15 +363,55 @@ func removeOrderKey(order []string, key string) []string {
 }
 
 func (c *NegativeHitCache) hit(target map[string]time.Time, key string, now time.Time) bool {
+	ok, _ := c.hitWithExpiry(target, key, now)
+	return ok
+}
+
+func (c *NegativeHitCache) hitWithExpiry(target map[string]time.Time, key string, now time.Time) (bool, time.Time) {
 	expiresAt, ok := target[key]
 	if !ok {
-		return false
+		return false, time.Time{}
 	}
 	if now.After(expiresAt) {
 		delete(target, key)
-		return false
+		return false, time.Time{}
 	}
-	return true
+	return true, expiresAt
+}
+
+// HasWithExpiry 同 Has，并返回命中条目的过期时间
+func (c *NegativeHitCache) HasWithExpiry(endpointName string, profile RouteRequestProfile) (bool, string, time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	if profile.IsCountTokens {
+		if ok, expiresAt := c.hitWithExpiry(c.unsupportedCountToken, endpointName, now); ok {
+			return true, FailureClassCountTokensUnsupported, expiresAt
+		}
+	}
+	if profile.Model != "" {
+		if ok, expiresAt := c.hitWithExpiry(c.unsupportedModel, endpointName+"|"+strings.ToLower(profile.Model), now); ok {
+			return true, FailureClassModelUnsupported, expiresAt
+		}
+	}
+	for _, field := range profile.SchemaFields {
+		if ok, expiresAt := c.hitWithExpiry(c.unsupportedSchema, endpointName+"|"+field, now); ok {
+			return true, FailureClassSchemaIncompatible, expiresAt
+		}
+	}
+	if profile.BodySize > 0 {
+		requestBucket := bodySizeBucket(profile.BodySize)
+		for _, bucket := range bodyBuckets() {
+			if bucket > requestBucket {
+				continue
+			}
+			if ok, expiresAt := c.hitWithExpiry(c.rejectedBodySize, endpointName+"|"+bucketKey(bucket), now); ok {
+				return true, FailureClassPayloadTooLarge, expiresAt
+			}
+		}
+	}
+	return false, "", time.Time{}
 }
 
 func clearByPrefix(target map[string]time.Time, prefix string) {

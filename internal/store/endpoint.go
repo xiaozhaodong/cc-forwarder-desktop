@@ -72,6 +72,13 @@ type EndpointStore interface {
 	// 统计
 	Count(ctx context.Context) (int, error)
 
+	// ActivateExclusive 单事务完成「禁用其余端点 + 启用目标端点」。
+	// 目标端点不存在时整笔回滚，不留下"全部禁用"的中间态。
+	ActivateExclusive(ctx context.Context, name string) error
+
+	// SetEnabled 更新单个端点的启用状态
+	SetEnabled(ctx context.Context, name string, enabled bool) error
+
 	// 事务支持
 	WithTx(tx *sql.Tx) EndpointStore
 }
@@ -292,6 +299,71 @@ func (s *SQLiteEndpointStore) Delete(ctx context.Context, name string) error {
 		return fmt.Errorf("端点不存在: %s", name)
 	}
 
+	return nil
+}
+
+// ActivateExclusive 单事务完成「禁用其余端点 + 启用目标端点」。
+// 任一步失败（含目标端点不存在）整笔回滚。
+func (s *SQLiteEndpointStore) ActivateExclusive(ctx context.Context, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.tx != nil {
+		return activateExclusiveIn(ctx, s.tx, name)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启激活事务失败: %w", err)
+	}
+	if err := activateExclusiveIn(ctx, tx, name); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交激活事务失败: %w", err)
+	}
+	return nil
+}
+
+type execerContext interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}
+
+func activateExclusiveIn(ctx context.Context, execer execerContext, name string) error {
+	if _, err := execer.ExecContext(ctx, `UPDATE endpoints SET enabled = 0 WHERE name != ?`, name); err != nil {
+		return fmt.Errorf("禁用其余端点失败: %w", err)
+	}
+	result, err := execer.ExecContext(ctx, `UPDATE endpoints SET enabled = 1 WHERE name = ?`, name)
+	if err != nil {
+		return fmt.Errorf("启用目标端点失败: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("获取启用影响行数失败: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("端点不存在: %s", name)
+	}
+	return nil
+}
+
+// SetEnabled 更新单个端点的启用状态
+func (s *SQLiteEndpointStore) SetEnabled(ctx context.Context, name string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.getQuerier().ExecContext(ctx, `UPDATE endpoints SET enabled = ? WHERE name = ?`, boolToInt(enabled), name)
+	if err != nil {
+		return fmt.Errorf("更新端点启用状态失败: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("获取影响行数失败: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("端点不存在: %s", name)
+	}
 	return nil
 }
 

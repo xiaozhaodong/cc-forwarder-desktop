@@ -107,6 +107,29 @@ func (t *FailureTracker) ShouldTriggerAction(endpointName string) bool {
 	return count >= t.config.Threshold
 }
 
+// TrippedUntil 返回 tripped 端点的保守恢复估计时间：
+// 窗口内最早失败时间 + TimeWindow（该失败滑出窗口后计数可能降到阈值下）。
+// 未 tripped 时返回零值。
+func (t *FailureTracker) TrippedUntil(endpointName string) time.Time {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if !t.config.Enabled {
+		return time.Time{}
+	}
+	now := time.Now()
+	if t.countValidFailuresLocked(endpointName, now) < t.config.Threshold {
+		return time.Time{}
+	}
+	windowStart := now.Add(-t.config.TimeWindow)
+	for _, failTime := range t.endpointFailures[endpointName] {
+		if failTime.After(windowStart) {
+			return failTime.Add(t.config.TimeWindow)
+		}
+	}
+	return time.Time{}
+}
+
 // GetStats 获取所有端点的失败统计
 // 返回 map[endpointName]failureCount
 func (t *FailureTracker) GetStats() map[string]int {

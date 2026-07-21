@@ -33,6 +33,7 @@ type EndpointStatus struct {
 	NeverChecked     bool      // 表示从未被检测过
 	CooldownUntil    time.Time // 请求失败冷却截止时间
 	CooldownReason   string    // 冷却原因（如 "HTTP 503"）
+	PausedUntil      time.Time // 手动暂停截止时间（零值=未暂停；到期读取时自愈）
 }
 
 // Endpoint represents an endpoint with its configuration and status
@@ -59,6 +60,13 @@ func (e *Endpoint) IsInCooldown() bool {
 	return !e.Status.CooldownUntil.IsZero() && time.Now().Before(e.Status.CooldownUntil)
 }
 
+// IsPaused 检查端点是否处于手动暂停状态（PausedUntil 到期自动视为恢复）
+func (e *Endpoint) IsPaused() bool {
+	e.mutex.RLock()
+	defer e.mutex.RUnlock()
+	return !e.Status.PausedUntil.IsZero() && time.Now().Before(e.Status.PausedUntil)
+}
+
 // Manager manages endpoints and their health status
 type Manager struct {
 	endpoints      []*Endpoint
@@ -82,6 +90,13 @@ type Manager struct {
 	// 故障转移回调（用于同步数据库）
 	// 参数: failedEndpoint 失败的端点名, newEndpoint 新激活的端点名
 	onFailoverTriggered func(failedEndpoint, newEndpoint string)
+
+	// v7 重构：activeEndpoint 单一权威状态（Phase 3 新增，Phase 4 接线）
+	// 所有变更统一走 active_state.go 的各档入口，持久化经 runtimeWriter。
+	activeMu       sync.Mutex
+	activeEndpoint string
+	activeRevision int64
+	runtimeWriter  *RuntimeWriter
 }
 
 // NewManager creates a new endpoint manager
