@@ -1,4 +1,4 @@
-// main.go - CC-Forwarder Wails 应用入口
+// main.go - AI Switchboard Wails 应用入口
 // 保留原有的核心功能，添加 Wails 桌面应用支持
 
 package main
@@ -17,6 +17,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/logging"
+	"cc-forwarder/internal/utils"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -64,11 +65,19 @@ func main() {
 
 	// 处理版本标志
 	if *showVersion {
-		fmt.Printf("CC-Forwarder Desktop\n")
+		fmt.Printf("AI Switchboard Desktop\n")
 		fmt.Printf("Version: %s\n", Version)
 		fmt.Printf("Commit: %s\n", Commit)
 		fmt.Printf("Built: %s\n", BuildTime)
 		os.Exit(0)
+	}
+
+	// 品牌更名（CC-Forwarder -> AI-Switchboard）后的一次性数据目录迁移，
+	// 必须在任何组件打开数据目录之前执行
+	if migrated, err := utils.MigrateLegacyAppDataDir(); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️ 应用数据目录迁移失败: %v（旧数据仍保留在原目录）\n", err)
+	} else if migrated {
+		fmt.Println("✅ 应用数据目录已迁移: CC-Forwarder -> AI-Switchboard")
 	}
 
 	// 创建应用实例
@@ -117,7 +126,7 @@ func main() {
 				UseToolbar:                 false,
 			},
 			About: &mac.AboutInfo{
-				Title:   "CC-Forwarder",
+				Title:   "AI Switchboard",
 				Message: fmt.Sprintf("Claude/OpenAI API 本地代理转发服务\n版本 %s", Version),
 				Icon:    icon,
 			},

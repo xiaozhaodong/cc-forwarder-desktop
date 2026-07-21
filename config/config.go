@@ -520,9 +520,9 @@ func (c *Config) setDefaults() {
 	// Set usage tracking defaults
 	if c.UsageTracking.DatabasePath == "" {
 		// 使用跨平台用户目录作为默认路径
-		// Windows: %APPDATA%\CC-Forwarder\data\usage.db
-		// macOS: ~/Library/Application Support/CC-Forwarder/data/usage.db
-		// Linux: ~/.local/share/cc-forwarder/data/usage.db
+		// Windows: %APPDATA%\AI-Switchboard\data\usage.db
+		// macOS: ~/Library/Application Support/AI-Switchboard/data/usage.db
+		// Linux: ~/.local/share/ai-switchboard/data/usage.db
 		c.UsageTracking.DatabasePath = filepath.Join(getConfigAppDataDir(), "data", "usage.db")
 	}
 	if c.UsageTracking.BufferSize == 0 {
@@ -1140,9 +1140,9 @@ func SavePriorityConfigWithComments(config *Config, path string) error {
 
 // getConfigAppDataDir 获取应用数据目录（跨平台）
 // 复制自 internal/utils/appdir.go，避免循环依赖
-// Windows: %APPDATA%\CC-Forwarder
-// macOS: ~/Library/Application Support/CC-Forwarder
-// Linux: ~/.local/share/cc-forwarder
+// Windows: %APPDATA%\AI-Switchboard
+// macOS: ~/Library/Application Support/AI-Switchboard
+// Linux: ~/.local/share/ai-switchboard
 func getConfigAppDataDir() string {
 	var baseDir string
 
@@ -1152,22 +1152,22 @@ func getConfigAppDataDir() string {
 		if baseDir == "" {
 			baseDir = filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Roaming")
 		}
-		return filepath.Join(baseDir, "CC-Forwarder")
+		return filepath.Join(baseDir, "AI-Switchboard")
 
 	case "darwin":
 		homeDir, _ := os.UserHomeDir()
-		return filepath.Join(homeDir, "Library", "Application Support", "CC-Forwarder")
+		return filepath.Join(homeDir, "Library", "Application Support", "AI-Switchboard")
 
 	case "linux":
 		homeDir, _ := os.UserHomeDir()
 		xdgDataHome := os.Getenv("XDG_DATA_HOME")
 		if xdgDataHome != "" {
-			return filepath.Join(xdgDataHome, "cc-forwarder")
+			return filepath.Join(xdgDataHome, "ai-switchboard")
 		}
-		return filepath.Join(homeDir, ".local", "share", "cc-forwarder")
+		return filepath.Join(homeDir, ".local", "share", "ai-switchboard")
 
 	default:
 		homeDir, _ := os.UserHomeDir()
-		return filepath.Join(homeDir, ".cc-forwarder")
+		return filepath.Join(homeDir, ".ai-switchboard")
 	}
 }
