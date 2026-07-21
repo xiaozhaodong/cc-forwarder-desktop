@@ -115,7 +115,7 @@ func (a *App) startup(ctx context.Context) {
 	a.setupLogger()
 
 	// 3. 显示启动信息
-	a.logger.Info("🚀 CC-Forwarder 桌面版启动中...",
+	a.logger.Info("🚀 AI Switchboard 桌面版启动中...",
 		"version", Version,
 		"config_file", a.configPath)
 
@@ -202,7 +202,7 @@ func (a *App) startup(ctx context.Context) {
 	a.startHistoryCollector()
 
 	a.isRunning = true
-	a.logger.Info("✅ CC-Forwarder 启动完成",
+	a.logger.Info("✅ AI Switchboard 启动完成",
 		"proxy_port", a.config.Server.Port)
 	a.scheduleStartupConnectivityChecks()
 }
@@ -212,7 +212,7 @@ func (a *App) shutdown(ctx context.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.logger.Info("🛑 正在关闭 CC-Forwarder...")
+	a.logger.Info("🛑 正在关闭 AI Switchboard...")
 
 	// 1. 停止接收新请求
 	if a.proxyServer != nil {
@@ -260,7 +260,7 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 
 	a.isRunning = false
-	a.logger.Info("✅ CC-Forwarder 已关闭")
+	a.logger.Info("✅ AI Switchboard 已关闭")
 }
 
 // domReady 在前端 DOM 准备就绪时调用
