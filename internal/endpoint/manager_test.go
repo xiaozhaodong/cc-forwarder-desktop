@@ -267,9 +267,14 @@ func TestManagerStartCleansExpiredFailureTrackerEntries(t *testing.T) {
 
 	manager := NewManager(cfg)
 	manager.RecordFailure("tracked-endpoint")
+	trackedEndpointCount := func() int {
+		manager.failureTracker.mu.RLock()
+		defer manager.failureTracker.mu.RUnlock()
+		return len(manager.failureTracker.endpointFailures)
+	}
 
-	if len(manager.failureTracker.endpointFailures) != 1 {
-		t.Fatalf("expected failure tracker to contain one endpoint entry, got %d", len(manager.failureTracker.endpointFailures))
+	if got := trackedEndpointCount(); got != 1 {
+		t.Fatalf("expected failure tracker to contain one endpoint entry, got %d", got)
 	}
 
 	time.Sleep(15 * time.Millisecond)
@@ -279,8 +284,8 @@ func TestManagerStartCleansExpiredFailureTrackerEntries(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	if len(manager.failureTracker.endpointFailures) != 0 {
-		t.Fatalf("expected expired failure tracker entries to be cleaned, got %d", len(manager.failureTracker.endpointFailures))
+	if got := trackedEndpointCount(); got != 0 {
+		t.Fatalf("expected expired failure tracker entries to be cleaned, got %d", got)
 	}
 }
 
@@ -428,7 +433,7 @@ func TestGetEndpointByNameWithGroups(t *testing.T) {
 
 	// Test: Put primary-endpoint group in cooldown
 	// v4.0: 组名 = 端点名
-	manager.GetGroupManager().SetGroupCooldown("primary-endpoint")
+	manager.SetEndpointCooldown("primary-endpoint", cfg.Group.Cooldown, "test")
 
 	// Now GetEndpointByName for primary-endpoint should return nil
 	// (because primary-endpoint's group is in cooldown)
@@ -489,7 +494,7 @@ func TestGetEndpointByNameWithNoActiveGroups(t *testing.T) {
 
 	// Put the only group in cooldown
 	// v4.0: 组名 = 端点名
-	manager.GetGroupManager().SetGroupCooldown("test-endpoint")
+	manager.SetEndpointCooldown("test-endpoint", cfg.Group.Cooldown, "test")
 
 	// GetEndpointByName should return nil (no active groups)
 	endpoint := manager.GetEndpointByName("test-endpoint")

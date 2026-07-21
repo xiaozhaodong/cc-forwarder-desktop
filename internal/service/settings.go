@@ -91,7 +91,7 @@ func NewSettingsService(store store.SettingsStore) *SettingsService {
 			CategoryRequest: {
 				Name:        CategoryRequest,
 				Label:       "请求控制",
-				Description: "配置全局超时、请求挂起和失败处理",
+				Description: "配置全局超时和失败处理",
 				Icon:        "⏱️",
 				Order:       5,
 			},
@@ -413,13 +413,11 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 	case CategoryRequest:
 		return []*store.SettingRecord{
 			{Category: CategoryRequest, Key: "global_timeout", Value: "300s", ValueType: ValueTypeDuration, Label: "全局超时", Description: "非流式请求的默认超时时间", DisplayOrder: 1},
-			{Category: CategoryRequest, Key: "suspend_timeout", Value: "300s", ValueType: ValueTypeDuration, Label: "挂起超时", Description: "挂起请求的最大等待时间", DisplayOrder: 2},
-			{Category: CategoryRequest, Key: "max_suspended", Value: "100", ValueType: ValueTypeInt, Label: "最大挂起数", Description: "同时挂起的最大请求数量", DisplayOrder: 3},
-			{Category: CategoryRequest, Key: "failure_time_window", Value: "5m", ValueType: ValueTypeDuration, Label: "失败时间窗口", Description: "统计失败次数的时间窗口", DisplayOrder: 4},
-			{Category: CategoryRequest, Key: "failure_threshold", Value: "3", ValueType: ValueTypeInt, Label: "失败阈值", Description: "触发失败处理的次数阈值", DisplayOrder: 5},
-			{Category: CategoryRequest, Key: "failure_action", Value: "failover", ValueType: ValueTypeString, Label: "失败处理动作", Description: "failover (故障转移) / suspend (挂起) / reject (拒绝)", DisplayOrder: 6},
-			{Category: CategoryRequest, Key: "failover_cooldown", Value: "600s", ValueType: ValueTypeDuration, Label: "故障冷却时间", Description: "端点故障后的冷却等待时间", DisplayOrder: 7},
-			{Category: CategoryRequest, Key: "eof_retry_hint", Value: "false", ValueType: ValueTypeBool, Label: "流式中断重试提示", Description: "流式传输中断时发送特定格式响应，触发客户端自动重试", DisplayOrder: 8},
+			{Category: CategoryRequest, Key: "failure_time_window", Value: "5m", ValueType: ValueTypeDuration, Label: "失败时间窗口", Description: "统计失败次数的时间窗口", DisplayOrder: 2},
+			{Category: CategoryRequest, Key: "failure_threshold", Value: "3", ValueType: ValueTypeInt, Label: "失败阈值", Description: "触发失败处理的次数阈值", DisplayOrder: 3},
+			{Category: CategoryRequest, Key: "failure_action", Value: "failover", ValueType: ValueTypeString, Label: "失败处理动作", Description: "failover (故障转移) / reject (拒绝)", DisplayOrder: 4},
+			{Category: CategoryRequest, Key: "failover_cooldown", Value: "600s", ValueType: ValueTypeDuration, Label: "故障冷却时间", Description: "端点故障后的冷却等待时间", DisplayOrder: 5},
+			{Category: CategoryRequest, Key: "eof_retry_hint", Value: "false", ValueType: ValueTypeBool, Label: "流式中断重试提示", Description: "流式传输中断时发送特定格式响应，触发客户端自动重试", DisplayOrder: 6},
 		}
 
 	case CategoryStreaming:

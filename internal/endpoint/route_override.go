@@ -136,11 +136,7 @@ func (m *Manager) GetClaudeRoutingOverride() RouteOverrideState {
 }
 
 func (m *Manager) SetClaudeRoutingOverride(state RouteOverrideState) RouteOverrideState {
-	next := m.routeOverride.Set(state)
-	if next.Mode != RouteModeAuto && next.EndpointName != "" {
-		_ = m.groupManager.ManualActivateGroup(next.EndpointName)
-	}
-	return next
+	return m.routeOverride.Set(state)
 }
 
 func (m *Manager) ClearClaudeRoutingOverride(setBy string) RouteOverrideState {

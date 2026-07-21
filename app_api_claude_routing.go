@@ -128,7 +128,6 @@ func (a *App) ClearNegativeHitCache(endpointName string) error {
 
 func (a *App) loadClaudeRoutingOverride(ctx context.Context) {
 	manager := a.endpointManager
-	endpointService := a.endpointService
 	if a.settingsService == nil || manager == nil {
 		return
 	}
@@ -158,7 +157,7 @@ func (a *App) loadClaudeRoutingOverride(ctx context.Context) {
 		setAt = parsed
 	}
 
-	if err := a.activateClaudeEndpointWith(ctx, manager, endpointService, endpointName); err != nil {
+	if err := a.activateClaudeEndpointWith(manager, endpointName); err != nil {
 		slog.Warn("⚠️ [Claude路由] 恢复手动端点激活失败，已恢复自动路由", "endpoint", endpointName, "error", err)
 		state := manager.ClearClaudeRoutingOverride(endpoint.RouteCallerStartupRecovery)
 		if err := a.persistClaudeRoutingState(ctx, state); err != nil {
@@ -181,15 +180,15 @@ func (a *App) loadClaudeRoutingOverride(ctx context.Context) {
 }
 
 func (a *App) activateClaudeEndpoint(ctx context.Context, endpointName string) error {
+	_ = ctx
 	a.mu.RLock()
 	manager := a.endpointManager
-	endpointService := a.endpointService
 	a.mu.RUnlock()
 
-	return a.activateClaudeEndpointWith(ctx, manager, endpointService, endpointName)
+	return a.activateClaudeEndpointWith(manager, endpointName)
 }
 
-func (a *App) activateClaudeEndpointWith(ctx context.Context, manager *endpoint.Manager, endpointService *service.EndpointService, endpointName string) error {
+func (a *App) activateClaudeEndpointWith(manager *endpoint.Manager, endpointName string) error {
 	if manager == nil {
 		return fmt.Errorf("端点管理器未初始化")
 	}
@@ -197,21 +196,8 @@ func (a *App) activateClaudeEndpointWith(ctx context.Context, manager *endpoint.
 		return fmt.Errorf("端点 '%s' 不存在", endpointName)
 	}
 
-	if endpointService != nil {
-		if err := endpointService.DisableAllEndpoints(ctx); err != nil {
-			if a.logger != nil {
-				a.logger.Warn("禁用所有端点失败", "error", err)
-			}
-		}
-		if err := endpointService.ToggleEndpoint(ctx, endpointName, true); err != nil {
-			if a.logger != nil {
-				a.logger.Warn("启用端点失败", "endpoint", endpointName, "error", err)
-			}
-		} else if a.logger != nil {
-			a.logger.Info("✅ 端点已同步到数据库", "endpoint", endpointName, "enabled", true)
-		}
-	}
-
+	// v7：持久化统一经 runtime writer（ManualActivateGroup 内部等待 ACK，
+	// 返回成功 ⇒ 已落库；失败时内存回滚到 lastPersisted 并返回错误）
 	return manager.ManualActivateGroup(endpointName)
 }
 
@@ -265,15 +251,10 @@ func (a *App) currentActiveClaudeEndpoint() string {
 	a.mu.RLock()
 	manager := a.endpointManager
 	a.mu.RUnlock()
-	if manager == nil || manager.GetGroupManager() == nil {
+	if manager == nil {
 		return ""
 	}
-	for _, group := range manager.GetGroupManager().GetAllGroups() {
-		if group.IsActive {
-			return group.Name
-		}
-	}
-	return ""
+	return manager.GetActiveGroupName()
 }
 
 func (a *App) availableClaudeEndpoints() []string {

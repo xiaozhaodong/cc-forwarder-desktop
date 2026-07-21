@@ -17,10 +17,10 @@ func responseWithStatus(status int, headers map[string]string) *http.Response {
 	return resp
 }
 
-func tracedState(wroteHeaders bool) *upstreamTraceState {
-	state := &upstreamTraceState{}
+func tracedState(wroteHeaders bool) *handlers.UpstreamTraceState {
+	state := &handlers.UpstreamTraceState{}
 	if wroteHeaders {
-		state.markWroteHeaders()
+		state.MarkWroteHeadersForTest()
 	}
 	return state
 }
@@ -30,7 +30,7 @@ func TestDecideEndpointForwardOutcome_Table(t *testing.T) {
 		name             string
 		forwardErr       error
 		resp             *http.Response
-		trace            *upstreamTraceState
+		trace            *handlers.UpstreamTraceState
 		bodySample       string
 		wantAction       EndpointForwardAction
 		wantMark         EndpointFailureMark

@@ -48,8 +48,9 @@ type App struct {
 	authMiddleware       *middleware.AuthMiddleware
 
 	// v5.0+ 端点存储 (SQLite)
-	endpointStore   store.EndpointStore      // 端点数据持久化
-	endpointService *service.EndpointService // 端点业务服务
+	endpointStore         store.EndpointStore      // 端点数据持久化
+	endpointService       *service.EndpointService // 端点业务服务
+	endpointRuntimeWriter *endpoint.RuntimeWriter  // v7: activeEndpoint 持久化协调器
 
 	// v5.0+ 模型定价存储 (SQLite)
 	modelPricingStore   store.ModelPricingStore      // 模型定价数据持久化
@@ -136,22 +137,8 @@ func (a *App) startup(ctx context.Context) {
 		a.emitEndpointUpdate()
 	})
 
-	// v5.x+ 设置故障转移回调，同步数据库状态
+	// v7：故障转移回调仅用于前端事件；DB 写入统一走 endpoint runtime writer
 	a.endpointManager.SetOnFailoverTriggered(func(failedEndpoint, newEndpoint string) {
-		// 同步数据库: 禁用失败的端点，启用新端点
-		if a.endpointService != nil {
-			ctx := context.Background()
-			// 禁用失败的端点
-			if err := a.endpointService.ToggleEndpoint(ctx, failedEndpoint, false); err != nil {
-				slog.Warn(fmt.Sprintf("⚠️ [故障转移回调] 禁用端点失败: %s - %v", failedEndpoint, err))
-			}
-			// 启用新端点
-			if err := a.endpointService.ToggleEndpoint(ctx, newEndpoint, true); err != nil {
-				slog.Warn(fmt.Sprintf("⚠️ [故障转移回调] 启用端点失败: %s - %v", newEndpoint, err))
-			}
-			slog.Info(fmt.Sprintf("✅ [故障转移回调] 数据库已同步: %s → %s", failedEndpoint, newEndpoint))
-		}
-		// 推送事件到前端
 		a.emitEndpointUpdate()
 	})
 
@@ -230,19 +217,25 @@ func (a *App) shutdown(ctx context.Context) {
 		}
 	}
 
-	// 3. 关闭使用追踪 (flush 数据库)
+	// 3. 关闭端点运行时 writer（flush 待写任务）与端点管理器
+	//    v7 §4.6：必须先于 usageTracker 关闭数据库
+	if a.endpointRuntimeWriter != nil {
+		if err := a.endpointRuntimeWriter.Close(); err != nil {
+			a.logger.Error("端点运行时写入器关闭失败", "error", err)
+		}
+	}
+	if a.endpointManager != nil {
+		a.endpointManager.Stop()
+	}
+
+	// 4. 关闭使用追踪 (flush 数据库)
 	if a.usageTracker != nil {
 		if err := a.usageTracker.Close(); err != nil {
 			a.logger.Error("使用追踪器关闭失败", "error", err)
 		}
 	}
 
-	// 4. 关闭端点管理器
-	if a.endpointManager != nil {
-		a.endpointManager.Stop()
-	}
-
-	// 4. 关闭事件总线
+	// 5. 关闭事件总线
 	if a.eventBus != nil {
 		if err := a.eventBus.Stop(); err != nil {
 			a.logger.Error("事件总线关闭失败", "error", err)
@@ -359,6 +352,11 @@ func (a *App) setupEndpointStore() {
 
 	// 创建 EndpointStore
 	a.endpointStore = store.NewSQLiteEndpointStore(db)
+
+	// v7 §4.6：先创建 endpoint runtime writer 并注入 Manager，再做启动恢复
+	//（恢复走仅内存 restore 档，不写回刚读取的 DB）
+	a.endpointRuntimeWriter = endpoint.NewRuntimeWriter(a.endpointStore, a.endpointManager.IsCurrentActiveRevision)
+	a.endpointManager.SetRuntimeWriter(a.endpointRuntimeWriter)
 
 	// 创建 EndpointService
 	a.endpointService = service.NewEndpointService(a.endpointStore, a.endpointManager, a.config)
@@ -1147,9 +1145,8 @@ func (a *App) applySettingsToConfig() {
 
 	// 请求控制配置
 	a.config.GlobalTimeout = a.settingsService.GetDuration(ctx, service.CategoryRequest, "global_timeout", a.config.GlobalTimeout)
-	a.config.RequestSuspend.Timeout = a.settingsService.GetDuration(ctx, service.CategoryRequest, "suspend_timeout", a.config.RequestSuspend.Timeout)
-	a.config.RequestSuspend.MaxSuspendedRequests = a.settingsService.GetInt(ctx, service.CategoryRequest, "max_suspended", a.config.RequestSuspend.MaxSuspendedRequests)
-	a.config.RequestSuspend.EOFRetryHint = a.settingsService.GetBool(ctx, service.CategoryRequest, "eof_retry_hint", a.config.RequestSuspend.EOFRetryHint)
+	// v7：eof_retry_hint 设置键不变，赋值目标迁移到 Streaming（挂起体系已删除）
+	a.config.Streaming.EOFRetryHint = a.settingsService.GetBool(ctx, service.CategoryRequest, "eof_retry_hint", a.config.Streaming.EOFRetryHint)
 
 	// 失败处理配置（默认开启）
 	a.config.FailureTracker.Enabled = true
@@ -1158,20 +1155,21 @@ func (a *App) applySettingsToConfig() {
 	a.config.FailureTracker.Action = a.getSettingString(ctx, service.CategoryRequest, "failure_action", a.config.FailureTracker.Action)
 	a.config.Failover.DefaultCooldown = a.settingsService.GetDuration(ctx, service.CategoryRequest, "failover_cooldown", a.config.Failover.DefaultCooldown)
 
-	// 根据失败处理动作自动启用对应功能
+	// v7 D2 迁移：挂起体系已删除，旧值 suspend 一次性改写为 failover 并落库
+	if a.config.FailureTracker.Action == "suspend" {
+		slog.Warn("⚠️ [设置迁移] failure_action='suspend' 已废弃（挂起体系删除），自动改写为 'failover'")
+		a.config.FailureTracker.Action = "failover"
+		if err := a.settingsService.Set(ctx, service.CategoryRequest, "failure_action", "failover"); err != nil {
+			slog.Warn("⚠️ [设置迁移] failure_action 落库失败（不影响本次运行）", "error", err)
+		}
+	}
+
+	// 根据失败处理动作自动启用对应功能（Failover.Enabled 即「请求内换候选 + 成功驱动迁移」总开关）
 	switch a.config.FailureTracker.Action {
-	case "failover":
-		a.config.Failover.Enabled = true
-		a.config.RequestSuspend.Enabled = false
-	case "suspend":
-		a.config.Failover.Enabled = false
-		a.config.RequestSuspend.Enabled = true
 	case "reject":
 		a.config.Failover.Enabled = false
-		a.config.RequestSuspend.Enabled = false
-	default:
-		a.config.Failover.Enabled = true // 默认故障转移
-		a.config.RequestSuspend.Enabled = false
+	default: // failover（默认）
+		a.config.Failover.Enabled = true
 	}
 	// 🔧 同步更新旧字段
 	a.config.Group.AutoSwitchBetweenGroups = a.config.Failover.Enabled

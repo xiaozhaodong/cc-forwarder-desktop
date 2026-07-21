@@ -129,8 +129,8 @@ func (s *EndpointService) UpdateEndpoint(ctx context.Context, record *store.Endp
 }
 
 // DeleteEndpoint 删除端点
-// 1. 从运行时管理器移除
-// 2. 从数据库删除
+// v7：删除经 writer coordinator 串行——DB 删除成功后才移除内存；
+// DB 删除失败时内存不动、返回错误（替代旧的"先删内存再删 DB、失败不恢复"顺序）
 func (s *EndpointService) DeleteEndpoint(ctx context.Context, name string) error {
 	// 验证端点存在
 	existing, err := s.store.Get(ctx, name)
@@ -141,15 +141,8 @@ func (s *EndpointService) DeleteEndpoint(ctx context.Context, name string) error
 		return fmt.Errorf("端点 '%s' 不存在", name)
 	}
 
-	// 先从运行时管理器移除
-	if err := s.manager.RemoveEndpoint(name); err != nil {
-		slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 从管理器移除端点失败: %v", err))
-		// 继续删除数据库记录
-	}
-
-	// 从数据库删除
-	if err := s.store.Delete(ctx, name); err != nil {
-		return fmt.Errorf("从数据库删除失败: %w", err)
+	if err := s.manager.DeleteEndpointCoordinated(name); err != nil {
+		return err
 	}
 
 	slog.Info(fmt.Sprintf("✅ [EndpointService] 删除端点成功: %s", name))
@@ -236,7 +229,7 @@ func (s *EndpointService) ImportFromYAML(ctx context.Context, endpoints []config
 }
 
 // SyncFromDatabase 从数据库同步端点到管理器
-// v5.0 Desktop: 加载所有端点参与健康检查，并同步 enabled=true 的端点到组激活状态
+// v7 §4.6：启动恢复走仅内存 restore（0/1/N enabled 三态；多 enabled 脏数据同步修复）
 func (s *EndpointService) SyncFromDatabase(ctx context.Context) error {
 	// 获取所有端点（包括 enabled=false 的）
 	records, err := s.store.List(ctx)
@@ -248,25 +241,28 @@ func (s *EndpointService) SyncFromDatabase(ctx context.Context) error {
 
 	// 转换为配置数组
 	endpoints := make([]config.EndpointConfig, len(records))
-	var enabledEndpointName string
+	var enabledRecords []endpoint.EnabledEndpointRecord
 	for i, record := range records {
 		endpoints[i] = s.recordToConfig(record)
-		// 记录 enabled=true 的端点
 		if record.Enabled {
-			enabledEndpointName = record.Name
+			enabledRecords = append(enabledRecords, endpoint.EnabledEndpointRecord{
+				Name:     record.Name,
+				Priority: record.Priority,
+				ID:       record.ID,
+			})
 		}
 	}
 
 	// 使用专门的同步方法（不走 UpdateConfig）
 	s.manager.SyncEndpoints(endpoints)
 
-	// 同步 enabled=true 的端点到组激活状态
-	if enabledEndpointName != "" {
-		if err := s.manager.ManualActivateGroup(enabledEndpointName); err != nil {
-			slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 激活组失败: %s - %v", enabledEndpointName, err))
-		} else {
-			slog.Info(fmt.Sprintf("✅ [EndpointService] 已激活端点: %s", enabledEndpointName))
-		}
+	// 启动恢复：仅内存 restore，不写回刚读取的 DB；多 enabled 同步提交修复事务
+	active, degraded := s.manager.RestoreActiveFromEnabled(enabledRecords)
+	if degraded {
+		slog.Warn("⚠️ [EndpointService] 多 enabled 修复事务失败，进入 degraded 状态（修复任务后台重试中）")
+	}
+	if active != "" {
+		slog.Info(fmt.Sprintf("✅ [EndpointService] 启动恢复激活端点: %s", active))
 	}
 
 	return nil

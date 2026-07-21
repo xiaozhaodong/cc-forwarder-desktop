@@ -481,6 +481,58 @@ endpoints_storage:
 	}
 }
 
+func TestLoadConfig_EOFRetryHintMigration(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{
+			name: "missing both defaults false",
+			yaml: "endpoints_storage:\n  type: sqlite\n",
+			want: false,
+		},
+		{
+			name: "legacy true is preserved",
+			yaml: "endpoints_storage:\n  type: sqlite\nrequest_suspend:\n  eof_retry_hint: true\n",
+			want: true,
+		},
+		{
+			name: "new explicit false overrides legacy true",
+			yaml: "endpoints_storage:\n  type: sqlite\nstreaming:\n  eof_retry_hint: false\nrequest_suspend:\n  eof_retry_hint: true\n",
+			want: false,
+		},
+		{
+			name: "new true overrides legacy false",
+			yaml: "endpoints_storage:\n  type: sqlite\nstreaming:\n  eof_retry_hint: true\nrequest_suspend:\n  eof_retry_hint: false\n",
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file, err := os.CreateTemp(t.TempDir(), "eof-retry-hint-*.yaml")
+			if err != nil {
+				t.Fatalf("create config: %v", err)
+			}
+			if _, err := file.WriteString(tt.yaml); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatalf("close config: %v", err)
+			}
+
+			cfg, err := LoadConfig(file.Name())
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.Streaming.EOFRetryHint != tt.want {
+				t.Fatalf("streaming.eof_retry_hint = %v, want %v", cfg.Streaming.EOFRetryHint, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadConfig_AccountPoolEnabledExplicitFalse(t *testing.T) {
 	configContent := `
 endpoints_storage:

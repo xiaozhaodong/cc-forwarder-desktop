@@ -43,9 +43,6 @@ func (m *Manager) SyncEndpoints(configs []config.EndpointConfig) {
 	m.endpoints = endpoints
 	m.endpointsMu.Unlock()
 
-	// 更新 GroupManager（创建组）
-	m.groupManager.UpdateGroups(endpoints)
-
 	slog.Info(fmt.Sprintf("🔄 [端点同步] 已同步 %d 个端点到管理器", len(configs)))
 }
 
@@ -86,13 +83,6 @@ func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
 	m.endpointsMu.Lock()
 	m.endpoints = append(m.endpoints, endpoint)
 	m.endpointsMu.Unlock()
-
-	// 更新 GroupManager
-	m.endpointsMu.RLock()
-	snapshot := make([]*Endpoint, len(m.endpoints))
-	copy(snapshot, m.endpoints)
-	m.endpointsMu.RUnlock()
-	m.groupManager.UpdateGroups(snapshot)
 
 	// 发布事件通知
 	if m.eventBus != nil {
@@ -143,15 +133,6 @@ func (m *Manager) RemoveEndpoint(name string) error {
 	if m.failureTracker != nil {
 		m.failureTracker.ClearEndpoint(name)
 	}
-
-	// 更新 GroupManager（在锁内创建快照）
-	snapshot := make([]*Endpoint, len(m.endpoints))
-	copy(snapshot, m.endpoints)
-
-	// 在锁外更新 GroupManager
-	go func() {
-		m.groupManager.UpdateGroups(snapshot)
-	}()
 
 	// 发布事件通知
 	if m.eventBus != nil {
@@ -206,13 +187,6 @@ func (m *Manager) UpdateEndpointConfig(name string, cfg config.EndpointConfig) e
 		apiKeyCount = 1
 	}
 	m.keyManager.UpdateEndpointKeyCount(name, tokenCount, apiKeyCount)
-
-	// 更新 GroupManager
-	m.endpointsMu.RLock()
-	snapshot := make([]*Endpoint, len(m.endpoints))
-	copy(snapshot, m.endpoints)
-	m.endpointsMu.RUnlock()
-	m.groupManager.UpdateGroups(snapshot)
 
 	// 发布事件通知
 	if m.eventBus != nil {

@@ -219,6 +219,81 @@ func TestRuntimeWriter_CloseFlushesPending(t *testing.T) {
 	}
 }
 
+func TestRuntimeWriter_CloseWaitsForInFlightSubmitBeforeDrain(t *testing.T) {
+	st := newFakeEndpointStore("a")
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var blockFirst sync.Once
+	st.onActivate = func(string) {
+		blockFirst.Do(func() {
+			close(firstStarted)
+			<-releaseFirst
+		})
+	}
+
+	writer := NewRuntimeWriter(st, func(int64) bool { return true })
+	writer.EnqueueAuto(endpointTaskActivate, "a", 1)
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("writer did not start the blocking task")
+	}
+
+	// 消费者阻塞时填满队列，让下一次手动提交卡在 channel send，
+	// 同时持有 lifecycleMu.RLock，确保 Close 不能越过它先取消消费者。
+	for i := 0; i < cap(writer.tasks); i++ {
+		writer.EnqueueAuto(endpointTaskActivate, "a", int64(i+2))
+	}
+	manualDone := make(chan error, 1)
+	go func() {
+		manualDone <- writer.EnqueueManual(endpointTaskActivate, "a", 1000)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		if writer.lifecycleMu.TryLock() {
+			writer.lifecycleMu.Unlock()
+			if time.Now().After(deadline) {
+				t.Fatal("manual submit did not enter the lifecycle gate")
+			}
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		break
+	}
+
+	closeStarted := make(chan struct{})
+	closeDone := make(chan error, 1)
+	go func() {
+		close(closeStarted)
+		closeDone <- writer.Close()
+	}()
+	<-closeStarted
+	select {
+	case err := <-closeDone:
+		t.Fatalf("Close returned before the in-flight submit could enqueue: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(releaseFirst)
+	select {
+	case err := <-manualDone:
+		if err != nil {
+			t.Fatalf("in-flight manual submit must receive its ACK during drain: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("manual submit remained blocked waiting for ACK")
+	}
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not finish after draining the in-flight submit")
+	}
+}
+
 func TestActiveState_ManualActivatePersistsAndMatchesMemory(t *testing.T) {
 	st := newFakeEndpointStore("a", "b")
 	manager := newActiveStateTestManager(t, st, "a", "b")

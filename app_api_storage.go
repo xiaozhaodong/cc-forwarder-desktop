@@ -432,19 +432,9 @@ func (a *App) ToggleEndpointRecord(name string, enabled bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// v5.0: 激活端点时实现互斥
+	// v7: 激活/停用统一走 activeEndpoint 契约（writer 单事务落库）
 	if enabled {
-		// 1. 数据库层互斥：先停用所有端点
-		if err := a.endpointService.DisableAllEndpoints(ctx); err != nil {
-			return fmt.Errorf("停用其他端点失败: %w", err)
-		}
-
-		// 2. 激活目标端点（数据库）
-		if err := a.endpointService.ToggleEndpoint(ctx, name, true); err != nil {
-			return fmt.Errorf("激活端点失败: %w", err)
-		}
-
-		// 3. 确保端点在内存中存在（处理新建端点的情况）
+		// 1. 确保端点在内存中存在（处理新建端点的情况）
 		if a.endpointManager != nil {
 			// 从数据库获取完整的端点配置
 			record, err := a.endpointService.GetEndpoint(ctx, name)
@@ -477,14 +467,19 @@ func (a *App) ToggleEndpointRecord(name string, enabled bool) error {
 				a.logger.Info("✅ 新端点已添加到内存", "name", name)
 			}
 
-			// 4. 激活对应的组
+			// 2. 激活端点：writer ACK 内单事务完成「禁用其余 + 启用目标」
 			if err := a.endpointManager.ManualActivateGroup(name); err != nil {
-				return fmt.Errorf("激活组失败: %w", err)
+				return fmt.Errorf("激活端点失败: %w", err)
 			}
 		}
 	} else {
-		// 停用端点：只更新数据库
-		if err := a.endpointService.ToggleEndpoint(ctx, name, false); err != nil {
+		// 停用端点：目标为当前 active 时按 revision 顺序清空激活态并由 writer 协调
+		// DB disable 写入；非 active 端点仅更新数据库
+		if a.endpointManager != nil && a.endpointManager.GetActiveGroupName() == name {
+			if err := a.endpointManager.DeactivateActiveEndpointManually(name); err != nil {
+				return fmt.Errorf("停用激活端点失败: %w", err)
+			}
+		} else if err := a.endpointService.ToggleEndpoint(ctx, name, false); err != nil {
 			return fmt.Errorf("切换端点状态失败: %w", err)
 		}
 	}

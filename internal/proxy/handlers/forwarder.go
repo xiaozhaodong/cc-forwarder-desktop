@@ -384,3 +384,65 @@ func ensureBetaFlag(header http.Header, flag string) {
 	}
 	header.Set(anthropicBetaHeader, existing+","+flag)
 }
+
+// ForwardForPipeline 新端点转发管线专用（方案 §4.4）：
+//   - 挂载 GotConn / TLSHandshakeDone / WroteHeaders / WroteRequest 四事件 trace，
+//     供决策表以 WroteHeaders 判定重放安全边界；
+//   - 保留 4xx/5xx 响应结构（分类交给决策表，不在此转换为 error）；
+//   - detachUpstream 为 true 时创建独立 upstream context（下游断开后仍可短时 drain 尾部），返回其 release；
+//   - 非 SSE 请求恢复端点级总超时，SSE 保持无总超时，避免长流被硬切断。
+func (f *Forwarder) ForwardForPipeline(ctx context.Context, r *http.Request, bodyBytes []byte, ep *endpoint.Endpoint, isSSE, detachUpstream bool, onWroteRequest func(time.Time)) (*http.Response, context.CancelFunc, *UpstreamTraceState, error) {
+	bodyBytes = prepareBodyForEndpoint(bodyBytes, ep)
+
+	// 🛡️ 出站隐私过滤（PolicyError 由调用方短路，不进入换候选/标记）
+	bodyBytes, err := ApplyPrivacyFilterForEndpoint(f.privacyFilter, r, bodyBytes, ep)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	requestCtx := ctx
+	var release context.CancelFunc
+	if detachUpstream {
+		requestCtx, release = context.WithCancel(context.Background())
+	}
+	requestCtx, traceState := WithUpstreamTrace(requestCtx, onWroteRequest)
+
+	targetURL := ep.Config.URL + r.URL.Path
+	if r.URL.RawQuery != "" {
+		targetURL += "?" + r.URL.RawQuery
+	}
+
+	req, err := http.NewRequestWithContext(requestCtx, r.Method, targetURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		if release != nil {
+			release()
+		}
+		return nil, nil, traceState, fmt.Errorf("failed to create request: %w", err)
+	}
+	f.CopyHeaders(r, req, ep)
+
+	httpTransport, err := f.buildStreamingTransport()
+	if err != nil {
+		if release != nil {
+			release()
+		}
+		return nil, nil, traceState, fmt.Errorf("failed to create transport: %w", err)
+	}
+	requestTimeout := time.Duration(0)
+	if !isSSE {
+		requestTimeout = ep.Config.Timeout
+	}
+	client := &http.Client{
+		Timeout:   requestTimeout,
+		Transport: httpTransport,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		if release != nil {
+			release()
+		}
+		return nil, nil, traceState, fmt.Errorf("request failed: %w", err)
+	}
+	return resp, release, traceState, nil
+}

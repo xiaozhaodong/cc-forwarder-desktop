@@ -60,7 +60,7 @@ type EndpointFailureDecision struct {
 //   - forwardErr 非 nil 时为 P0 连接阶段：以 trace.WroteHeaders 分界重放安全/歧义
 //   - resp 非 nil 时为 P1 响应头阶段：按状态码区分「确定未执行」与「歧义」
 //   - respBodySample 供 4xx 的模型不支持 / schema 不兼容文本判定（调用方窥读并复原 body）
-func decideEndpointForwardOutcome(forwardErr error, resp *http.Response, trace *upstreamTraceState, respBodySample string) EndpointFailureDecision {
+func decideEndpointForwardOutcome(forwardErr error, resp *http.Response, trace *handlers.UpstreamTraceState, respBodySample string) EndpointFailureDecision {
 	if forwardErr != nil {
 		if !trace.WroteHeaders() {
 			return EndpointFailureDecision{
@@ -159,4 +159,31 @@ func endpointRateLimitCooldown(decision EndpointFailureDecision) time.Duration {
 
 func normalizeEndpointFailureBody(body string) string {
 	return strings.ToLower(body)
+}
+
+// isModelUnsupportedError 判定错误文本是否为「模型不支持」（原 retry_manager 分类逻辑并入）
+func isModelUnsupportedError(errText string) bool {
+	if errText == "" {
+		return false
+	}
+	return strings.Contains(errText, "model_not_found") ||
+		strings.Contains(errText, "model not found") ||
+		strings.Contains(errText, "no available channel for model") ||
+		strings.Contains(errText, "model is not supported") ||
+		strings.Contains(errText, "unsupported model") ||
+		strings.Contains(errText, "does not have access to model")
+}
+
+// isSchemaIncompatibleError 判定错误文本是否为「schema 不兼容」（原 retry_manager 分类逻辑并入）
+func isSchemaIncompatibleError(errText string) bool {
+	if errText == "" {
+		return false
+	}
+	return strings.Contains(errText, "extra inputs are not permitted") ||
+		strings.Contains(errText, "context_management") ||
+		strings.Contains(errText, "cache_control.scope") ||
+		(strings.Contains(errText, "anthropic-beta") && strings.Contains(errText, "not supported")) ||
+		strings.Contains(errText, "field not supported") ||
+		strings.Contains(errText, "字段不支持") ||
+		strings.Contains(errText, "参数不允许")
 }

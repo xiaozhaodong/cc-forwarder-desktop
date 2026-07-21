@@ -4,10 +4,8 @@
 package endpoint
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"time"
 )
 
@@ -15,137 +13,6 @@ import (
 // 当请求失败触发故障转移时调用，用于同步数据库
 func (m *Manager) SetOnFailoverTriggered(fn func(failedEndpoint, newEndpoint string)) {
 	m.onFailoverTriggered = fn
-}
-
-// TriggerRequestFailover 触发请求级故障转移
-// 当请求在某端点上失败达到重试上限时调用
-// 返回: 新激活的端点名，如果没有可用端点则返回空字符串
-func (m *Manager) TriggerRequestFailover(failedEndpointName string, reason string) (string, error) {
-	return m.TriggerRequestFailoverWithCaller(failedEndpointName, reason, RouteCallerSystemFailoverRequest)
-}
-
-func (m *Manager) TriggerRequestFailoverWithCaller(failedEndpointName string, reason string, callerKind string) (string, error) {
-	cfg := m.getConfigSnapshot()
-
-	// 🔧 [热更新修复] 检查故障转移开关
-	if !cfg.Failover.Enabled {
-		slog.Info(fmt.Sprintf("⏭️ [故障转移] 故障转移已禁用，跳过: %s", failedEndpointName))
-		return "", fmt.Errorf("故障转移已禁用")
-	}
-
-	slog.Warn(fmt.Sprintf("🔄 [故障转移] 触发请求级故障转移: %s, 原因: %s", failedEndpointName, reason))
-
-	// 1. 找到失败的端点并设置冷却
-	failedEndpoint := m.GetEndpointByNameAny(failedEndpointName)
-	if failedEndpoint == nil {
-		return "", fmt.Errorf("端点 %s 不存在", failedEndpointName)
-	}
-
-	newEndpointName := m.selectNextFailoverEndpoint(failedEndpointName)
-	if newEndpointName == "" {
-		slog.Error("❌ [故障转移] 没有可用的故障转移端点")
-		return "", fmt.Errorf("没有可用的故障转移端点")
-	}
-	if ok, blockReason := m.AllowSystemRouteSwitch(failedEndpointName, newEndpointName, callerKind); !ok {
-		m.NoteRouteDecision(failedEndpointName, blockReason)
-		slog.Warn(fmt.Sprintf("⛔ [故障转移] manual override 阻止系统切换: %s", blockReason))
-		return "", errors.New(blockReason)
-	}
-
-	// 计算冷却时间
-	cooldownDuration := cfg.Failover.DefaultCooldown
-	if cooldownDuration == 0 {
-		cooldownDuration = 10 * time.Minute // 默认 10 分钟
-	}
-	// 如果端点有自定义冷却时间，使用端点配置
-	if failedEndpoint.Config.Cooldown != nil && *failedEndpoint.Config.Cooldown > 0 {
-		cooldownDuration = *failedEndpoint.Config.Cooldown
-	}
-
-	// 设置冷却状态
-	failedEndpoint.mutex.Lock()
-	failedEndpoint.Status.CooldownUntil = time.Now().Add(cooldownDuration)
-	failedEndpoint.Status.CooldownReason = reason
-	failedEndpoint.mutex.Unlock()
-
-	slog.Info(fmt.Sprintf("⏱️ [故障转移] 端点 %s 进入冷却，持续 %v", failedEndpointName, cooldownDuration))
-
-	// 2. 停用失败端点的组
-	if err := m.groupManager.DeactivateGroup(failedEndpointName); err != nil {
-		slog.Warn(fmt.Sprintf("⚠️ [故障转移] 停用组失败: %v", err))
-	}
-
-	// 4. 激活新端点
-	if err := m.groupManager.ManualActivateGroup(newEndpointName); err != nil {
-		slog.Error(fmt.Sprintf("❌ [故障转移] 激活新端点失败: %v", err))
-		return "", fmt.Errorf("激活新端点失败: %w", err)
-	}
-
-	slog.Info(fmt.Sprintf("✅ [故障转移] 已切换到端点: %s", newEndpointName))
-
-	// 5. 调用回调通知 App 层同步数据库
-	if m.onFailoverTriggered != nil {
-		go m.onFailoverTriggered(failedEndpointName, newEndpointName)
-	}
-
-	// 6. 触发前端刷新
-	if m.onHealthCheckComplete != nil {
-		go m.onHealthCheckComplete()
-	}
-
-	return newEndpointName, nil
-}
-
-// selectNextFailoverEndpoint 选择下一个故障转移端点
-func (m *Manager) selectNextFailoverEndpoint(excludeEndpoint string) string {
-	cfg := m.getConfigSnapshot()
-
-	m.endpointsMu.RLock()
-	snapshot := make([]*Endpoint, len(m.endpoints))
-	copy(snapshot, m.endpoints)
-	m.endpointsMu.RUnlock()
-
-	// 按优先级排序
-	sort.Slice(snapshot, func(i, j int) bool {
-		return snapshot[i].Config.Priority < snapshot[j].Config.Priority
-	})
-
-	now := time.Now()
-	for _, ep := range snapshot {
-		// 跳过失败的端点
-		if ep.Config.Name == excludeEndpoint {
-			continue
-		}
-
-		// 检查是否参与故障转移
-		failoverEnabled := true
-		if ep.Config.FailoverEnabled != nil {
-			failoverEnabled = *ep.Config.FailoverEnabled
-		}
-		if !failoverEnabled {
-			continue
-		}
-
-		// 📊 [失败追踪] 达到阈值的端点不应作为故障转移目标
-		if cfg.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(ep.Config.Name) {
-			slog.Debug(fmt.Sprintf("📊 [失败追踪] 跳过达到失败阈值的故障转移端点: %s", ep.Config.Name))
-			continue
-		}
-
-		// 检查是否在冷却中
-		ep.mutex.RLock()
-		inCooldown := !ep.Status.CooldownUntil.IsZero() && now.Before(ep.Status.CooldownUntil)
-		ep.mutex.RUnlock()
-
-		if inCooldown {
-			slog.Debug(fmt.Sprintf("⏭️ [故障转移] 跳过冷却中的端点: %s", ep.Config.Name))
-			continue
-		}
-
-		return ep.Config.Name
-	}
-
-	return ""
 }
 
 // IsEndpointInCooldown 检查端点是否在冷却中
@@ -191,4 +58,36 @@ func (m *Manager) GetEndpointCooldownInfo(name string) (inCooldown bool, until t
 	now := time.Now()
 	inCooldown = !ep.Status.CooldownUntil.IsZero() && now.Before(ep.Status.CooldownUntil)
 	return inCooldown, ep.Status.CooldownUntil, ep.Status.CooldownReason
+}
+
+// SetEndpointCooldown 设置端点冷却（新转发管线的失败标记入口）
+func (m *Manager) SetEndpointCooldown(name string, duration time.Duration, reason string) {
+	if duration <= 0 {
+		return
+	}
+	ep := m.GetEndpointByNameAny(name)
+	if ep == nil {
+		return
+	}
+	ep.mutex.Lock()
+	ep.Status.CooldownUntil = time.Now().Add(duration)
+	ep.Status.CooldownReason = reason
+	ep.mutex.Unlock()
+}
+
+// PauseEndpoint 手动暂停端点至指定时刻（兼容层 ManualPauseGroup 语义）
+func (m *Manager) PauseEndpoint(name string, until time.Time) bool {
+	ep := m.GetEndpointByNameAny(name)
+	if ep == nil {
+		return false
+	}
+	ep.mutex.Lock()
+	ep.Status.PausedUntil = until
+	ep.mutex.Unlock()
+	return true
+}
+
+// ResumeEndpoint 清除端点手动暂停状态
+func (m *Manager) ResumeEndpoint(name string) bool {
+	return m.PauseEndpoint(name, time.Time{})
 }

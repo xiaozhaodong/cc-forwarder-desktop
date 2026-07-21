@@ -143,6 +143,7 @@ func (m *Manager) TryMigrateActiveEndpoint(candidate string, expectedActiveRevis
 			"expected_revision", expectedActiveRevision, "current_revision", m.activeRevision)
 		return false
 	}
+	previous := m.activeEndpoint
 	m.activeEndpoint = candidate
 	m.activeRevision++
 	revision := m.activeRevision
@@ -151,6 +152,10 @@ func (m *Manager) TryMigrateActiveEndpoint(candidate string, expectedActiveRevis
 
 	if writer != nil {
 		writer.EnqueueAuto(endpointTaskActivate, candidate, revision)
+	}
+	// 前端事件通知（回调仅用于 UI 刷新，DB 写入已统一走 runtime writer）
+	if m.onFailoverTriggered != nil {
+		go m.onFailoverTriggered(previous, candidate)
 	}
 	return true
 }

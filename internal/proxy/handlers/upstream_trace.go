@@ -1,4 +1,4 @@
-package proxy
+package handlers
 
 import (
 	"context"
@@ -8,11 +8,11 @@ import (
 	"time"
 )
 
-// upstreamTraceState 记录单次上游转发的连接级事件。
+// UpstreamTraceState 记录单次上游转发的连接级事件（端点侧与账号池侧共用）。
 // 以 WroteHeaders 是否触发作为「重放安全 / 歧义」分界：
 // WroteHeaders 前失败 = 请求确定未发出（DNS / refused / dial 超时 / TLS 握手失败），
 // 可安全换候选重放；触发后的任何失败均视为歧义，不得据此重放。
-type upstreamTraceState struct {
+type UpstreamTraceState struct {
 	mu               sync.Mutex
 	gotConn          bool
 	tlsHandshakeDone bool
@@ -21,25 +21,25 @@ type upstreamTraceState struct {
 	wroteRequestErr  error
 }
 
-func (s *upstreamTraceState) markGotConn() {
+func (s *UpstreamTraceState) markGotConn() {
 	s.mu.Lock()
 	s.gotConn = true
 	s.mu.Unlock()
 }
 
-func (s *upstreamTraceState) markTLSHandshakeDone() {
+func (s *UpstreamTraceState) markTLSHandshakeDone() {
 	s.mu.Lock()
 	s.tlsHandshakeDone = true
 	s.mu.Unlock()
 }
 
-func (s *upstreamTraceState) markWroteHeaders() {
+func (s *UpstreamTraceState) markWroteHeaders() {
 	s.mu.Lock()
 	s.wroteHeaders = true
 	s.mu.Unlock()
 }
 
-func (s *upstreamTraceState) markWroteRequest(err error) {
+func (s *UpstreamTraceState) markWroteRequest(err error) {
 	s.mu.Lock()
 	s.wroteRequest = true
 	s.wroteRequestErr = err
@@ -47,7 +47,7 @@ func (s *upstreamTraceState) markWroteRequest(err error) {
 }
 
 // WroteHeaders 返回请求头是否已写向上游。
-func (s *upstreamTraceState) WroteHeaders() bool {
+func (s *UpstreamTraceState) WroteHeaders() bool {
 	if s == nil {
 		return false
 	}
@@ -57,7 +57,7 @@ func (s *upstreamTraceState) WroteHeaders() bool {
 }
 
 // WroteRequestErr 返回请求体写出阶段记录的错误（未写出或成功时为 nil）。
-func (s *upstreamTraceState) WroteRequestErr() error {
+func (s *UpstreamTraceState) WroteRequestErr() error {
 	if s == nil {
 		return nil
 	}
@@ -66,11 +66,16 @@ func (s *upstreamTraceState) WroteRequestErr() error {
 	return s.wroteRequestErr
 }
 
-// withUpstreamTrace 在 ctx 上挂载 GotConn / TLSHandshakeDone / WroteHeaders /
+// MarkWroteHeadersForTest 测试辅助：标记 WroteHeaders 已触发。
+func (s *UpstreamTraceState) MarkWroteHeadersForTest() {
+	s.markWroteHeaders()
+}
+
+// WithUpstreamTrace 在 ctx 上挂载 GotConn / TLSHandshakeDone / WroteHeaders /
 // WroteRequest 四事件 trace，返回记录事件的状态结构。
 // onWroteRequest 保留首字计时用途（可为 nil）。
-func withUpstreamTrace(ctx context.Context, onWroteRequest func(time.Time)) (context.Context, *upstreamTraceState) {
-	state := &upstreamTraceState{}
+func WithUpstreamTrace(ctx context.Context, onWroteRequest func(time.Time)) (context.Context, *UpstreamTraceState) {
+	state := &UpstreamTraceState{}
 	trace := &httptrace.ClientTrace{
 		GotConn: func(httptrace.GotConnInfo) {
 			state.markGotConn()

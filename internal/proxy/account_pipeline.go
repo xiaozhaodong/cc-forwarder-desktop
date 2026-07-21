@@ -451,7 +451,7 @@ func (h *Handler) accountStreamTailDrainTimeout() time.Duration {
 	return defaultAccountStreamTailDrainTimeout
 }
 
-func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, bodyBytes []byte, acc *store.UpstreamAccountRecord, isSSE bool, lifecycleManager *RequestLifecycleManager) (*http.Response, context.CancelFunc, *upstreamTraceState, error) {
+func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, bodyBytes []byte, acc *store.UpstreamAccountRecord, isSSE bool, lifecycleManager *RequestLifecycleManager) (*http.Response, context.CancelFunc, *handlers.UpstreamTraceState, error) {
 	targetURL, err := resolveAccountTargetURL(acc, r.URL.Path, r.URL.RawQuery)
 	if err != nil {
 		return nil, nil, nil, err
@@ -473,7 +473,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	if lifecycleManager != nil {
 		onWroteRequest = lifecycleManager.SetFirstTokenStartTime
 	}
-	requestCtx, traceState := withUpstreamTrace(requestCtx, onWroteRequest)
+	requestCtx, traceState := handlers.WithUpstreamTrace(requestCtx, onWroteRequest)
 
 	req, err := http.NewRequestWithContext(requestCtx, r.Method, targetURL, bytes.NewReader(bodyBytes))
 	if err != nil {

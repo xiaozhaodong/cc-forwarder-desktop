@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -206,6 +207,9 @@ func newAccountPipelineTestHandlerWithEnabled(t *testing.T, fallbackURL string, 
 	cfg := &config.Config{
 		AccountPool: config.AccountPoolConfig{
 			Enabled: enabled,
+		},
+		Failover: config.FailoverConfig{
+			Enabled: true,
 		},
 		Streaming: config.StreamingConfig{
 			ResponseHeaderTimeout: 5 * time.Second,
@@ -1017,9 +1021,9 @@ func TestAccountPipeline_ConnectionFailureBeforeWroteHeaders_PinnedAccountDoesNo
 }
 
 func TestAccountPipeline_FailureAfterWroteHeaders_KeepsThresholdSemantics(t *testing.T) {
-	firstHits := 0
+	var firstHits int32
 	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		firstHits++
+		atomic.AddInt32(&firstHits, 1)
 		_, _ = io.ReadAll(r.Body)
 		hj, ok := w.(http.Hijacker)
 		if !ok {
@@ -1035,9 +1039,9 @@ func TestAccountPipeline_FailureAfterWroteHeaders_KeepsThresholdSemantics(t *tes
 	}))
 	defer firstServer.Close()
 
-	secondHits := 0
+	var secondHits int32
 	secondServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		secondHits++
+		atomic.AddInt32(&secondHits, 1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"resp_should_not_serve","status":"completed","output":[]}`))
 	}))
@@ -1057,8 +1061,10 @@ func TestAccountPipeline_FailureAfterWroteHeaders_KeepsThresholdSemantics(t *tes
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected ambiguous failure after WroteHeaders to keep below-threshold passthrough, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if firstHits != 1 || secondHits != 0 {
-		t.Fatalf("expected no failover for post-WroteHeaders failure below threshold, got first=%d second=%d", firstHits, secondHits)
+	firstHitCount := atomic.LoadInt32(&firstHits)
+	secondHitCount := atomic.LoadInt32(&secondHits)
+	if firstHitCount != 1 || secondHitCount != 0 {
+		t.Fatalf("expected no failover for post-WroteHeaders failure below threshold, got first=%d second=%d", firstHitCount, secondHitCount)
 	}
 
 	service.mu.Lock()

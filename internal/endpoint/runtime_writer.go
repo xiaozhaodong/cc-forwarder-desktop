@@ -61,8 +61,10 @@ type RuntimeWriter struct {
 
 	tasks chan endpointRuntimeTask
 
+	lifecycleMu sync.RWMutex // 协调 submit 与 Close：通过门禁的任务必须先完成入队再允许取消消费者
+	closing     bool
+
 	mu                    sync.Mutex
-	closing               bool
 	retryTask             *endpointRuntimeTask
 	lastPersistedEndpoint string
 	lastPersistedRevision int64
@@ -143,12 +145,11 @@ func (w *RuntimeWriter) EnqueueAuto(kind endpointTaskKind, name string, revision
 }
 
 func (w *RuntimeWriter) submit(task endpointRuntimeTask) error {
-	w.mu.Lock()
+	w.lifecycleMu.RLock()
+	defer w.lifecycleMu.RUnlock()
 	if w.closing {
-		w.mu.Unlock()
 		return ErrRuntimeWriterClosed
 	}
-	w.mu.Unlock()
 
 	select {
 	case w.tasks <- task:
@@ -163,16 +164,15 @@ func (w *RuntimeWriter) Close() error {
 	if w == nil {
 		return nil
 	}
-	w.mu.Lock()
+	w.lifecycleMu.Lock()
 	if w.closing {
-		w.mu.Unlock()
+		w.lifecycleMu.Unlock()
 		w.wg.Wait()
 		return nil
 	}
 	w.closing = true
-	w.mu.Unlock()
-
 	w.cancel()
+	w.lifecycleMu.Unlock()
 	w.wg.Wait()
 	return nil
 }

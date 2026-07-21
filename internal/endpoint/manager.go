@@ -78,7 +78,6 @@ type Manager struct {
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
 	fastTester     *FastTester
-	groupManager   *GroupManager
 	keyManager     *KeyManager     // 管理多 API Key 状态
 	failureTracker *FailureTracker // 失败追踪器，用于检测端点持续故障
 	routeOverride  *RouteOverride
@@ -120,7 +119,6 @@ func NewManager(cfg *config.Config) *Manager {
 		ctx:           ctx,
 		cancel:        cancel,
 		fastTester:    NewFastTester(cfg),
-		groupManager:  NewGroupManager(cfg),
 		keyManager:    NewKeyManager(), // 初始化 Key 管理器
 		routeOverride: NewRouteOverride(),
 		routeState:    NewRouteState(),
@@ -157,9 +155,6 @@ func NewManager(cfg *config.Config) *Manager {
 	// Set manager reference in fast tester for dynamic token resolution
 	manager.fastTester.SetManager(manager)
 
-	// Initialize groups from endpoints
-	manager.groupManager.UpdateGroups(manager.endpoints)
-
 	return manager
 }
 
@@ -187,8 +182,6 @@ func (m *Manager) UpdateConfig(cfg *config.Config) {
 	m.config = cfg
 	m.configMu.Unlock()
 
-	// 只更新 GroupManager 配置
-	m.groupManager.UpdateConfig(cfg)
 	slog.Debug("🔄 [热更新] 更新配置参数完成，端点保持不变")
 
 	// Update fast tester with new config
@@ -317,11 +310,6 @@ func (m *Manager) getConfigSnapshot() *config.Config {
 	return cfg
 }
 
-// GetGroupManager returns the group manager
-func (m *Manager) GetGroupManager() *GroupManager {
-	return m.groupManager
-}
-
 // RecordFailure 记录端点失败，返回当前窗口内失败次数
 func (m *Manager) RecordFailure(endpointName string) int {
 	return m.failureTracker.RecordFailure(endpointName)
@@ -379,7 +367,7 @@ func (m *Manager) UpdateFailureTrackerConfig(enabled bool, timeWindow time.Durat
 }
 
 // ShouldRejectRequest 检查是否应该拒绝请求
-// 当 FailureTracker 配置为 "reject" 模式且有任意活跃端点达到失败阈值时返回 true
+// 当 FailureTracker 配置为 "reject" 模式且当前 active 端点达到失败阈值时返回 true
 // 返回: (shouldReject, rejectedEndpointName)
 func (m *Manager) ShouldRejectRequest() (bool, string) {
 	cfg := m.getConfigSnapshot()
@@ -389,19 +377,13 @@ func (m *Manager) ShouldRejectRequest() (bool, string) {
 		return false, ""
 	}
 
-	// 获取活跃端点
-	m.endpointsMu.RLock()
-	snapshot := make([]*Endpoint, len(m.endpoints))
-	copy(snapshot, m.endpoints)
-	m.endpointsMu.RUnlock()
-
-	activeEndpoints := m.groupManager.FilterEndpointsByActiveGroups(snapshot)
-
-	// 检查是否有任意活跃端点达到失败阈值
-	for _, ep := range activeEndpoints {
-		if m.failureTracker.ShouldTriggerAction(ep.Config.Name) {
-			return true, ep.Config.Name
-		}
+	// v7：活跃端点 = activeEndpoint（组体系已退役）
+	activeName, _ := m.GetActiveEndpointSelection()
+	if activeName == "" {
+		return false, ""
+	}
+	if m.failureTracker.ShouldTriggerAction(activeName) {
+		return true, activeName
 	}
 
 	return false, ""

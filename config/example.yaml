@@ -63,17 +63,12 @@ streaming:
   # 设置过短可能导致假超时和不必要的重试
   # 推荐范围: 30s-120s，根据实际服务响应时间调整
   response_header_timeout: "60s"   # 响应头超时，默认: 60s
+  eof_retry_hint: false             # 流式传输中断时发送客户端重试提示，默认: false
 
 # 组管理配置
 group:
   cooldown: "600s"                      # 组失败后的冷却时间，默认: 600s
   auto_switch_between_groups: true      # 组间自动切换：true=自动切换到其他组，false=需要手动切换，默认: true
-
-# 请求挂起配置
-request_suspend:
-  enabled: false              # 是否启用请求挂起功能，默认: false
-  timeout: "300s"             # 挂起请求的超时时间，默认: 300s (5分钟)
-  max_suspended_requests: 100 # 最大挂起请求数量，默认: 100
 
 # 账号池路由配置 (v6.0+)
 # /v1/responses 专用于 Codex 账号池链路；endpoint 主要承载 Claude 相关请求

@@ -77,13 +77,7 @@ func (a *App) GetSystemStatus() SystemStatus {
 	}
 
 	if a.endpointManager != nil {
-		gm := a.endpointManager.GetGroupManager()
-		if gm != nil {
-			activeGroups := gm.GetActiveGroups()
-			if len(activeGroups) > 0 {
-				status.ActiveGroup = activeGroups[0].Name
-			}
-		}
+		status.ActiveGroup = a.endpointManager.GetActiveGroupName()
 	}
 
 	return status

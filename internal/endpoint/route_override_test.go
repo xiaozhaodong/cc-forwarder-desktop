@@ -1,6 +1,7 @@
 package endpoint
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -26,17 +27,8 @@ func TestRouteOverrideManualFixedBlocksSystemSwitch(t *testing.T) {
 }
 
 func TestManualFixedFailoverBlockReasonPreservesPercentLiterals(t *testing.T) {
-	cfg := &config.Config{
-		Strategy: config.StrategyConfig{Type: "priority"},
-		Failover: config.FailoverConfig{
-			Enabled: true,
-		},
-		Endpoints: []config.EndpointConfig{
-			{Name: "primary%s", URL: "http://primary.example", Priority: 1},
-			{Name: "backup%q", URL: "http://backup.example", Priority: 2},
-		},
-	}
-	manager := NewManager(cfg)
+	manager := NewManager(&config.Config{})
+	defer manager.Stop()
 	manager.SetClaudeRoutingOverride(RouteOverrideState{
 		Mode:            RouteModeManualFixed,
 		EndpointName:    "primary%s",
@@ -44,15 +36,15 @@ func TestManualFixedFailoverBlockReasonPreservesPercentLiterals(t *testing.T) {
 		FallbackEnabled: false,
 	})
 
-	_, err := manager.TriggerRequestFailoverWithCaller("primary%s", "unit test", RouteCallerSystemFailoverRequest)
-	if err == nil {
+	allowed, reason := manager.AllowSystemRouteSwitch("primary%s", "backup%q", RouteCallerSystemFailoverRequest)
+	if allowed || reason == "" {
 		t.Fatal("expected manual fixed failover to be blocked")
 	}
-	if strings.Contains(err.Error(), "%!") {
-		t.Fatalf("block reason was treated as a format string: %q", err.Error())
+	if strings.Contains(reason, "%!") {
+		t.Fatalf("block reason was treated as a format string: %q", reason)
 	}
-	if !strings.Contains(err.Error(), "primary%s") || !strings.Contains(err.Error(), "backup%q") {
-		t.Fatalf("block reason lost endpoint names: %q", err.Error())
+	if !strings.Contains(reason, "primary%s") || !strings.Contains(reason, "backup%q") {
+		t.Fatalf("block reason lost endpoint names: %q", reason)
 	}
 }
 
@@ -68,19 +60,19 @@ func TestManualPreferredAllowsFallbackWithoutClearingPreference(t *testing.T) {
 		},
 	}
 	manager := NewManager(cfg)
+	defer manager.Stop()
+	manager.RestoreActiveEndpoint("primary")
 	manager.SetClaudeRoutingOverride(RouteOverrideState{
 		Mode:            RouteModeManualPreferred,
 		EndpointName:    "primary",
 		SetBy:           RouteCallerUser,
 		FallbackEnabled: true,
 	})
+	manager.SetEndpointCooldown("primary", time.Minute, "unit test")
 
-	newEndpoint, err := manager.TriggerRequestFailoverWithCaller("primary", "unit test", RouteCallerSystemFailoverRequest)
-	if err != nil {
-		t.Fatalf("manual preferred should allow fallback: %v", err)
-	}
-	if newEndpoint != "backup" {
-		t.Fatalf("expected fallback to backup, got %q", newEndpoint)
+	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
+	if len(result.Candidates) != 1 || result.Candidates[0].Config.Name != "backup" {
+		t.Fatalf("expected scheduler fallback candidate [backup], got %v", candidateNames(result))
 	}
 
 	override := manager.GetClaudeRoutingOverride()

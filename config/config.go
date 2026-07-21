@@ -15,27 +15,27 @@ import (
 )
 
 type Config struct {
-	Server              ServerConfig           `yaml:"server"`
-	Strategy            StrategyConfig         `yaml:"strategy"`
-	Retry               RetryConfig            `yaml:"retry"`
-	Health              HealthConfig           `yaml:"health"`
-	Logging             LoggingConfig          `yaml:"logging"`
-	Streaming           StreamingConfig        `yaml:"streaming"`
-	Group               GroupConfig            `yaml:"group"`             // Group configuration (DEPRECATED: use Failover instead)
-	Failover            FailoverConfig         `yaml:"failover"`          // Failover configuration (v4.0+)
-	FailureTracker      FailureTrackerConfig   `yaml:"failure_tracker"`   // Failure tracker configuration (v5.2.6+)
-	RequestSuspend      RequestSuspendConfig   `yaml:"request_suspend"`   // Request suspension configuration
-	UsageTracking       UsageTrackingConfig    `yaml:"usage_tracking"`    // Usage tracking configuration
-	TokenCounting       TokenCountingConfig    `yaml:"token_counting"`    // Token counting configuration
-	EndpointsStorage    EndpointsStorageConfig `yaml:"endpoints_storage"` // Endpoints storage configuration (v5.0+)
-	AccountPool         AccountPoolConfig      `yaml:"account_pool"`      // Account pool routing configuration (v6.0+)
-	Proxy               ProxyConfig            `yaml:"proxy"`
-	Auth                AuthConfig             `yaml:"auth"`
-	TUI                 TUIConfig              `yaml:"tui"`                    // TUI configuration (DEPRECATED: TUI has been removed)
-	GlobalTimeout       time.Duration          `yaml:"global_timeout"`         // Global timeout for non-streaming requests
-	RequestBodyMaxBytes int64                  `yaml:"request_body_max_bytes"` // Optional max request body size in bytes, 0 = unlimited
-	Timezone            string                 `yaml:"timezone"`               // Global timezone setting for all components
-	Endpoints           []EndpointConfig       `yaml:"endpoints"`
+	Server              ServerConfig               `yaml:"server"`
+	Strategy            StrategyConfig             `yaml:"strategy"`
+	Retry               RetryConfig                `yaml:"retry"`
+	Health              HealthConfig               `yaml:"health"`
+	Logging             LoggingConfig              `yaml:"logging"`
+	Streaming           StreamingConfig            `yaml:"streaming"`
+	Group               GroupConfig                `yaml:"group"`                    // Group configuration (DEPRECATED: use Failover instead)
+	Failover            FailoverConfig             `yaml:"failover"`                 // Failover configuration (v4.0+)
+	FailureTracker      FailureTrackerConfig       `yaml:"failure_tracker"`          // Failure tracker configuration (v5.2.6+)
+	RequestSuspend      LegacyRequestSuspendConfig `yaml:"request_suspend" json:"-"` // 已废弃：仅 YAML 解析兼容（挂起体系已删除）
+	UsageTracking       UsageTrackingConfig        `yaml:"usage_tracking"`           // Usage tracking configuration
+	TokenCounting       TokenCountingConfig        `yaml:"token_counting"`           // Token counting configuration
+	EndpointsStorage    EndpointsStorageConfig     `yaml:"endpoints_storage"`        // Endpoints storage configuration (v5.0+)
+	AccountPool         AccountPoolConfig          `yaml:"account_pool"`             // Account pool routing configuration (v6.0+)
+	Proxy               ProxyConfig                `yaml:"proxy"`
+	Auth                AuthConfig                 `yaml:"auth"`
+	TUI                 TUIConfig                  `yaml:"tui"`                    // TUI configuration (DEPRECATED: TUI has been removed)
+	GlobalTimeout       time.Duration              `yaml:"global_timeout"`         // Global timeout for non-streaming requests
+	RequestBodyMaxBytes int64                      `yaml:"request_body_max_bytes"` // Optional max request body size in bytes, 0 = unlimited
+	Timezone            string                     `yaml:"timezone"`               // Global timezone setting for all components
+	Endpoints           []EndpointConfig           `yaml:"endpoints"`
 
 	// Runtime priority override (not serialized to YAML)
 	PrimaryEndpoint string `yaml:"-"` // Primary endpoint name from command line
@@ -92,6 +92,11 @@ type StreamingConfig struct {
 	ReadTimeout           time.Duration `yaml:"read_timeout"`
 	MaxIdleTime           time.Duration `yaml:"max_idle_time"`
 	ResponseHeaderTimeout time.Duration `yaml:"response_header_timeout"` // 响应头超时时间，默认: 60s
+	// EOFRetryHintRaw 流式错误时发送可重试中断消息（触发客户端自动重试）。
+	// 新配置键；nil 表示未配置，回退旧键 request_suspend.eof_retry_hint。
+	EOFRetryHintRaw *bool `yaml:"eof_retry_hint" json:"-"`
+	// EOFRetryHint 生效值：新键 ?? 旧键 ?? false（解析后由 resolveEOFRetryHint 计算）
+	EOFRetryHint bool `yaml:"-" json:"eof_retry_hint"`
 }
 
 // GroupConfig (DEPRECATED in v4.0: use FailoverConfig instead)
@@ -108,19 +113,22 @@ type FailoverConfig struct {
 }
 
 // FailureTrackerConfig v5.2.6 失败追踪器配置
-// 追踪端点失败次数，用于触发故障转移、挂起或拒绝请求
+// 追踪端点失败次数，用于触发故障转移或拒绝请求
 type FailureTrackerConfig struct {
 	Enabled    bool          `yaml:"enabled"`     // 启用失败追踪，默认: false
 	TimeWindow time.Duration `yaml:"time_window"` // 时间窗口，默认: 5m
 	Threshold  int           `yaml:"threshold"`   // 失败次数阈值，默认: 3
-	Action     string        `yaml:"action"`      // 触发动作: failover|suspend|reject，默认: failover
+	Action     string        `yaml:"action"`      // 触发动作: failover|reject，默认: failover
 }
 
-type RequestSuspendConfig struct {
-	Enabled              bool          `yaml:"enabled"`                // Enable request suspension feature, default: false
-	Timeout              time.Duration `yaml:"timeout"`                // Timeout for suspended requests, default: 300s
-	MaxSuspendedRequests int           `yaml:"max_suspended_requests"` // Maximum number of suspended requests, default: 100
-	EOFRetryHint         bool          `yaml:"eof_retry_hint"`         // Send retryable error format on streaming errors (triggers client auto-retry), default: false
+// LegacyRequestSuspendConfig 仅用于 YAML 解析兼容（挂起体系已随 v7 重构删除）。
+// 旧配置文件不报错；json:"-" 使其不出现在 Wails/JSON 输出中。
+// eof_retry_hint 旧键仍参与 EOFRetryHint 生效值回退计算。
+type LegacyRequestSuspendConfig struct {
+	Enabled              bool          `yaml:"enabled" json:"-"`
+	Timeout              time.Duration `yaml:"timeout" json:"-"`
+	MaxSuspendedRequests int           `yaml:"max_suspended_requests" json:"-"`
+	EOFRetryHint         *bool         `yaml:"eof_retry_hint" json:"-"`
 }
 
 // ModelPricing 模型定价配置
@@ -508,14 +516,8 @@ func (c *Config) setDefaults() {
 		c.EndpointsStorage.Type = "yaml" // Default to YAML for backward compatibility
 	}
 
-	// Set request suspension defaults
-	if c.RequestSuspend.Timeout == 0 {
-		c.RequestSuspend.Timeout = 300 * time.Second // Default 5 minutes timeout for suspended requests
-	}
-	if c.RequestSuspend.MaxSuspendedRequests == 0 {
-		c.RequestSuspend.MaxSuspendedRequests = 100 // Default maximum 100 suspended requests
-	}
-	// RequestSuspend.Enabled defaults to false (zero value) for backward compatibility
+	// EOFRetryHint 生效值：新键 streaming.eof_retry_hint ?? 旧键 request_suspend.eof_retry_hint ?? false
+	c.resolveEOFRetryHint()
 
 	// Set usage tracking defaults
 	if c.UsageTracking.DatabasePath == "" {
@@ -715,19 +717,6 @@ func (c *Config) validate() error {
 		}
 		if c.Proxy.URL == "" && (c.Proxy.Host == "" || c.Proxy.Port == 0) {
 			return fmt.Errorf("proxy URL or host:port must be specified when proxy is enabled")
-		}
-	}
-
-	// Validate request suspension configuration
-	if c.RequestSuspend.Enabled {
-		if c.RequestSuspend.Timeout <= 0 {
-			return fmt.Errorf("request suspend timeout must be greater than 0 when enabled")
-		}
-		if c.RequestSuspend.MaxSuspendedRequests <= 0 {
-			return fmt.Errorf("max suspended requests must be greater than 0 when request suspension is enabled")
-		}
-		if c.RequestSuspend.MaxSuspendedRequests > 10000 {
-			return fmt.Errorf("max suspended requests cannot exceed 10000 for performance reasons")
 		}
 	}
 
@@ -983,24 +972,6 @@ func (cw *ConfigWatcher) logConfigChanges(oldConfig, newConfig *Config) {
 			"new_enabled", newConfig.Auth.Enabled)
 	}
 
-	if oldConfig.RequestSuspend.Enabled != newConfig.RequestSuspend.Enabled {
-		cw.logger.Info("⏸️ 请求挂起状态变更",
-			"old_enabled", oldConfig.RequestSuspend.Enabled,
-			"new_enabled", newConfig.RequestSuspend.Enabled)
-	}
-
-	if oldConfig.RequestSuspend.MaxSuspendedRequests != newConfig.RequestSuspend.MaxSuspendedRequests {
-		cw.logger.Info("⏸️ 最大挂起请求数变更",
-			"old_max", oldConfig.RequestSuspend.MaxSuspendedRequests,
-			"new_max", newConfig.RequestSuspend.MaxSuspendedRequests)
-	}
-
-	if oldConfig.RequestSuspend.Timeout != newConfig.RequestSuspend.Timeout {
-		cw.logger.Info("⏸️ 请求挂起超时时间变更",
-			"old_timeout", oldConfig.RequestSuspend.Timeout,
-			"new_timeout", newConfig.RequestSuspend.Timeout)
-	}
-
 	if oldConfig.UsageTracking.Enabled != newConfig.UsageTracking.Enabled {
 		cw.logger.Info("📊 使用跟踪状态变更",
 			"old_enabled", oldConfig.UsageTracking.Enabled,
@@ -1169,5 +1140,18 @@ func getConfigAppDataDir() string {
 	default:
 		homeDir, _ := os.UserHomeDir()
 		return filepath.Join(homeDir, ".ai-switchboard")
+	}
+}
+
+// resolveEOFRetryHint 计算 EOFRetryHint 生效值（v7 D2 迁移）：
+// 新键 streaming.eof_retry_hint 非 nil 优先；否则回退旧键 request_suspend.eof_retry_hint；均未配置为 false。
+func (c *Config) resolveEOFRetryHint() {
+	switch {
+	case c.Streaming.EOFRetryHintRaw != nil:
+		c.Streaming.EOFRetryHint = *c.Streaming.EOFRetryHintRaw
+	case c.RequestSuspend.EOFRetryHint != nil:
+		c.Streaming.EOFRetryHint = *c.RequestSuspend.EOFRetryHint
+	default:
+		c.Streaming.EOFRetryHint = false
 	}
 }

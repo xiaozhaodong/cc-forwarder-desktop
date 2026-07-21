@@ -19,24 +19,9 @@ func (m *Manager) SetOnHealthCheckComplete(fn func()) {
 	m.onHealthCheckComplete = fn
 }
 
-// refreshGroupActivation 刷新组激活状态
-// 当端点健康状态变化时调用，用于重新评估哪些组应该被激活
-// v5.0+: 解决新增端点后不会自动激活的问题
+// refreshGroupActivation 保留旧函数名，仅通知前端刷新。
+// v7 起激活状态由 activeEndpoint 单独管理，健康检查不得改写路由状态。
 func (m *Manager) refreshGroupActivation() {
-	// 防御性检查：确保 groupManager 已初始化
-	if m.groupManager == nil {
-		return
-	}
-
-	m.endpointsMu.RLock()
-	snapshot := make([]*Endpoint, len(m.endpoints))
-	copy(snapshot, m.endpoints)
-	m.endpointsMu.RUnlock()
-
-	m.groupManager.UpdateGroups(snapshot)
-	slog.Debug("🔄 [组管理] 端点最近连通性状态变化，已刷新组激活状态")
-
-	// 触发检测完成回调（通知前端更新）
 	if m.onHealthCheckComplete != nil {
 		go m.onHealthCheckComplete()
 	}
@@ -132,8 +117,7 @@ func (m *Manager) updateEndpointStatus(endpoint *Endpoint, healthy bool, respons
 	// 通知Web界面端点状态变化
 	go m.notifyWebInterface(endpoint)
 
-	// 当端点最近检测结果从不可达转为可达时，重新评估组的激活状态
-	// 这对新增端点后立即激活特别重要
+	// 最近检测结果从不可达转为可达时通知前端刷新，不改写 activeEndpoint。
 	if healthy && wasUnhealthy {
 		go m.refreshGroupActivation()
 	}

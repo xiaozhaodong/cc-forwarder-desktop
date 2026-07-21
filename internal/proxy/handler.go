@@ -15,7 +15,6 @@ import (
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/proxy/handlers"
 	"cc-forwarder/internal/proxy/response"
 	"cc-forwarder/internal/tracking"
@@ -39,8 +38,6 @@ type Handler struct {
 	tokenAnalyzer                 *response.TokenAnalyzer
 	forwarder                     *handlers.Forwarder
 	refreshTokenManager           *accountauth.OpenAIRefreshTokenManager
-	regularHandler                *handlers.RegularHandler
-	streamingHandler              *handlers.StreamingHandler
 	eventBus                      events.EventBus // EventBus事件总线
 	accountHTTPInitOnce           sync.Once
 	accountHTTPInitErr            error
@@ -52,11 +49,6 @@ type Handler struct {
 	imageHTTPTransport            *http.Transport
 	imageHTTPClient               *http.Client
 	imageDirectHTTPClientFactory  func(int, int) (*http.Client, func(), error)
-	// 🔧 [Critical修复] 保存共享的SuspensionManager实例的引用
-	// 确保在SetUsageTracker中重建Handler时保持共享状态
-	sharedSuspensionManager handlers.SuspensionManager
-	// 🚀 [端点自愈] 端点恢复信号管理器
-	recoverySignalManager *EndpointRecoverySignalManager
 	// 🛡️ 出站隐私过滤（可选注入，nil 时不影响原有链路）
 	privacyFilter handlers.PrivacyFilter
 }
@@ -83,239 +75,22 @@ func (p *TokenParserProviderImpl) NewTokenParserWithUsageTracker(requestID strin
 	return NewTokenParserWithUsageTracker(requestID, usageTracker)
 }
 
-// 适配器类型定义
-
-// TokenParserAdapter 适配proxy.TokenParser到handlers.TokenParser
-type TokenParserAdapter struct {
-	innerParser *TokenParser
-}
-
-func (ta *TokenParserAdapter) ParseSSELine(line string) *monitor.TokenUsage {
-	return ta.innerParser.ParseSSELine(line)
-}
-
-func (ta *TokenParserAdapter) SetModelName(model string) {
-	ta.innerParser.SetModelName(model)
-}
-
-// StreamProcessorAdapter 适配proxy.StreamProcessor到handlers.StreamProcessor
-type StreamProcessorAdapter struct {
-	innerProcessor *StreamProcessor
-}
-
-func (spa *StreamProcessorAdapter) ProcessStreamWithRetry(ctx context.Context, resp *http.Response) (*tracking.TokenUsage, string, error) {
-	return spa.innerProcessor.ProcessStreamWithRetry(ctx, resp)
-}
-
-func (spa *StreamProcessorAdapter) EnableDownstreamTailDrain(timeout time.Duration, cancelUpstream context.CancelFunc) {
-	spa.innerProcessor.EnableDownstreamTailDrain(timeout, cancelUpstream)
-}
-
-func (spa *StreamProcessorAdapter) SetFirstTokenRecorder(recorder func()) {
-	spa.innerProcessor.SetFirstTokenRecorder(recorder)
-}
-
-func (spa *StreamProcessorAdapter) SetStreamTimingRecorders(firstTokenRecorder func() bool, completionRecorder func()) {
-	spa.innerProcessor.SetStreamTimingRecorders(firstTokenRecorder, completionRecorder)
-}
-
-// ErrorRecoveryManagerAdapter 适配*ErrorRecoveryManager到handlers.ErrorRecoveryManager
-type ErrorRecoveryManagerAdapter struct {
-	innerManager *ErrorRecoveryManager
-}
-
-func (era *ErrorRecoveryManagerAdapter) ClassifyError(err error, connID, endpointName, groupName string, attemptCount int) handlers.ErrorContext {
-	ctx := era.innerManager.ClassifyError(err, connID, endpointName, groupName, attemptCount)
-	return handlers.ErrorContext{
-		RequestID:      ctx.RequestID,
-		EndpointName:   ctx.EndpointName,
-		GroupName:      ctx.GroupName,
-		AttemptCount:   ctx.AttemptCount,
-		ErrorType:      handlers.ErrorType(ctx.ErrorType),
-		OriginalError:  ctx.OriginalError,
-		RetryableAfter: ctx.RetryableAfter,
-		MaxRetries:     ctx.MaxRetries,
-	}
-}
-
-func (era *ErrorRecoveryManagerAdapter) HandleFinalFailure(errorCtx handlers.ErrorContext) {
-	innerCtx := ErrorContext{
-		RequestID:      errorCtx.RequestID,
-		EndpointName:   errorCtx.EndpointName,
-		GroupName:      errorCtx.GroupName,
-		AttemptCount:   errorCtx.AttemptCount,
-		ErrorType:      ErrorType(errorCtx.ErrorType),
-		OriginalError:  errorCtx.OriginalError,
-		RetryableAfter: errorCtx.RetryableAfter,
-		MaxRetries:     errorCtx.MaxRetries,
-	}
-	era.innerManager.HandleFinalFailure(&innerCtx)
-}
-
-func (era *ErrorRecoveryManagerAdapter) GetErrorTypeName(errorType handlers.ErrorType) string {
-	return era.innerManager.getErrorTypeName(ErrorType(errorType))
-}
-
-// TokenAnalyzerAdapter 适配*response.TokenAnalyzer到handlers.TokenAnalyzer
-type TokenAnalyzerAdapter struct {
-	innerAnalyzer *response.TokenAnalyzer
-}
-
-func (taa *TokenAnalyzerAdapter) AnalyzeResponseForTokens(ctx context.Context, responseBody, endpointName string, r *http.Request) {
-	taa.innerAnalyzer.AnalyzeResponseForTokens(ctx, responseBody, endpointName, r)
-}
-
-func (taa *TokenAnalyzerAdapter) AnalyzeResponseForTokensUnified(responseBytes []byte, connID, endpointName string) (*tracking.TokenUsage, string) {
-	// 使用新的方法签名获取Token信息
-	tokenUsage, modelName := taa.innerAnalyzer.AnalyzeResponseForTokensUnified(responseBytes, connID, endpointName)
-
-	return tokenUsage, modelName
-}
-
-// RequestLifecycleManagerAdapter 适配handlers.RequestLifecycleManager到response.RequestLifecycleManager
-type RequestLifecycleManagerAdapter struct {
-	innerManager handlers.RequestLifecycleManager
-}
-
-func (rlma *RequestLifecycleManagerAdapter) GetDuration() time.Duration {
-	// 这里需要根据具体实现来获取持续时间
-	// 暂时返回0，可能需要在handlers.RequestLifecycleManager接口中添加GetDuration方法
-	return time.Duration(0)
-}
-
-// 工厂实现 - 使用适配器
-
-type TokenParserFactoryImpl struct{}
-
-func (f *TokenParserFactoryImpl) NewTokenParserWithUsageTracker(connID string, usageTracker *tracking.UsageTracker) handlers.TokenParser {
-	innerParser := NewTokenParserWithUsageTracker(connID, usageTracker)
-	return &TokenParserAdapter{innerParser: innerParser}
-}
-
-type StreamProcessorFactoryImpl struct{}
-
-func (f *StreamProcessorFactoryImpl) NewStreamProcessor(tokenParser handlers.TokenParser, usageTracker *tracking.UsageTracker,
-	w http.ResponseWriter, flusher http.Flusher, requestID, endpoint string) handlers.StreamProcessor {
-	// 获取内部的TokenParser实例
-	var concreteTokenParser *TokenParser
-	if adapter, ok := tokenParser.(*TokenParserAdapter); ok {
-		concreteTokenParser = adapter.innerParser
-	} else {
-		// 如果不是适配器类型，创建新的
-		concreteTokenParser = NewTokenParserWithUsageTracker(requestID, usageTracker)
-	}
-	innerProcessor := NewStreamProcessor(concreteTokenParser, usageTracker, w, flusher, requestID, endpoint)
-	return &StreamProcessorAdapter{innerProcessor: innerProcessor}
-}
-
-type ErrorRecoveryFactoryImpl struct{}
-
-func (f *ErrorRecoveryFactoryImpl) NewErrorRecoveryManager(usageTracker *tracking.UsageTracker) handlers.ErrorRecoveryManager {
-	innerManager := NewErrorRecoveryManager(usageTracker)
-	return &ErrorRecoveryManagerAdapter{innerManager: innerManager}
-}
-
-type RetryManagerFactoryImpl struct {
-	config          *config.Config
-	errorRecovery   *ErrorRecoveryManager
-	endpointManager *endpoint.Manager
-}
-
-func (f *RetryManagerFactoryImpl) NewRetryManager() handlers.RetryManager {
-	return NewRetryManager(f.config, f.errorRecovery, f.endpointManager)
-}
-
-type SuspensionManagerFactoryImpl struct {
-	config                *config.Config
-	endpointManager       *endpoint.Manager
-	recoverySignalManager *EndpointRecoverySignalManager // 🚀 [端点自愈] 恢复信号管理器
-}
-
-func (f *SuspensionManagerFactoryImpl) NewSuspensionManager() handlers.SuspensionManager {
-	// 🚀 [端点自愈] 使用带恢复信号的SuspensionManager构造函数
-	return NewSuspensionManagerWithRecoverySignal(f.config, f.endpointManager, f.endpointManager.GetGroupManager(), f.recoverySignalManager)
-}
-
 // NewHandler creates a new proxy handler
 func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler {
 	// 创建forwarder
 	forwarder := handlers.NewForwarder(cfg, endpointManager)
 
-	// 🚀 [端点自愈] 创建端点恢复信号管理器
-	recoverySignalManager := NewEndpointRecoverySignalManager()
-
 	h := &Handler{
-		endpointManager:       endpointManager,
-		config:                cfg,
-		responseProcessor:     response.NewProcessor(),
-		forwarder:             forwarder,
-		refreshTokenManager:   accountauth.NewOpenAIRefreshTokenManager(cfg),
-		recoverySignalManager: recoverySignalManager, // 🚀 [端点自愈] 保存恢复信号管理器引用
+		endpointManager:     endpointManager,
+		config:              cfg,
+		responseProcessor:   response.NewProcessor(),
+		forwarder:           forwarder,
+		refreshTokenManager: accountauth.NewOpenAIRefreshTokenManager(cfg),
 	}
 
 	// 初始化 token analyzer
 	provider := &TokenParserProviderImpl{}
 	h.tokenAnalyzer = response.NewTokenAnalyzer(nil, nil, provider)
-
-	// 创建工厂实例
-	tokenParserFactory := &TokenParserFactoryImpl{}
-	streamProcessorFactory := &StreamProcessorFactoryImpl{}
-	errorRecoveryFactory := &ErrorRecoveryFactoryImpl{}
-	retryManagerFactory := &RetryManagerFactoryImpl{
-		config:          cfg,
-		errorRecovery:   NewErrorRecoveryManager(nil), // 临时创建，后续会在工厂中重新创建
-		endpointManager: endpointManager,
-	}
-	suspensionManagerFactory := &SuspensionManagerFactoryImpl{
-		config:                cfg,
-		endpointManager:       endpointManager,
-		recoverySignalManager: recoverySignalManager, // 🚀 [端点自愈] 传递恢复信号管理器
-	}
-
-	// 🔧 [Critical修复] 创建单一共享的SuspensionManager实例
-	// 确保常规请求和流式请求共享同一个挂起计数器，真正实现全局限制
-	sharedSuspensionManager := suspensionManagerFactory.NewSuspensionManager()
-
-	// 🔧 [Critical修复] 保存共享SuspensionManager的引用到Handler结构体
-	// 确保在SetUsageTracker中能重用相同的实例
-	h.sharedSuspensionManager = sharedSuspensionManager
-
-	// 创建TokenAnalyzer适配器
-	tokenAnalyzerAdapter := &TokenAnalyzerAdapter{innerAnalyzer: h.tokenAnalyzer}
-
-	// 创建regularHandler - 传入正确初始化的组件
-	h.regularHandler = handlers.NewRegularHandler(
-		cfg,
-		endpointManager,
-		forwarder,
-		nil,                  // usageTracker will be set later
-		h.responseProcessor,  // 传入已创建的responseProcessor
-		tokenAnalyzerAdapter, // 传入TokenAnalyzer适配器
-		errorRecoveryFactory,
-		retryManagerFactory,
-		suspensionManagerFactory,
-		// 🔧 [Critical修复] 传入共享的SuspensionManager实例
-		sharedSuspensionManager,
-	)
-
-	// 创建streamingHandler
-	h.streamingHandler = handlers.NewStreamingHandler(
-		cfg,
-		endpointManager,
-		forwarder,
-		nil, // usageTracker will be set later
-		tokenParserFactory,
-		streamProcessorFactory,
-		errorRecoveryFactory,
-		retryManagerFactory, // 传递retryManagerFactory
-		suspensionManagerFactory,
-		// 🔧 [Critical修复] 传入相同的共享SuspensionManager实例
-		sharedSuspensionManager,
-	)
-
-	// 初始化 token analyzer，暂时不设置 usageTracker 和 monitoringMiddleware
-	// 这些将在 SetUsageTracker 和 SetMonitoringMiddleware 方法中设置
-	// provider已经在上面定义过了，这里删除重复定义
 
 	return h
 }
@@ -344,66 +119,8 @@ func (h *Handler) monitoringMiddlewareForAnalyzer() any {
 func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 	h.usageTracker = ut
 
-	// ⚠️ 重要：先更新tokenAnalyzer，再创建适配器
 	provider := &TokenParserProviderImpl{}
 	h.tokenAnalyzer = response.NewTokenAnalyzer(ut, h.monitoringMiddlewareForAnalyzer(), provider)
-
-	// 创建共用的工厂实例
-	errorRecoveryFactory := &ErrorRecoveryFactoryImpl{}
-	retryManagerFactory := &RetryManagerFactoryImpl{
-		config:          h.config,
-		errorRecovery:   NewErrorRecoveryManager(nil), // 临时创建，后续会在工厂中重新创建
-		endpointManager: h.endpointManager,
-	}
-	suspensionManagerFactory := &SuspensionManagerFactoryImpl{
-		config:                h.config,
-		endpointManager:       h.endpointManager,
-		recoverySignalManager: h.recoverySignalManager, // 🚀 [端点自愈] 修复：确保恢复信号能力不丢失
-	}
-
-	// 重新创建regularHandler以包含usageTracker
-	if h.regularHandler != nil {
-		// 创建适配器 - 使用更新后的tokenAnalyzer
-		tokenAnalyzerAdapter := &TokenAnalyzerAdapter{innerAnalyzer: h.tokenAnalyzer}
-
-		h.regularHandler = handlers.NewRegularHandler(
-			h.config,
-			h.endpointManager,
-			h.forwarder,
-			ut,
-			h.responseProcessor,  // responseProcessor
-			tokenAnalyzerAdapter, // tokenAnalyzer适配器
-			errorRecoveryFactory,
-			retryManagerFactory,
-			suspensionManagerFactory,
-			// 🔧 [Critical修复] 使用保存的共享SuspensionManager实例
-			h.sharedSuspensionManager,
-		)
-		// 🛡️ 重建后重新注入隐私过滤依赖，避免热路径丢失
-		h.regularHandler.SetPrivacyFilter(h.privacyFilter)
-	}
-
-	// 重新创建streamingHandler以包含usageTracker
-	if h.streamingHandler != nil {
-		tokenParserFactory := &TokenParserFactoryImpl{}
-		streamProcessorFactory := &StreamProcessorFactoryImpl{}
-
-		h.streamingHandler = handlers.NewStreamingHandler(
-			h.config,
-			h.endpointManager,
-			h.forwarder,
-			ut, // 设置usageTracker
-			tokenParserFactory,
-			streamProcessorFactory,
-			errorRecoveryFactory,
-			retryManagerFactory,
-			suspensionManagerFactory,
-			// 🔧 [Critical修复] 使用保存的共享SuspensionManager实例
-			h.sharedSuspensionManager,
-		)
-	}
-
-	// 注意：h.tokenAnalyzer 已经在方法开头更新
 }
 
 // SetEventBus 设置EventBus事件总线
@@ -422,9 +139,6 @@ func (h *Handler) SetPrivacyFilter(filter handlers.PrivacyFilter) {
 	h.privacyFilter = filter
 	if h.forwarder != nil {
 		h.forwarder.SetPrivacyFilter(filter)
-	}
-	if h.regularHandler != nil {
-		h.regularHandler.SetPrivacyFilter(filter)
 	}
 }
 
@@ -518,7 +232,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 创建统一的请求生命周期管理器
-	lifecycleManager := NewRequestLifecycleManagerWithRecoverySignal(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus, h.recoverySignalManager)
+	lifecycleManager := NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus)
 	// Codex /v1/responses 链路分离，不挂载 endpoint 失败追踪语义
 	if !h.isAccountPipelinePath(r.URL.Path) && !isImageAPIPath(r.URL.Path) {
 		// 📊 [失败追踪] 设置端点管理器，用于记录成功/失败
@@ -597,20 +311,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 统一请求处理
-	if isSSE {
-		// 流式请求处理 - 使用StreamingHandler
-		if h.streamingHandler != nil {
-			h.streamingHandler.HandleStreamingRequest(ctx, w, r, bodyBytes, lifecycleManager)
-			// h.regularHandler.HandleRegularRequestUnified(ctx, w, r, bodyBytes, lifecycleManager)
-		} else {
-			// 备用方案：如果streamingHandler不可用，使用regularHandler
-			h.regularHandler.HandleRegularRequestUnified(ctx, w, r, bodyBytes, lifecycleManager)
-		}
-	} else {
-		// 常规请求处理 - 使用RegularHandler
-		h.regularHandler.HandleRegularRequestUnified(ctx, w, r, bodyBytes, lifecycleManager)
-	}
+	// 统一端点转发管线（v7：streaming/regular 合并，仅 P2 处理分叉）
+	h.handleEndpointPipeline(ctx, w, r, bodyBytes, lifecycleManager, isSSE)
 }
 
 func (h *Handler) isCodexModelsRequest(r *http.Request) bool {
@@ -993,11 +695,6 @@ func (h *Handler) detectSSERequest(r *http.Request, bodyBytes []byte) bool {
 // UpdateConfig updates the handler configuration
 func (h *Handler) UpdateConfig(cfg *config.Config) {
 	h.config = cfg
-
-	// 🔧 [热更新] Update suspension manager with new config
-	if h.sharedSuspensionManager != nil {
-		h.sharedSuspensionManager.UpdateConfig(cfg)
-	}
 }
 
 // noOpFlusher 是一个不执行实际flush操作的flusher实现

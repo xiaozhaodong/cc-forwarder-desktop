@@ -26,7 +26,6 @@ const STRATEGY_OPTIONS = [
 // 失败处理动作选项
 const FAILURE_ACTION_OPTIONS = [
   { value: 'failover', label: 'failover - 故障转移到其他端点' },
-  { value: 'suspend', label: 'suspend - 挂起请求等待恢复' },
   { value: 'reject', label: 'reject - 直接拒绝返回错误' }
 ];
 

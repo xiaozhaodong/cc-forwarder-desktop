@@ -37,15 +37,13 @@ func (a *App) GetEndpoints() []EndpointInfo {
 	}
 
 	endpoints := a.endpointManager.GetAllEndpoints()
-	gm := a.endpointManager.GetGroupManager()
 	result := make([]EndpointInfo, 0, len(endpoints))
 
-	// 预先构建组状态映射
+	// v7 兼容层：组名=端点名，激活态即 activeEndpoint
+	activeEndpointName := a.endpointManager.GetActiveGroupName()
 	groupActiveMap := make(map[string]bool)
-	if gm != nil {
-		for _, g := range gm.GetAllGroups() {
-			groupActiveMap[g.Name] = g.IsActive
-		}
+	if activeEndpointName != "" {
+		groupActiveMap[activeEndpointName] = true
 	}
 
 	for _, ep := range endpoints {

@@ -53,10 +53,10 @@ func (m *Manager) notifyWebInterface(endpoint *Endpoint) {
 	})
 }
 
-// ManualActivateGroup manually activates a specific group via web interface
+// ManualActivateGroup 兼容层（v7）：组名=端点名，激活走 activeEndpoint 统一入口
+// （有 writer 时等待 ACK，返回成功 ⇒ 已落库）+ 清该端点冷却。
 func (m *Manager) ManualActivateGroup(groupName string) error {
-	err := m.groupManager.ManualActivateGroup(groupName)
-	if err != nil {
+	if err := m.ActivateEndpointManually(groupName); err != nil {
 		return err
 	}
 
@@ -69,10 +69,9 @@ func (m *Manager) ManualActivateGroup(groupName string) error {
 	return nil
 }
 
-// ManualActivateGroupWithForce manually activates a specific group via web interface with force option
+// ManualActivateGroupWithForce 兼容层（v7）：force 语义已随组体系退役，与普通激活等价
 func (m *Manager) ManualActivateGroupWithForce(groupName string, force bool) error {
-	err := m.groupManager.ManualActivateGroupWithForce(groupName, force)
-	if err != nil {
+	if err := m.ActivateEndpointManually(groupName); err != nil {
 		return err
 	}
 
@@ -89,11 +88,10 @@ func (m *Manager) ManualActivateGroupWithForce(groupName string, force bool) err
 	return nil
 }
 
-// ManualPauseGroup manually pauses a group via web interface
+// ManualPauseGroup 兼容层（v7）：映射为端点 PausedUntil（到期读取时自愈，无恢复 goroutine）
 func (m *Manager) ManualPauseGroup(groupName string, duration time.Duration) error {
-	err := m.groupManager.ManualPauseGroup(groupName, duration)
-	if err != nil {
-		return err
+	if !m.PauseEndpoint(groupName, time.Now().Add(duration)) {
+		return fmt.Errorf("端点 '%s' 不存在", groupName)
 	}
 
 	// Notify web interface about group change
@@ -102,22 +100,16 @@ func (m *Manager) ManualPauseGroup(groupName string, duration time.Duration) err
 	return nil
 }
 
-// ManualResumeGroup manually resumes a paused group via web interface
+// ManualResumeGroup 兼容层（v7）：清除端点 PausedUntil
 func (m *Manager) ManualResumeGroup(groupName string) error {
-	err := m.groupManager.ManualResumeGroup(groupName)
-	if err != nil {
-		return err
+	if !m.ResumeEndpoint(groupName) {
+		return fmt.Errorf("端点 '%s' 不存在", groupName)
 	}
 
 	// Notify web interface about group change
 	go m.notifyWebGroupChange("group_manually_resumed", groupName)
 
 	return nil
-}
-
-// GetGroupDetails returns detailed information about all groups for web interface
-func (m *Manager) GetGroupDetails() map[string]interface{} {
-	return m.groupManager.GetGroupDetails()
 }
 
 // notifyWebGroupChange notifies the web interface about group management changes

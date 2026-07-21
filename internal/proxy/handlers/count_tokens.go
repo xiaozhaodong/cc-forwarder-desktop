@@ -52,7 +52,7 @@ func (h *CountTokensHandler) Handle(ctx context.Context, w http.ResponseWriter, 
 	routeProfile := endpoint.BuildRouteRequestProfile(r.URL.Path, bodyBytes)
 
 	// 1. 找配置了 supports_count_tokens: true 的端点
-	supportedEndpoints := h.getSupportedEndpoints(routeProfile)
+	supportedEndpoints := h.getSupportedEndpoints(ctx, routeProfile)
 
 	// 2. 如果有，尝试转发
 	if len(supportedEndpoints) > 0 {
@@ -81,11 +81,12 @@ func (h *CountTokensHandler) Handle(ctx context.Context, w http.ResponseWriter, 
 }
 
 // getSupportedEndpoints 获取支持count_tokens的端点
-func (h *CountTokensHandler) getSupportedEndpoints(profile endpoint.RouteRequestProfile) []*endpoint.Endpoint {
-	allEndpoints := h.endpointManager.GetHealthyEndpointsForRoute(profile)
+// v7：改用无写副作用的调度器候选输出；只读候选，不做失败标记（现状语义）
+func (h *CountTokensHandler) getSupportedEndpoints(ctx context.Context, profile endpoint.RouteRequestProfile) []*endpoint.Endpoint {
+	result := h.endpointManager.PrepareRouteCandidates(ctx, profile)
 	var supported []*endpoint.Endpoint
 
-	for _, ep := range allEndpoints {
+	for _, ep := range result.Candidates {
 		if ep.Config.SupportsCountTokens {
 			supported = append(supported, ep)
 		}

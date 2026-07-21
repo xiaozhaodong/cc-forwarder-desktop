@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"sort"
 	"time"
 )
 
@@ -61,7 +62,6 @@ type EndpointScheduleResult struct {
 // 过滤：冷却 / tripped / PausedUntil / 负缓存；skipped 记录 availableAt（四来源）。
 // manual_fixed 只考虑目标端点；Failover.Enabled=false 时只返回单候选且禁用请求内换候选。
 func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteRequestProfile) EndpointScheduleResult {
-	_ = ctx
 	cfg := m.getConfigSnapshot()
 	override := m.routeOverride.Snapshot()
 	activeName, activeRevision := m.GetActiveEndpointSelection()
@@ -155,7 +155,7 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 		rest = append(rest, ep)
 	}
 
-	rest = m.sortHealthyEndpoints(rest, false)
+	rest = m.sortRestForSchedule(ctx, rest)
 	for _, ep := range rest {
 		record(ep.Config.Name, endpointDecisionCandidate, "failover_candidate", time.Time{})
 	}
@@ -197,4 +197,55 @@ func (m *Manager) classifyEndpointRoutable(ep *Endpoint, profile RouteRequestPro
 	}
 
 	return true, "", time.Time{}
+}
+
+// sortRestForSchedule 备选端点排序：fastest+实时测速时按测速结果，否则按策略排序
+// （priority / fastest 缓存）。测速只更新测速缓存，非路由状态。
+func (m *Manager) sortRestForSchedule(ctx context.Context, rest []*Endpoint) []*Endpoint {
+	cfg := m.getConfigSnapshot()
+	if cfg.Strategy.Type == "fastest" && cfg.Strategy.FastTestEnabled && len(rest) > 1 && m.fastTester != nil {
+		results, _ := m.fastTester.TestEndpointsParallel(ctx, rest)
+		if ordered := orderByFastTestResults(rest, results); len(ordered) == len(rest) {
+			return ordered
+		}
+	}
+	return m.sortHealthyEndpoints(rest, false)
+}
+
+// orderByFastTestResults 按实时测速结果排序：成功者按响应时间升序在前，
+// 失败/未覆盖者保持原相对顺序在后。
+func orderByFastTestResults(rest []*Endpoint, results []*FastTestResult) []*Endpoint {
+	if len(results) == 0 {
+		return nil
+	}
+	type timing struct {
+		ep           *Endpoint
+		responseTime time.Duration
+	}
+	successTimes := make(map[string]time.Duration, len(results))
+	for _, result := range results {
+		if result != nil && result.Success && result.Endpoint != nil {
+			successTimes[result.Endpoint.Config.Name] = result.ResponseTime
+		}
+	}
+	fast := make([]timing, 0, len(rest))
+	var slow []*Endpoint
+	for _, ep := range rest {
+		if responseTime, ok := successTimes[ep.Config.Name]; ok {
+			fast = append(fast, timing{ep: ep, responseTime: responseTime})
+		} else {
+			slow = append(slow, ep)
+		}
+	}
+	sort.SliceStable(fast, func(i, j int) bool {
+		if fast[i].responseTime == fast[j].responseTime {
+			return fast[i].ep.Config.Priority < fast[j].ep.Config.Priority
+		}
+		return fast[i].responseTime < fast[j].responseTime
+	})
+	ordered := make([]*Endpoint, 0, len(rest))
+	for _, item := range fast {
+		ordered = append(ordered, item.ep)
+	}
+	return append(ordered, slow...)
 }

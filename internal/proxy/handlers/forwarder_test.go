@@ -364,7 +364,7 @@ func TestForwarder_PrepareBodyForEndpoint_KeepsOtherChannelsUntouched(t *testing
 	}
 }
 
-func TestRegularHandler_ExecuteRequest_StripsCoderelayCacheControlScope(t *testing.T) {
+func TestForwarder_Pipeline_StripsCoderelayCacheControlScope(t *testing.T) {
 	var receivedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var err error
@@ -380,10 +380,6 @@ func TestRegularHandler_ExecuteRequest_StripsCoderelayCacheControlScope(t *testi
 	cfg := &config.Config{}
 	endpointManager := endpoint.NewManager(cfg)
 	forwarder := NewForwarder(cfg, endpointManager)
-	regularHandler := &RegularHandler{
-		config:    cfg,
-		forwarder: forwarder,
-	}
 	ep := &endpoint.Endpoint{
 		Config: config.EndpointConfig{
 			Name:    "mywechat",
@@ -395,9 +391,9 @@ func TestRegularHandler_ExecuteRequest_StripsCoderelayCacheControlScope(t *testi
 	bodyBytes := []byte(`{"system":[{"cache_control":{"type":"ephemeral","nested":{"scope":"global"}}}],"metadata":{"scope":"keep"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(bodyBytes))
 
-	resp, err := regularHandler.executeRequest(context.Background(), req, bodyBytes, ep)
+	resp, _, _, err := forwarder.ForwardForPipeline(context.Background(), req, bodyBytes, ep, false, false, nil)
 	if err != nil {
-		t.Fatalf("executeRequest failed: %v", err)
+		t.Fatalf("ForwardForPipeline failed: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -420,6 +416,85 @@ func TestRegularHandler_ExecuteRequest_StripsCoderelayCacheControlScope(t *testi
 	}
 	if metadata["scope"] != "keep" {
 		t.Fatalf("expected non-cache_control scope to be preserved, got %v", metadata["scope"])
+	}
+}
+
+func TestForwarder_ForwardForPipeline_NonSSETimeoutCoversResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "1024")
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{Streaming: config.StreamingConfig{ResponseHeaderTimeout: time.Second}}
+	forwarder := NewForwarder(cfg, endpoint.NewManager(cfg))
+	ep := &endpoint.Endpoint{Config: config.EndpointConfig{
+		Name:    "regular-timeout",
+		URL:     server.URL,
+		Timeout: 80 * time.Millisecond,
+	}}
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader([]byte(`{"stream":false}`)))
+
+	resp, release, _, err := forwarder.ForwardForPipeline(context.Background(), req, []byte(`{"stream":false}`), ep, false, false, nil)
+	if err != nil {
+		t.Fatalf("expected response headers before timeout, got %v", err)
+	}
+	if release != nil {
+		t.Fatal("non-SSE request must not detach upstream context")
+	}
+	defer resp.Body.Close()
+
+	started := time.Now()
+	_, err = io.ReadAll(resp.Body)
+	if err == nil {
+		t.Fatal("expected response body read to stop at endpoint timeout")
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("response body timeout took too long: %v", elapsed)
+	}
+}
+
+func TestForwarder_ForwardForPipeline_SSEIgnoresEndpointTotalTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		time.Sleep(120 * time.Millisecond)
+		_, _ = w.Write([]byte("data: done\n\n"))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{Streaming: config.StreamingConfig{ResponseHeaderTimeout: time.Second}}
+	forwarder := NewForwarder(cfg, endpoint.NewManager(cfg))
+	ep := &endpoint.Endpoint{Config: config.EndpointConfig{
+		Name:    "stream-no-total-timeout",
+		URL:     server.URL,
+		Timeout: 40 * time.Millisecond,
+	}}
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader([]byte(`{"stream":true}`)))
+
+	resp, release, _, err := forwarder.ForwardForPipeline(context.Background(), req, []byte(`{"stream":true}`), ep, true, false, nil)
+	if err != nil {
+		t.Fatalf("SSE request should not use endpoint total timeout: %v", err)
+	}
+	if release != nil {
+		t.Fatal("tail drain disabled should keep the caller context")
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("SSE body should outlive endpoint timeout: %v", err)
+	}
+	if string(body) != "data: done\n\n" {
+		t.Fatalf("unexpected SSE body: %q", string(body))
 	}
 }
 

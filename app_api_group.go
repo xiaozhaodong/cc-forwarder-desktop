@@ -27,7 +27,7 @@ type GroupInfo struct {
 	CooldownRemainMs int64  `json:"cooldown_remain_ms"`
 }
 
-// GetGroups 获取所有组状态
+// GetGroups 获取所有组状态（v7 兼容层：组名=端点名，自端点运行态合成）
 func (a *App) GetGroups() []GroupInfo {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -36,37 +36,21 @@ func (a *App) GetGroups() []GroupInfo {
 		return []GroupInfo{}
 	}
 
-	gm := a.endpointManager.GetGroupManager()
-	if gm == nil {
-		return []GroupInfo{}
-	}
-
-	groups := gm.GetAllGroups()
-	result := make([]GroupInfo, 0, len(groups))
-
-	for _, g := range groups {
-		// 从第一个端点获取渠道名称
-		channel := ""
-		if len(g.Endpoints) > 0 {
-			channel = g.Endpoints[0].Config.Channel
-		}
-
+	views := a.endpointManager.GetGroupCompatViews()
+	result := make([]GroupInfo, 0, len(views))
+	for _, view := range views {
 		info := GroupInfo{
-			Name:          g.Name,
-			Channel:       channel,
-			Active:        g.IsActive,
-			Paused:        g.ManuallyPaused,
-			Priority:      g.Priority,
-			EndpointCount: len(g.Endpoints),
-			InCooldown:    gm.IsGroupInCooldown(g.Name),
+			Name:          view.Name,
+			Channel:       view.Channel,
+			Active:        view.IsActive,
+			Paused:        view.ManuallyPaused,
+			Priority:      view.Priority,
+			EndpointCount: 1,
+			InCooldown:    view.InCooldown,
 		}
-
-		// 获取冷却剩余时间
-		remaining := gm.GetGroupCooldownRemaining(g.Name)
-		if remaining > 0 {
-			info.CooldownRemainMs = remaining.Milliseconds()
+		if view.CooldownRemain > 0 {
+			info.CooldownRemainMs = view.CooldownRemain.Milliseconds()
 		}
-
 		result = append(result, info)
 	}
 

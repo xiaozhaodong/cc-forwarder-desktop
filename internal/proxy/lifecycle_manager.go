@@ -42,39 +42,38 @@ type RetryContext struct {
 // RequestLifecycleManager 请求生命周期管理器
 // 负责管理请求的完整生命周期，确保所有请求都有完整的跟踪记录
 type RequestLifecycleManager struct {
-	usageTracker          *tracking.UsageTracker         // 使用跟踪器
-	monitoringMiddleware  MonitoringMiddlewareInterface  // 监控中间件
-	errorRecovery         *ErrorRecoveryManager          // 错误恢复管理器
-	eventBus              events.EventBus                // EventBus事件总线
-	recoverySignalManager *EndpointRecoverySignalManager // 端点恢复信号管理器
-	endpointManager       *endpoint.Manager              // 端点管理器（用于失败追踪）
-	requestID             string                         // 请求唯一标识符
-	startTime             time.Time                      // 请求开始时间
-	modelMu               sync.RWMutex                   // 保护模型字段的读写锁
-	stateMu               sync.RWMutex                   // 保护生命周期状态字段
-	modelName             string                         // 模型名称
-	channel               string                         // 渠道标签
-	endpointName          string                         // 端点名称
-	groupName             string                         // 组名称
-	upstreamType          string                         // 上游类型：endpoint/account
-	upstreamSourceName    string                         // 上游来源名（订阅源等）
-	upstreamName          string                         // 上游名称（账号或端点）
-	upstreamID            int64                          // 上游ID（账号ID，可空）
-	retryCount            int                            // 重试计数
-	lastStatus            string                         // 最后状态
-	lastError             error                          // 最后一次错误
-	finalStatusCode       int                            // 最终状态码
-	modelUpdatedInDB      bool                           // 标记是否已在数据库中更新过模型
-	modelUpdateMu         sync.Mutex                     // 保护模型更新标记
-	firstTokenOnce        sync.Once                      // 确保首响耗时仅记录一次
-	firstTokenStartTime   time.Time                      // 首响计时起点，默认请求开始；账号链路可改为上游请求写完
-	firstTokenAt          time.Time                      // 首个有效流式响应到达时间
-	timingMu              sync.RWMutex                   // 保护首响计时字段
-	attemptCounter        int                            // 内部尝试计数器（语义修复：统一重试计数）
-	attemptMu             sync.Mutex                     // 保护尝试计数器的互斥锁
-	pendingErrorContext   *ErrorContext                  // 预先计算的错误上下文，仅对下一个HandleError有效
-	pendingErrorOriginal  error                          // 预先计算上下文对应的原始错误，用于校验匹配
-	pendingErrorMu        sync.Mutex                     // 保护预先计算错误上下文的互斥锁
+	usageTracker         *tracking.UsageTracker        // 使用跟踪器
+	monitoringMiddleware MonitoringMiddlewareInterface // 监控中间件
+	errorRecovery        *ErrorRecoveryManager         // 错误恢复管理器
+	eventBus             events.EventBus               // EventBus事件总线
+	endpointManager      *endpoint.Manager             // 端点管理器（用于失败追踪）
+	requestID            string                        // 请求唯一标识符
+	startTime            time.Time                     // 请求开始时间
+	modelMu              sync.RWMutex                  // 保护模型字段的读写锁
+	stateMu              sync.RWMutex                  // 保护生命周期状态字段
+	modelName            string                        // 模型名称
+	channel              string                        // 渠道标签
+	endpointName         string                        // 端点名称
+	groupName            string                        // 组名称
+	upstreamType         string                        // 上游类型：endpoint/account
+	upstreamSourceName   string                        // 上游来源名（订阅源等）
+	upstreamName         string                        // 上游名称（账号或端点）
+	upstreamID           int64                         // 上游ID（账号ID，可空）
+	retryCount           int                           // 重试计数
+	lastStatus           string                        // 最后状态
+	lastError            error                         // 最后一次错误
+	finalStatusCode      int                           // 最终状态码
+	modelUpdatedInDB     bool                          // 标记是否已在数据库中更新过模型
+	modelUpdateMu        sync.Mutex                    // 保护模型更新标记
+	firstTokenOnce       sync.Once                     // 确保首响耗时仅记录一次
+	firstTokenStartTime  time.Time                     // 首响计时起点，默认请求开始；账号链路可改为上游请求写完
+	firstTokenAt         time.Time                     // 首个有效流式响应到达时间
+	timingMu             sync.RWMutex                  // 保护首响计时字段
+	attemptCounter       int                           // 内部尝试计数器（语义修复：统一重试计数）
+	attemptMu            sync.Mutex                    // 保护尝试计数器的互斥锁
+	pendingErrorContext  *ErrorContext                 // 预先计算的错误上下文，仅对下一个HandleError有效
+	pendingErrorOriginal error                         // 预先计算上下文对应的原始错误，用于校验匹配
+	pendingErrorMu       sync.Mutex                    // 保护预先计算错误上下文的互斥锁
 }
 
 type lifecycleStateSnapshot struct {
@@ -121,23 +120,6 @@ func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringM
 		startTime:            time.Now(),
 		lastStatus:           "pending",
 		upstreamType:         "endpoint",
-	}
-	manager.firstTokenStartTime = manager.startTime
-	return manager
-}
-
-// NewRequestLifecycleManagerWithRecoverySignal 创建带端点恢复信号管理器的生命周期管理器
-func NewRequestLifecycleManagerWithRecoverySignal(usageTracker *tracking.UsageTracker, monitoringMiddleware MonitoringMiddlewareInterface, requestID string, eventBus events.EventBus, recoverySignalManager *EndpointRecoverySignalManager) *RequestLifecycleManager {
-	manager := &RequestLifecycleManager{
-		usageTracker:          usageTracker,
-		monitoringMiddleware:  monitoringMiddleware,
-		errorRecovery:         NewErrorRecoveryManager(usageTracker),
-		eventBus:              eventBus,
-		recoverySignalManager: recoverySignalManager,
-		requestID:             requestID,
-		startTime:             time.Now(),
-		lastStatus:            "pending",
-		upstreamType:          "endpoint",
 	}
 	manager.firstTokenStartTime = manager.startTime
 	return manager
@@ -359,12 +341,6 @@ func (rlm *RequestLifecycleManager) notifyStatusChange(status string, retryCount
 func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage) {
 	duration := time.Since(rlm.startTime)
 	state := rlm.snapshotState()
-	// 🚀 [端点自愈] 无论usageTracker是否为空，都应该广播端点成功信号
-	// 这是端点自愈功能的关键，不应该依赖于数据库跟踪功能
-	if rlm.recoverySignalManager != nil && state.endpointName != "" {
-		rlm.recoverySignalManager.BroadcastEndpointSuccess(state.endpointName)
-	}
-
 	// 📊 [失败追踪] 记录端点成功，清空失败计数
 	if rlm.endpointManager != nil && state.endpointName != "" {
 		rlm.endpointManager.RecordSuccess(state.endpointName)
@@ -439,11 +415,6 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithCost(costUSD float64) {
 func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.TokenUsage, failureReason string) {
 	duration := time.Since(rlm.startTime)
 	state := rlm.snapshotState()
-
-	// 🚀 [端点自愈] 无论usageTracker是否为空，都应该广播端点成功信号
-	if rlm.recoverySignalManager != nil && state.endpointName != "" {
-		rlm.recoverySignalManager.BroadcastEndpointSuccess(state.endpointName)
-	}
 
 	// 📊 [失败追踪] 记录端点成功，清空失败计数
 	if rlm.endpointManager != nil && state.endpointName != "" {

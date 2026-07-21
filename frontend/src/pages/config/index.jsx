@@ -173,19 +173,6 @@ const ConfigPage = () => {
           </ConfigSection>
         )}
 
-        {/* 请求挂起配置 */}
-        {config?.request_suspend && (
-          <ConfigSection title="请求挂起" icon={Clock}>
-            <ConfigItem label="启用状态" value={config.request_suspend.Enabled} type="boolean" />
-            <ConfigItem label="超时时间" value={config.request_suspend.Timeout} type="duration" />
-            <ConfigItem
-              label="最大挂起数"
-              value={config.request_suspend.MaxSuspendedRequests}
-              type="number"
-            />
-          </ConfigSection>
-        )}
-
         {/* 使用追踪配置 */}
         {config?.usage_tracking && (
           <ConfigSection title="使用追踪" icon={Database}>
