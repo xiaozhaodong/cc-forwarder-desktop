@@ -30,7 +30,6 @@ const EndpointContextKey = contextKey("endpoint")
 type Handler struct {
 	endpointManager               *endpoint.Manager
 	config                        *config.Config
-	retryHandler                  *RetryHandler
 	usageTracker                  *tracking.UsageTracker
 	accountPoolService            AccountPoolService
 	codexModelsProvider           CodexModelListProvider
@@ -184,33 +183,6 @@ func (rlma *RequestLifecycleManagerAdapter) GetDuration() time.Duration {
 	return time.Duration(0)
 }
 
-// RetryHandlerAdapter 适配*RetryHandler到handlers.RetryHandler
-type RetryHandlerAdapter struct {
-	innerHandler *RetryHandler
-}
-
-func (rha *RetryHandlerAdapter) ShouldSuspendRequest(ctx context.Context) bool {
-	return rha.innerHandler.shouldSuspendRequest(ctx)
-}
-
-func (rha *RetryHandlerAdapter) WaitForGroupSwitch(ctx context.Context, connID string) bool {
-	return rha.innerHandler.waitForGroupSwitch(ctx, connID)
-}
-
-func (rha *RetryHandlerAdapter) SetEndpointManager(manager any) {
-	if em, ok := manager.(*endpoint.Manager); ok {
-		rha.innerHandler.SetEndpointManager(em)
-	}
-}
-
-func (rha *RetryHandlerAdapter) SetUsageTracker(tracker *tracking.UsageTracker) {
-	rha.innerHandler.SetUsageTracker(tracker)
-}
-
-func (rha *RetryHandlerAdapter) ExecuteWithContext(ctx context.Context, operation func(*endpoint.Endpoint, string) (*http.Response, error), connID string) (*http.Response, error) {
-	return rha.innerHandler.ExecuteWithContext(ctx, Operation(operation), connID)
-}
-
 // 工厂实现 - 使用适配器
 
 type TokenParserFactoryImpl struct{}
@@ -243,16 +215,6 @@ func (f *ErrorRecoveryFactoryImpl) NewErrorRecoveryManager(usageTracker *trackin
 	return &ErrorRecoveryManagerAdapter{innerManager: innerManager}
 }
 
-type RetryHandlerFactoryImpl struct{}
-
-func (f *RetryHandlerFactoryImpl) NewRetryHandler(configInterface any) handlers.RetryHandler {
-	if cfg, ok := configInterface.(*config.Config); ok {
-		innerHandler := NewRetryHandler(cfg)
-		return &RetryHandlerAdapter{innerHandler: innerHandler}
-	}
-	return nil
-}
-
 type RetryManagerFactoryImpl struct {
 	config          *config.Config
 	errorRecovery   *ErrorRecoveryManager
@@ -276,9 +238,6 @@ func (f *SuspensionManagerFactoryImpl) NewSuspensionManager() handlers.Suspensio
 
 // NewHandler creates a new proxy handler
 func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler {
-	retryHandler := NewRetryHandler(cfg)
-	retryHandler.SetEndpointManager(endpointManager)
-
 	// 创建forwarder
 	forwarder := handlers.NewForwarder(cfg, endpointManager)
 
@@ -288,7 +247,6 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 	h := &Handler{
 		endpointManager:       endpointManager,
 		config:                cfg,
-		retryHandler:          retryHandler,
 		responseProcessor:     response.NewProcessor(),
 		forwarder:             forwarder,
 		refreshTokenManager:   accountauth.NewOpenAIRefreshTokenManager(cfg),
@@ -322,9 +280,6 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 	// 确保在SetUsageTracker中能重用相同的实例
 	h.sharedSuspensionManager = sharedSuspensionManager
 
-	// 创建RetryHandler适配器
-	retryHandlerAdapter := &RetryHandlerAdapter{innerHandler: retryHandler}
-
 	// 创建TokenAnalyzer适配器
 	tokenAnalyzerAdapter := &TokenAnalyzerAdapter{innerAnalyzer: h.tokenAnalyzer}
 
@@ -336,7 +291,6 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 		nil,                  // usageTracker will be set later
 		h.responseProcessor,  // 传入已创建的responseProcessor
 		tokenAnalyzerAdapter, // 传入TokenAnalyzer适配器
-		retryHandlerAdapter,  // 传入RetryHandler适配器
 		errorRecoveryFactory,
 		retryManagerFactory,
 		suspensionManagerFactory,
@@ -369,7 +323,6 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 // SetMonitoringMiddleware 设置监控中间件用于重试跟踪
 func (h *Handler) SetMonitoringMiddleware(mm *middleware.MonitoringMiddleware) {
 	h.monitoringMiddleware = mm
-	h.retryHandler.SetMonitoringMiddleware(mm)
 
 	// 同时更新tokenAnalyzer的monitoringMiddleware
 	if h.tokenAnalyzer != nil {
@@ -378,13 +331,22 @@ func (h *Handler) SetMonitoringMiddleware(mm *middleware.MonitoringMiddleware) {
 	}
 }
 
+// monitoringMiddlewareForAnalyzer 返回用于 TokenAnalyzer 的监控中间件。
+// 未设置时返回纯 nil interface，避免 typed-nil 指针通过类型断言后被调用。
+func (h *Handler) monitoringMiddlewareForAnalyzer() any {
+	if h.monitoringMiddleware == nil {
+		return nil
+	}
+	return h.monitoringMiddleware
+}
+
 // SetUsageTracker sets the usage tracker for request tracking
 func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 	h.usageTracker = ut
 
 	// ⚠️ 重要：先更新tokenAnalyzer，再创建适配器
 	provider := &TokenParserProviderImpl{}
-	h.tokenAnalyzer = response.NewTokenAnalyzer(ut, h.retryHandler.monitoringMiddleware, provider)
+	h.tokenAnalyzer = response.NewTokenAnalyzer(ut, h.monitoringMiddlewareForAnalyzer(), provider)
 
 	// 创建共用的工厂实例
 	errorRecoveryFactory := &ErrorRecoveryFactoryImpl{}
@@ -402,7 +364,6 @@ func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 	// 重新创建regularHandler以包含usageTracker
 	if h.regularHandler != nil {
 		// 创建适配器 - 使用更新后的tokenAnalyzer
-		retryHandlerAdapter := &RetryHandlerAdapter{innerHandler: h.retryHandler}
 		tokenAnalyzerAdapter := &TokenAnalyzerAdapter{innerAnalyzer: h.tokenAnalyzer}
 
 		h.regularHandler = handlers.NewRegularHandler(
@@ -412,7 +373,6 @@ func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 			ut,
 			h.responseProcessor,  // responseProcessor
 			tokenAnalyzerAdapter, // tokenAnalyzer适配器
-			retryHandlerAdapter,  // retryHandler适配器
 			errorRecoveryFactory,
 			retryManagerFactory,
 			suspensionManagerFactory,
@@ -444,11 +404,6 @@ func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 	}
 
 	// 注意：h.tokenAnalyzer 已经在方法开头更新
-}
-
-// GetRetryHandler returns the retry handler for accessing suspended request counts
-func (h *Handler) GetRetryHandler() *RetryHandler {
-	return h.retryHandler
 }
 
 // SetEventBus 设置EventBus事件总线
@@ -1038,9 +993,6 @@ func (h *Handler) detectSSERequest(r *http.Request, bodyBytes []byte) bool {
 // UpdateConfig updates the handler configuration
 func (h *Handler) UpdateConfig(cfg *config.Config) {
 	h.config = cfg
-
-	// Update retry handler with new config
-	h.retryHandler.UpdateConfig(cfg)
 
 	// 🔧 [热更新] Update suspension manager with new config
 	if h.sharedSuspensionManager != nil {

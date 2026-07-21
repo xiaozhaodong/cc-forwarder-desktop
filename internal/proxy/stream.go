@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/transport"
 )
 
@@ -63,10 +62,8 @@ func (h *Handler) handleSSERequest(w http.ResponseWriter, r *http.Request, bodyB
 	// Try endpoints in order until one succeeds
 	for i, ep := range endpoints {
 		// Update connection endpoint in monitoring
-		if mm, ok := h.retryHandler.monitoringMiddleware.(interface {
-			UpdateConnectionEndpoint(connID, endpoint string)
-		}); ok && connID != "" {
-			mm.UpdateConnectionEndpoint(connID, ep.Config.Name)
+		if h.monitoringMiddleware != nil && connID != "" {
+			h.monitoringMiddleware.UpdateConnectionEndpoint(connID, ep.Config.Name)
 		}
 
 		err := h.streamFromEndpoint(ctx, w, r, ep, bodyBytes, flusher, connID)
@@ -398,14 +395,12 @@ func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWrit
 						slog.Debug(fmt.Sprintf("🔍 [Stream Parser] Processing line - line: %s, lineLength: %d", line, len(line)))
 						if tokenUsage := tokenParser.ParseSSELine(line); tokenUsage != nil {
 							// Record token usage if we have monitoring middleware
-							if mm, ok := h.retryHandler.monitoringMiddleware.(interface {
-								RecordTokenUsage(connID string, endpoint string, tokens *monitor.TokenUsage)
-							}); ok && connID != "" {
-								mm.RecordTokenUsage(connID, endpointName, tokenUsage)
+							if h.monitoringMiddleware != nil && connID != "" {
+								h.monitoringMiddleware.RecordTokenUsage(connID, endpointName, tokenUsage)
 								slog.InfoContext(ctx, fmt.Sprintf("✅ [令牌统计] 记录令牌使用 - 端点: %s, 输入: %d, 输出: %d, 缓存创建: %d, 缓存读取: %d",
 									endpointName, tokenUsage.InputTokens, tokenUsage.OutputTokens, tokenUsage.CacheCreationTokens, tokenUsage.CacheReadTokens))
 							} else {
-								slog.Debug(fmt.Sprintf("⚠️ [Token Parser] Monitoring middleware not available or no connID - connID: %s, hasMiddleware: %t", connID, h.retryHandler.monitoringMiddleware != nil))
+								slog.Debug(fmt.Sprintf("⚠️ [Token Parser] Monitoring middleware not available or no connID - connID: %s, hasMiddleware: %t", connID, h.monitoringMiddleware != nil))
 							}
 						}
 
@@ -461,10 +456,8 @@ func (h *Handler) streamResponseByBytes(ctx context.Context, w http.ResponseWrit
 
 						if tokenUsage := tokenParser.ParseSSELine(line); tokenUsage != nil {
 							// Record token usage if we have monitoring middleware
-							if mm, ok := h.retryHandler.monitoringMiddleware.(interface {
-								RecordTokenUsage(connID string, endpoint string, tokens *monitor.TokenUsage)
-							}); ok && connID != "" {
-								mm.RecordTokenUsage(connID, endpointName, tokenUsage)
+							if h.monitoringMiddleware != nil && connID != "" {
+								h.monitoringMiddleware.RecordTokenUsage(connID, endpointName, tokenUsage)
 								slog.InfoContext(ctx, fmt.Sprintf("✅ [令牌统计] 记录最终令牌使用 - 端点: %s, 输入: %d, 输出: %d",
 									endpointName, tokenUsage.InputTokens, tokenUsage.OutputTokens))
 							}
@@ -539,10 +532,8 @@ func (h *Handler) streamResponseSimple(ctx context.Context, w http.ResponseWrite
 						if b == '\n' {
 							line := string(lineBuffer)
 							if tokenUsage := tokenParser.ParseSSELine(line); tokenUsage != nil {
-								if mm, ok := h.retryHandler.monitoringMiddleware.(interface {
-									RecordTokenUsage(connID string, endpoint string, tokens *monitor.TokenUsage)
-								}); ok && connID != "" {
-									mm.RecordTokenUsage(connID, endpointName, tokenUsage)
+								if h.monitoringMiddleware != nil && connID != "" {
+									h.monitoringMiddleware.RecordTokenUsage(connID, endpointName, tokenUsage)
 									slog.InfoContext(context.Background(), "✅ [简单流转发] 记录令牌使用", "endpoint", endpointName, "inputTokens", tokenUsage.InputTokens, "outputTokens", tokenUsage.OutputTokens)
 								}
 							}

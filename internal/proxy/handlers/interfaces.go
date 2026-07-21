@@ -142,15 +142,6 @@ type StreamProcessor interface {
 	SetStreamTimingRecorders(firstTokenRecorder func() bool, completionRecorder func())
 }
 
-// RetryHandler 重试处理器接口
-type RetryHandler interface {
-	ExecuteWithContext(ctx context.Context, operation func(*endpoint.Endpoint, string) (*http.Response, error), connID string) (*http.Response, error)
-	ShouldSuspendRequest(ctx context.Context) bool
-	WaitForGroupSwitch(ctx context.Context, connID string) bool
-	SetEndpointManager(manager interface{})
-	SetUsageTracker(tracker *tracking.UsageTracker)
-}
-
 // TokenParserFactory Token解析器工厂接口
 type TokenParserFactory interface {
 	NewTokenParserWithUsageTracker(connID string, usageTracker *tracking.UsageTracker) TokenParser
@@ -165,11 +156,6 @@ type StreamProcessorFactory interface {
 // ErrorRecoveryFactory 错误恢复管理器工厂接口
 type ErrorRecoveryFactory interface {
 	NewErrorRecoveryManager(usageTracker *tracking.UsageTracker) ErrorRecoveryManager
-}
-
-// RetryHandlerFactory 重试处理器工厂接口
-type RetryHandlerFactory interface {
-	NewRetryHandler(config interface{}) RetryHandler
 }
 
 // TokenAnalyzer Token分析器接口

@@ -760,9 +760,6 @@ func (a *App) setupProxyHandler() {
 
 	if a.usageTracker != nil {
 		a.proxyHandler.SetUsageTracker(a.usageTracker)
-		if retryHandler := a.proxyHandler.GetRetryHandler(); retryHandler != nil {
-			retryHandler.SetUsageTracker(a.usageTracker)
-		}
 	}
 
 	if a.accountPoolService != nil {
