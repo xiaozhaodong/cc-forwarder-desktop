@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-**CC-Forwarder Desktop** 是一款基于 Wails 的跨平台桌面应用，用于 Claude / OpenAI 请求转发、端点故障转移、请求追踪，以及 ChatGPT Codex 账号池管理。
+**AI Switchboard**（工程代号 cc-forwarder-desktop） 是一款基于 Wails 的跨平台桌面应用，用于 Claude / OpenAI 请求转发、端点故障转移、请求追踪，以及 ChatGPT Codex 账号池管理。
 
 - 技术栈：Go + Wails v2 + React + Vite + SQLite
 - 平台：macOS / Windows / Linux

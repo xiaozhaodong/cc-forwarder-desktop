@@ -1,7 +1,7 @@
-# CC-Forwarder Desktop
+# AI Switchboard
 
 <p align="center">
-  <img src="build/appicon.png" width="128" height="128" alt="CC-Forwarder Desktop">
+  <img src="build/appicon.png" width="128" height="128" alt="AI Switchboard">
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@
 
 ## 概述
 
-CC-Forwarder Desktop 是一款基于 [Wails](https://wails.io) 构建的跨平台桌面应用，专为 Claude API 用户设计。它作为本地代理运行，提供智能请求转发、多端点管理、自动故障恢复等企业级功能，同时记录完整的使用统计和成本数据。
+AI Switchboard 是一款基于 [Wails](https://wails.io) 构建的跨平台桌面应用，专为 Claude API 用户设计。它作为本地代理运行，提供智能请求转发、多端点管理、自动故障恢复等企业级功能，同时记录完整的使用统计和成本数据。
 
 ### 为什么需要它？
 
@@ -80,10 +80,10 @@ CC-Forwarder Desktop 是一款基于 [Wails](https://wails.io) 构建的跨平�
 
 | 平台 | 文件 |
 |------|------|
-| macOS (Intel) | `CC-Forwarder-darwin-amd64.zip` |
-| macOS (Apple Silicon) | `CC-Forwarder-darwin-arm64.zip` |
-| Windows | `CC-Forwarder-windows-amd64.zip` |
-| Linux | `CC-Forwarder-linux-amd64.tar.gz` |
+| macOS (Intel) | `AI-Switchboard-darwin-amd64.zip` |
+| macOS (Apple Silicon) | `AI-Switchboard-darwin-arm64.zip` |
+| Windows | `AI-Switchboard-windows-amd64.zip` |
+| Linux | `AI-Switchboard-linux-amd64.tar.gz` |
 
 ### 方式二：从源码构建
 
@@ -165,7 +165,7 @@ usage_tracking:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                      CC-Forwarder Desktop                     │
+│                         AI Switchboard                        │
 ├──────────────────────────────────────────────────────────────┤
 │                                                               │
 │  ┌─────────────────────┐      ┌─────────────────────────┐   │
@@ -261,13 +261,13 @@ usage_tracking:
 
 | 平台 | 应用数据目录 |
 |------|-------------|
-| macOS | `~/Library/Application Support/CC-Forwarder/` |
-| Windows | `%APPDATA%\CC-Forwarder\` |
-| Linux | `~/.local/share/cc-forwarder/` |
+| macOS | `~/Library/Application Support/AI-Switchboard/` |
+| Windows | `%APPDATA%\AI-Switchboard\` |
+| Linux | `~/.local/share/ai-switchboard/` |
 
 **目录结构：**
 ```
-CC-Forwarder/
+AI-Switchboard/
 ├── data/
 │   └── usage.db        # SQLite 数据库（端点配置、请求记录、使用统计）
 ├── logs/
