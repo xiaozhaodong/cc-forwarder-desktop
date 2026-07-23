@@ -763,6 +763,10 @@ func (a *App) setupProxyHandler() {
 	if a.accountPoolService != nil {
 		a.proxyHandler.SetAccountPoolService(a.accountPoolService)
 	}
+	// 请求级故障转移只推送到应用窗口内的全局 Toast，不触发系统通知中心。
+	a.proxyHandler.SetOnFailoverTriggered(func(event proxy.FailoverEvent) {
+		a.emitFailoverNotification(event)
+	})
 	// 🛡️ 注入出站隐私过滤（必须在 SetUsageTracker 之后，重建的 handler 会重新注入）
 	if a.privacyService != nil {
 		a.proxyHandler.SetPrivacyFilter(a.privacyService)

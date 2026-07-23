@@ -66,7 +66,7 @@ func decideEndpointForwardOutcome(forwardErr error, resp *http.Response, trace *
 			return EndpointFailureDecision{
 				Action: EndpointForwardNextCandidate,
 				Mark:   EndpointMarkFailureWindow,
-				Reason: "connection_failed_before_wrote_headers",
+				Reason: FailoverReasonConnectionFailedBeforeHeaders,
 			}
 		}
 		return EndpointFailureDecision{
@@ -81,7 +81,7 @@ func decideEndpointForwardOutcome(forwardErr error, resp *http.Response, trace *
 		return EndpointFailureDecision{
 			Action: EndpointForwardPassthroughError,
 			Mark:   EndpointMarkFailureWindow,
-			Reason: "empty_response",
+			Reason: FailoverReasonEmptyResponse,
 		}
 	}
 
@@ -90,27 +90,27 @@ func decideEndpointForwardOutcome(forwardErr error, resp *http.Response, trace *
 		return EndpointFailureDecision{
 			Action: EndpointForwardNextCandidate,
 			Mark:   EndpointMarkAuthCooldown,
-			Reason: "auth_rejected",
+			Reason: FailoverReasonAuthRejected,
 		}
 	case resp.StatusCode == http.StatusTooManyRequests:
 		return EndpointFailureDecision{
 			Action:     EndpointForwardNextCandidate,
 			Mark:       EndpointMarkRateLimitCooldown,
 			RetryAfter: parseAccountRetryAfter(resp),
-			Reason:     "rate_limited",
+			Reason:     FailoverReasonRateLimited,
 		}
 	case resp.StatusCode == http.StatusRequestEntityTooLarge:
 		return EndpointFailureDecision{
 			Action:       EndpointForwardNextCandidate,
 			Mark:         EndpointMarkNegativeCache,
 			FailureClass: handlers.FailureClassPayloadTooLarge,
-			Reason:       "payload_too_large",
+			Reason:       FailoverReasonPayloadTooLarge,
 		}
 	case resp.StatusCode >= http.StatusInternalServerError:
 		return EndpointFailureDecision{
 			Action: EndpointForwardPassthroughError,
 			Mark:   EndpointMarkFailureWindow,
-			Reason: "server_error",
+			Reason: FailoverReasonServerError,
 		}
 	case resp.StatusCode >= http.StatusBadRequest:
 		lowerBody := normalizeEndpointFailureBody(respBodySample)
@@ -119,7 +119,7 @@ func decideEndpointForwardOutcome(forwardErr error, resp *http.Response, trace *
 				Action:       EndpointForwardNextCandidate,
 				Mark:         EndpointMarkNegativeCache,
 				FailureClass: handlers.FailureClassModelUnsupported,
-				Reason:       "model_unsupported",
+				Reason:       FailoverReasonModelUnsupported,
 			}
 		}
 		if isSchemaIncompatibleError(lowerBody) {
@@ -127,7 +127,7 @@ func decideEndpointForwardOutcome(forwardErr error, resp *http.Response, trace *
 				Action:       EndpointForwardNextCandidate,
 				Mark:         EndpointMarkNegativeCache,
 				FailureClass: handlers.FailureClassSchemaIncompatible,
-				Reason:       "schema_incompatible",
+				Reason:       FailoverReasonSchemaIncompatible,
 			}
 		}
 		return EndpointFailureDecision{

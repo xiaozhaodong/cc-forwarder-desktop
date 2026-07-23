@@ -5,8 +5,10 @@
 
 import { useState, Suspense, lazy, useCallback } from 'react';
 import Header from '@components/layout/Header.jsx';
+import ToastHost from '@components/notifications/ToastHost.jsx';
 import { LoadingSpinner } from '@components/ui';
 import useSSE from '@hooks/useSSE.js';
+import useGlobalToasts from '@hooks/useGlobalToasts.js';
 
 // 懒加载页面组件
 const OverviewPage = lazy(() => import('@pages/overview/index.jsx'));
@@ -32,6 +34,7 @@ const PrivacyProtectionPage = lazy(() => import('@pages/privacy-protection/index
 
 function App() {
   const [activeTab, setActiveTab] = useState('overview');
+  const { toasts, pendingCount, showToast, dismissToast } = useGlobalToasts();
   // v5.1+: 代理网关真实状态（来自后端 system:status 事件）
   const [proxyStatus, setProxyStatus] = useState({
     running: false,
@@ -41,17 +44,27 @@ function App() {
 
   // 处理 system:status 事件
   const handleStatusUpdate = useCallback((data) => {
-    if (data?.proxy_running !== undefined) {
+    const payload = data?.data && typeof data.data === 'object' ? data.data : data;
+    if (payload?.proxy_running !== undefined) {
       setProxyStatus({
-        running: data.proxy_running,
-        port: data.proxy_port || 0,
-        host: data.proxy_host || '127.0.0.1'
+        running: payload.proxy_running,
+        port: payload.proxy_port || 0,
+        host: payload.proxy_host || '127.0.0.1'
       });
     }
   }, []);
 
+  const handleRealtimeEvent = useCallback((data, eventType) => {
+    if (eventType === 'notification' || data?.event === 'notification') {
+      showToast(data);
+      return;
+    }
+    // 兼容命名 SSE 事件与默认 message 事件；非状态数据会被 handleStatusUpdate 忽略。
+    handleStatusUpdate(data);
+  }, [handleStatusUpdate, showToast]);
+
   // SSE 连接状态（用于全局状态指示）
-  const { connectionStatus } = useSSE(handleStatusUpdate, { events: 'status' });
+  const { connectionStatus } = useSSE(handleRealtimeEvent, { events: 'status,notification' });
 
   // 渲染当前页面
   const renderPage = () => {
@@ -94,6 +107,9 @@ function App() {
         connectionStatus={connectionStatus}
         proxyStatus={proxyStatus}
       />
+
+      {/* 应用窗口内全局 Toast；不会调用 macOS 通知中心。 */}
+      <ToastHost toasts={toasts} pendingCount={pendingCount} onDismiss={dismissToast} />
 
       {/* 主内容区 */}
       <main id="app-scroll-container" className="flex-1 min-h-0 overflow-y-auto overscroll-none relative z-10">

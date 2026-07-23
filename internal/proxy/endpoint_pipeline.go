@@ -141,6 +141,23 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			lastErr = fmt.Errorf("%s: %s", decision.Reason, detail)
 			h.markEndpointFailure(ep, decision, profile, detail)
 			h.endpointManager.RecordEndpointScheduleAttempt(connID, ep.Config.Name, endpoint.EndpointScheduleRuntimeTryNext, detail)
+			if i+1 < len(result.Candidates) && ctx.Err() == nil {
+				next := result.Candidates[i+1]
+				statusCode := 0
+				if resp != nil {
+					statusCode = resp.StatusCode
+				}
+				h.notifyFailover(FailoverEvent{
+					Lane:         FailoverLaneCC,
+					From:         ep.Config.Name,
+					To:           next.Config.Name,
+					ReasonCode:   decision.Reason,
+					ReasonDetail: failoverHTTPDetail(statusCode, detail),
+					RequestID:    connID,
+					RequestPath:  r.URL.Path,
+					Attempt:      i + 1,
+				})
+			}
 			slog.Warn(fmt.Sprintf("🔄 [端点管线] [%s] 端点 %s 失败（%s），换下一候选 (%d/%d)",
 				connID, ep.Config.Name, decision.Reason, i+1, len(result.Candidates)))
 			continue

@@ -51,6 +51,9 @@ type Handler struct {
 	imageDirectHTTPClientFactory  func(int, int) (*http.Client, func(), error)
 	// 🛡️ 出站隐私过滤（可选注入，nil 时不影响原有链路）
 	privacyFilter handlers.PrivacyFilter
+	// 故障转移通知回调仅用于向桌面/前端推送结构化事件，不改变调度语义。
+	failoverNotifierMu  sync.RWMutex
+	onFailoverTriggered func(FailoverEvent)
 }
 
 type CodexModelListProvider interface {
@@ -351,11 +354,17 @@ func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w htt
 		return true
 	}
 
+	requestID := failoverRequestID(ctx)
+	if requestID == "" {
+		requestID = newFallbackAccountScheduleRequestID()
+	}
+
 	var lastErr error
-	for _, acc := range accounts {
+	for idx, acc := range accounts {
 		if acc == nil {
 			continue
 		}
+		accountName := accountFailoverDisplayName(acc)
 
 		attemptStartedAt := time.Now()
 		resp, upstreamCancel, _, err := h.forwardRequestToAccount(ctx, r, nil, acc, false, nil)
@@ -371,6 +380,7 @@ func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w htt
 			if !h.shouldFailOverAfterSoftFailure(ctx, acc.ID, err.Error(), accountSoftFailureCategoryServerError, 0) {
 				break
 			}
+			h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonForwardError, 0, err.Error(), requestID, r.URL.Path)
 			continue
 		}
 		if resp == nil {
@@ -379,6 +389,7 @@ func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w htt
 			if !h.shouldFailOverAfterSoftFailure(ctx, acc.ID, lastErr.Error(), accountSoftFailureCategoryServerError, 0) {
 				break
 			}
+			h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonEmptyResponse, 0, lastErr.Error(), requestID, r.URL.Path)
 			continue
 		}
 
@@ -390,6 +401,7 @@ func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w htt
 			}
 			lastErr = fmt.Errorf("auth failed: %s", detail)
 			_ = h.accountPoolService.MarkAccountAuthFailed(ctx, acc.ID, detail)
+			h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonAuthFailed, resp.StatusCode, detail, requestID, r.URL.Path)
 			continue
 		}
 
@@ -403,11 +415,13 @@ func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w htt
 			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
 			if usageLimit, ok := parseAccountUsageLimitWindow(detail, time.Now()); ok {
 				_ = h.accountPoolService.MarkAccountUsageLimitExceeded(ctx, acc.ID, detail, usageLimit.planType, usageLimit.resetAt)
+				h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonUsageLimit, resp.StatusCode, detail, requestID, r.URL.Path)
 				continue
 			}
 			if !h.shouldFailOverAfterSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryRateLimit, retryAfter) {
 				break
 			}
+			h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonRateLimited, resp.StatusCode, detail, requestID, r.URL.Path)
 			continue
 		}
 
@@ -421,6 +435,7 @@ func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w htt
 			if !h.shouldFailOverAfterSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryServerError, 0) {
 				break
 			}
+			h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonServerError, resp.StatusCode, detail, requestID, r.URL.Path)
 			continue
 		}
 

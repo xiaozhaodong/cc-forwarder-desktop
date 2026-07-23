@@ -136,16 +136,16 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 	var lastErr error
 
 	for idx, acc := range accounts {
-		accountName := acc.AccountName
-		if strings.TrimSpace(accountName) == "" {
-			accountName = fmt.Sprintf("account-%d", acc.ID)
+		if acc == nil {
+			continue
 		}
+		accountName := accountFailoverDisplayName(acc)
 
 		lifecycleManager.SetUpstream("account", "", accountName, acc.ID)
 		lifecycleManager.SetEndpoint(accountName, "", "account-pool")
 		lifecycleManager.UpdateStatus("forwarding", idx, 0)
 		attemptStartedAt := time.Now()
-		hasNextAccount := idx < len(accounts)-1
+		hasNextAccount := hasNextAccountFailoverCandidate(accounts, idx)
 
 		resp, upstreamCancel, traceState, forwardErr := h.forwardRequestToAccount(ctx, r, bodyBytes, acc, isSSE, lifecycleManager)
 		// upstreamCancel 同时可能被 releaseUpstream 和 tail-drain 超时回调持有；context.CancelFunc 幂等，重复调用是安全的。
@@ -171,15 +171,17 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			// 同层下一候选（软失败计数已照记）。pinned 账号维持穿透语义，保住
 			// 「固定直到严格不可用」：达阈值冷却后由后续请求降级，pin 保留。
 			if !traceState.WroteHeaders() && !schedule.Pinned {
-				logAccountPipelineAttemptFailure(requestID, acc, 0, "connection_failed_before_wrote_headers", forwardErr.Error(), hasNextAccount)
+				logAccountPipelineAttemptFailure(requestID, acc, 0, FailoverReasonConnectionFailedBeforeHeaders, forwardErr.Error(), hasNextAccount)
 				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, forwardErr.Error())
+				h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonConnectionFailedBeforeHeaders, 0, forwardErr.Error(), requestID, r.URL.Path)
 				continue
 			}
-			logAccountPipelineAttemptFailure(requestID, acc, 0, "forward_error", forwardErr.Error(), shouldFailover && hasNextAccount)
+			logAccountPipelineAttemptFailure(requestID, acc, 0, FailoverReasonForwardError, forwardErr.Error(), shouldFailover && hasNextAccount)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, forwardErr.Error())
 			if !shouldFailover {
 				break
 			}
+			h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonForwardError, 0, forwardErr.Error(), requestID, r.URL.Path)
 			continue
 		}
 
@@ -187,11 +189,12 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			lastErr = fmt.Errorf("empty response from account %d", acc.ID)
 			releaseUpstream()
 			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, lastErr.Error(), accountSoftFailureCategoryServerError, 0)
-			logAccountPipelineAttemptFailure(requestID, acc, 0, "empty_response", lastErr.Error(), shouldFailover && hasNextAccount)
+			logAccountPipelineAttemptFailure(requestID, acc, 0, FailoverReasonEmptyResponse, lastErr.Error(), shouldFailover && hasNextAccount)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, lastErr.Error())
 			if !shouldFailover {
 				break
 			}
+			h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonEmptyResponse, 0, lastErr.Error(), requestID, r.URL.Path)
 			continue
 		}
 
@@ -203,8 +206,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			lastErr = fmt.Errorf("auth failed: %s", detail)
 			_ = h.accountPoolService.MarkAccountAuthFailed(ctx, acc.ID, detail)
-			logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, "auth_failed", detail, hasNextAccount)
+			logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, FailoverReasonAuthFailed, detail, hasNextAccount)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeAuthFailed, detail)
+			h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonAuthFailed, resp.StatusCode, detail, requestID, r.URL.Path)
 			continue
 		}
 
@@ -234,16 +238,18 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
 			if usageLimit, ok := parseAccountUsageLimitWindow(detail, time.Now()); ok {
 				_ = h.accountPoolService.MarkAccountUsageLimitExceeded(ctx, acc.ID, detail, usageLimit.planType, usageLimit.resetAt)
-				logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, "usage_limit", detail, hasNextAccount)
+				logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, FailoverReasonUsageLimit, detail, hasNextAccount)
 				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
+				h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonUsageLimit, resp.StatusCode, detail, requestID, r.URL.Path)
 				continue
 			}
 			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryRateLimit, retryAfter)
-			logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, "rate_limited", detail, shouldFailover && hasNextAccount)
+			logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, FailoverReasonRateLimited, detail, shouldFailover && hasNextAccount)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
 			if !shouldFailover {
 				break
 			}
+			h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonRateLimited, resp.StatusCode, detail, requestID, r.URL.Path)
 			continue
 		}
 
@@ -255,11 +261,12 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
 			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryServerError, 0)
-			logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, "server_error", detail, shouldFailover && hasNextAccount)
+			logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, FailoverReasonServerError, detail, shouldFailover && hasNextAccount)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
 			if !shouldFailover {
 				break
 			}
+			h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonServerError, resp.StatusCode, detail, requestID, r.URL.Path)
 			continue
 		}
 
@@ -315,6 +322,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				if !shouldFailover {
 					break
 				}
+				h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonProcessingError, 0, processErr.Error(), requestID, r.URL.Path)
 				continue
 			}
 			// 流式响应一旦开始输出，无法切换到下一个账号，直接终止
