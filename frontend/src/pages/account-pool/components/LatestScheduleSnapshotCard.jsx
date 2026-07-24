@@ -3,7 +3,7 @@
 // 2026-03-07
 // ============================================
 
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { ChevronDown, ChevronUp, Info } from 'lucide-react';
 import { formatTimestamp } from '@utils/api.js';
 import Badge from './Badge.jsx';
@@ -15,6 +15,7 @@ import {
 } from '../utils.js';
 
 const DEFAULT_VISIBLE_CANDIDATES = 3;
+const EMPTY_CANDIDATES = [];
 
 const toDisplayTime = (value) => (value ? formatTimestamp(value) : '-');
 
@@ -23,7 +24,7 @@ const LatestScheduleSnapshotCard = ({ snapshot = {}, snapshotUnsupported = false
   const [showAllCandidates, setShowAllCandidates] = useState(false);
 
   const hasSnapshot = snapshot?.hasSnapshot === true || snapshot?.has_snapshot === true;
-  const candidates = Array.isArray(snapshot?.candidates) ? snapshot.candidates : [];
+  const candidates = Array.isArray(snapshot?.candidates) ? snapshot.candidates : EMPTY_CANDIDATES;
   const outcome = String(snapshot?.finalOutcome || snapshot?.final_outcome || '').trim().toLowerCase() || (hasSnapshot ? 'pending' : '');
   const outcomeClass = SCHEDULE_OUTCOME_STYLE[outcome] || SCHEDULE_OUTCOME_STYLE.pending;
   const requestPath = snapshot?.requestPath || snapshot?.request_path || '/v1/responses';
@@ -39,17 +40,17 @@ const LatestScheduleSnapshotCard = ({ snapshot = {}, snapshotUnsupported = false
   const isAbnormal = Boolean(degraded) || Boolean(finalError) || (Boolean(outcome) && !['success', 'pending'].includes(outcome));
   const snapshotIdentity = `${requestId}|${updatedAt}|${outcome}|${degraded ? '1' : '0'}|${finalError}`;
 
-  useEffect(() => {
+  // 快照变化时重置展开态（渲染期调整，避免 effect 级联渲染；isAbnormal 的输入均含于 identity）
+  const [lastSnapshotIdentity, setLastSnapshotIdentity] = useState(null);
+  if (lastSnapshotIdentity !== snapshotIdentity) {
+    setLastSnapshotIdentity(snapshotIdentity);
     setIsExpanded(isAbnormal);
     setShowAllCandidates(false);
-  }, [snapshotIdentity, isAbnormal]);
+  }
 
-  const visibleCandidates = useMemo(() => {
-    if (showAllCandidates) {
-      return candidates;
-    }
-    return candidates.slice(0, DEFAULT_VISIBLE_CANDIDATES);
-  }, [candidates, showAllCandidates]);
+  const visibleCandidates = showAllCandidates
+    ? candidates
+    : candidates.slice(0, DEFAULT_VISIBLE_CANDIDATES);
 
   const hiddenCandidateCount = Math.max(candidates.length - visibleCandidates.length, 0);
 

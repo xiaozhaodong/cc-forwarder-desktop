@@ -35,11 +35,15 @@ export const SSE_STATUS = {
  * @param {Object} options - 配置选项
  */
 const useSSE = (onDataUpdate, options = {}) => {
-  // 在 Wails 环境中使用 Wails Events
+  const isWails = isWailsEnvironment();
+
+  // 两个 hook 都无条件调用以满足 hooks 规则；
+  // Wails 环境下通过 enabled=false 阻止 SSE 自动建连
   const wailsEvents = useWailsEvents(onDataUpdate, options);
+  const sse = useSSEInternal(onDataUpdate, options, !isWails);
 
   // 如果是 Wails 环境，直接返回 Wails Events 结果
-  if (isWailsEnvironment()) {
+  if (isWails) {
     return {
       connectionStatus: wailsEvents.connectionStatus === WAILS_STATUS.CONNECTED
         ? SSE_STATUS.CONNECTED
@@ -54,14 +58,14 @@ const useSSE = (onDataUpdate, options = {}) => {
     };
   }
 
-  // 以下是原有的 SSE 实现，用于非 Wails 环境
-  return useSSEInternal(onDataUpdate, options);
+  // 非 Wails 环境使用原有的 SSE 实现
+  return sse;
 };
 
 /**
- * 内部 SSE 实现（仅用于非 Wails 环境）
+ * 内部 SSE 实现（仅在非 Wails 环境启用自动连接）
  */
-const useSSEInternal = (onDataUpdate, options = {}) => {
+const useSSEInternal = (onDataUpdate, options = {}, enabled = true) => {
   const {
     events = 'status,endpoint,group,connection,log,chart',
     maxReconnectAttempts = 5,
@@ -203,6 +207,8 @@ const useSSEInternal = (onDataUpdate, options = {}) => {
 
   // 组件挂载时自动连接 - 使用延迟初始化避免 effect 同步 setState
   useEffect(() => {
+    if (!enabled) return undefined;
+
     // 使用 setTimeout 延迟执行，避免 React 18 严格模式下的问题
     const timer = setTimeout(() => {
       connect();
@@ -212,7 +218,7 @@ const useSSEInternal = (onDataUpdate, options = {}) => {
       clearTimeout(timer);
       disconnect();
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [enabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     connectionStatus,
