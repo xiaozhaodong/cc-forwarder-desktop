@@ -6,8 +6,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Activity,
+  AlertTriangle,
   RefreshCw,
   Database,
+  Route,
   Server,
   Info,
   RotateCcw
@@ -22,10 +24,12 @@ import {
   EndpointForm,
   ChannelCard,
   DeleteConfirmDialog,
-  groupEndpointsByChannel
+  groupEndpointsByChannel,
+  resolveSnapshotOutcome
 } from './components';
-import EndpointScheduleSnapshotCard from './components/EndpointScheduleSnapshotCard.jsx';
+import EndpointScheduleDrawer from './components/EndpointScheduleDrawer.jsx';
 import { fetchLatestEndpointScheduleSnapshot } from '@utils/endpointScheduleApi.js';
+import { formatTimestamp } from '@utils/api.js';
 import {
   getEndpointStorageStatus,
   getEndpointRecords,
@@ -72,6 +76,7 @@ const EndpointsPage = () => {
   const [scheduleSnapshot, setScheduleSnapshot] = useState({ hasSnapshot: false, decisions: [] });
   const [scheduleSnapshotUnsupported, setScheduleSnapshotUnsupported] = useState(false);
   const [scheduleSnapshotLoading, setScheduleSnapshotLoading] = useState(false);
+  const [scheduleDrawerOpen, setScheduleDrawerOpen] = useState(false);
 
   // 表单状态
   const [showForm, setShowForm] = useState(false);
@@ -216,6 +221,11 @@ const EndpointsPage = () => {
   const routeMode = routingState?.mode || 'auto';
   const routeEndpointName = routingState?.endpointName || routingState?.endpoint_name || '';
   const routeModeLabel = routeMode === 'manual_fixed' ? '手动固定' : '手动优选';
+  const snapshotOutcome = resolveSnapshotOutcome(scheduleSnapshot);
+  const showScheduleAlert = !scheduleSnapshotUnsupported
+    && scheduleSnapshot.hasSnapshot
+    && snapshotOutcome.isAbnormal;
+  const scheduleAlertTime = scheduleSnapshot.updatedAt || scheduleSnapshot.capturedAt;
 
   const handleActivateEndpointGroup = useCallback(async (endpointName, groupName) => {
     const result = await activateEndpointGroup(endpointName, groupName);
@@ -405,6 +415,16 @@ const EndpointsPage = () => {
             测试连通性
           </Button>
 
+          {/* 调度快照抽屉入口 */}
+          <Button
+            icon={Route}
+            variant="secondary"
+            onClick={() => setScheduleDrawerOpen(true)}
+            className="border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300"
+          >
+            调度快照
+          </Button>
+
           {/* 新建端点按钮 (SQLite 模式) */}
           {isSqliteMode && (
             <Button
@@ -445,10 +465,25 @@ const EndpointsPage = () => {
         </div>
       )}
 
-      <EndpointScheduleSnapshotCard
-        snapshot={scheduleSnapshot}
-        unsupported={scheduleSnapshotUnsupported}
-      />
+      {showScheduleAlert && (
+        <div className="flex items-center justify-between gap-3 mb-6 px-3 py-2 bg-amber-50/80 rounded-lg border border-amber-200 text-xs text-amber-800">
+          <div className="flex min-w-0 items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 text-amber-500" />
+            <span className="truncate">
+              最近调度异常：{snapshotOutcome.label}
+              {scheduleAlertTime ? ` · ${formatTimestamp(scheduleAlertTime)}` : ''}
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setScheduleDrawerOpen(true)}
+            className="shrink-0 text-amber-800 hover:bg-amber-100"
+          >
+            查看明细
+          </Button>
+        </div>
+      )}
 
       {/* 统计卡片 */}
       <div className="grid grid-cols-5 gap-4 mb-6">
@@ -533,6 +568,14 @@ const EndpointsPage = () => {
           </div>
         </>
       )}
+
+      {/* 调度快照抽屉 */}
+      <EndpointScheduleDrawer
+        open={scheduleDrawerOpen}
+        onClose={() => setScheduleDrawerOpen(false)}
+        snapshot={scheduleSnapshot}
+        unsupported={scheduleSnapshotUnsupported}
+      />
 
       {/* 端点表单弹窗 */}
       {showForm && (
