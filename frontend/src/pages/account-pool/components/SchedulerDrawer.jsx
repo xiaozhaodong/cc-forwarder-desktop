@@ -3,9 +3,11 @@
 // 2026-03-22
 // ============================================
 
+import { useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { GitBranch, X } from 'lucide-react';
 import { Button } from '@components/ui';
+import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import Badge from './Badge.jsx';
 import AccountPoolSchedulerSection from './AccountPoolSchedulerSection.jsx';
 import LatestScheduleSnapshotCard from './LatestScheduleSnapshotCard.jsx';
@@ -23,6 +25,10 @@ const SchedulerDrawer = ({
   onViewInInventory,
   busyKey = ''
 }) => {
+  const closeButtonRef = useRef(null);
+
+  useModalLifecycle({ open, onClose, initialFocusRef: closeButtonRef });
+
   if (!open) return null;
 
   const nav = document.querySelector('nav.sticky');
@@ -40,7 +46,12 @@ const SchedulerDrawer = ({
         onClick={onClose}
       />
 
-      <aside className="relative z-10 flex h-full w-full max-w-[680px] flex-col border-l border-slate-200 bg-white shadow-2xl shadow-slate-950/20 animate-in slide-in-from-right duration-300">
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label="调度编排"
+        className="relative z-10 flex h-full w-full max-w-[680px] flex-col border-l border-slate-200 bg-white shadow-2xl shadow-slate-950/20 animate-in slide-in-from-right duration-300"
+      >
         <div className="border-b border-slate-100 bg-gradient-to-r from-indigo-50/80 via-white to-white px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
@@ -54,6 +65,7 @@ const SchedulerDrawer = ({
             </div>
             <button
               type="button"
+              ref={closeButtonRef}
               aria-label="关闭抽屉"
               onClick={onClose}
               className="rounded-lg border border-slate-200 bg-white p-2 text-slate-400 transition-colors hover:text-slate-700 hover:border-slate-300"

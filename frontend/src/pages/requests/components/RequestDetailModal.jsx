@@ -27,7 +27,7 @@ import {
 import RequestStatusBadge from './RequestStatusBadge.jsx';
 import ModelTag from './ModelTag.jsx';
 import { formatCost, formatTimestamp } from '@utils/api.js';
-import { lockAppScroll } from '@utils/scrollLock.js';
+import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import { copyTextToClipboard } from './clipboard.js';
 import {
   calculateTokensPerSecond,
@@ -155,23 +155,9 @@ const RequestTimingValue = ({ request }) => {
  */
 const RequestDetailModal = ({ isOpen, onClose, request }) => {
   const [activeTab, setActiveTab] = useState('overview');
+  const closeButtonRef = useRef(null);
 
-  // ESC 键关闭 & 阻止滚动
-  useEffect(() => {
-    if (!isOpen) return undefined;
-
-    const unlockScroll = lockAppScroll();
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      unlockScroll();
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isOpen, onClose]);
+  useModalLifecycle({ open: isOpen, onClose, initialFocusRef: closeButtonRef });
 
   if (!isOpen || !request) return null;
 
@@ -194,7 +180,12 @@ const RequestDetailModal = ({ isOpen, onClose, request }) => {
       />
 
       {/* 模态框内容 - 固定高度，内容区域滚动 */}
-      <div className="relative w-full max-w-3xl max-h-[80vh] bg-white rounded-2xl shadow-2xl ring-1 ring-black/5 animate-in zoom-in-95 fade-in duration-200 flex flex-col overflow-hidden">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="请求详情"
+        className="relative w-full max-w-3xl max-h-[80vh] bg-white rounded-2xl shadow-2xl ring-1 ring-black/5 animate-in zoom-in-95 fade-in duration-200 flex flex-col overflow-hidden"
+      >
         {/* 头部 - 固定不滚动 */}
         <div className="flex-shrink-0 px-6 py-4 border-b border-slate-100 bg-white rounded-t-2xl flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -214,7 +205,7 @@ const RequestDetailModal = ({ isOpen, onClose, request }) => {
           </div>
           <div className="flex items-center gap-2">
             <kbd className="hidden sm:inline-block px-2 py-1 bg-slate-100 border border-slate-200 rounded text-xs text-slate-500">ESC</kbd>
-            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-400 hover:text-slate-600">
+            <button ref={closeButtonRef} aria-label="关闭详情" onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-400 hover:text-slate-600">
               <X className="w-5 h-5" />
             </button>
           </div>

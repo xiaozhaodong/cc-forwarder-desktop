@@ -3,7 +3,7 @@
 // 2025-12-06 (v5.0 新增)
 // ============================================
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   DollarSign,
   Plus,
@@ -23,6 +23,7 @@ import {
   LoadingSpinner,
   ErrorMessage
 } from '@components/ui';
+import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import {
   getModelPricingStorageStatus,
   getModelPricings,
@@ -41,6 +42,17 @@ const CACHE_PRICE_DECIMALS = 3;
 
 const PricingForm = ({ pricing, onSave, onCancel, loading }) => {
   const isEdit = !!pricing;
+  const dialogRef = useRef(null);
+
+  // 挂载即打开（父组件条件渲染），卸载时由 hook 清理
+  useModalLifecycle({
+    open: true,
+    onClose: () => {
+      if (!loading) onCancel();
+    },
+    initialFocusRef: dialogRef
+  });
+
   const [formData, setFormData] = useState({
     modelName: pricing?.modelName || '',
     displayName: pricing?.displayName || '',
@@ -102,7 +114,14 @@ const PricingForm = ({ pricing, onSave, onCancel, loading }) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 animate-fade-in pt-[10vh] overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 my-8">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label={isEdit ? '编辑模型定价' : '添加模型定价'}
+        className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 my-8 focus:outline-none"
+      >
         <form onSubmit={handleSubmit}>
           {/* 头部 */}
           <div className="px-6 py-4 border-b border-slate-100">
@@ -325,40 +344,59 @@ const PricingForm = ({ pricing, onSave, onCancel, loading }) => {
 // 删除确认对话框
 // ============================================
 
-const DeleteConfirmDialog = ({ pricing, onConfirm, onCancel, loading }) => (
-  <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 animate-fade-in pt-[20vh]">
-    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-      <div className="flex items-center gap-3 mb-4">
-        <div className="p-3 bg-rose-100 rounded-full">
-          <AlertTriangle className="text-rose-600" size={24} />
-        </div>
-        <div>
-          <h3 className="text-lg font-semibold text-slate-900">确认删除</h3>
-          <p className="text-sm text-slate-500">此操作不可撤销</p>
-        </div>
-      </div>
+const DeleteConfirmDialog = ({ pricing, onConfirm, onCancel, loading }) => {
+  // 挂载即打开（父组件条件渲染），卸载时由 hook 清理
+  const dialogRef = useRef(null);
+  useModalLifecycle({
+    open: true,
+    onClose: () => {
+      if (!loading) onCancel();
+    },
+    initialFocusRef: dialogRef
+  });
 
-      <p className="text-slate-700 mb-6">
-        确定要删除模型定价 <span className="font-semibold">&ldquo;{pricing?.displayName || pricing?.modelName}&rdquo;</span> 吗？
-        删除后将无法恢复。
-      </p>
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 animate-fade-in pt-[20vh]">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label="确认删除模型定价"
+        className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 focus:outline-none"
+      >
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-3 bg-rose-100 rounded-full">
+            <AlertTriangle className="text-rose-600" size={24} />
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-slate-900">确认删除</h3>
+            <p className="text-sm text-slate-500">此操作不可撤销</p>
+          </div>
+        </div>
 
-      <div className="flex justify-end gap-3">
-        <Button variant="ghost" onClick={onCancel} disabled={loading}>
-          取消
-        </Button>
-        <Button
-          variant="danger"
-          icon={Trash2}
-          onClick={onConfirm}
-          loading={loading}
-        >
-          确认删除
-        </Button>
+        <p className="text-slate-700 mb-6">
+          确定要删除模型定价 <span className="font-semibold">&ldquo;{pricing?.displayName || pricing?.modelName}&rdquo;</span> 吗？
+          删除后将无法恢复。
+        </p>
+
+        <div className="flex justify-end gap-3">
+          <Button variant="ghost" onClick={onCancel} disabled={loading}>
+            取消
+          </Button>
+          <Button
+            variant="danger"
+            icon={Trash2}
+            onClick={onConfirm}
+            loading={loading}
+          >
+            确认删除
+          </Button>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ============================================
 // 定价卡片组件

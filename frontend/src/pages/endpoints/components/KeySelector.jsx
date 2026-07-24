@@ -4,9 +4,9 @@
 // 2025-12-01 升级版
 // ============================================
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { ChevronDown, Key, Check, Search, Settings2, Gauge } from 'lucide-react';
-import { lockAppScroll } from '@utils/scrollLock.js';
+import useModalLifecycle from '@hooks/useModalLifecycle.js';
 
 /**
  * 根据 Token 名称推断类型
@@ -55,38 +55,7 @@ const TokenSelectionModal = ({ isOpen, onClose, keys, activeKey, onSelect, switc
   const [searchTerm, setSearchTerm] = useState('');
   const searchInputRef = useRef(null);
 
-  // 阻止滚动 & 自动聚焦
-  useEffect(() => {
-    if (!isOpen) return undefined;
-
-    const unlockScroll = lockAppScroll();
-    let focusTimer = 0;
-
-    // 延迟聚焦，确保模态框完全渲染
-    focusTimer = window.setTimeout(() => {
-      searchInputRef.current?.focus();
-    }, 100);
-
-    return () => {
-      unlockScroll();
-      if (focusTimer) {
-        window.clearTimeout(focusTimer);
-      }
-    };
-  }, [isOpen]);
-
-  // ESC 键关闭
-  useEffect(() => {
-    if (isOpen) {
-      const handleKeyDown = (e) => {
-        if (e.key === 'Escape') {
-          onClose();
-        }
-      };
-      window.addEventListener('keydown', handleKeyDown);
-      return () => window.removeEventListener('keydown', handleKeyDown);
-    }
-  }, [isOpen, onClose]);
+  useModalLifecycle({ open: isOpen, onClose, initialFocusRef: searchInputRef });
 
   if (!isOpen) return null;
 
@@ -107,7 +76,12 @@ const TokenSelectionModal = ({ isOpen, onClose, keys, activeKey, onSelect, switc
       />
 
       {/* 模态框内容 - Command Palette 样式 */}
-      <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl ring-1 ring-black/5 flex flex-col max-h-[80vh] animate-in zoom-in-95 fade-in duration-200">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`选择 ${endpointName} 的 Token`}
+        className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl ring-1 ring-black/5 flex flex-col max-h-[80vh] animate-in zoom-in-95 fade-in duration-200"
+      >
 
         {/* 搜索头部 */}
         <div className="p-4 border-b border-slate-100 flex items-center gap-3">
@@ -215,7 +189,7 @@ const TokenSelectionModal = ({ isOpen, onClose, keys, activeKey, onSelect, switc
             })
           ) : (
             <div className="p-8 text-center text-slate-500">
-              <p>未找到 "{searchTerm}"</p>
+              <p>未找到 &quot;{searchTerm}&quot;</p>
               <button className="mt-2 text-indigo-600 font-medium text-sm hover:underline">
                 创建新 Token
               </button>

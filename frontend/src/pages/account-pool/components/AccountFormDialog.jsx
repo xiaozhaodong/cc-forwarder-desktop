@@ -3,9 +3,10 @@
 // 2026-03-07
 // ============================================
 
-import { useEffect, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
 import { Button, CustomSelect } from '@components/ui';
+import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import { maskSessionId } from '../utils.js';
 import OAuthHelperPanel from './OAuthHelperPanel.jsx';
 import { FormField } from './shared.jsx';
@@ -42,10 +43,23 @@ const AccountFormDialog = ({
   openExternalURL
 }) => {
   const [showCredential, setShowCredential] = useState(true);
+  const [credentialResetKey, setCredentialResetKey] = useState({ open: null, account: null });
+  const closeButtonRef = useRef(null);
+  const handleRequestClose = () => {
+    if (!accountSubmitting) onClose();
+  };
 
-  useEffect(() => {
+  // 打开弹窗或切换编辑对象时重置凭据可见性（渲染期调整，避免 effect 级联渲染）
+  if (credentialResetKey.open !== open || credentialResetKey.account !== editingAccount) {
+    setCredentialResetKey({ open, account: editingAccount });
     setShowCredential(!editingAccount);
-  }, [editingAccount, open]);
+  }
+
+  useModalLifecycle({
+    open,
+    onClose: handleRequestClose,
+    initialFocusRef: closeButtonRef
+  });
 
   if (!open) return null;
 
@@ -110,17 +124,21 @@ const AccountFormDialog = ({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[15vh]">
-      <div className="absolute inset-0 bg-slate-900/40" onClick={() => !accountSubmitting && onClose()} />
+      <div className="absolute inset-0 bg-slate-900/40" onClick={handleRequestClose} />
       <form
         onSubmit={onSubmit}
+        role="dialog"
+        aria-modal="true"
+        aria-label={editingAccount ? '编辑账号' : '新增账号'}
         className="relative flex w-full max-w-2xl max-h-[75vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <h3 className="text-lg font-semibold text-slate-900">{editingAccount ? '编辑账号' : '新增账号'}</h3>
           <button
             type="button"
+            ref={closeButtonRef}
             className="text-sm text-slate-400 hover:text-slate-600"
-            onClick={onClose}
+            onClick={handleRequestClose}
             disabled={accountSubmitting}
           >
             关闭
@@ -408,7 +426,7 @@ const AccountFormDialog = ({
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-white px-6 py-4">
-          <Button type="button" variant="ghost" onClick={onClose} disabled={accountSubmitting}>
+          <Button type="button" variant="ghost" onClick={handleRequestClose} disabled={accountSubmitting}>
             取消
           </Button>
           <Button type="submit" loading={accountSubmitting}>

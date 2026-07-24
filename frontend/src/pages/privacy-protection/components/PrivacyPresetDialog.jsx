@@ -3,15 +3,26 @@
 // 2026-06-11 (v6.1 新增)
 // ============================================
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { PackagePlus, X } from 'lucide-react';
 import { Button } from '@components/ui';
+import useModalLifecycle from '@hooks/useModalLifecycle.js';
 
 const PrivacyPresetDialog = ({ open, presets = [], onImport, onClose }) => {
   const [selectedId, setSelectedId] = useState('');
   const [importingId, setImportingId] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const closeButtonRef = useRef(null);
+  const handleRequestClose = () => {
+    if (!importingId) onClose();
+  };
+
+  useModalLifecycle({
+    open,
+    onClose: handleRequestClose,
+    initialFocusRef: closeButtonRef
+  });
 
   if (!open) return null;
 
@@ -38,7 +49,12 @@ const PrivacyPresetDialog = ({ open, presets = [], onImport, onClose }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[14vh] bg-black/40 animate-fade-in">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 overflow-hidden">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="导入预设规则集"
+        className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 overflow-hidden"
+      >
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
           <h3 className="text-base font-semibold text-slate-800 flex items-center gap-2">
             <PackagePlus size={17} className="text-indigo-500" />
@@ -46,7 +62,9 @@ const PrivacyPresetDialog = ({ open, presets = [], onImport, onClose }) => {
           </h3>
           <button
             type="button"
-            onClick={onClose}
+            ref={closeButtonRef}
+            aria-label="关闭弹窗"
+            onClick={handleRequestClose}
             className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg"
           >
             <X size={18} />
@@ -100,7 +118,7 @@ const PrivacyPresetDialog = ({ open, presets = [], onImport, onClose }) => {
           {error && <p className="text-xs text-rose-500 break-all">{error}</p>}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/70 px-5 py-4">
-          <Button type="button" variant="ghost" onClick={onClose} disabled={Boolean(importingId)}>
+          <Button type="button" variant="ghost" onClick={handleRequestClose} disabled={Boolean(importingId)}>
             取消
           </Button>
           <Button

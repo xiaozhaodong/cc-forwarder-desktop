@@ -3,10 +3,11 @@
 // 2026-06-11 (v6.1 新增)
 // ============================================
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { Button, Input } from '@components/ui';
+import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import PrivacyPatternEditor from './PrivacyPatternEditor.jsx';
 import PrivacyScopeEditor from './PrivacyScopeEditor.jsx';
 import {
@@ -29,6 +30,16 @@ const PrivacyRuleDrawer = ({
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState('');
   const isBuiltin = form.match_type === 'builtin';
+  const closeButtonRef = useRef(null);
+  const handleRequestClose = () => {
+    if (!saving) onClose();
+  };
+
+  useModalLifecycle({
+    open,
+    onClose: handleRequestClose,
+    initialFocusRef: closeButtonRef
+  });
 
   if (!open) return null;
 
@@ -61,15 +72,22 @@ const PrivacyRuleDrawer = ({
 
   return createPortal(
     <div className="fixed inset-0 z-[45] flex justify-end" style={{ top: topOffset }}>
-      <div className="absolute inset-0 bg-black/30 animate-fade-in" onClick={onClose} />
-      <div className="relative w-full max-w-xl h-full bg-white shadow-2xl flex flex-col">
+      <div className="absolute inset-0 bg-black/30 animate-fade-in" onClick={handleRequestClose} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={isBuiltin ? '编辑内置规则' : (form.id > 0 ? '编辑规则' : '新增规则')}
+        className="relative w-full max-w-xl h-full bg-white shadow-2xl flex flex-col"
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h3 className="text-base font-semibold text-slate-800">
             {isBuiltin ? '编辑内置规则' : (form.id > 0 ? '编辑规则' : '新增规则')}
           </h3>
           <button
             type="button"
-            onClick={onClose}
+            ref={closeButtonRef}
+            aria-label="关闭抽屉"
+            onClick={handleRequestClose}
             className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg"
           >
             <X size={18} />
@@ -198,7 +216,7 @@ const PrivacyRuleDrawer = ({
               <p className="text-xs text-rose-500 mb-2 break-all">{submitError}</p>
             )}
             <div className="flex justify-end gap-2">
-              <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>
+              <Button type="button" variant="secondary" onClick={handleRequestClose} disabled={saving}>
                 取消
               </Button>
               <Button type="submit" loading={saving}>

@@ -3,30 +3,16 @@
 // 2026-06-12
 // ============================================
 
-import { useEffect } from 'react';
+import { useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { FlaskConical, X } from 'lucide-react';
-import { lockAppScroll } from '@utils/scrollLock.js';
+import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import PrivacyRuleTestPanel from './PrivacyRuleTestPanel.jsx';
 
 const PrivacyRuleTestDrawer = ({ open, onClose, onTest }) => {
-  useEffect(() => {
-    if (!open) return undefined;
-    return lockAppScroll();
-  }, [open]);
+  const closeButtonRef = useRef(null);
 
-  useEffect(() => {
-    if (!open) return undefined;
-
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        onClose?.();
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [open, onClose]);
+  useModalLifecycle({ open, onClose, initialFocusRef: closeButtonRef });
 
   if (!open) return null;
 
@@ -42,7 +28,12 @@ const PrivacyRuleTestDrawer = ({ open, onClose, onTest }) => {
         onClick={onClose}
       />
 
-      <aside className="relative z-10 flex h-full w-full max-w-[620px] flex-col border-l border-slate-200 bg-white shadow-2xl shadow-slate-950/20 animate-slide-in-right">
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label="规则测试"
+        className="relative z-10 flex h-full w-full max-w-[620px] flex-col border-l border-slate-200 bg-white shadow-2xl shadow-slate-950/20 animate-slide-in-right"
+      >
         <div className="border-b border-slate-100 bg-gradient-to-r from-indigo-50/80 via-white to-white px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
@@ -56,6 +47,7 @@ const PrivacyRuleTestDrawer = ({ open, onClose, onTest }) => {
             </div>
             <button
               type="button"
+              ref={closeButtonRef}
               aria-label="关闭抽屉"
               onClick={onClose}
               className="rounded-lg border border-slate-200 bg-white p-2 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-700"

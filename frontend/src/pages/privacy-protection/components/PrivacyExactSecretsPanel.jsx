@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { KeyRound, Pencil, Plus, Search, Trash2, Upload, X } from 'lucide-react';
 import { Button, CustomSelect, EmptyState, Input } from '@components/ui';
+import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import {
   PRIVACY_EXACT_SECRET_CATEGORY_OPTIONS,
   createEmptyExactSecretForm,
@@ -51,6 +52,16 @@ const ExactSecretDrawer = ({ open, secret, saving, onSave, onClose }) => {
   const [form, setForm] = useState(() => exactSecretToForm(secret || createEmptyExactSecretForm()));
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState('');
+  const closeButtonRef = useRef(null);
+  const handleRequestClose = () => {
+    if (!saving) onClose();
+  };
+
+  useModalLifecycle({
+    open,
+    onClose: handleRequestClose,
+    initialFocusRef: closeButtonRef
+  });
 
   if (!open) return null;
 
@@ -89,15 +100,23 @@ const ExactSecretDrawer = ({ open, secret, saving, onSave, onClose }) => {
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/30 animate-fade-in" onClick={onClose} />
-      <form onSubmit={handleSubmit} className="relative flex h-full w-full max-w-lg flex-col bg-white shadow-2xl">
+      <div className="absolute inset-0 bg-black/30 animate-fade-in" onClick={handleRequestClose} />
+      <form
+        onSubmit={handleSubmit}
+        role="dialog"
+        aria-modal="true"
+        aria-label={form.id > 0 ? '编辑本地敏感值' : '新增本地敏感值'}
+        className="relative flex h-full w-full max-w-lg flex-col bg-white shadow-2xl"
+      >
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <h3 className="text-base font-semibold text-slate-800">
             {form.id > 0 ? '编辑本地敏感值' : '新增本地敏感值'}
           </h3>
           <button
             type="button"
-            onClick={onClose}
+            ref={closeButtonRef}
+            aria-label="关闭抽屉"
+            onClick={handleRequestClose}
             className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
           >
             <X size={18} />
@@ -164,7 +183,7 @@ const ExactSecretDrawer = ({ open, secret, saving, onSave, onClose }) => {
         <div className="border-t border-slate-100 bg-slate-50/70 px-6 py-4">
           {submitError && <p className="mb-2 break-all text-xs text-rose-500">{submitError}</p>}
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>
+            <Button type="button" variant="secondary" onClick={handleRequestClose} disabled={saving}>
               取消
             </Button>
             <Button type="submit" loading={saving}>
@@ -181,6 +200,16 @@ const ExactSecretDrawer = ({ open, secret, saving, onSave, onClose }) => {
 const ImportCandidatesDialog = ({ open, loading, candidates, onLoad, onImport, onClose }) => {
   const [importingKey, setImportingKey] = useState('');
   const [error, setError] = useState('');
+  const closeButtonRef = useRef(null);
+  const handleRequestClose = () => {
+    if (!importingKey) onClose();
+  };
+
+  useModalLifecycle({
+    open,
+    onClose: handleRequestClose,
+    initialFocusRef: closeButtonRef
+  });
 
   if (!open) return null;
 
@@ -206,7 +235,12 @@ const ImportCandidatesDialog = ({ open, loading, candidates, onLoad, onImport, o
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-[12vh] animate-fade-in">
-      <div className="mx-4 w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="导入候选"
+        className="mx-4 w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-xl"
+      >
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <h3 className="flex items-center gap-2 text-base font-semibold text-slate-800">
             <Upload size={17} className="text-indigo-500" />
@@ -214,7 +248,9 @@ const ImportCandidatesDialog = ({ open, loading, candidates, onLoad, onImport, o
           </h3>
           <button
             type="button"
-            onClick={onClose}
+            ref={closeButtonRef}
+            aria-label="关闭弹窗"
+            onClick={handleRequestClose}
             className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
           >
             <X size={18} />
@@ -272,6 +308,16 @@ const ManualImportDialog = ({ open, onImport, onClose }) => {
   });
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
+  const closeButtonRef = useRef(null);
+  const handleRequestClose = () => {
+    if (!importing) onClose();
+  };
+
+  useModalLifecycle({
+    open,
+    onClose: handleRequestClose,
+    initialFocusRef: closeButtonRef
+  });
 
   if (!open) return null;
 
@@ -358,7 +404,13 @@ const ManualImportDialog = ({ open, onImport, onClose }) => {
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-[10vh] animate-fade-in">
-      <form onSubmit={handleSubmit} className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
+      <form
+        onSubmit={handleSubmit}
+        role="dialog"
+        aria-modal="true"
+        aria-label="粘贴导入"
+        className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+      >
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <h3 className="flex items-center gap-2 text-base font-semibold text-slate-800">
             <Upload size={17} className="text-indigo-500" />
@@ -366,7 +418,9 @@ const ManualImportDialog = ({ open, onImport, onClose }) => {
           </h3>
           <button
             type="button"
-            onClick={onClose}
+            ref={closeButtonRef}
+            aria-label="关闭弹窗"
+            onClick={handleRequestClose}
             className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
           >
             <X size={18} />
@@ -421,7 +475,7 @@ const ManualImportDialog = ({ open, onImport, onClose }) => {
         <div className="border-t border-slate-100 bg-slate-50/70 px-5 py-4">
           {error && <p className="mb-2 break-all text-xs text-rose-500">{error}</p>}
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={onClose} disabled={importing}>
+            <Button type="button" variant="secondary" onClick={handleRequestClose} disabled={importing}>
               取消
             </Button>
             <Button type="submit" loading={importing}>

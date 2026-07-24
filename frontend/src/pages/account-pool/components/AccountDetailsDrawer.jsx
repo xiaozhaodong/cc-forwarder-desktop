@@ -3,9 +3,11 @@
 // 2026-03-21
 // ============================================
 
+import { useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Activity, Gauge, Settings, Shield, X } from 'lucide-react';
 import { Button } from '@components/ui';
+import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import Badge from './Badge.jsx';
 import { parseCodexModelRewriteSettings } from '../utils.js';
 
@@ -107,6 +109,10 @@ const AccountDetailsDrawer = ({
   onDeleteAccount,
   onEditAccount
 }) => {
+  const closeButtonRef = useRef(null);
+
+  useModalLifecycle({ open: open && Boolean(row), onClose, initialFocusRef: closeButtonRef });
+
   if (!open || !row) {
     return null;
   }
@@ -141,7 +147,12 @@ const AccountDetailsDrawer = ({
         onClick={onClose}
       />
 
-      <aside className="relative z-10 flex h-full w-full max-w-[560px] flex-col border-l border-slate-200 bg-slate-50 shadow-2xl shadow-slate-950/20">
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label="账号详情"
+        className="relative z-10 flex h-full w-full max-w-[560px] flex-col border-l border-slate-200 bg-slate-50 shadow-2xl shadow-slate-950/20"
+      >
         <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
           <div className="min-w-0 space-y-2">
             <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">账号详情</div>
@@ -156,6 +167,7 @@ const AccountDetailsDrawer = ({
 
           <button
             type="button"
+            ref={closeButtonRef}
             aria-label="关闭抽屉"
             onClick={onClose}
             className="rounded-xl border border-slate-200 bg-white p-2 text-slate-400 transition-colors hover:text-slate-700"

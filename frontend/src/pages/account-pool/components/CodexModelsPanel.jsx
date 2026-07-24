@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Database, Plus, RefreshCw, RotateCcw, Save, Trash2, X } from 'lucide-react';
+import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import {
   getCodexModelCatalog,
   isWailsEnvironment,
@@ -91,6 +92,10 @@ const CodexModelsPanel = ({ open = false, onClose, showNotice }) => {
     if (dirty && !window.confirm('Codex 模型目录有未保存修改，确定关闭吗？')) return;
     onClose?.();
   }, [dirty, onClose, saving]);
+
+  const closeButtonRef = useRef(null);
+
+  useModalLifecycle({ open, onClose: handleRequestClose, initialFocusRef: closeButtonRef });
 
   const handleToggleCatalog = useCallback(() => {
     updateCatalog(prev => ({ ...prev, enabled: !prev.enabled }));
@@ -198,7 +203,12 @@ const CodexModelsPanel = ({ open = false, onClose, showNotice }) => {
         onClick={handleRequestClose}
       />
 
-      <aside className="relative z-10 flex h-full w-full max-w-[820px] flex-col border-l border-slate-200 bg-white shadow-2xl shadow-slate-950/20 animate-in slide-in-from-right duration-300">
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label="Codex 模型目录"
+        className="relative z-10 flex h-full w-full max-w-[820px] flex-col border-l border-slate-200 bg-white shadow-2xl shadow-slate-950/20 animate-in slide-in-from-right duration-300"
+      >
         <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 via-white to-white px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex min-w-0 items-start gap-3">
@@ -212,6 +222,7 @@ const CodexModelsPanel = ({ open = false, onClose, showNotice }) => {
             </div>
             <button
               type="button"
+              ref={closeButtonRef}
               aria-label="关闭抽屉"
               onClick={handleRequestClose}
               className="rounded-lg border border-slate-200 bg-white p-2 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-700"

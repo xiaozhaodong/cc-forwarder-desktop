@@ -3,7 +3,9 @@
 // 2026-03-07
 // ============================================
 
+import { useRef } from 'react';
 import { Button } from '@components/ui';
+import useModalLifecycle from '@hooks/useModalLifecycle.js';
 
 const FormField = ({ label, required = false, children }) => (
   <label className="block">
@@ -26,21 +28,36 @@ const Modal = ({
   submitting,
   children
 }) => {
+  const closeButtonRef = useRef(null);
+  const handleRequestClose = () => {
+    if (!submitting) onClose();
+  };
+
+  useModalLifecycle({
+    open,
+    onClose: handleRequestClose,
+    initialFocusRef: closeButtonRef
+  });
+
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-      <div className="absolute inset-0 bg-slate-900/40" onClick={() => !submitting && onClose()} />
+      <div className="absolute inset-0 bg-slate-900/40" onClick={handleRequestClose} />
       <form
         onSubmit={onSubmit}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
         className="relative w-full max-w-xl bg-white rounded-2xl border border-slate-200 shadow-2xl"
       >
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
           <button
             type="button"
+            ref={closeButtonRef}
             className="text-slate-400 hover:text-slate-600 text-sm"
-            onClick={onClose}
+            onClick={handleRequestClose}
             disabled={submitting}
           >
             关闭
@@ -52,7 +69,7 @@ const Modal = ({
         </div>
 
         <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={onClose} disabled={submitting}>
+          <Button type="button" variant="secondary" onClick={handleRequestClose} disabled={submitting}>
             {cancelText}
           </Button>
           <Button type="submit" variant={submitVariant} loading={submitting}>

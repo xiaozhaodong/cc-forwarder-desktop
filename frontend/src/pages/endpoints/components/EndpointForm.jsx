@@ -3,9 +3,10 @@
 // 2025-12-05
 // ============================================
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { X, Save, AlertCircle, ChevronDown, ChevronUp, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@components/ui';
+import useModalLifecycle from '@hooks/useModalLifecycle.js';
 
 // ============================================
 // 表单输入组件
@@ -147,6 +148,17 @@ const EndpointForm = ({
   // 表单错误
   const [errors, setErrors] = useState({});
 
+  // 挂载即打开（父组件条件渲染），卸载时由 hook 清理
+  const closeButtonRef = useRef(null);
+  const handleRequestClose = () => {
+    if (!loading) onCancel();
+  };
+  useModalLifecycle({
+    open: true,
+    onClose: handleRequestClose,
+    initialFocusRef: closeButtonRef
+  });
+
   // 处理输入变化
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -201,14 +213,21 @@ const EndpointForm = ({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 animate-fade-in pt-[15vh]">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[75vh] flex flex-col overflow-hidden">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={isEditMode ? '编辑端点' : '新建端点'}
+        className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[75vh] flex flex-col overflow-hidden"
+      >
         {/* 标题栏 */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
           <h2 className="text-lg font-semibold text-slate-900">
             {isEditMode ? '编辑端点' : '新建端点'}
           </h2>
           <button
-            onClick={onCancel}
+            ref={closeButtonRef}
+            aria-label="关闭表单"
+            onClick={handleRequestClose}
             className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
           >
             <X size={20} />
@@ -459,7 +478,7 @@ const EndpointForm = ({
             <Button
               type="button"
               variant="ghost"
-              onClick={onCancel}
+              onClick={handleRequestClose}
               disabled={loading}
             >
               取消
