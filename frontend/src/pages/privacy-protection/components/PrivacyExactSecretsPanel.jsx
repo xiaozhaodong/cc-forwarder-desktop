@@ -12,6 +12,10 @@ import {
   filterPrivacyExactSecrets,
   validateExactSecretForm
 } from '../utils/privacyRules.js';
+import {
+  ClearExactSecretsDialog,
+  DeleteExactSecretDialog
+} from './PrivacyExactSecretActionDialogs.jsx';
 
 const EXACT_SECRET_STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
@@ -175,7 +179,7 @@ const ExactSecretDrawer = ({ open, secret, saving, onSave, onClose }) => {
           </div>
           {form.id > 0 && (
             <p className="text-xs text-slate-400">
-              当前值不会回显；列表只展示掩码、长度和 hash 前缀。
+              当前值不会回显；列表只展示掩码和长度。
             </p>
           )}
         </div>
@@ -271,7 +275,7 @@ const ImportCandidatesDialog = ({ open, loading, candidates, onLoad, onImport, o
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium text-slate-800">{candidate.name}</div>
                     <div className="mt-0.5 text-xs text-slate-400">
-                      {exactSecretCategoryLabel(candidate.category)} · {candidate.masked_value} · len {candidate.value_length} · hash {candidate.value_hash_short}
+                      {exactSecretCategoryLabel(candidate.category)} · {candidate.masked_value} · {candidate.value_length} 字符
                     </div>
                   </div>
                   <Button
@@ -507,7 +511,12 @@ const PrivacyExactSecretsPanel = ({
   const [candidates, setCandidates] = useState([]);
   const [filters, setFilters] = useState({});
   const [panelError, setPanelError] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
   const filteredSecrets = useMemo(() => filterPrivacyExactSecrets(secrets, filters), [secrets, filters]);
+  const actionBusy = busy || deleteBusy || clearBusy;
 
   const updateFilters = (patch) => {
     setFilters((prev) => ({ ...prev, ...patch }));
@@ -528,24 +537,35 @@ const PrivacyExactSecretsPanel = ({
     }
   };
 
-  const handleDelete = async (secret) => {
-    if (!window.confirm(`确定删除本地敏感值「${secret.name}」？`)) return;
+  const handleDelete = (secret) => {
+    setPanelError('');
+    setDeleteTarget(secret);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleteBusy(true);
     setPanelError('');
     try {
-      await onDelete(secret.id);
+      await onDelete(deleteTarget.id);
+      setDeleteTarget(null);
     } catch (err) {
       setPanelError(err.message || String(err));
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
-  const handleClear = async () => {
-    const text = window.prompt('输入“清空本地敏感值”确认清空本地敏感值库');
-    if (!text) return;
+  const confirmClear = async (confirmText) => {
+    setClearBusy(true);
     setPanelError('');
     try {
-      await onClear(text);
+      await onClear(confirmText);
+      setClearOpen(false);
     } catch (err) {
       setPanelError(err.message || String(err));
+    } finally {
+      setClearBusy(false);
     }
   };
 
@@ -569,16 +589,16 @@ const PrivacyExactSecretsPanel = ({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" icon={Plus} onClick={() => openDrawer(createEmptyExactSecretForm())} disabled={busy}>
+        <Button size="sm" icon={Plus} onClick={() => openDrawer(createEmptyExactSecretForm())} disabled={actionBusy}>
           新增敏感值
         </Button>
-        <Button size="sm" variant="secondary" icon={Upload} onClick={openImport} disabled={busy}>
+        <Button size="sm" variant="secondary" icon={Upload} onClick={openImport} disabled={actionBusy}>
           从账号/端点导入
         </Button>
-        <Button size="sm" variant="secondary" icon={Upload} onClick={() => setManualImportOpen(true)} disabled={busy}>
+        <Button size="sm" variant="secondary" icon={Upload} onClick={() => setManualImportOpen(true)} disabled={actionBusy}>
           粘贴导入
         </Button>
-        <Button size="sm" variant="secondary" icon={Trash2} onClick={handleClear} disabled={busy || secrets.length === 0}>
+        <Button size="sm" variant="secondary" icon={Trash2} onClick={() => setClearOpen(true)} disabled={actionBusy || secrets.length === 0}>
           清空
         </Button>
         <span className="text-xs text-slate-400">完整敏感值不在列表中展示，也不会导出到规则 JSON。</span>
@@ -644,7 +664,7 @@ const PrivacyExactSecretsPanel = ({
               {filteredSecrets.map((secret) => (
                 <tr key={secret.id} className="border-t border-slate-100 hover:bg-slate-50/60">
                   <td className="px-3 py-2">
-                    <Toggle checked={secret.enabled} disabled={busy} onChange={(enabled) => handleToggle(secret, enabled)} />
+                    <Toggle checked={secret.enabled} disabled={actionBusy} onChange={(enabled) => handleToggle(secret, enabled)} />
                   </td>
                   <td className="px-3 py-2">
                     <div className="font-medium text-slate-800">{secret.name}</div>
@@ -653,7 +673,7 @@ const PrivacyExactSecretsPanel = ({
                   <td className="px-3 py-2 text-slate-600">{exactSecretCategoryLabel(secret.category)}</td>
                   <td className="px-3 py-2 text-xs text-slate-500">
                     <span className="font-mono">{secret.masked_value}</span>
-                    <span className="ml-2 text-slate-300">len {secret.value_length} · {secret.value_hash_short}</span>
+                    <span className="ml-2 text-slate-300">{secret.value_length} 字符</span>
                   </td>
                   <td className="break-all px-3 py-2 text-slate-600">{secret.placeholder}</td>
                   <td className="px-3 py-2 text-xs text-slate-400">{secret.source_type}</td>
@@ -661,7 +681,7 @@ const PrivacyExactSecretsPanel = ({
                     <div className="flex justify-end gap-1">
                       <button
                         type="button"
-                        disabled={busy}
+                        disabled={actionBusy}
                         onClick={() => openDrawer(exactSecretToForm(secret))}
                         className="rounded-lg p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600"
                         title="编辑"
@@ -670,7 +690,7 @@ const PrivacyExactSecretsPanel = ({
                       </button>
                       <button
                         type="button"
-                        disabled={busy}
+                        disabled={actionBusy}
                         onClick={() => handleDelete(secret)}
                         className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
                         title="删除"
@@ -686,11 +706,27 @@ const PrivacyExactSecretsPanel = ({
         </div>
       )}
 
+      {deleteTarget && (
+        <DeleteExactSecretDialog
+          secret={deleteTarget}
+          loading={deleteBusy}
+          onConfirm={confirmDelete}
+          onClose={() => setDeleteTarget(null)}
+        />
+      )}
+      {clearOpen && (
+        <ClearExactSecretsDialog
+          loading={clearBusy}
+          onConfirm={confirmClear}
+          onClose={() => setClearOpen(false)}
+        />
+      )}
+
       <ExactSecretDrawer
         key={drawerKey}
         open={drawerOpen}
         secret={drawerSecret}
-        saving={busy}
+        saving={actionBusy}
         onSave={onSave}
         onClose={() => setDrawerOpen(false)}
       />

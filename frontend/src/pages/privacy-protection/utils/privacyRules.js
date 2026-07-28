@@ -142,7 +142,6 @@ export const filterPrivacyExactSecrets = (secrets = [], filters = {}) => {
         exactSecretCategoryLabel(secret.category),
         secret.placeholder,
         secret.masked_value,
-        secret.value_hash_short,
         secret.source_type,
         secret.source_ref
       ].join(' ').toLowerCase();

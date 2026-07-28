@@ -27,27 +27,19 @@ func HashPrivacySecretValue(secretValue string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// MaskPrivacySecretValue 生成前端可展示的掩码，不泄露短敏感值片段。
-func MaskPrivacySecretValue(secretValue, valueHash string) string {
+// MaskPrivacySecretValue 生成前端可展示的掩码，不泄露短敏感值片段或内部 hash 信息。
+func MaskPrivacySecretValue(secretValue, _ string) string {
 	length := len(secretValue)
-	hashShort := shortHash(valueHash)
 	switch {
 	case length <= 0:
 		return ""
 	case length < 16:
-		return fmt.Sprintf("len=%d hash=%s", length, hashShort)
+		return "••••••••"
 	case length < 32:
 		return fmt.Sprintf("%s…%s", secretValue[:2], secretValue[length-2:])
 	default:
 		return fmt.Sprintf("%s…%s", secretValue[:6], secretValue[length-4:])
 	}
-}
-
-func shortHash(valueHash string) string {
-	if len(valueHash) <= 8 {
-		return valueHash
-	}
-	return valueHash[:8]
 }
 
 // ListExactSecrets 列出本地精确敏感值。返回值含 SecretValue，API 层必须遮蔽后再返回前端。

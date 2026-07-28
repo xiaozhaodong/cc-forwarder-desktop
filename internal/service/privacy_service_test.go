@@ -513,8 +513,8 @@ func TestPrivacyServiceExactSecretDuplicateAndMask(t *testing.T) {
 		t.Fatalf("duplicate must return ErrPrivacyExactSecretExists, got %v", err)
 	}
 	masked := MaskPrivacySecretValue(created.SecretValue, created.ValueHash)
-	if strings.Contains(masked, secret[:4]) {
-		t.Fatalf("short secret mask must not leak prefix, got %q", masked)
+	if masked != "••••••••" || strings.Contains(masked, secret[:4]) || strings.Contains(masked, "hash=") {
+		t.Fatalf("short secret mask must be opaque and user-facing, got %q", masked)
 	}
 }
 
