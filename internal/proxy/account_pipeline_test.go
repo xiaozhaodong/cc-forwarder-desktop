@@ -257,6 +257,16 @@ func performResponsesCompactRequest(t *testing.T, handler *Handler) *httptest.Re
 	return rec
 }
 
+func performStandaloneSearchRequest(t *testing.T, handler *Handler) *httptest.ResponseRecorder {
+	t.Helper()
+	body := bytes.NewBufferString(`{"id":"search-session","model":"gpt-5.6","commands":{"search_query":[{"q":"OpenAI Codex"}]},"settings":{"external_web_access":true}}`)
+	req := httptest.NewRequest(http.MethodPost, codexStandaloneSearchPath, body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
 func performResponsesStreamingRequest(t *testing.T, handler *Handler) *httptest.ResponseRecorder {
 	t.Helper()
 	body := bytes.NewBufferString(`{"model":"gpt-4.1","input":"hello","stream":true}`)
@@ -345,6 +355,72 @@ func TestAccountPipeline_NoEndpointFallbackWhenAccountPoolEmpty(t *testing.T) {
 	}
 }
 
+func TestAccountPipeline_StandaloneSearchUsesAccountPoolInsteadOfEndpoint(t *testing.T) {
+	fallbackHits := 0
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"unexpected":true}`))
+	}))
+	defer fallbackServer.Close()
+
+	accountHits := 0
+	accountServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accountHits++
+		if r.URL.Path != codexStandaloneSearchPath {
+			t.Errorf("expected standalone search path %s, got %s", codexStandaloneSearchPath, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer sk-search" {
+			t.Errorf("expected selected account auth header, got %q", got)
+		}
+		if got := r.Header.Get("Content-Encoding"); got != "" {
+			t.Errorf("standalone search must remain uncompressed, got Content-Encoding=%q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"encrypted_output":null,"output":"search result","results":[]}`))
+	}))
+	defer accountServer.Close()
+
+	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{
+		{ID: 91, AccountName: "search-account", ProviderType: "api_key", CredentialRaw: "sk-search", BaseURL: accountServer.URL, EnableRequestCompression: true, Enabled: true},
+	}}
+	handler := newAccountPipelineTestHandler(t, fallbackServer.URL, service)
+
+	rec := performStandaloneSearchRequest(t, handler)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if accountHits != 1 {
+		t.Fatalf("expected account pool upstream to be called once, got %d", accountHits)
+	}
+	if fallbackHits != 0 {
+		t.Fatalf("expected Claude endpoint fallback not to be called, got %d calls", fallbackHits)
+	}
+	if len(service.prepareCalls) != 1 || service.prepareCalls[0].requestPath != codexStandaloneSearchPath {
+		t.Fatalf("expected search path in account scheduling snapshot, got %+v", service.prepareCalls)
+	}
+}
+
+func TestAccountPipeline_StandaloneSearchDoesNotUseEndpointWhenAccountPoolDisabled(t *testing.T) {
+	fallbackHits := 0
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"unexpected":true}`))
+	}))
+	defer fallbackServer.Close()
+
+	handler := newAccountPipelineTestHandlerWithEnabled(t, fallbackServer.URL, nil, false)
+	rec := performStandaloneSearchRequest(t, handler)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if fallbackHits != 0 {
+		t.Fatalf("expected disabled account pool not to fall back to Claude endpoint, got %d calls", fallbackHits)
+	}
+}
+
 func TestAccountPipeline_DoesNotUseEndpointWhenAccountPoolDisabled(t *testing.T) {
 	fallbackHits := 0
 	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -372,7 +448,7 @@ func TestAccountPipeline_DoesNotUseEndpointWhenAccountPoolDisabled(t *testing.T)
 	if errObj["type"] != "account_pool_disabled" {
 		t.Fatalf("unexpected error type: %#v", errObj["type"])
 	}
-	if errObj["message"] != "account pool is disabled for Codex /v1/responses and /v1/responses/compact" {
+	if errObj["message"] != "account pool is disabled for Codex /v1/responses, /v1/responses/compact, and /v1/alpha/search" {
 		t.Fatalf("unexpected error message: %#v", errObj["message"])
 	}
 }
@@ -404,7 +480,7 @@ func TestAccountPipeline_DoesNotUseEndpointWhenServiceNotReady(t *testing.T) {
 	if errObj["type"] != "account_pool_unavailable" {
 		t.Fatalf("unexpected error type: %#v", errObj["type"])
 	}
-	if errObj["message"] != "account pool service is not initialized for Codex /v1/responses and /v1/responses/compact" {
+	if errObj["message"] != "account pool service is not initialized for Codex /v1/responses, /v1/responses/compact, and /v1/alpha/search" {
 		t.Fatalf("unexpected error message: %#v", errObj["message"])
 	}
 }
@@ -444,6 +520,14 @@ func TestShouldUseAccountPipeline_SupportsResponsesCompactPath(t *testing.T) {
 
 	if !handler.isAccountPipelinePath("/v1/responses/compact") {
 		t.Fatal("expected /v1/responses/compact to be treated as account pipeline path")
+	}
+
+	if !handler.shouldUseAccountPipeline(codexStandaloneSearchPath) {
+		t.Fatalf("expected %s to use account pipeline", codexStandaloneSearchPath)
+	}
+
+	if !handler.isAccountPipelinePath(codexStandaloneSearchPath) {
+		t.Fatalf("expected %s to be treated as account pipeline path", codexStandaloneSearchPath)
 	}
 }
 
@@ -875,6 +959,23 @@ func TestPrepareAccountOutboundBody_OnlyAPIKeyCanCompress(t *testing.T) {
 		if sendZstd || mode != "disabled" || !bytes.Equal(wire, body) {
 			t.Fatalf("provider %s must remain plaintext: sendZstd=%v mode=%s body=%q", providerType, sendZstd, mode, wire)
 		}
+	}
+}
+
+func TestPrepareAccountOutboundBody_StandaloneSearchRemainsPlainJSON(t *testing.T) {
+	body := []byte(`{"id":"search-session","model":"gpt-5.6"}`)
+	req := httptest.NewRequest(http.MethodPost, codexStandaloneSearchPath, bytes.NewReader(body))
+	attachNormalizedRequestBodyMetadata(req, &normalizedRequestBodyMetadata{normalizedBody: body})
+
+	wire, sendZstd, mode, err := prepareAccountOutboundBody(req, body, &store.UpstreamAccountRecord{
+		ProviderType:             "api_key",
+		EnableRequestCompression: true,
+	})
+	if err != nil {
+		t.Fatalf("prepareAccountOutboundBody returned error: %v", err)
+	}
+	if sendZstd || mode != "disabled" || !bytes.Equal(wire, body) {
+		t.Fatalf("standalone search must remain plaintext: sendZstd=%v mode=%s body=%q", sendZstd, mode, wire)
 	}
 }
 
@@ -1823,6 +1924,32 @@ func TestResolveAccountTargetURL_OAuthUsesChatGPTCodexModelsEndpoint(t *testing.
 	}
 }
 
+func TestResolveAccountTargetURL_OAuthUsesChatGPTCodexSearchEndpoint(t *testing.T) {
+	acc := &store.UpstreamAccountRecord{
+		ProviderType: "chatgpt_refresh_token",
+		BaseURL:      "https://api.openai.com",
+	}
+
+	targetURL, err := resolveAccountTargetURL(acc, codexStandaloneSearchPath, "client_version=0.146.0")
+	if err != nil {
+		t.Fatalf("resolveAccountTargetURL returned error: %v", err)
+	}
+
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		t.Fatalf("parse target url failed: %v", err)
+	}
+	if parsed.Scheme != "https" || parsed.Host != "chatgpt.com" {
+		t.Fatalf("expected chatgpt host, got %s://%s", parsed.Scheme, parsed.Host)
+	}
+	if parsed.Path != "/backend-api/codex/alpha/search" {
+		t.Fatalf("unexpected path: %s", parsed.Path)
+	}
+	if parsed.RawQuery != "client_version=0.146.0" {
+		t.Fatalf("unexpected query: %s", parsed.RawQuery)
+	}
+}
+
 func TestApplyOpenAIChatGPTOAuthHeaders_SetsRequiredHeaders(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "https://chatgpt.com/backend-api/codex/responses", strings.NewReader(`{}`))
 	credential := `{"refresh_token":"rt-1","chatgpt_account_id":"acc-1"}`
@@ -1863,6 +1990,30 @@ func TestApplyOpenAIChatGPTModelsHeaders_SkipsResponsesOnlyHeaders(t *testing.T)
 	}
 	if req.Header.Get("Accept") == "text/event-stream" {
 		t.Fatal("expected models request not to force text/event-stream")
+	}
+}
+
+func TestApplyOpenAIChatGPTSearchHeaders_SkipsResponsesOnlyHeaders(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, chatGPTCodexSearchURL, strings.NewReader(`{}`))
+	req.Header.Set("Accept", "application/json")
+	credential := `{"refresh_token":"rt-1","chatgpt_account_id":"acc-1"}`
+
+	applyOpenAIChatGPTSearchHeaders(req, credential)
+
+	if req.Host != "chatgpt.com" {
+		t.Fatalf("expected host=chatgpt.com, got %s", req.Host)
+	}
+	if req.Header.Get("chatgpt-account-id") != "acc-1" {
+		t.Fatalf("unexpected chatgpt-account-id header: %s", req.Header.Get("chatgpt-account-id"))
+	}
+	if req.Header.Get("OpenAI-Beta") != "" {
+		t.Fatalf("expected search request not to set OpenAI-Beta, got %s", req.Header.Get("OpenAI-Beta"))
+	}
+	if req.Header.Get("originator") != defaultOAuthOriginator {
+		t.Fatalf("expected default search originator, got %s", req.Header.Get("originator"))
+	}
+	if req.Header.Get("Accept") != "application/json" {
+		t.Fatalf("expected search request to preserve JSON Accept header, got %s", req.Header.Get("Accept"))
 	}
 }
 

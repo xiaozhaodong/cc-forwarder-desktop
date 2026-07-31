@@ -199,7 +199,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !countTokensIntercept {
 		// 创建统一的请求生命周期管理器
 		lifecycleManager = NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus)
-		// Codex /v1/responses 链路分离，不挂载 endpoint 失败追踪语义
+		// Codex 账号池链路分离，不挂载 endpoint 失败追踪语义
 		if !h.isAccountPipelinePath(r.URL.Path) && !isImageAPIPath(r.URL.Path) {
 			// 📊 [失败追踪] 设置端点管理器，用于记录成功/失败
 			lifecycleManager.SetEndpointManager(h.endpointManager)
@@ -275,7 +275,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Codex /v1/responses 仅由账号池链路处理，不回退到 endpoint
+	// Codex 账号池路径仅由账号池链路处理，不回退到 endpoint
 	if h.shouldUseAccountPipeline(r.URL.Path) {
 		h.handleAccountPipeline(ctx, w, r, bodyBytes, lifecycleManager)
 		return
@@ -293,7 +293,7 @@ func writeRequestBodyError(w http.ResponseWriter, path string, bodyErr *requestB
 	if bodyErr == nil {
 		return
 	}
-	if isCodexResponsesRequestPath(path) {
+	if isCodexAccountPoolRoute(path) {
 		writeAccountPipelineError(w, bodyErr.StatusCode, bodyErr.Code, bodyErr.Message)
 		return
 	}
@@ -635,18 +635,18 @@ func (h *Handler) shouldUseAccountPipeline(path string) bool {
 }
 
 func (h *Handler) isAccountPipelinePath(path string) bool {
-	return path == "/v1/responses" || path == "/v1/responses/compact"
+	return isCodexAccountPoolRoute(path)
 }
 
 func (h *Handler) handleUnavailableAccountPipeline(w http.ResponseWriter, lifecycleManager *RequestLifecycleManager) {
 	errType := "account_pool_disabled"
-	message := "account pool is disabled for Codex /v1/responses and /v1/responses/compact"
+	message := "account pool is disabled for Codex /v1/responses, /v1/responses/compact, and /v1/alpha/search"
 	failureKey := "account_pool_disabled"
 
 	if h.config != nil && h.config.AccountPool.Enabled {
 		errType = "account_pool_unavailable"
 		failureKey = "account_pool_not_ready"
-		message = "account pool service is not initialized for Codex /v1/responses and /v1/responses/compact"
+		message = "account pool service is not initialized for Codex /v1/responses, /v1/responses/compact, and /v1/alpha/search"
 	}
 
 	lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
@@ -656,6 +656,12 @@ func (h *Handler) handleUnavailableAccountPipeline(w http.ResponseWriter, lifecy
 
 // detectSSERequest 统一SSE请求检测逻辑
 func (h *Handler) detectSSERequest(r *http.Request, bodyBytes []byte) bool {
+	// Codex standalone search 是同步 JSON 接口，且 input 会携带最近对话文本。
+	// 必须先短路，避免对话内容中的 `"stream": true` 或 SSE 头被通用启发式检测误判为流式请求。
+	if r != nil && r.URL.Path == codexStandaloneSearchPath {
+		return false
+	}
+
 	// 检查多种SSE请求模式:
 	acceptHeader := r.Header.Get("Accept")
 	cacheControlHeader := r.Header.Get("Cache-Control")

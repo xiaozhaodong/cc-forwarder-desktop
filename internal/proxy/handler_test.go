@@ -219,6 +219,11 @@ func TestExtractModelFromRequestBody_SupportsResponsesPath(t *testing.T) {
 		t.Fatalf("expected gpt-5-codex for /v1/responses/compact, got %s", compactModel)
 	}
 
+	searchModel := handler.extractModelFromRequestBody([]byte(`{"model":"gpt-5.6","commands":{"search_query":[{"q":"hello"}]}}`), codexStandaloneSearchPath)
+	if searchModel != "gpt-5.6" {
+		t.Fatalf("expected gpt-5.6 for %s, got %s", codexStandaloneSearchPath, searchModel)
+	}
+
 	messagesModel := handler.extractModelFromRequestBody([]byte(`{"model":"claude-sonnet-4-20250514","messages":[]}`), "/v1/messages")
 	if messagesModel != "claude-sonnet-4-20250514" {
 		t.Fatalf("expected claude-sonnet-4-20250514 for /v1/messages, got %s", messagesModel)
@@ -227,5 +232,16 @@ func TestExtractModelFromRequestBody_SupportsResponsesPath(t *testing.T) {
 	otherModel := handler.extractModelFromRequestBody([]byte(`{"model":"should-not-be-used"}`), "/v1/other")
 	if otherModel != "" {
 		t.Fatalf("expected empty model for unrelated path, got %s", otherModel)
+	}
+}
+
+func TestDetectSSERequest_StandaloneSearchIsAlwaysRegularJSON(t *testing.T) {
+	handler := &Handler{}
+	req := httptest.NewRequest(http.MethodPost, codexStandaloneSearchPath, nil)
+	req.Header.Set("Accept", "text/event-stream")
+	body := []byte(`{"stream":true}`)
+
+	if handler.detectSSERequest(req, body) {
+		t.Fatal("expected standalone search to remain non-streaming")
 	}
 }

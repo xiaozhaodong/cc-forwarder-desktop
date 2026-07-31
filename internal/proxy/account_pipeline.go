@@ -36,11 +36,13 @@ const (
 	accountSoftFailureCategoryServerError   = "server_error"
 	localNoAvailableProvidersMarker         = "no_available_providers::ccf_local"
 
-	chatGPTCodexResponsesURL = "https://chatgpt.com/backend-api/codex/responses"
-	chatGPTCodexCompactURL   = "https://chatgpt.com/backend-api/codex/responses/compact"
-	chatGPTCodexModelsURL    = "https://chatgpt.com/backend-api/codex/models"
-	openAIBetaResponsesValue = "responses=experimental"
-	defaultOAuthOriginator   = "codex_cli_rs"
+	chatGPTCodexResponsesURL  = "https://chatgpt.com/backend-api/codex/responses"
+	chatGPTCodexCompactURL    = "https://chatgpt.com/backend-api/codex/responses/compact"
+	chatGPTCodexModelsURL     = "https://chatgpt.com/backend-api/codex/models"
+	chatGPTCodexSearchURL     = "https://chatgpt.com/backend-api/codex/alpha/search"
+	codexStandaloneSearchPath = "/v1/alpha/search"
+	openAIBetaResponsesValue  = "responses=experimental"
+	defaultOAuthOriginator    = "codex_cli_rs"
 )
 
 type accountUsageLimitErrorEnvelope struct {
@@ -522,9 +524,12 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 			}
 			return nil, nil, traceState, fmt.Errorf("chatgpt_account_id is missing from credential")
 		}
-		if r.URL.Path == "/v1/models" {
+		switch r.URL.Path {
+		case "/v1/models":
 			applyOpenAIChatGPTModelsHeaders(req, acc.CredentialRaw)
-		} else {
+		case codexStandaloneSearchPath:
+			applyOpenAIChatGPTSearchHeaders(req, acc.CredentialRaw)
+		default:
 			applyOpenAIChatGPTOAuthHeaders(req, acc.CredentialRaw)
 		}
 	}
@@ -555,7 +560,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 }
 
 func prepareAccountOutboundBody(r *http.Request, body []byte, acc *store.UpstreamAccountRecord) ([]byte, bool, string, error) {
-	if acc == nil || len(body) == 0 || !acc.EnableRequestCompression || !strings.EqualFold(strings.TrimSpace(acc.ProviderType), "api_key") {
+	if r == nil || !isCodexResponsesAPIPath(r.URL.Path) || acc == nil || len(body) == 0 || !acc.EnableRequestCompression || !strings.EqualFold(strings.TrimSpace(acc.ProviderType), "api_key") {
 		return body, false, "disabled", nil
 	}
 	metadata := normalizedRequestBodyMetadataFromRequest(r)
@@ -619,11 +624,18 @@ func shouldRewriteCodexAccountModel(acc *store.UpstreamAccountRecord, path strin
 	if acc == nil || accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
 		return false
 	}
-	return isCodexResponsesRequestPath(path) && strings.TrimSpace(acc.ModelRewriteRules) != ""
+	return isCodexResponsesAPIPath(path) && strings.TrimSpace(acc.ModelRewriteRules) != ""
 }
 
-func isCodexResponsesRequestPath(path string) bool {
+// isCodexResponsesAPIPath 表示使用 Responses 请求语义的路径。
+// 只有这些路径允许账号级模型改写与 zstd 压缩；standalone search 虽走账号池，但不属于此范围。
+func isCodexResponsesAPIPath(path string) bool {
 	return path == "/v1/responses" || path == "/v1/responses/compact"
+}
+
+// isCodexAccountPoolRoute 表示由 Codex 账号池独占处理、禁止回退到普通 endpoint 的全部路径。
+func isCodexAccountPoolRoute(path string) bool {
+	return isCodexResponsesAPIPath(path) || path == codexStandaloneSearchPath
 }
 
 func rewriteCodexAccountModel(acc *store.UpstreamAccountRecord, path, model string) (string, bool) {
@@ -842,6 +854,8 @@ func resolveAccountTargetURL(acc *store.UpstreamAccountRecord, path, rawQuery st
 			targetURL = chatGPTCodexCompactURL
 		case path == "/v1/models":
 			targetURL = chatGPTCodexModelsURL
+		case path == codexStandaloneSearchPath:
+			targetURL = chatGPTCodexSearchURL
 		default:
 			targetURL = chatGPTCodexResponsesURL
 		}
@@ -1008,6 +1022,16 @@ func applyOpenAIChatGPTOAuthHeaders(req *http.Request, credentialRaw string) {
 
 func applyOpenAIChatGPTModelsHeaders(req *http.Request, credentialRaw string) {
 	applyOpenAIChatGPTCommonHeaders(req, credentialRaw)
+}
+
+func applyOpenAIChatGPTSearchHeaders(req *http.Request, credentialRaw string) {
+	applyOpenAIChatGPTCommonHeaders(req, credentialRaw)
+	if req == nil {
+		return
+	}
+	if strings.TrimSpace(req.Header.Get("originator")) == "" {
+		req.Header.Set("originator", defaultOAuthOriginator)
+	}
 }
 
 func applyOpenAIChatGPTCommonHeaders(req *http.Request, credentialRaw string) {
