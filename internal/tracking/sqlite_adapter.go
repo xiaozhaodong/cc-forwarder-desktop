@@ -298,6 +298,12 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		},
 		{
 			table:       "upstream_accounts",
+			checkColumn: "enable_request_compression",
+			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN enable_request_compression INTEGER DEFAULT 0",
+			description: "账号 zstd 请求压缩开关字段",
+		},
+		{
+			table:       "upstream_accounts",
 			checkColumn: "cost_multiplier",
 			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN cost_multiplier REAL DEFAULT 1.0",
 			description: "账号总成本倍率字段",
@@ -643,6 +649,7 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 				credential_raw TEXT NOT NULL,
 				base_url TEXT NOT NULL DEFAULT 'https://api.openai.com',
 				model_rewrite_rules TEXT DEFAULT '',
+				enable_request_compression INTEGER DEFAULT 0,
 				cost_multiplier REAL DEFAULT 1.0,
 				input_cost_multiplier REAL DEFAULT 1.0,
 				output_cost_multiplier REAL DEFAULT 1.0,
@@ -672,7 +679,7 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 				updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
 			)`,
 			`INSERT INTO upstream_accounts_new (
-				id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules,
+				id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules, enable_request_compression,
 				cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 				cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 				group_key, priority, enabled, state, cooldown_until, fail_count,
@@ -683,6 +690,7 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 			SELECT
 				id, provider_type, account_name, credential_raw, base_url,
 				'' AS model_rewrite_rules,
+				enable_request_compression,
 				1.0 AS cost_multiplier,
 				1.0 AS input_cost_multiplier,
 				1.0 AS output_cost_multiplier,

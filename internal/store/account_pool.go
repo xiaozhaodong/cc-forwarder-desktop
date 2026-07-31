@@ -33,6 +33,7 @@ type UpstreamAccountRecord struct {
 	CredentialRaw                 string     `json:"credential_raw"`
 	BaseURL                       string     `json:"base_url"`
 	ModelRewriteRules             string     `json:"model_rewrite_rules"`
+	EnableRequestCompression      bool       `json:"enable_request_compression"`
 	CostMultiplier                float64    `json:"cost_multiplier"`
 	InputCostMultiplier           float64    `json:"input_cost_multiplier"`
 	OutputCostMultiplier          float64    `json:"output_cost_multiplier"`
@@ -121,6 +122,11 @@ func (s *SQLiteAccountPoolStore) ensureSchemaCompatibility(ctx context.Context) 
 				column: "model_rewrite_rules",
 				sql:    `ALTER TABLE upstream_accounts ADD COLUMN model_rewrite_rules TEXT DEFAULT ''`,
 				errMsg: "补齐 model_rewrite_rules 字段失败",
+			},
+			{
+				column: "enable_request_compression",
+				sql:    `ALTER TABLE upstream_accounts ADD COLUMN enable_request_compression INTEGER DEFAULT 0`,
+				errMsg: "补齐 enable_request_compression 字段失败",
 			},
 		}
 
@@ -281,17 +287,17 @@ func (s *SQLiteAccountPoolStore) CreateAccount(ctx context.Context, record *Upst
 	normalizeAccountRecord(record)
 	query := `
 		INSERT INTO upstream_accounts (
-			provider_type, account_name, credential_raw, base_url, model_rewrite_rules,
+			provider_type, account_name, credential_raw, base_url, model_rewrite_rules, enable_request_compression,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
 			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
 			quota_status, quota_refreshed_at, fingerprint
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	res, err := s.getQuerier().ExecContext(ctx, query,
-		record.ProviderType, record.AccountName, record.CredentialRaw, record.BaseURL, record.ModelRewriteRules,
+		record.ProviderType, record.AccountName, record.CredentialRaw, record.BaseURL, record.ModelRewriteRules, boolToInt(record.EnableRequestCompression),
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
 		record.GroupKey, record.Priority, boolToInt(record.Enabled), record.State, nullableTime(record.CooldownUntil), record.FailCount,
@@ -324,7 +330,7 @@ func (s *SQLiteAccountPoolStore) UpdateAccount(ctx context.Context, record *Upst
 	normalizeAccountRecord(record)
 	query := `
 		UPDATE upstream_accounts
-		SET provider_type = ?, account_name = ?, credential_raw = ?, base_url = ?, model_rewrite_rules = ?,
+		SET provider_type = ?, account_name = ?, credential_raw = ?, base_url = ?, model_rewrite_rules = ?, enable_request_compression = ?,
 			cost_multiplier = ?, input_cost_multiplier = ?, output_cost_multiplier = ?,
 			cache_creation_cost_multiplier = ?, cache_creation_cost_multiplier_1h = ?, cache_read_cost_multiplier = ?,
 			group_key = ?, priority = ?, enabled = ?, state = ?, cooldown_until = ?, fail_count = ?, last_success_at = ?, last_error = ?,
@@ -334,7 +340,7 @@ func (s *SQLiteAccountPoolStore) UpdateAccount(ctx context.Context, record *Upst
 		WHERE id = ?
 	`
 	res, err := s.getQuerier().ExecContext(ctx, query,
-		record.ProviderType, record.AccountName, record.CredentialRaw, record.BaseURL, record.ModelRewriteRules,
+		record.ProviderType, record.AccountName, record.CredentialRaw, record.BaseURL, record.ModelRewriteRules, boolToInt(record.EnableRequestCompression),
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
 		record.GroupKey, record.Priority, boolToInt(record.Enabled), record.State, nullableTime(record.CooldownUntil), record.FailCount,
@@ -475,7 +481,7 @@ func (s *SQLiteAccountPoolStore) GetAccount(ctx context.Context, id int64) (*Ups
 
 func (s *SQLiteAccountPoolStore) getAccountByID(ctx context.Context, id int64) (*UpstreamAccountRecord, error) {
 	query := `
-		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules,
+		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules, enable_request_compression,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
@@ -525,7 +531,7 @@ func (s *SQLiteAccountPoolStore) ListAccounts(ctx context.Context, includeDisabl
 func (s *SQLiteAccountPoolStore) listAccountsRaw(ctx context.Context, includeDisabled bool) ([]*UpstreamAccountRecord, error) {
 
 	query := `
-		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules,
+		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules, enable_request_compression,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
@@ -568,7 +574,7 @@ func (s *SQLiteAccountPoolStore) ListSchedulableAccounts(ctx context.Context, no
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules,
+		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules, enable_request_compression,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
@@ -610,7 +616,7 @@ func (s *SQLiteAccountPoolStore) FindAccountByFingerprint(ctx context.Context, f
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules,
+		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules, enable_request_compression,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
@@ -833,6 +839,7 @@ func normalizeAccountRecord(record *UpstreamAccountRecord) {
 	record.ModelRewriteRules = strings.TrimSpace(record.ModelRewriteRules)
 	if strings.TrimSpace(strings.ToLower(record.ProviderType)) != "api_key" {
 		record.ModelRewriteRules = ""
+		record.EnableRequestCompression = false
 	}
 	applyAccountCostMultiplierPolicy(record)
 	if record.Priority == 0 {
@@ -925,6 +932,7 @@ func scanAccountRow(scanner rowScanner) (*UpstreamAccountRecord, error) {
 		rec                       UpstreamAccountRecord
 		enabled                   int
 		cooldownUntilStr          sql.NullString
+		enabledRequestCompression int
 		lastSuccessAtStr          sql.NullString
 		quota5HUsedPercent        sql.NullFloat64
 		quota5HResetAtStr         sql.NullString
@@ -942,7 +950,7 @@ func scanAccountRow(scanner rowScanner) (*UpstreamAccountRecord, error) {
 	)
 	if err := scanner.Scan(
 		&rec.ID, &rec.ProviderType, &rec.AccountName, &rec.CredentialRaw, &rec.BaseURL,
-		&rec.ModelRewriteRules,
+		&rec.ModelRewriteRules, &enabledRequestCompression,
 		&costMultiplier, &inputCostMultiplier, &outputCostMultiplier,
 		&cacheCreationMultiplier, &cacheCreationMultiplier1h, &cacheReadMultiplier,
 		&rec.GroupKey, &rec.Priority, &enabled, &rec.State, &cooldownUntilStr, &rec.FailCount, &lastSuccessAtStr, &rec.LastError,
@@ -953,6 +961,7 @@ func scanAccountRow(scanner rowScanner) (*UpstreamAccountRecord, error) {
 		return nil, err
 	}
 	rec.Enabled = enabled == 1
+	rec.EnableRequestCompression = enabledRequestCompression == 1
 	rec.CooldownUntil = parseNullableTime(cooldownUntilStr)
 	rec.CostMultiplier = parseMultiplierFloat(costMultiplier)
 	rec.InputCostMultiplier = parseMultiplierFloat(inputCostMultiplier)

@@ -463,6 +463,24 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	requestID := ""
+	if lifecycleManager != nil {
+		requestID = lifecycleManager.GetRequestID()
+	}
+	wireBody, sendZstd, compressionMode, err := prepareAccountOutboundBody(r, bodyBytes, acc)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if compressionMode != "disabled" {
+		slog.Info("🗜️ [账号请求压缩] 出站请求已规范化",
+			"request_id", requestID,
+			"account", acc.AccountName,
+			"path", r.URL.Path,
+			"mode", compressionMode,
+			"plaintext_bytes", len(bodyBytes),
+			"wire_bytes", len(wireBody),
+		)
+	}
 
 	requestCtx := ctx
 	var release context.CancelFunc
@@ -475,7 +493,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	}
 	requestCtx, traceState := handlers.WithUpstreamTrace(requestCtx, onWroteRequest)
 
-	req, err := http.NewRequestWithContext(requestCtx, r.Method, targetURL, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(requestCtx, r.Method, targetURL, bytes.NewReader(wireBody))
 	if err != nil {
 		if release != nil {
 			release()
@@ -484,6 +502,13 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	}
 
 	copyRequestHeadersForAccount(r, req)
+	if sendZstd {
+		req.Header.Set("Content-Encoding", requestContentEncodingZstd)
+	} else {
+		req.Header.Del("Content-Encoding")
+	}
+	req.Header.Del("Content-Length")
+	req.ContentLength = int64(len(wireBody))
 	if err := accountauth.ApplyAccountAuth(ctx, req, acc.ProviderType, acc.CredentialRaw, h.refreshTokenManager); err != nil {
 		if release != nil {
 			release()
@@ -518,7 +543,30 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 		}
 		return nil, nil, traceState, fmt.Errorf("request failed: %w", err)
 	}
+	if sendZstd && resp.StatusCode == http.StatusUnsupportedMediaType {
+		slog.Warn("⚠️ [账号请求压缩] 上游拒绝 zstd，请求不会静默降级为明文",
+			"request_id", requestID,
+			"account", acc.AccountName,
+			"path", r.URL.Path,
+			"status_code", resp.StatusCode,
+		)
+	}
 	return resp, release, traceState, nil
+}
+
+func prepareAccountOutboundBody(r *http.Request, body []byte, acc *store.UpstreamAccountRecord) ([]byte, bool, string, error) {
+	if acc == nil || len(body) == 0 || !acc.EnableRequestCompression || !strings.EqualFold(strings.TrimSpace(acc.ProviderType), "api_key") {
+		return body, false, "disabled", nil
+	}
+	metadata := normalizedRequestBodyMetadataFromRequest(r)
+	if metadata != nil && metadata.inboundContentEncoding == requestContentEncodingZstd && bytes.Equal(body, metadata.normalizedBody) {
+		return metadata.originalCompressedBody, true, "reuse_original", nil
+	}
+	compressed, err := compressNormalizedRequestBody(metadata, body)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to compress outbound request body: %w", err)
+	}
+	return compressed, true, "recompress", nil
 }
 
 // applyAccountPrivacyFilter 账号池链路出站隐私过滤。
@@ -926,10 +974,13 @@ func (h *Handler) writeRawResponse(w http.ResponseWriter, resp *http.Response) e
 
 func copyRequestHeadersForAccount(src *http.Request, dst *http.Request) {
 	skipHeaders := map[string]bool{
-		"host":          true,
-		"authorization": true,
-		"x-api-key":     true,
-		"cookie":        true,
+		"host":              true,
+		"authorization":     true,
+		"x-api-key":         true,
+		"cookie":            true,
+		"content-encoding":  true,
+		"content-length":    true,
+		"transfer-encoding": true,
 	}
 	for key, values := range src.Header {
 		if skipHeaders[strings.ToLower(key)] {

@@ -182,48 +182,7 @@ func (h *Handler) extractModelFromRequestBody(bodyBytes []byte, path string) str
 // ServeHTTP implements the http.Handler interface
 // 统一请求分发逻辑 - 整合流式处理、错误恢复和生命周期管理
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// 🔢 [count_tokens拦截] 特殊处理count_tokens端点
-	if r.URL.Path == "/v1/messages/count_tokens" && h.config.TokenCounting.Enabled {
-		ctx := r.Context()
-		connID, _ := r.Context().Value("conn_id").(string)
-
-		// 读取请求体
-		var bodyBytes []byte
-		if r.Body != nil {
-			if limit := requestBodyMaxBytes(h.config); limit > 0 {
-				r.Body = http.MaxBytesReader(w, r.Body, limit)
-			}
-			var err error
-			bodyBytes, err = readRequestBodyWithPrealloc(r)
-			if err != nil {
-				if maxErr, ok := extractMaxBytesError(err); ok {
-					http.Error(w, buildRequestBodyTooLargeMessage(maxErr.Limit), http.StatusRequestEntityTooLarge)
-					return
-				}
-				http.Error(w, "Failed to read request body", http.StatusInternalServerError)
-				return
-			}
-			r.Body.Close()
-		}
-
-		// 🛡️ count_tokens 走提前拦截分支，也必须挂载请求级隐私状态。
-		// 这样同一请求在多个支持端点之间尝试时能复用过滤结果，并传递 requestID。
-		if h.privacyFilter != nil {
-			privacyState := handlers.NewPrivacyRequestState(connID)
-			*r = *r.WithContext(handlers.WithPrivacyRequestState(r.Context(), privacyState))
-			ctx = r.Context()
-		}
-
-		// 使用CountTokensHandler处理
-		countTokensHandler := handlers.NewCountTokensHandler(h.config, h.endpointManager, h.forwarder)
-		countTokensHandler.Handle(ctx, w, r, bodyBytes, connID)
-		return
-	}
-
-	// 创建请求上下文
 	ctx := r.Context()
-
-	// 获取连接ID
 	connID := ""
 	if connIDValue, ok := r.Context().Value("conn_id").(string); ok {
 		connID = connIDValue
@@ -234,52 +193,64 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 创建统一的请求生命周期管理器
-	lifecycleManager := NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus)
-	// Codex /v1/responses 链路分离，不挂载 endpoint 失败追踪语义
-	if !h.isAccountPipelinePath(r.URL.Path) && !isImageAPIPath(r.URL.Path) {
-		// 📊 [失败追踪] 设置端点管理器，用于记录成功/失败
-		lifecycleManager.SetEndpointManager(h.endpointManager)
-	}
-
-	clientIP := r.RemoteAddr
-	userAgent := r.Header.Get("User-Agent")
-	requestStarted := false
-	startTrackedRequest := func(isStreaming bool) {
-		if requestStarted {
-			return
+	countTokensIntercept := r.URL.Path == "/v1/messages/count_tokens" && h.config.TokenCounting.Enabled
+	var lifecycleManager *RequestLifecycleManager
+	startTrackedRequest := func(bool) {}
+	if !countTokensIntercept {
+		// 创建统一的请求生命周期管理器
+		lifecycleManager = NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus)
+		// Codex /v1/responses 链路分离，不挂载 endpoint 失败追踪语义
+		if !h.isAccountPipelinePath(r.URL.Path) && !isImageAPIPath(r.URL.Path) {
+			// 📊 [失败追踪] 设置端点管理器，用于记录成功/失败
+			lifecycleManager.SetEndpointManager(h.endpointManager)
 		}
-		lifecycleManager.StartRequest(clientIP, userAgent, r.Method, r.URL.Path, isStreaming)
-		requestStarted = true
-	}
 
-	// 克隆请求体用于重试
-	var bodyBytes []byte
-	if r.Body != nil {
-		if limit := requestBodyMaxBytes(h.config); limit > 0 {
-			r.Body = http.MaxBytesReader(w, r.Body, limit)
-		}
-		var err error
-		bodyBytes, err = readRequestBodyWithPrealloc(r)
-		if err != nil {
-			if maxErr, ok := extractMaxBytesError(err); ok {
-				startTrackedRequest(false)
-				lifecycleManager.HandleError(fmt.Errorf("request body too large: %w", err))
-				http.Error(w, buildRequestBodyTooLargeMessage(maxErr.Limit), http.StatusRequestEntityTooLarge)
+		clientIP := r.RemoteAddr
+		userAgent := r.Header.Get("User-Agent")
+		requestStarted := false
+		startTrackedRequest = func(isStreaming bool) {
+			if requestStarted {
 				return
 			}
-			startTrackedRequest(false)
-			lifecycleManager.HandleError(err)
-			http.Error(w, "Failed to read request body", http.StatusInternalServerError)
-			return
+			lifecycleManager.StartRequest(clientIP, userAgent, r.Method, r.URL.Path, isStreaming)
+			requestStarted = true
 		}
-		r.Body.Close()
+	}
+
+	// 请求方向唯一规范化入口：读取一次，必要时解压 zstd，并清理压缩元数据。
+	normalizedBodyMetadata, bodyErr := normalizeRequestBodyWithMetadata(w, r, h.config)
+	if bodyErr != nil {
+		if lifecycleManager != nil {
+			startTrackedRequest(false)
+			lifecycleManager.FailRequest(bodyErr.Code, bodyErr.Message, bodyErr.StatusCode)
+		}
+		writeRequestBodyError(w, r.URL.Path, bodyErr)
+		return
+	}
+	bodyBytes := normalizedBodyMetadata.normalizedBody
+	attachNormalizedRequestBodyMetadata(r, normalizedBodyMetadata)
+	ctx = r.Context()
+
+	// 🔢 [count_tokens拦截] 特殊处理count_tokens端点
+	if countTokensIntercept {
+		// 🛡️ count_tokens 走提前拦截分支，也必须挂载请求级隐私状态。
+		// 这样同一请求在多个支持端点之间尝试时能复用过滤结果，并传递 requestID。
+		if h.privacyFilter != nil {
+			privacyState := handlers.NewPrivacyRequestState(connID)
+			*r = *r.WithContext(handlers.WithPrivacyRequestState(r.Context(), privacyState))
+			ctx = r.Context()
+		}
+
+		countTokensHandler := handlers.NewCountTokensHandler(h.config, h.endpointManager, h.forwarder)
+		countTokensHandler.Handle(ctx, w, r, bodyBytes, connID)
+		return
 	}
 
 	// 🛡️ 请求级隐私过滤状态：同一 requestID + scopeFingerprint 重试时复用扫描结果
 	if h.privacyFilter != nil {
 		privacyState := handlers.NewPrivacyRequestState(lifecycleManager.GetRequestID())
 		*r = *r.WithContext(handlers.WithPrivacyRequestState(r.Context(), privacyState))
+		ctx = r.Context()
 	}
 
 	// 异步解析请求体中的模型名称（不阻塞主转发流程）
@@ -316,6 +287,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 统一端点转发管线（v7：streaming/regular 合并，仅 P2 处理分叉）
 	h.handleEndpointPipeline(ctx, w, r, bodyBytes, lifecycleManager, isSSE)
+}
+
+func writeRequestBodyError(w http.ResponseWriter, path string, bodyErr *requestBodyError) {
+	if bodyErr == nil {
+		return
+	}
+	if isCodexResponsesRequestPath(path) {
+		writeAccountPipelineError(w, bodyErr.StatusCode, bodyErr.Code, bodyErr.Message)
+		return
+	}
+	http.Error(w, bodyErr.Message, bodyErr.StatusCode)
 }
 
 func (h *Handler) isCodexModelsRequest(r *http.Request) bool {

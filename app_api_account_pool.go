@@ -23,6 +23,7 @@ type UpstreamAccountInfo struct {
 	IsGroupPreferred              bool     `json:"is_group_preferred"`
 	BaseURL                       string   `json:"base_url"`
 	ModelRewriteRules             string   `json:"model_rewrite_rules"`
+	EnableRequestCompression      bool     `json:"enable_request_compression"`
 	CostMultiplier                float64  `json:"cost_multiplier"`
 	InputCostMultiplier           float64  `json:"input_cost_multiplier"`
 	OutputCostMultiplier          float64  `json:"output_cost_multiplier"`
@@ -59,6 +60,7 @@ type CreateUpstreamAccountInput struct {
 	CredentialRaw                 string  `json:"credential_raw"`
 	BaseURL                       string  `json:"base_url"`
 	ModelRewriteRules             string  `json:"model_rewrite_rules"`
+	EnableRequestCompression      bool    `json:"enable_request_compression"`
 	CostMultiplier                float64 `json:"cost_multiplier"`
 	InputCostMultiplier           float64 `json:"input_cost_multiplier"`
 	OutputCostMultiplier          float64 `json:"output_cost_multiplier"`
@@ -207,6 +209,7 @@ func (a *App) GetUpstreamAccounts() ([]UpstreamAccountInfo, error) {
 			IsGroupPreferred:              isGroupPreferred,
 			BaseURL:                       rec.BaseURL,
 			ModelRewriteRules:             rec.ModelRewriteRules,
+			EnableRequestCompression:      rec.EnableRequestCompression,
 			CostMultiplier:                rec.CostMultiplier,
 			InputCostMultiplier:           rec.InputCostMultiplier,
 			OutputCostMultiplier:          rec.OutputCostMultiplier,
@@ -542,6 +545,7 @@ func (a *App) CreateUpstreamAccount(input CreateUpstreamAccountInput) error {
 		CredentialRaw:                 strings.TrimSpace(input.CredentialRaw),
 		BaseURL:                       strings.TrimSpace(input.BaseURL),
 		ModelRewriteRules:             strings.TrimSpace(input.ModelRewriteRules),
+		EnableRequestCompression:      input.EnableRequestCompression && strings.EqualFold(strings.TrimSpace(input.ProviderType), "api_key"),
 		CostMultiplier:                input.CostMultiplier,
 		InputCostMultiplier:           input.InputCostMultiplier,
 		OutputCostMultiplier:          input.OutputCostMultiplier,
@@ -585,6 +589,7 @@ func (a *App) UpdateUpstreamAccount(id int64, input CreateUpstreamAccountInput) 
 	existing.CredentialRaw = strings.TrimSpace(input.CredentialRaw)
 	existing.BaseURL = strings.TrimSpace(input.BaseURL)
 	existing.ModelRewriteRules = strings.TrimSpace(input.ModelRewriteRules)
+	existing.EnableRequestCompression = input.EnableRequestCompression && strings.EqualFold(strings.TrimSpace(input.ProviderType), "api_key")
 	existing.CostMultiplier = input.CostMultiplier
 	existing.InputCostMultiplier = input.InputCostMultiplier
 	existing.OutputCostMultiplier = input.OutputCostMultiplier

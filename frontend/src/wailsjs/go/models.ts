@@ -390,6 +390,7 @@ export namespace main {
 	    credential_raw: string;
 	    base_url: string;
 	    model_rewrite_rules: string;
+	    enable_request_compression: boolean;
 	    cost_multiplier: number;
 	    input_cost_multiplier: number;
 	    output_cost_multiplier: number;
@@ -411,6 +412,7 @@ export namespace main {
 	        this.credential_raw = source["credential_raw"];
 	        this.base_url = source["base_url"];
 	        this.model_rewrite_rules = source["model_rewrite_rules"];
+	        this.enable_request_compression = source["enable_request_compression"];
 	        this.cost_multiplier = source["cost_multiplier"];
 	        this.input_cost_multiplier = source["input_cost_multiplier"];
 	        this.output_cost_multiplier = source["output_cost_multiplier"];
@@ -1828,6 +1830,7 @@ export namespace main {
 	    is_group_preferred: boolean;
 	    base_url: string;
 	    model_rewrite_rules: string;
+	    enable_request_compression: boolean;
 	    cost_multiplier: number;
 	    input_cost_multiplier: number;
 	    output_cost_multiplier: number;
@@ -1872,6 +1875,7 @@ export namespace main {
 	        this.is_group_preferred = source["is_group_preferred"];
 	        this.base_url = source["base_url"];
 	        this.model_rewrite_rules = source["model_rewrite_rules"];
+	        this.enable_request_compression = source["enable_request_compression"];
 	        this.cost_multiplier = source["cost_multiplier"];
 	        this.input_cost_multiplier = source["input_cost_multiplier"];
 	        this.output_cost_multiplier = source["output_cost_multiplier"];

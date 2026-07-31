@@ -268,6 +268,17 @@ func performResponsesStreamingRequest(t *testing.T, handler *Handler) *httptest.
 	return rec
 }
 
+func performZstdAccountRequest(t *testing.T, handler *Handler, path string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	compressed := mustEncodeZstd(t, body)
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(compressed))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "zstd")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
 func newRealAccountPipelineTestService(t *testing.T, accounts []*store.UpstreamAccountRecord) *servicepkg.AccountPoolService {
 	t.Helper()
 
@@ -604,6 +615,269 @@ func TestAccountPipeline_PreparesCompactRequestPath(t *testing.T) {
 	}
 }
 
+func TestAccountPipeline_ZstdRequestsReachAPIKeyUpstreamAsPlainJSON(t *testing.T) {
+	body := []byte(`{"model":"gpt-4.1","input":"desktop compressed"}`)
+	for _, path := range []string{"/v1/responses", "/v1/responses/compact"} {
+		t.Run(path, func(t *testing.T) {
+			var receivedBody []byte
+			var receivedContentLength int64
+			var receivedContentEncoding string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedBody, _ = io.ReadAll(r.Body)
+				receivedContentLength = r.ContentLength
+				receivedContentEncoding = r.Header.Get("Content-Encoding")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"resp_zstd","status":"completed","output":[]}`))
+			}))
+			defer upstream.Close()
+
+			service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{
+				{ID: 81, AccountName: "api-key-zstd", ProviderType: "api_key", CredentialRaw: "sk-zstd", BaseURL: upstream.URL, Enabled: true},
+			}}
+			handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+
+			rec := performZstdAccountRequest(t, handler, path, body)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+			}
+			if !bytes.Equal(receivedBody, body) {
+				t.Fatalf("upstream body mismatch\nwant: %s\n got: %s", body, receivedBody)
+			}
+			if receivedContentEncoding != "" {
+				t.Fatalf("upstream Content-Encoding must be empty, got %q", receivedContentEncoding)
+			}
+			if receivedContentLength != int64(len(body)) {
+				t.Fatalf("upstream ContentLength = %d, want %d", receivedContentLength, len(body))
+			}
+		})
+	}
+}
+
+func TestAccountPipeline_ZstdRequestSupportsConfiguredModelRewrite(t *testing.T) {
+	var receivedBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_1","model":"gpt-5.5","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{
+		{ID: 82, AccountName: "rewrite-zstd", ProviderType: "api_key", CredentialRaw: "sk-rewrite", BaseURL: upstream.URL, ModelRewriteRules: testGPT54ModelRewriteRules, Enabled: true},
+	}}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+
+	rec := performZstdAccountRequest(t, handler, "/v1/responses", []byte(`{"model":"gpt-5.4","input":"hello"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(receivedBody, &payload); err != nil {
+		t.Fatalf("decode upstream body: %v body=%s", err, receivedBody)
+	}
+	if payload["model"] != "gpt-5.5" {
+		t.Fatalf("expected rewritten model gpt-5.5, got %v", payload["model"])
+	}
+}
+
+func TestAccountPipeline_ZstdRequestFailoverReusesNormalizedBody(t *testing.T) {
+	body := []byte(`{"model":"gpt-4.1","input":"retry same plaintext"}`)
+	var receivedBodies [][]byte
+	var receivedEncodings []string
+	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ := io.ReadAll(r.Body)
+		receivedBodies = append(receivedBodies, received)
+		receivedEncodings = append(receivedEncodings, r.Header.Get("Content-Encoding"))
+		http.Error(w, "invalid session", http.StatusUnauthorized)
+	}))
+	defer firstServer.Close()
+	secondServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ := io.ReadAll(r.Body)
+		receivedBodies = append(receivedBodies, received)
+		receivedEncodings = append(receivedEncodings, r.Header.Get("Content-Encoding"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_ok","status":"completed","output":[]}`))
+	}))
+	defer secondServer.Close()
+
+	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{
+		{ID: 83, AccountName: "zstd-first", ProviderType: "api_key", CredentialRaw: "sk-first", BaseURL: firstServer.URL, Enabled: true},
+		{ID: 84, AccountName: "zstd-second", ProviderType: "api_key", CredentialRaw: "sk-second", BaseURL: secondServer.URL, Enabled: true},
+	}}
+	handler := newAccountPipelineTestHandler(t, firstServer.URL, service)
+
+	rec := performZstdAccountRequest(t, handler, "/v1/responses", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(receivedBodies) != 2 {
+		t.Fatalf("expected two upstream attempts, got %d", len(receivedBodies))
+	}
+	for idx := range receivedBodies {
+		if !bytes.Equal(receivedBodies[idx], body) {
+			t.Fatalf("attempt %d body mismatch\nwant: %s\n got: %s", idx+1, body, receivedBodies[idx])
+		}
+		if receivedEncodings[idx] != "" {
+			t.Fatalf("attempt %d Content-Encoding must be empty, got %q", idx+1, receivedEncodings[idx])
+		}
+	}
+}
+
+func TestAccountPipeline_ZstdRequestCompressionReusesOriginalFrame(t *testing.T) {
+	body := []byte(`{"model":"gpt-4.1","input":"reuse compressed frame"}`)
+	originalCompressed := mustEncodeZstd(t, body)
+	var received []byte
+	var receivedEncoding string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ = io.ReadAll(r.Body)
+		receivedEncoding = r.Header.Get("Content-Encoding")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_reuse","status":"completed","output":[]}`))
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{
+		{ID: 85, AccountName: "reuse-zstd", ProviderType: "api_key", CredentialRaw: "sk-reuse", BaseURL: upstream.URL, EnableRequestCompression: true, Enabled: true},
+	}}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(originalCompressed))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "zstd")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if receivedEncoding != "zstd" {
+		t.Fatalf("expected zstd upstream encoding, got %q", receivedEncoding)
+	}
+	if !bytes.Equal(received, originalCompressed) {
+		t.Fatalf("expected original compressed frame to be reused")
+	}
+}
+
+func TestAccountPipeline_RequestCompressionRecompressesAfterModelRewrite(t *testing.T) {
+	var received []byte
+	var receivedEncoding string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ = io.ReadAll(r.Body)
+		receivedEncoding = r.Header.Get("Content-Encoding")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_recompress","status":"completed","output":[]}`))
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{
+		{ID: 86, AccountName: "recompress-zstd", ProviderType: "api_key", CredentialRaw: "sk-recompress", BaseURL: upstream.URL, EnableRequestCompression: true, ModelRewriteRules: testGPT54ModelRewriteRules, Enabled: true},
+	}}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-5.4","input":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if receivedEncoding != "zstd" {
+		t.Fatalf("expected zstd upstream encoding, got %q", receivedEncoding)
+	}
+	decoded, err := decodeZstdRequestBody(received, defaultEncodedRequestBodyMaxBytes)
+	if err != nil {
+		t.Fatalf("decode upstream zstd body: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(decoded, &payload); err != nil {
+		t.Fatalf("decode upstream JSON body: %v", err)
+	}
+	if payload["model"] != "gpt-5.5" {
+		t.Fatalf("expected rewritten model gpt-5.5, got %v", payload["model"])
+	}
+}
+
+func TestAccountPipeline_RequestCompression415DoesNotFallback(t *testing.T) {
+	var calls int
+	var receivedEncoding string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		receivedEncoding = r.Header.Get("Content-Encoding")
+		http.Error(w, "zstd unsupported", http.StatusUnsupportedMediaType)
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{
+		{ID: 87, AccountName: "reject-zstd", ProviderType: "api_key", CredentialRaw: "sk-reject", BaseURL: upstream.URL, EnableRequestCompression: true, Enabled: true},
+	}}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+	rec := performResponsesRequest(t, handler)
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("expected status 415, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if calls != 1 {
+		t.Fatalf("expected no plaintext fallback attempt, got %d calls", calls)
+	}
+	if receivedEncoding != "zstd" {
+		t.Fatalf("expected rejected request to use zstd, got %q", receivedEncoding)
+	}
+}
+
+func TestAccountPipeline_OAuthCompressionSwitchStillSendsPlainJSON(t *testing.T) {
+	var receivedBody []byte
+	var receivedEncoding string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		receivedEncoding = r.Header.Get("Content-Encoding")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"oauth-explicit-plain","status":"completed","output":[]}`))
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{
+		{ID: 88, AccountName: "oauth-explicit-compression", ProviderType: "chatgpt_refresh_token", CredentialRaw: `{"refresh_token":"rt-explicit","access_token":"at-explicit","expires_at":"2099-01-01T00:00:00Z","chatgpt_account_id":"acc-explicit"}`, BaseURL: upstream.URL, EnableRequestCompression: true, Enabled: true},
+	}}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+	handler.accountHTTPInitOnce.Do(func() {})
+	handler.accountHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		receivedBody, _ = io.ReadAll(req.Body)
+		receivedEncoding = req.Header.Get("Content-Encoding")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"oauth-explicit-plain","status":"completed","output":[]}`)),
+			Request:    req,
+		}, nil
+	})}
+	handler.accountSSEHTTPClient = handler.accountHTTPClient
+	body := []byte(`{"model":"gpt-4.1","input":"oauth explicit switch"}`)
+	rec := performZstdAccountRequest(t, handler, "/v1/responses", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Equal(receivedBody, body) || receivedEncoding != "" {
+		t.Fatalf("OAuth must receive plain JSON despite switch: encoding=%q body=%s", receivedEncoding, receivedBody)
+	}
+}
+
+func TestPrepareAccountOutboundBody_OnlyAPIKeyCanCompress(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4.1"}`))
+	metadata := &normalizedRequestBodyMetadata{normalizedBody: []byte(`{"model":"gpt-4.1"}`)}
+	attachNormalizedRequestBodyMetadata(req, metadata)
+	body := metadata.normalizedBody
+
+	for _, providerType := range []string{"session_cookie", "chatgpt_refresh_token"} {
+		wire, sendZstd, mode, err := prepareAccountOutboundBody(req, body, &store.UpstreamAccountRecord{
+			ProviderType:             providerType,
+			EnableRequestCompression: true,
+		})
+		if err != nil {
+			t.Fatalf("provider %s returned error: %v", providerType, err)
+		}
+		if sendZstd || mode != "disabled" || !bytes.Equal(wire, body) {
+			t.Fatalf("provider %s must remain plaintext: sendZstd=%v mode=%s body=%q", providerType, sendZstd, mode, wire)
+		}
+	}
+}
+
 func TestAccountPipeline_ConfiguredRuleRewritesUnsupportedCodexModelBeforeForward(t *testing.T) {
 	var receivedModel string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -687,6 +961,71 @@ func TestAccountPipeline_OAuthSuccessEnqueuesQuotaRefresh(t *testing.T) {
 	}
 	if len(service.quotaRefreshCalls) != 1 || service.quotaRefreshCalls[0] != 17 {
 		t.Fatalf("expected oauth success to enqueue quota refresh, got %+v", service.quotaRefreshCalls)
+	}
+}
+
+func TestAccountPipeline_ZstdRequestReachesOAuthAsPlainJSON(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"at-zstd","refresh_token":"rt-zstd","expires_in":3600}`))
+	}))
+	defer authServer.Close()
+
+	oldRefreshURL := accountauth.CurrentOpenAIRefreshTokenURLForTest()
+	t.Cleanup(func() {
+		accountauth.SetOpenAIRefreshTokenURLForTest(oldRefreshURL)
+	})
+	accountauth.SetOpenAIRefreshTokenURLForTest(authServer.URL)
+
+	body := []byte(`{"model":"gpt-4.1","input":"oauth compressed"}`)
+	var receivedBody []byte
+	var receivedContentEncoding string
+	var receivedContentLength int64
+	var receivedPath string
+	var receivedBeta string
+	var receivedOriginator string
+	var receivedAccountID string
+
+	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{
+		{ID: 85, AccountName: "oauth-zstd", ProviderType: "chatgpt_refresh_token", CredentialRaw: `{"refresh_token":"rt-1","chatgpt_account_id":"acc-zstd"}`, Enabled: true},
+	}}
+	handler := newAccountPipelineTestHandler(t, "https://example.com", service)
+	handler.accountHTTPInitOnce.Do(func() {})
+	handler.accountHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		receivedBody, _ = io.ReadAll(req.Body)
+		receivedContentEncoding = req.Header.Get("Content-Encoding")
+		receivedContentLength = req.ContentLength
+		receivedPath = req.URL.Path
+		receivedBeta = req.Header.Get("OpenAI-Beta")
+		receivedOriginator = req.Header.Get("originator")
+		receivedAccountID = req.Header.Get("chatgpt-account-id")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"resp_oauth_zstd","status":"completed","output":[]}`)),
+			Request:    req,
+		}, nil
+	})}
+	handler.accountSSEHTTPClient = handler.accountHTTPClient
+
+	rec := performZstdAccountRequest(t, handler, "/v1/responses", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Equal(receivedBody, body) {
+		t.Fatalf("OAuth upstream body mismatch\nwant: %s\n got: %s", body, receivedBody)
+	}
+	if receivedContentEncoding != "" {
+		t.Fatalf("OAuth upstream Content-Encoding must be empty, got %q", receivedContentEncoding)
+	}
+	if receivedContentLength != int64(len(body)) {
+		t.Fatalf("OAuth upstream ContentLength = %d, want %d", receivedContentLength, len(body))
+	}
+	if receivedPath != "/backend-api/codex/responses" {
+		t.Fatalf("unexpected OAuth upstream path: %s", receivedPath)
+	}
+	if receivedBeta != openAIBetaResponsesValue || receivedOriginator != defaultOAuthOriginator || receivedAccountID != "acc-zstd" {
+		t.Fatalf("unexpected OAuth headers: beta=%q originator=%q account=%q", receivedBeta, receivedOriginator, receivedAccountID)
 	}
 }
 

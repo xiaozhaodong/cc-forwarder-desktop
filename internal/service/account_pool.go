@@ -850,6 +850,7 @@ func mergeEditableAccountRecord(current, incoming *store.UpstreamAccountRecord) 
 	merged.CredentialRaw = incoming.CredentialRaw
 	merged.BaseURL = incoming.BaseURL
 	merged.ModelRewriteRules = incoming.ModelRewriteRules
+	merged.EnableRequestCompression = incoming.EnableRequestCompression
 	merged.CostMultiplier = incoming.CostMultiplier
 	merged.InputCostMultiplier = incoming.InputCostMultiplier
 	merged.OutputCostMultiplier = incoming.OutputCostMultiplier

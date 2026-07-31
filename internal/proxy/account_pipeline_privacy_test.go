@@ -25,6 +25,7 @@ type stubPrivacyFilter struct {
 	mu         sync.Mutex
 	applyCalls int
 	requests   []privacy.Request
+	bodies     [][]byte
 	redactTo   []byte
 	err        error
 }
@@ -34,6 +35,7 @@ func (s *stubPrivacyFilter) Apply(_ context.Context, req privacy.Request, body [
 	defer s.mu.Unlock()
 	s.applyCalls++
 	s.requests = append(s.requests, req)
+	s.bodies = append(s.bodies, append([]byte(nil), body...))
 	if s.err != nil {
 		return privacy.ApplyResult{Action: privacy.ModeRedact}, s.err
 	}
@@ -128,6 +130,100 @@ func TestAccountPipeline_PrivacyRedactsBodyBeforeUpstream(t *testing.T) {
 	}
 	if !bytes.Equal(receivedBody, redacted) {
 		t.Errorf("upstream received %s, want redacted body", receivedBody)
+	}
+}
+
+func TestAccountPipeline_ZstdPrivacyScansPlaintextBeforeUpstream(t *testing.T) {
+	var receivedBody []byte
+	var receivedContentEncoding string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		receivedContentEncoding = r.Header.Get("Content-Encoding")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_1","status":"completed","output":[]}`))
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{
+		{ID: 32, AccountName: "privacy-zstd", ProviderType: "api_key", CredentialRaw: "sk-zstd", BaseURL: upstream.URL, Enabled: true},
+	}}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+	original := []byte(`{"model":"gpt-4.1","input":"secret before redaction"}`)
+	redacted := []byte(`{"model":"gpt-4.1","input":"[已脱敏]"}`)
+	filter := &stubPrivacyFilter{redactTo: redacted}
+	handler.SetPrivacyFilter(filter)
+
+	rec := performZstdAccountRequest(t, handler, "/v1/responses", original)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected success, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	filter.mu.Lock()
+	scannedBodies := append([][]byte(nil), filter.bodies...)
+	filter.mu.Unlock()
+	if len(scannedBodies) != 1 || !bytes.Equal(scannedBodies[0], original) {
+		t.Fatalf("privacy filter must scan normalized plaintext, got %q", scannedBodies)
+	}
+	if !bytes.Equal(receivedBody, redacted) {
+		t.Fatalf("upstream received %s, want redacted body", receivedBody)
+	}
+	if receivedContentEncoding != "" {
+		t.Fatalf("upstream Content-Encoding must be empty, got %q", receivedContentEncoding)
+	}
+}
+
+func TestAccountPipeline_ZstdRealPrivacyServiceRedactsBeforeUpstream(t *testing.T) {
+	var receivedBody []byte
+	var receivedContentEncoding string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		receivedContentEncoding = r.Header.Get("Content-Encoding")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_1","status":"completed","output":[]}`))
+	}))
+	defer upstream.Close()
+
+	privacyService := newProxyTestPrivacyService(t)
+	ctx := context.Background()
+	settings, err := privacyService.GetSettings(ctx)
+	if err != nil {
+		t.Fatalf("get privacy settings: %v", err)
+	}
+	settings.Mode = privacy.ModeRedact
+	if _, err := privacyService.UpdateSettings(ctx, settings); err != nil {
+		t.Fatalf("enable privacy redact mode: %v", err)
+	}
+	if _, err := privacyService.CreateRule(ctx, &store.PrivacyRuleRecord{
+		Enabled: true, Name: "OpenAI Key", Priority: 100, MatchType: "regex",
+		Pattern: `sk-(?:proj-)?[A-Za-z0-9_-]{20,}`, Placeholder: "[OpenAI密钥]",
+		Action: "redact", ScopeJSON: `{"paths":["/v1/responses"]}`,
+	}); err != nil {
+		t.Fatalf("create privacy rule: %v", err)
+	}
+
+	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{
+		{ID: 33, AccountName: "privacy-real-zstd", ProviderType: "api_key", CredentialRaw: "sk-zstd", BaseURL: upstream.URL, EnableRequestCompression: true, Enabled: true},
+	}}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+	handler.SetPrivacyFilter(privacyService)
+	originalSecret := "sk-proj-abcdefghijklmnopqrstuvwxyz123456"
+	body := []byte(`{"model":"gpt-4.1","input":"key ` + originalSecret + `"}`)
+
+	rec := performZstdAccountRequest(t, handler, "/v1/responses", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected success, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if receivedContentEncoding != "zstd" {
+		t.Fatalf("expected zstd upstream encoding, got %q", receivedContentEncoding)
+	}
+	decoded, err := decodeZstdRequestBody(receivedBody, defaultEncodedRequestBodyMaxBytes)
+	if err != nil {
+		t.Fatalf("decode upstream zstd body: %v", err)
+	}
+	if !bytes.Contains(decoded, []byte("[OpenAI密钥]")) {
+		t.Fatalf("upstream body must contain redaction placeholder: %s", decoded)
+	}
+	if bytes.Contains(decoded, []byte(originalSecret)) {
+		t.Fatalf("original secret leaked to upstream: %s", decoded)
 	}
 }
 

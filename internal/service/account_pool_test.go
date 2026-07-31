@@ -968,6 +968,31 @@ func TestUpdateAccount_PersistsModelRewriteRules(t *testing.T) {
 	}
 }
 
+func TestUpdateAccount_PersistsRequestCompressionSetting(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	account, err := st.CreateAccount(context.Background(), &store.UpstreamAccountRecord{
+		ProviderType: "api_key", AccountName: "zstd-service", CredentialRaw: "sk-zstd-service", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create account failed: %v", err)
+	}
+	updated, err := svc.GetAccount(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("get account failed: %v", err)
+	}
+	updated.EnableRequestCompression = true
+	if err := svc.UpdateAccount(context.Background(), updated); err != nil {
+		t.Fatalf("update account failed: %v", err)
+	}
+	persisted, err := st.GetAccount(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("get persisted account failed: %v", err)
+	}
+	if !persisted.EnableRequestCompression {
+		t.Fatalf("expected request compression setting to persist")
+	}
+}
+
 func TestPinAccountSelection_PreservesPinnedTargetAcrossTransientCooldown(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()

@@ -51,6 +51,7 @@ test('normalizeUpstreamAccount keeps mirrored aliases in sync for mixed-case ups
     credentialRaw: 'sk-live',
     baseURL: 'https://example.com',
     modelRewriteRules: '[{"from":"gpt-5.4","to":"gpt-5.5"}]',
+    EnableRequestCompression: true,
     costMultiplier: '1.5',
     input_cost_multiplier: '1.2',
     outputCostMultiplier: '2.4',
@@ -98,6 +99,8 @@ test('normalizeUpstreamAccount keeps mirrored aliases in sync for mixed-case ups
   assert.equal(result.cache_creation_cost_multiplier_1h, 3.5);
   assert.equal(result.cacheCreationCostMultiplier1h, 3.5);
   assert.equal(result.cache_read_cost_multiplier, 0.8);
+  assert.equal(result.enable_request_compression, true);
+  assert.equal(result.enableRequestCompression, true);
   assert.equal(result.cacheReadCostMultiplier, 0.8);
   assert.equal(result.model_rewrite_rules, '[{"from":"gpt-5.4","to":"gpt-5.5"}]');
   assert.equal(result.modelRewriteRules, '[{"from":"gpt-5.4","to":"gpt-5.5"}]');
@@ -155,6 +158,20 @@ test('buildUpstreamAccountPayload serializes editable model rewrite rule arrays'
       ['exact', 'gpt-5.4-mini', 'gpt-5.5']
     ]
   );
+});
+
+test('buildUpstreamAccountPayload keeps zstd compression opt-in for API Key only', () => {
+  const apiKeyPayload = buildUpstreamAccountPayload({
+    provider_type: 'api_key',
+    enableRequestCompression: true
+  });
+  const oauthPayload = buildUpstreamAccountPayload({
+    provider_type: 'chatgpt_refresh_token',
+    enableRequestCompression: true
+  });
+
+  assert.equal(apiKeyPayload.enable_request_compression, true);
+  assert.equal(oauthPayload.enable_request_compression, false);
 });
 
 test('normalizeUpstreamAccount uses alias helpers instead of repeating inline field chains', async () => {

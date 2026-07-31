@@ -116,6 +116,16 @@ func TestListAccounts_AutoAddsMissingGroupKeyColumnForLegacyDatabase(t *testing.
 	if modelRewriteRulesCount != 1 {
 		t.Fatalf("expected model_rewrite_rules column to be auto-added, got count=%d", modelRewriteRulesCount)
 	}
+	var requestCompressionCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('upstream_accounts') WHERE name = 'enable_request_compression'`).Scan(&requestCompressionCount); err != nil {
+		t.Fatalf("query enable_request_compression existence failed: %v", err)
+	}
+	if requestCompressionCount != 1 {
+		t.Fatalf("expected enable_request_compression column to be auto-added, got count=%d", requestCompressionCount)
+	}
+	if current.EnableRequestCompression {
+		t.Fatalf("legacy account should default to request compression disabled")
+	}
 }
 
 func TestFindAccountByFingerprint_ReturnsAccount(t *testing.T) {
@@ -240,6 +250,28 @@ func TestCreateAccount_PersistsModelRewriteRules(t *testing.T) {
 	}
 	if got.ModelRewriteRules != rules {
 		t.Fatalf("expected model rewrite rules to persist, got %q", got.ModelRewriteRules)
+	}
+}
+
+func TestCreateAccount_PersistsRequestCompressionSetting(t *testing.T) {
+	st := newTestSQLiteAccountPoolStore(t)
+	record, err := st.CreateAccount(context.Background(), &UpstreamAccountRecord{
+		ProviderType:             "api_key",
+		AccountName:              "zstd-account",
+		CredentialRaw:            "sk-zstd-account",
+		BaseURL:                  "https://api.openai.com",
+		EnableRequestCompression: true,
+		Enabled:                  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount failed: %v", err)
+	}
+	got, err := st.GetAccount(context.Background(), record.ID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if !got.EnableRequestCompression {
+		t.Fatalf("expected request compression setting to persist")
 	}
 }
 
