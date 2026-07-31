@@ -40,7 +40,7 @@ const (
 	chatGPTCodexCompactURL    = "https://chatgpt.com/backend-api/codex/responses/compact"
 	chatGPTCodexModelsURL     = "https://chatgpt.com/backend-api/codex/models"
 	chatGPTCodexSearchURL     = "https://chatgpt.com/backend-api/codex/alpha/search"
-	codexStandaloneSearchPath = "/v1/alpha/search"
+	codexStandaloneSearchPath = svc.CodexStandaloneSearchPath
 	openAIBetaResponsesValue  = "responses=experimental"
 	defaultOAuthOriginator    = "codex_cli_rs"
 )
@@ -119,10 +119,18 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 	}
 	accounts := schedule.Accounts
 	if len(accounts) == 0 {
-		_ = h.completeAccountScheduleSnapshot(ctx, requestID, 0, "", svc.AccountScheduleOutcomeNoSchedulableAccounts, "no schedulable account")
+		failureReason := "account_pool_empty"
+		errorType := "account_pool_unavailable"
+		message := "no schedulable account"
+		if r.URL.Path == codexStandaloneSearchPath {
+			failureReason = "codex_search_oauth_unavailable"
+			errorType = "codex_search_oauth_unavailable"
+			message = "Codex /v1/alpha/search requires an enabled and available ChatGPT OAuth account"
+		}
+		_ = h.completeAccountScheduleSnapshot(ctx, requestID, 0, "", svc.AccountScheduleOutcomeNoSchedulableAccounts, message)
 		lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
-		lifecycleManager.FailRequest("account_pool_empty", "no schedulable account", http.StatusServiceUnavailable)
-		writeAccountPipelineError(w, http.StatusServiceUnavailable, "account_pool_unavailable", "no schedulable account")
+		lifecycleManager.FailRequest(failureReason, message, http.StatusServiceUnavailable)
+		writeAccountPipelineError(w, http.StatusServiceUnavailable, errorType, message)
 		return
 	}
 

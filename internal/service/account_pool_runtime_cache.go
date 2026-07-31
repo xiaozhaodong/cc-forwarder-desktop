@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"cc-forwarder/internal/accountauth"
 	"cc-forwarder/internal/store"
 )
 
@@ -385,7 +386,7 @@ func (c *accountRuntimeCache) clearPinnedSelection() bool {
 	return true
 }
 
-func (c *accountRuntimeCache) resolveActiveSelection(prepared []*rankedPriorityTier) (*rankedPriorityTier, int, accountSelectionSource) {
+func (c *accountRuntimeCache) resolveActiveSelection(prepared []*rankedPriorityTier, requireChatGPTOAuth bool) (*rankedPriorityTier, int, accountSelectionSource) {
 	if c == nil {
 		return selectFirstEligibleTier(prepared), 0, accountSelectionSourceRanked
 	}
@@ -393,7 +394,12 @@ func (c *accountRuntimeCache) resolveActiveSelection(prepared []*rankedPriorityT
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	selectedTier, selectedIndex, selectedSource := c.resolveActiveSelectionLocked(prepared)
+	ignorePinnedSelection := false
+	if requireChatGPTOAuth && c.selectionPinned && c.activeAccount > 0 {
+		pinnedAccount := c.byID[c.activeAccount]
+		ignorePinnedSelection = pinnedAccount != nil && !accountauth.IsChatGPTOAuthProvider(pinnedAccount.ProviderType)
+	}
+	selectedTier, selectedIndex, selectedSource := c.resolveActiveSelectionLocked(prepared, ignorePinnedSelection)
 	if selectedTier == nil {
 		if !c.selectionPinned {
 			c.clearSelectionLocked()
@@ -407,12 +413,12 @@ func (c *accountRuntimeCache) resolveActiveSelection(prepared []*rankedPriorityT
 	return selectedTier, selectedIndex, selectedSource
 }
 
-func (c *accountRuntimeCache) resolveActiveSelectionLocked(prepared []*rankedPriorityTier) (*rankedPriorityTier, int, accountSelectionSource) {
+func (c *accountRuntimeCache) resolveActiveSelectionLocked(prepared []*rankedPriorityTier, ignorePinnedSelection bool) (*rankedPriorityTier, int, accountSelectionSource) {
 	if len(prepared) == 0 {
 		return nil, -1, accountSelectionSourceRanked
 	}
 
-	if !c.selectionPinned {
+	if !c.selectionPinned || ignorePinnedSelection {
 		selectedTier := selectFirstEligibleTier(prepared)
 		if selectedTier == nil {
 			return nil, -1, accountSelectionSourceRanked

@@ -19,6 +19,12 @@ const (
 )
 
 const (
+	// CodexStandaloneSearchPath 是只允许 ChatGPT OAuth 账号参与调度的独立搜索端点。
+	CodexStandaloneSearchPath                    = "/v1/alpha/search"
+	accountScheduleSkipRouteRequiresChatGPTOAuth = "route_requires_chatgpt_oauth"
+)
+
+const (
 	AccountScheduleOutcomeSuccess                        = "success"
 	AccountScheduleOutcomeAuthFailed                     = "auth_failed"
 	AccountScheduleOutcomeTransientFailure               = "transient_failure"
@@ -277,7 +283,7 @@ func (s *AccountPoolService) prepareSchedulableAccounts(ctx context.Context, req
 }
 
 func (s *AccountPoolService) rankSchedulableAccounts(accounts []*store.UpstreamAccountRecord, now time.Time, requestID, requestPath string) ([]*store.UpstreamAccountRecord, *LatestAccountScheduleSnapshot, bool) {
-	preparedTiers := preparePriorityTiers(accounts, now)
+	preparedTiers := preparePriorityTiers(accounts, now, requestPath)
 	snapshot := &LatestAccountScheduleSnapshot{
 		RequestID:   requestID,
 		CapturedAt:  now,
@@ -289,14 +295,19 @@ func (s *AccountPoolService) rankSchedulableAccounts(accounts []*store.UpstreamA
 	selectedIndex := 0
 	selectedSource := accountSelectionSourceRanked
 	if s != nil && s.runtimeCache != nil {
-		selectedTier, selectedIndex, selectedSource = s.runtimeCache.resolveActiveSelection(preparedTiers)
+		requireChatGPTOAuth := requestPath == CodexStandaloneSearchPath
+		selectedTier, selectedIndex, selectedSource = s.runtimeCache.resolveActiveSelection(preparedTiers, requireChatGPTOAuth)
 	} else {
 		selectedTier = selectFirstEligibleTier(preparedTiers)
 	}
 
 	if selectedTier == nil {
 		snapshot.FinalOutcome = accountScheduleOutcomeNoSchedulableAccounts
-		snapshot.Summary = "当前没有可调度账号：所有候选均因状态或额度暂不可调度"
+		if requestPath == CodexStandaloneSearchPath {
+			snapshot.Summary = "当前没有可调度的 ChatGPT OAuth 账号：/v1/alpha/search 不会路由到 api_key 提供者"
+		} else {
+			snapshot.Summary = "当前没有可调度账号：所有候选均因状态或额度暂不可调度"
+		}
 		for _, tier := range preparedTiers {
 			appendSkippedCandidates(snapshot, tier, tier.skipped)
 		}
@@ -367,11 +378,11 @@ func selectedTierEligibleOrder(eligible []*rankedSchedulableAccount, selectedInd
 	return ordered
 }
 
-func preparePriorityTiers(accounts []*store.UpstreamAccountRecord, now time.Time) []*rankedPriorityTier {
+func preparePriorityTiers(accounts []*store.UpstreamAccountRecord, now time.Time, requestPath string) []*rankedPriorityTier {
 	grouped := groupAccountsByPriority(accounts)
 	prepared := make([]*rankedPriorityTier, 0, len(grouped))
 	for _, tier := range grouped {
-		eligible, skipped := rankPriorityTier(tier.accounts, now)
+		eligible, skipped := rankPriorityTier(tier.accounts, now, requestPath)
 		prepared = append(prepared, &rankedPriorityTier{
 			groupKey: tier.groupKey,
 			priority: tier.priority,
@@ -441,11 +452,15 @@ func groupAccountsByPriority(accounts []*store.UpstreamAccountRecord) []groupedP
 	return result
 }
 
-func rankPriorityTier(accounts []*store.UpstreamAccountRecord, now time.Time) ([]*rankedSchedulableAccount, []*rankedSchedulableAccount) {
+func rankPriorityTier(accounts []*store.UpstreamAccountRecord, now time.Time, requestPath string) ([]*rankedSchedulableAccount, []*rankedSchedulableAccount) {
 	eligible := make([]*rankedSchedulableAccount, 0)
 	skipped := make([]*rankedSchedulableAccount, 0)
 	for _, account := range accounts {
 		candidate := classifySchedulableAccount(account, now)
+		if requestPath == CodexStandaloneSearchPath && candidate.account != nil && !accountauth.IsChatGPTOAuthProvider(candidate.account.ProviderType) {
+			candidate.skipReason = accountScheduleSkipRouteRequiresChatGPTOAuth
+			candidate.skipReasonDetail = "Codex /v1/alpha/search 仅支持 ChatGPT OAuth 账号"
+		}
 		if candidate.skipReason != "" {
 			skipped = append(skipped, candidate)
 			continue

@@ -355,6 +355,42 @@ func TestAccountPipeline_NoEndpointFallbackWhenAccountPoolEmpty(t *testing.T) {
 	}
 }
 
+func TestAccountPipeline_StandaloneSearchReturnsExplicitOAuthUnavailableError(t *testing.T) {
+	fallbackHits := 0
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"unexpected":true}`))
+	}))
+	defer fallbackServer.Close()
+
+	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{}}
+	handler := newAccountPipelineTestHandler(t, fallbackServer.URL, service)
+
+	rec := performStandaloneSearchRequest(t, handler)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if fallbackHits != 0 {
+		t.Fatalf("expected standalone search not to fall back to endpoint, got %d calls", fallbackHits)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	errObj, _ := payload["error"].(map[string]any)
+	if errObj["type"] != "codex_search_oauth_unavailable" {
+		t.Fatalf("unexpected error type: %#v", errObj["type"])
+	}
+	if message, _ := errObj["message"].(string); !strings.Contains(message, "ChatGPT OAuth account") {
+		t.Fatalf("expected OAuth-specific error message, got %#v", errObj["message"])
+	}
+	if len(service.completeCalls) != 1 || service.completeCalls[0].finalError != errObj["message"] {
+		t.Fatalf("expected OAuth-specific schedule completion, got %+v", service.completeCalls)
+	}
+}
+
 func TestAccountPipeline_StandaloneSearchUsesAccountPoolInsteadOfEndpoint(t *testing.T) {
 	fallbackHits := 0
 	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -364,27 +400,34 @@ func TestAccountPipeline_StandaloneSearchUsesAccountPoolInsteadOfEndpoint(t *tes
 	}))
 	defer fallbackServer.Close()
 
+	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{
+		{ID: 91, AccountName: "search-account", ProviderType: "chatgpt_refresh_token", CredentialRaw: `{"refresh_token":"rt-search","access_token":"at-search","expires_at":"2099-01-01T00:00:00Z","chatgpt_account_id":"acc-search"}`, EnableRequestCompression: true, Enabled: true},
+	}}
+	handler := newAccountPipelineTestHandler(t, fallbackServer.URL, service)
 	accountHits := 0
-	accountServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler.accountHTTPInitOnce.Do(func() {})
+	handler.accountHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		accountHits++
-		if r.URL.Path != codexStandaloneSearchPath {
-			t.Errorf("expected standalone search path %s, got %s", codexStandaloneSearchPath, r.URL.Path)
+		if r.URL.String() != chatGPTCodexSearchURL {
+			t.Errorf("expected standalone search target %s, got %s", chatGPTCodexSearchURL, r.URL.String())
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer sk-search" {
-			t.Errorf("expected selected account auth header, got %q", got)
+		if got := r.Header.Get("Authorization"); got != "Bearer at-search" {
+			t.Errorf("expected OAuth access token, got %q", got)
+		}
+		if got := r.Header.Get("chatgpt-account-id"); got != "acc-search" {
+			t.Errorf("expected ChatGPT account id, got %q", got)
 		}
 		if got := r.Header.Get("Content-Encoding"); got != "" {
 			t.Errorf("standalone search must remain uncompressed, got Content-Encoding=%q", got)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"encrypted_output":null,"output":"search result","results":[]}`))
-	}))
-	defer accountServer.Close()
-
-	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{
-		{ID: 91, AccountName: "search-account", ProviderType: "api_key", CredentialRaw: "sk-search", BaseURL: accountServer.URL, EnableRequestCompression: true, Enabled: true},
-	}}
-	handler := newAccountPipelineTestHandler(t, fallbackServer.URL, service)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"encrypted_output":null,"output":"search result","results":[]}`)),
+			Request:    r,
+		}, nil
+	})}
+	handler.accountSSEHTTPClient = handler.accountHTTPClient
 
 	rec := performStandaloneSearchRequest(t, handler)
 	if rec.Code != http.StatusOK {

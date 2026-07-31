@@ -80,6 +80,152 @@ func TestPrepareSchedulableAccounts_SelectsHighestPriorityTierOnly(t *testing.T)
 	}
 }
 
+func TestPrepareSchedulableAccounts_StandaloneSearchUsesOAuthAndPreservesPinnedAPIKey(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	oauth, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "search-oauth",
+		CredentialRaw:          `{"refresh_token":"rt-search","chatgpt_account_id":"acc-search"}`,
+		Priority:               10,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		QuotaWeeklyUsedPercent: testFloat64Ptr(20),
+	})
+	if err != nil {
+		t.Fatalf("create oauth account failed: %v", err)
+	}
+
+	apiKey, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "pinned-api-key",
+		CredentialRaw: "sk-third-party",
+		Priority:      20,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create api key account failed: %v", err)
+	}
+	sameTierOAuth, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:           "chatgpt_refresh_token",
+		AccountName:            "backup-search-oauth",
+		CredentialRaw:          `{"refresh_token":"rt-backup-search","chatgpt_account_id":"acc-backup-search"}`,
+		Priority:               20,
+		Enabled:                true,
+		State:                  "active",
+		QuotaStatus:            "ok",
+		QuotaWeeklyUsedPercent: testFloat64Ptr(10),
+	})
+	if err != nil {
+		t.Fatalf("create same-tier oauth account failed: %v", err)
+	}
+
+	changed, err := svc.PinAccountSelection(ctx, apiKey.ID)
+	if err != nil {
+		t.Fatalf("PinAccountSelection failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected api key pin to change runtime selection")
+	}
+
+	searchSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-search-oauth-only", CodexStandaloneSearchPath)
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts search failed: %v", err)
+	}
+	if searchSchedule.Pinned {
+		t.Fatal("expected incompatible api key pin not to apply to standalone search")
+	}
+	if got, want := collectAccountIDs(searchSchedule.Accounts), []int64{oauth.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected standalone search to use OAuth only, got %v want %v", got, want)
+	}
+
+	snapshot, err := svc.GetLatestAccountScheduleSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("GetLatestAccountScheduleSnapshot failed: %v", err)
+	}
+	apiKeyDecision := mustFindCandidateDecision(t, snapshot, apiKey.ID)
+	if apiKeyDecision.Decision != accountScheduleDecisionSkipped || apiKeyDecision.Reason != accountScheduleSkipRouteRequiresChatGPTOAuth {
+		t.Fatalf("expected api key skipped by search route constraint, got %+v", apiKeyDecision)
+	}
+
+	activeAccountID, pinned, err := svc.GetActiveSelectionAccountID(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveSelectionAccountID failed: %v", err)
+	}
+	if !pinned || activeAccountID != apiKey.ID {
+		t.Fatalf("expected global api key pin to remain unchanged, got pinned=%v accountID=%d", pinned, activeAccountID)
+	}
+
+	responsesSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-responses-after-search", "/v1/responses")
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts responses failed: %v", err)
+	}
+	if !responsesSchedule.Pinned {
+		t.Fatal("expected ordinary responses request to keep using the global pin")
+	}
+	if got, want := collectAccountIDs(responsesSchedule.Accounts), []int64{apiKey.ID, sameTierOAuth.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected ordinary responses request to return to pinned api key, got %v want %v", got, want)
+	}
+
+	changed, err = svc.PinAccountSelection(ctx, sameTierOAuth.ID)
+	if err != nil {
+		t.Fatalf("PinAccountSelection OAuth failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected OAuth pin to change runtime selection")
+	}
+	oauthPinnedSearchSchedule, err := svc.PrepareSchedulableAccounts(ctx, "req-search-compatible-oauth-pin", CodexStandaloneSearchPath)
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts OAuth-pinned search failed: %v", err)
+	}
+	if !oauthPinnedSearchSchedule.Pinned {
+		t.Fatal("expected compatible OAuth pin to remain effective for standalone search")
+	}
+	if got, want := collectAccountIDs(oauthPinnedSearchSchedule.Accounts), []int64{sameTierOAuth.ID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected standalone search to honor compatible OAuth pin, got %v want %v", got, want)
+	}
+}
+
+func TestPrepareSchedulableAccounts_StandaloneSearchRejectsAPIKeyOnlyPool(t *testing.T) {
+	svc, st := newTestAccountPoolServiceWithStore(t)
+	ctx := context.Background()
+
+	apiKey, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "third-party-only",
+		CredentialRaw: "sk-third-party",
+		Priority:      10,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create api key account failed: %v", err)
+	}
+
+	schedule, err := svc.PrepareSchedulableAccounts(ctx, "req-search-api-key-only", CodexStandaloneSearchPath)
+	if err != nil {
+		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
+	}
+	if len(schedule.Accounts) != 0 {
+		t.Fatalf("expected no standalone search candidates, got %v", collectAccountIDs(schedule.Accounts))
+	}
+
+	snapshot, err := svc.GetLatestAccountScheduleSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("GetLatestAccountScheduleSnapshot failed: %v", err)
+	}
+	decision := mustFindCandidateDecision(t, snapshot, apiKey.ID)
+	if decision.Reason != accountScheduleSkipRouteRequiresChatGPTOAuth {
+		t.Fatalf("expected route constraint reason, got %+v", decision)
+	}
+	if !strings.Contains(snapshot.Summary, "ChatGPT OAuth") {
+		t.Fatalf("expected OAuth-specific empty summary, got %q", snapshot.Summary)
+	}
+}
+
 func TestPrepareSchedulableAccounts_DegradesWhenHigherTierTemporarilyExhausted(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
