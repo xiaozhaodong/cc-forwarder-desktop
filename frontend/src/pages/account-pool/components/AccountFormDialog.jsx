@@ -64,6 +64,7 @@ const AccountFormDialog = ({
   if (!open) return null;
 
   const isAPIKeyAccount = isAPIKeyProviderType(accountForm.provider_type || accountForm.auth_method);
+  const supportsRequestCompression = isAPIKeyAccount || accountForm.auth_method === 'chatgpt_refresh_token';
   const modelRewriteRules = (() => {
     if (Array.isArray(accountForm.modelRewriteRules) && accountForm.modelRewriteRules.length > 0) {
       return accountForm.modelRewriteRules;
@@ -214,18 +215,18 @@ const AccountFormDialog = ({
 
             <section className="space-y-3">
               <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">请求压缩</h4>
-              <label className={`flex items-start gap-2 text-sm ${isAPIKeyAccount ? 'text-slate-700' : 'text-slate-400'}`}>
+              <label className={`flex items-start gap-2 text-sm ${supportsRequestCompression ? 'text-slate-700' : 'text-slate-400'}`}>
                 <input
                   type="checkbox"
                   checked={Boolean(accountForm.enableRequestCompression)}
-                  disabled={!isAPIKeyAccount}
+                  disabled={!supportsRequestCompression}
                   onChange={(event) => setAccountForm(prev => ({ ...prev, enableRequestCompression: event.target.checked }))}
                   className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
                 <span>向上游发送 zstd 压缩请求体</span>
               </label>
               <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
-                关闭时发送明文 JSON；仅 API Key 账号可用。请确认第三方上游支持请求头 Content-Encoding: zstd，ChatGPT OAuth 账号固定发送明文。
+                关闭时发送明文 JSON；API Key 和 ChatGPT OAuth 账号均可开启。第三方上游请先确认支持请求头 Content-Encoding: zstd。
               </div>
             </section>
 

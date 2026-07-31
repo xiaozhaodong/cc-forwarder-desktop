@@ -560,7 +560,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 }
 
 func prepareAccountOutboundBody(r *http.Request, body []byte, acc *store.UpstreamAccountRecord) ([]byte, bool, string, error) {
-	if r == nil || !isCodexResponsesAPIPath(r.URL.Path) || acc == nil || len(body) == 0 || !acc.EnableRequestCompression || !strings.EqualFold(strings.TrimSpace(acc.ProviderType), "api_key") {
+	if r == nil || !isCodexResponsesAPIPath(r.URL.Path) || acc == nil || len(body) == 0 || !acc.EnableRequestCompression || !store.SupportsAccountRequestCompression(acc.ProviderType) {
 		return body, false, "disabled", nil
 	}
 	metadata := normalizedRequestBodyMetadataFromRequest(r)

@@ -160,7 +160,7 @@ test('buildUpstreamAccountPayload serializes editable model rewrite rule arrays'
   );
 });
 
-test('buildUpstreamAccountPayload keeps zstd compression opt-in for API Key only', () => {
+test('buildUpstreamAccountPayload keeps zstd compression opt-in for API Key and ChatGPT OAuth', () => {
   const apiKeyPayload = buildUpstreamAccountPayload({
     provider_type: 'api_key',
     enableRequestCompression: true
@@ -169,9 +169,14 @@ test('buildUpstreamAccountPayload keeps zstd compression opt-in for API Key only
     provider_type: 'chatgpt_refresh_token',
     enableRequestCompression: true
   });
+  const sessionPayload = buildUpstreamAccountPayload({
+    provider_type: 'session_cookie',
+    enableRequestCompression: true
+  });
 
   assert.equal(apiKeyPayload.enable_request_compression, true);
-  assert.equal(oauthPayload.enable_request_compression, false);
+  assert.equal(oauthPayload.enable_request_compression, true);
+  assert.equal(sessionPayload.enable_request_compression, false);
 });
 
 test('normalizeUpstreamAccount uses alias helpers instead of repeating inline field chains', async () => {

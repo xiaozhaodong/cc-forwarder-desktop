@@ -545,7 +545,7 @@ func (a *App) CreateUpstreamAccount(input CreateUpstreamAccountInput) error {
 		CredentialRaw:                 strings.TrimSpace(input.CredentialRaw),
 		BaseURL:                       strings.TrimSpace(input.BaseURL),
 		ModelRewriteRules:             strings.TrimSpace(input.ModelRewriteRules),
-		EnableRequestCompression:      input.EnableRequestCompression && strings.EqualFold(strings.TrimSpace(input.ProviderType), "api_key"),
+		EnableRequestCompression:      input.EnableRequestCompression && store.SupportsAccountRequestCompression(input.ProviderType),
 		CostMultiplier:                input.CostMultiplier,
 		InputCostMultiplier:           input.InputCostMultiplier,
 		OutputCostMultiplier:          input.OutputCostMultiplier,
@@ -589,7 +589,7 @@ func (a *App) UpdateUpstreamAccount(id int64, input CreateUpstreamAccountInput) 
 	existing.CredentialRaw = strings.TrimSpace(input.CredentialRaw)
 	existing.BaseURL = strings.TrimSpace(input.BaseURL)
 	existing.ModelRewriteRules = strings.TrimSpace(input.ModelRewriteRules)
-	existing.EnableRequestCompression = input.EnableRequestCompression && strings.EqualFold(strings.TrimSpace(input.ProviderType), "api_key")
+	existing.EnableRequestCompression = input.EnableRequestCompression && store.SupportsAccountRequestCompression(input.ProviderType)
 	existing.CostMultiplier = input.CostMultiplier
 	existing.InputCostMultiplier = input.InputCostMultiplier
 	existing.OutputCostMultiplier = input.OutputCostMultiplier

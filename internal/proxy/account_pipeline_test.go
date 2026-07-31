@@ -905,7 +905,7 @@ func TestAccountPipeline_RequestCompression415DoesNotFallback(t *testing.T) {
 	}
 }
 
-func TestAccountPipeline_OAuthCompressionSwitchStillSendsPlainJSON(t *testing.T) {
+func TestAccountPipeline_OAuthCompressionSwitchSendsZstd(t *testing.T) {
 	var receivedBody []byte
 	var receivedEncoding string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -937,18 +937,25 @@ func TestAccountPipeline_OAuthCompressionSwitchStillSendsPlainJSON(t *testing.T)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !bytes.Equal(receivedBody, body) || receivedEncoding != "" {
-		t.Fatalf("OAuth must receive plain JSON despite switch: encoding=%q body=%s", receivedEncoding, receivedBody)
+	if receivedEncoding != requestContentEncodingZstd {
+		t.Fatalf("OAuth upstream Content-Encoding = %q, want zstd", receivedEncoding)
+	}
+	decoded, err := decodeZstdRequestBody(receivedBody, defaultEncodedRequestBodyMaxBytes)
+	if err != nil {
+		t.Fatalf("decode OAuth upstream zstd body: %v", err)
+	}
+	if !bytes.Equal(decoded, body) {
+		t.Fatalf("OAuth upstream body mismatch\nwant: %s\n got: %s", body, decoded)
 	}
 }
 
-func TestPrepareAccountOutboundBody_OnlyAPIKeyCanCompress(t *testing.T) {
+func TestPrepareAccountOutboundBody_APIKeyAndOAuthCanCompress(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4.1"}`))
 	metadata := &normalizedRequestBodyMetadata{normalizedBody: []byte(`{"model":"gpt-4.1"}`)}
 	attachNormalizedRequestBodyMetadata(req, metadata)
 	body := metadata.normalizedBody
 
-	for _, providerType := range []string{"session_cookie", "chatgpt_refresh_token"} {
+	for _, providerType := range []string{"api_key", "chatgpt_refresh_token", "oauth"} {
 		wire, sendZstd, mode, err := prepareAccountOutboundBody(req, body, &store.UpstreamAccountRecord{
 			ProviderType:             providerType,
 			EnableRequestCompression: true,
@@ -956,9 +963,27 @@ func TestPrepareAccountOutboundBody_OnlyAPIKeyCanCompress(t *testing.T) {
 		if err != nil {
 			t.Fatalf("provider %s returned error: %v", providerType, err)
 		}
-		if sendZstd || mode != "disabled" || !bytes.Equal(wire, body) {
-			t.Fatalf("provider %s must remain plaintext: sendZstd=%v mode=%s body=%q", providerType, sendZstd, mode, wire)
+		if !sendZstd || mode != "recompress" {
+			t.Fatalf("provider %s must use zstd: sendZstd=%v mode=%s", providerType, sendZstd, mode)
 		}
+		decoded, err := decodeZstdRequestBody(wire, defaultEncodedRequestBodyMaxBytes)
+		if err != nil {
+			t.Fatalf("decode provider %s zstd body: %v", providerType, err)
+		}
+		if !bytes.Equal(decoded, body) {
+			t.Fatalf("provider %s body mismatch: %q", providerType, decoded)
+		}
+	}
+
+	wire, sendZstd, mode, err := prepareAccountOutboundBody(req, body, &store.UpstreamAccountRecord{
+		ProviderType:             "session_cookie",
+		EnableRequestCompression: true,
+	})
+	if err != nil {
+		t.Fatalf("session cookie provider returned error: %v", err)
+	}
+	if sendZstd || mode != "disabled" || !bytes.Equal(wire, body) {
+		t.Fatalf("session cookie provider must remain plaintext: sendZstd=%v mode=%s body=%q", sendZstd, mode, wire)
 	}
 }
 
@@ -1065,7 +1090,7 @@ func TestAccountPipeline_OAuthSuccessEnqueuesQuotaRefresh(t *testing.T) {
 	}
 }
 
-func TestAccountPipeline_ZstdRequestReachesOAuthAsPlainJSON(t *testing.T) {
+func TestAccountPipeline_ZstdRequestReachesOAuthAsPlainJSONWhenCompressionDisabled(t *testing.T) {
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"access_token":"at-zstd","refresh_token":"rt-zstd","expires_in":3600}`))

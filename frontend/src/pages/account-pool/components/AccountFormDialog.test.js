@@ -58,7 +58,7 @@ test('AccountFormDialog exposes editable model compatibility controls', async ()
   assert.match(hookSource, /model_rewrite_rules:\s*modelRewriteRules/);
 });
 
-test('AccountFormDialog exposes the API Key zstd request compression switch', async () => {
+test('AccountFormDialog exposes the API Key and ChatGPT OAuth zstd request compression switch', async () => {
   const [dialogSource, hookSource, constantsSource] = await Promise.all([
     readFile(sourcePath, 'utf8'),
     readFile(formHookPath, 'utf8'),
@@ -67,7 +67,8 @@ test('AccountFormDialog exposes the API Key zstd request compression switch', as
 
   assert.match(dialogSource, /请求压缩/);
   assert.match(dialogSource, /向上游发送 zstd/);
-  assert.match(dialogSource, /disabled={!isAPIKeyAccount}/);
+  assert.match(dialogSource, /disabled={!supportsRequestCompression}/);
+  assert.match(dialogSource, /API Key 和 ChatGPT OAuth 账号均可开启/);
   assert.match(hookSource, /enable_request_compression/);
   assert.match(constantsSource, /enableRequestCompression:\s*false/);
 });

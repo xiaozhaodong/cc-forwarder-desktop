@@ -177,6 +177,7 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
   const openEditAccount = useCallback(async (account) => {
     const providerType = account.provider_type || account.providerType || 'chatgpt_refresh_token';
     const isAPIKeyAccount = isAPIKeyProviderType(providerType);
+    const supportsRequestCompression = isAPIKeyAccount || providerTypeToAuthMethod(providerType) === 'chatgpt_refresh_token';
     const modelRewriteRulesRaw = account.model_rewrite_rules || account.modelRewriteRules || '';
     const modelRewriteSettings = parseCodexModelRewriteSettings(modelRewriteRulesRaw);
     const nextForm = {
@@ -190,7 +191,7 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
       cacheCreationCostMultiplier: String(account.cache_creation_cost_multiplier ?? account.cacheCreationCostMultiplier ?? 1.0),
       cacheCreationCostMultiplier1h: String(account.cache_creation_cost_multiplier_1h ?? account.cacheCreationCostMultiplier1h ?? 1.0),
       cacheReadCostMultiplier: String(account.cache_read_cost_multiplier ?? account.cacheReadCostMultiplier ?? 1.0),
-      enableRequestCompression: isAPIKeyAccount && Boolean(account.enable_request_compression ?? account.enableRequestCompression),
+      enableRequestCompression: supportsRequestCompression && Boolean(account.enable_request_compression ?? account.enableRequestCompression),
       priority: String(account.priority || 10),
       enabled: account.enabled !== false,
       credential_raw: account.credential_raw || account.credentialRaw || '',
@@ -246,6 +247,7 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
     const baseURL = (accountForm.base_url || DEFAULT_BASE_URL).trim() || DEFAULT_BASE_URL;
     const originalRewriteSettings = parseCodexModelRewriteSettings(accountForm.modelRewriteRulesRaw || '');
     const isAPIKeyAccount = isAPIKeyProviderType(providerType);
+    const supportsRequestCompression = isAPIKeyAccount || authMethod === 'chatgpt_refresh_token';
     const modelRewriteRules = (() => {
       if (!isAPIKeyAccount) {
         return '';
@@ -275,7 +277,7 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
         cacheCreationCostMultiplier: isAPIKeyAccount ? accountForm.cacheCreationCostMultiplier : '1.0',
         cacheCreationCostMultiplier1h: isAPIKeyAccount ? accountForm.cacheCreationCostMultiplier1h : '1.0',
         cacheReadCostMultiplier: isAPIKeyAccount ? accountForm.cacheReadCostMultiplier : '1.0',
-        enable_request_compression: isAPIKeyAccount && Boolean(accountForm.enableRequestCompression),
+        enable_request_compression: supportsRequestCompression && Boolean(accountForm.enableRequestCompression),
         group_key: accountForm.group_key || groupKey,
         priority: Number.isNaN(priorityValue) ? 10 : priorityValue,
         enabled: accountForm.enabled !== false,

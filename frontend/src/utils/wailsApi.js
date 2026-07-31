@@ -589,6 +589,8 @@ const serializeModelRewriteRules = (value) => {
 export const buildUpstreamAccountPayload = (input = {}) => {
   const providerType = String(input.provider_type || input.providerType || '').trim().toLowerCase();
   const isAPIKeyAccount = providerType === 'api_key';
+  const isChatGPTOAuthAccount = ['chatgpt_refresh_token', 'chatgpt_rt', 'refresh_token', 'rt', 'oauth', 'openai_oauth'].includes(providerType);
+  const supportsRequestCompression = isAPIKeyAccount || isChatGPTOAuthAccount;
   const normalizeMultiplier = (value) => {
     const parsed = Number.parseFloat(value);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 1.0;
@@ -601,7 +603,7 @@ export const buildUpstreamAccountPayload = (input = {}) => {
     credential_raw: input.credential_raw || input.credentialRaw || '',
     base_url: input.base_url || input.baseURL || '',
     model_rewrite_rules: isAPIKeyAccount ? serializeModelRewriteRules(input.model_rewrite_rules ?? input.modelRewriteRules ?? '') : '',
-    enable_request_compression: isAPIKeyAccount && Boolean(input.enable_request_compression ?? input.enableRequestCompression),
+    enable_request_compression: supportsRequestCompression && Boolean(input.enable_request_compression ?? input.enableRequestCompression),
     cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.cost_multiplier ?? input.costMultiplier) : 1.0,
     input_cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.input_cost_multiplier ?? input.inputCostMultiplier) : 1.0,
     output_cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.output_cost_multiplier ?? input.outputCostMultiplier) : 1.0,

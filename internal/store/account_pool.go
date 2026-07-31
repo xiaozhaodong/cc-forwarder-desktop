@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"cc-forwarder/internal/accountauth"
 )
 
 const (
@@ -825,6 +827,12 @@ func GenerateAccountFingerprint(providerType, credentialRaw, baseURL string) str
 	return hex.EncodeToString(sum[:])
 }
 
+// SupportsAccountRequestCompression 判断账号类型是否允许向上游发送 zstd 请求体。
+func SupportsAccountRequestCompression(providerType string) bool {
+	normalized := accountauth.NormalizeProviderType(providerType)
+	return normalized == accountauth.ProviderAPIKey || normalized == accountauth.ProviderChatGPTRefreshToken
+}
+
 func normalizeAccountRecord(record *UpstreamAccountRecord) {
 	if record.ProviderType == "" {
 		record.ProviderType = "api_key"
@@ -837,8 +845,10 @@ func normalizeAccountRecord(record *UpstreamAccountRecord) {
 	}
 	record.BaseURL = normalizeBaseURL(record.BaseURL)
 	record.ModelRewriteRules = strings.TrimSpace(record.ModelRewriteRules)
-	if strings.TrimSpace(strings.ToLower(record.ProviderType)) != "api_key" {
+	if accountauth.NormalizeProviderType(record.ProviderType) != accountauth.ProviderAPIKey {
 		record.ModelRewriteRules = ""
+	}
+	if !SupportsAccountRequestCompression(record.ProviderType) {
 		record.EnableRequestCompression = false
 	}
 	applyAccountCostMultiplierPolicy(record)
