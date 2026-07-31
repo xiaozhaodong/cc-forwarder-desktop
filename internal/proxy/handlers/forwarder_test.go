@@ -251,7 +251,7 @@ func TestForwarder_PrepareBodyForEndpoint_StripsCoderelayCacheControlScope(t *te
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := prepareBodyForEndpoint(bodyBytes, tt.ep)
+			got := prepareBodyForEndpoint("/v1/messages", bodyBytes, tt.ep)
 
 			var payload any
 			if err := json.Unmarshal(got, &payload); err != nil {
@@ -278,6 +278,40 @@ func TestForwarder_PrepareBodyForEndpoint_StripsCoderelayCacheControlScope(t *te
 				t.Fatalf("expected non-cache_control scope to be preserved, got %v", metadata["scope"])
 			}
 		})
+	}
+}
+
+func TestForwarder_PrepareBodyForEndpoint_RewritesConfiguredClaudeModel(t *testing.T) {
+	bodyBytes := []byte(`{"model":"claude-sonnet-4-5","messages":[],"max_tokens":1024}`)
+	rules := `[{"paths":["/v1/messages","/v1/messages/count_tokens"],"match":"exact","from":"claude-sonnet-4-5","to":"provider-sonnet"}]`
+	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "rewrite-endpoint", ModelRewriteRules: rules}}
+
+	for _, path := range []string{"/v1/messages", "/v1/messages/count_tokens"} {
+		got := prepareBodyForEndpoint(path, bodyBytes, ep)
+		var payload map[string]any
+		if err := json.Unmarshal(got, &payload); err != nil {
+			t.Fatalf("unmarshal rewritten body failed: %v", err)
+		}
+		if payload["model"] != "provider-sonnet" {
+			t.Fatalf("path %s expected provider-sonnet, got %v", path, payload["model"])
+		}
+	}
+
+	if got := prepareBodyForEndpoint("/v1/responses", bodyBytes, ep); !bytes.Equal(got, bodyBytes) {
+		t.Fatalf("non-Claude path must stay unchanged, got %s", string(got))
+	}
+	if got := prepareBodyForEndpoint("/v1/messages", []byte(`{"model":"claude-sonnet-4-5-latest"}`), ep); string(got) != `{"model":"claude-sonnet-4-5-latest"}` {
+		t.Fatalf("exact rule must not match suffix model, got %s", string(got))
+	}
+
+	invalidRuleEndpoint := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "invalid-rules", ModelRewriteRules: `{"from":`}}
+	if got := prepareBodyForEndpoint("/v1/messages", bodyBytes, invalidRuleEndpoint); !bytes.Equal(got, bodyBytes) {
+		t.Fatalf("invalid saved rules must preserve request body, got %s", string(got))
+	}
+
+	trailingJSONBody := []byte(`{"model":"claude-sonnet-4-5"}{"messages":[]}`)
+	if got := prepareBodyForEndpoint("/v1/messages", trailingJSONBody, ep); !bytes.Equal(got, trailingJSONBody) {
+		t.Fatalf("body with trailing JSON must stay unchanged, got %s", string(got))
 	}
 }
 
@@ -308,7 +342,7 @@ func TestForwarder_PrepareBodyForEndpoint_StripsMywechatContextManagement(t *tes
 	}`)
 	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "mywechat", Channel: "coderelay"}}
 
-	got := prepareBodyForEndpoint(bodyBytes, ep)
+	got := prepareBodyForEndpoint("/v1/messages", bodyBytes, ep)
 
 	var payload any
 	if err := json.Unmarshal(got, &payload); err != nil {
@@ -338,7 +372,7 @@ func TestForwarder_PrepareBodyForEndpoint_KeepsContextManagementForOtherCoderela
 	bodyBytes := []byte(`{"context_management":{"edits":[]},"system":[{"cache_control":{"type":"ephemeral","scope":"conversation"}}]}`)
 	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "relay-proxy", Channel: "coderelay"}}
 
-	got := prepareBodyForEndpoint(bodyBytes, ep)
+	got := prepareBodyForEndpoint("/v1/messages", bodyBytes, ep)
 
 	var payload map[string]any
 	if err := json.Unmarshal(got, &payload); err != nil {
@@ -357,7 +391,7 @@ func TestForwarder_PrepareBodyForEndpoint_KeepsOtherChannelsUntouched(t *testing
 	bodyBytes := []byte(`{"system":[{"cache_control":{"type":"ephemeral","scope":"conversation"}}]}`)
 	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "coderelay", Channel: "custom"}}
 
-	got := prepareBodyForEndpoint(bodyBytes, ep)
+	got := prepareBodyForEndpoint("/v1/messages", bodyBytes, ep)
 
 	if !bytes.Equal(got, bodyBytes) {
 		t.Fatalf("expected non-coderelay channel body to stay untouched, got %s", string(got))

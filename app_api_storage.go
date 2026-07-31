@@ -6,9 +6,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
-	"cc-forwarder/config"
 	"cc-forwarder/internal/store"
 	"cc-forwarder/internal/utils"
 )
@@ -35,6 +35,7 @@ type EndpointRecordInfo struct {
 	CooldownSeconds               *int              `json:"cooldown_seconds"`
 	TimeoutSeconds                int               `json:"timeout_seconds"`
 	SupportsCountTokens           bool              `json:"supports_count_tokens"`
+	ModelRewriteRules             string            `json:"model_rewrite_rules"`
 	CostMultiplier                float64           `json:"cost_multiplier"`
 	InputCostMultiplier           float64           `json:"input_cost_multiplier"`
 	OutputCostMultiplier          float64           `json:"output_cost_multiplier"`
@@ -68,6 +69,7 @@ type CreateEndpointInput struct {
 	CooldownSeconds               *int              `json:"cooldown_seconds"`
 	TimeoutSeconds                int               `json:"timeout_seconds"`
 	SupportsCountTokens           bool              `json:"supports_count_tokens"`
+	ModelRewriteRules             string            `json:"model_rewrite_rules"`
 	CostMultiplier                float64           `json:"cost_multiplier"`
 	InputCostMultiplier           float64           `json:"input_cost_multiplier"`
 	OutputCostMultiplier          float64           `json:"output_cost_multiplier"`
@@ -208,6 +210,9 @@ func (a *App) GetEndpointRecord(name string) (EndpointRecordInfo, error) {
 	if v, ok := detail["timeout_seconds"].(int); ok {
 		info.TimeoutSeconds = v
 	}
+	if v, ok := detail["model_rewrite_rules"].(string); ok {
+		info.ModelRewriteRules = v
+	}
 	if v, ok := detail["cost_multiplier"].(float64); ok {
 		info.CostMultiplier = v
 	}
@@ -269,6 +274,7 @@ func (a *App) CreateEndpointRecord(input CreateEndpointInput) error {
 		CooldownSeconds:               input.CooldownSeconds,
 		TimeoutSeconds:                input.TimeoutSeconds,
 		SupportsCountTokens:           input.SupportsCountTokens,
+		ModelRewriteRules:             strings.TrimSpace(input.ModelRewriteRules),
 		CostMultiplier:                input.CostMultiplier,
 		InputCostMultiplier:           input.InputCostMultiplier,
 		OutputCostMultiplier:          input.OutputCostMultiplier,
@@ -341,6 +347,7 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 		CooldownSeconds:               input.CooldownSeconds,
 		TimeoutSeconds:                input.TimeoutSeconds,
 		SupportsCountTokens:           input.SupportsCountTokens,
+		ModelRewriteRules:             strings.TrimSpace(input.ModelRewriteRules),
 		CostMultiplier:                input.CostMultiplier,
 		InputCostMultiplier:           input.InputCostMultiplier,
 		OutputCostMultiplier:          input.OutputCostMultiplier,
@@ -356,34 +363,6 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 
 	if a.logger != nil {
 		a.logger.Info("✅ 端点已更新", "name", name)
-	}
-
-	// v5.0: 同步更新内存中的端点配置（确保 Key 等配置立即生效）
-	if a.endpointManager != nil {
-		// 构建 failover_enabled 指针
-		failoverEnabled := input.FailoverEnabled
-
-		// 构建 config.EndpointConfig
-		endpointCfg := config.EndpointConfig{
-			Name:                name,
-			URL:                 input.URL,
-			Channel:             input.Channel,
-			Priority:            input.Priority,
-			FailoverEnabled:     &failoverEnabled,
-			Token:               token,  // 使用处理后的值（空值时保留原有）
-			ApiKey:              apiKey, // 使用处理后的值（空值时保留原有）
-			Timeout:             time.Duration(input.TimeoutSeconds) * time.Second,
-			Headers:             input.Headers,
-			SupportsCountTokens: input.SupportsCountTokens,
-		}
-
-		// 更新内存中的端点配置
-		if err := a.endpointManager.UpdateEndpointConfig(name, endpointCfg); err != nil {
-			a.logger.Warn("⚠️ 同步端点配置到内存失败", "name", name, "error", err)
-			// 不返回错误，数据库已更新成功
-		} else {
-			a.logger.Debug("✅ 端点配置已同步到内存", "name", name)
-		}
 	}
 
 	// v5.0: 更新成功后，异步同步端点倍率到 UsageTracker
@@ -436,35 +415,8 @@ func (a *App) ToggleEndpointRecord(name string, enabled bool) error {
 	if enabled {
 		// 1. 确保端点在内存中存在（处理新建端点的情况）
 		if a.endpointManager != nil {
-			// 从数据库获取完整的端点配置
-			record, err := a.endpointService.GetEndpoint(ctx, name)
-			if err != nil {
-				return fmt.Errorf("获取端点配置失败: %w", err)
-			}
-
-			// 构建 config.EndpointConfig
-			failoverEnabled := record.FailoverEnabled
-			endpointCfg := config.EndpointConfig{
-				Name:                record.Name,
-				URL:                 record.URL,
-				Channel:             record.Channel,
-				Priority:            record.Priority,
-				FailoverEnabled:     &failoverEnabled,
-				Token:               record.Token,
-				ApiKey:              record.ApiKey,
-				Timeout:             time.Duration(record.TimeoutSeconds) * time.Second,
-				Headers:             record.Headers,
-				SupportsCountTokens: record.SupportsCountTokens,
-			}
-
-			// 尝试添加端点（如果已存在会更新配置）
-			if err := a.endpointManager.AddEndpoint(endpointCfg); err != nil {
-				// 端点已存在，尝试更新配置
-				if updateErr := a.endpointManager.UpdateEndpointConfig(name, endpointCfg); updateErr != nil {
-					a.logger.Warn("⚠️ 更新端点配置失败", "name", name, "error", updateErr)
-				}
-			} else {
-				a.logger.Info("✅ 新端点已添加到内存", "name", name)
+			if err := a.endpointService.SyncEndpointRuntime(ctx, name); err != nil {
+				return fmt.Errorf("同步端点配置到运行时失败: %w", err)
 			}
 
 			// 2. 激活端点：writer ACK 内单事务完成「禁用其余 + 启用目标」
@@ -597,6 +549,7 @@ func (a *App) recordToInfo(r *store.EndpointRecord) EndpointRecordInfo {
 		CooldownSeconds:               r.CooldownSeconds,
 		TimeoutSeconds:                r.TimeoutSeconds,
 		SupportsCountTokens:           r.SupportsCountTokens,
+		ModelRewriteRules:             r.ModelRewriteRules,
 		CostMultiplier:                r.CostMultiplier,
 		InputCostMultiplier:           r.InputCostMultiplier,
 		OutputCostMultiplier:          r.OutputCostMultiplier,

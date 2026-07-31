@@ -7,6 +7,56 @@ import (
 	"time"
 )
 
+func TestConfigValidateEndpointModelRewriteRules(t *testing.T) {
+	tests := []struct {
+		name    string
+		rules   string
+		wantErr bool
+	}{
+		{
+			name:  "固定双路径精确规则",
+			rules: `[{"paths":["/v1/messages","/v1/messages/count_tokens"],"match":"exact","from":"source","to":"target"}]`,
+		},
+		{
+			name:    "缺少 count_tokens 路径",
+			rules:   `[{"paths":["/v1/messages"],"match":"exact","from":"source","to":"target"}]`,
+			wantErr: true,
+		},
+		{
+			name:    "不允许 prefix",
+			rules:   `[{"paths":["/v1/messages","/v1/messages/count_tokens"],"match":"prefix","from":"source","to":"target"}]`,
+			wantErr: true,
+		},
+		{
+			name:    "无效 JSON",
+			rules:   `{"from":`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				Strategy: StrategyConfig{Type: "priority"},
+				Endpoints: []EndpointConfig{{
+					Name:              "test-endpoint",
+					URL:               "https://api.example.com",
+					Priority:          1,
+					ModelRewriteRules: tt.rules,
+				}},
+			}
+
+			err := cfg.validate()
+			if tt.wantErr && err == nil {
+				t.Fatal("expected model rewrite validation error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("valid model rewrite rules rejected: %v", err)
+			}
+		})
+	}
+}
+
 func TestDynamicTokenResolution(t *testing.T) {
 	configContent := `
 server:

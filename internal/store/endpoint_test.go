@@ -43,6 +43,7 @@ func createTestDB(t *testing.T) (*sql.DB, func()) {
 			cooldown_seconds INTEGER,
 			timeout_seconds INTEGER DEFAULT 300,
 			supports_count_tokens INTEGER DEFAULT 0,
+			model_rewrite_rules TEXT DEFAULT '',
 			cost_multiplier REAL DEFAULT 1.0,
 			input_cost_multiplier REAL DEFAULT 1.0,
 			output_cost_multiplier REAL DEFAULT 1.0,
@@ -81,14 +82,15 @@ func TestCreate(t *testing.T) {
 	ctx := context.Background()
 
 	record := &EndpointRecord{
-		Channel:         "test-channel",
-		Name:            "test-endpoint",
-		URL:             "https://api.example.com",
-		Token:           "sk-test-token",
-		Priority:        1,
-		FailoverEnabled: true,
-		TimeoutSeconds:  300,
-		Enabled:         true,
+		Channel:           "test-channel",
+		Name:              "test-endpoint",
+		URL:               "https://api.example.com",
+		Token:             "sk-test-token",
+		Priority:          1,
+		FailoverEnabled:   true,
+		TimeoutSeconds:    300,
+		ModelRewriteRules: `[{"paths":["/v1/messages"],"match":"exact","from":"source","to":"target"}]`,
+		Enabled:           true,
 	}
 
 	created, err := store.Create(ctx, record)
@@ -102,6 +104,9 @@ func TestCreate(t *testing.T) {
 
 	if created.Name != "test-endpoint" {
 		t.Errorf("Name 不匹配: got %s, want test-endpoint", created.Name)
+	}
+	if created.ModelRewriteRules != record.ModelRewriteRules {
+		t.Errorf("ModelRewriteRules 不匹配: got %q, want %q", created.ModelRewriteRules, record.ModelRewriteRules)
 	}
 
 	// 验证默认成本倍率
@@ -120,15 +125,16 @@ func TestGet(t *testing.T) {
 
 	// 先创建
 	record := &EndpointRecord{
-		Channel:         "test-channel",
-		Name:            "get-test",
-		URL:             "https://api.example.com",
-		Token:           "sk-token",
-		Priority:        2,
-		FailoverEnabled: true,
-		TimeoutSeconds:  600,
-		Enabled:         true,
-		Headers:         map[string]string{"X-Custom": "value"},
+		Channel:           "test-channel",
+		Name:              "get-test",
+		URL:               "https://api.example.com",
+		Token:             "sk-token",
+		Priority:          2,
+		FailoverEnabled:   true,
+		TimeoutSeconds:    600,
+		ModelRewriteRules: `[{"paths":["/v1/messages"],"match":"exact","from":"source","to":"target"}]`,
+		Enabled:           true,
+		Headers:           map[string]string{"X-Custom": "value"},
 	}
 
 	_, err := store.Create(ctx, record)
@@ -156,6 +162,9 @@ func TestGet(t *testing.T) {
 
 	if got.Headers["X-Custom"] != "value" {
 		t.Errorf("Headers 不匹配: got %v", got.Headers)
+	}
+	if got.ModelRewriteRules != record.ModelRewriteRules {
+		t.Errorf("ModelRewriteRules 不匹配: got %q, want %q", got.ModelRewriteRules, record.ModelRewriteRules)
 	}
 }
 

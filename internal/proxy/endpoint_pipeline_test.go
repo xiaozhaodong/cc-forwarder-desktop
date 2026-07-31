@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -168,6 +169,46 @@ func TestEndpointPipeline_Unauthorized_FailsOverAndMigratesActive(t *testing.T) 
 	}
 	if primaryEndpoint := manager.GetEndpointByNameAny("primary"); primaryEndpoint == nil || !primaryEndpoint.IsInCooldown() {
 		t.Fatal("expected unauthorized primary endpoint to enter auth cooldown")
+	}
+}
+
+func TestEndpointPipeline_ModelRewriteUsesOriginalBodyForEachCandidate(t *testing.T) {
+	var primaryModel, backupModel string
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode primary body failed: %v", err)
+		}
+		primaryModel, _ = payload["model"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"model not found"}}`))
+	}))
+	t.Cleanup(primary.Close)
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode backup body failed: %v", err)
+		}
+		backupModel, _ = payload["model"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(backup.Close)
+
+	primaryConfig := endpointPipelineConfig("primary", primary.URL, 1)
+	primaryConfig.ModelRewriteRules = `[{"paths":["/v1/messages"],"match":"exact","from":"claude-test","to":"primary-model"}]`
+	backupConfig := endpointPipelineConfig("backup", backup.URL, 2)
+	backupConfig.ModelRewriteRules = `[{"paths":["/v1/messages"],"match":"exact","from":"claude-test","to":"backup-model"}]`
+	handler, manager := newEndpointPipelineTestHandler(t, primaryConfig, backupConfig)
+	manager.RestoreActiveEndpoint("primary")
+
+	recorder := performEndpointPipelineRequest(t, handler, false)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected backup success, got status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if primaryModel != "primary-model" || backupModel != "backup-model" {
+		t.Fatalf("expected endpoint-specific rewrites from original body, got primary=%q backup=%q", primaryModel, backupModel)
 	}
 }
 

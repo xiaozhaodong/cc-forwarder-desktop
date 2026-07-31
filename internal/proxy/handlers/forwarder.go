@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
@@ -14,6 +16,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/modelrewrite"
 	"cc-forwarder/internal/transport"
 )
 
@@ -54,7 +57,7 @@ func NewForwarder(cfg *config.Config, endpointManager *endpoint.Manager) *Forwar
 
 // ForwardRequestToEndpoint 转发请求到指定端点
 func (f *Forwarder) ForwardRequestToEndpoint(ctx context.Context, r *http.Request, bodyBytes []byte, ep *endpoint.Endpoint) (*http.Response, error) {
-	bodyBytes = prepareBodyForEndpoint(bodyBytes, ep)
+	bodyBytes = prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
 
 	// 🛡️ 出站隐私过滤（PolicyError 由调用方短路，不进入 retry/failover）
 	bodyBytes, err := ApplyPrivacyFilterForEndpoint(f.privacyFilter, r, bodyBytes, ep)
@@ -119,7 +122,7 @@ func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes
 		}
 		upstreamCtx = httptrace.WithClientTrace(upstreamCtx, trace)
 	}
-	bodyBytes = prepareBodyForEndpoint(bodyBytes, ep)
+	bodyBytes = prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
 
 	// 🛡️ 出站隐私过滤（PolicyError 由调用方短路，不进入 retry/failover）
 	bodyBytes, err := ApplyPrivacyFilterForEndpoint(f.privacyFilter, r, bodyBytes, ep)
@@ -173,12 +176,47 @@ func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes
 	return resp, release, nil
 }
 
-func prepareBodyForEndpoint(bodyBytes []byte, ep *endpoint.Endpoint) []byte {
-	if !isCoderelayChannel(ep) {
+func prepareBodyForEndpoint(path string, bodyBytes []byte, ep *endpoint.Endpoint) []byte {
+	bodyBytes = rewriteEndpointModel(path, bodyBytes, ep)
+	if isCoderelayChannel(ep) {
+		bodyBytes = stripCoderelayUnsupportedFields(bodyBytes, ep)
+	}
+	return bodyBytes
+}
+
+func rewriteEndpointModel(path string, bodyBytes []byte, ep *endpoint.Endpoint) []byte {
+	if ep == nil || strings.TrimSpace(ep.Config.ModelRewriteRules) == "" || !isClaudeMessagesPath(path) || len(bytes.TrimSpace(bodyBytes)) == 0 {
 		return bodyBytes
 	}
 
-	return stripCoderelayUnsupportedFields(bodyBytes, ep)
+	var payload map[string]any
+	if !decodeSingleJSON(bodyBytes, &payload) {
+		return bodyBytes
+	}
+	model, ok := payload["model"].(string)
+	if !ok {
+		return bodyBytes
+	}
+	target, rewritten, err := modelrewrite.Rewrite(ep.Config.ModelRewriteRules, path, model)
+	if err != nil {
+		slog.Warn("⚠️ [端点模型改写] 忽略无效规则", "endpoint", ep.Config.Name, "error", err)
+		return bodyBytes
+	}
+	if !rewritten {
+		return bodyBytes
+	}
+
+	payload["model"] = target
+	rewrittenBody, err := json.Marshal(payload)
+	if err != nil {
+		return bodyBytes
+	}
+	slog.Debug("🔀 [端点模型改写] 已替换上游模型", "endpoint", ep.Config.Name, "from", model, "to", target, "path", path)
+	return rewrittenBody
+}
+
+func isClaudeMessagesPath(path string) bool {
+	return path == "/v1/messages" || path == "/v1/messages/count_tokens"
 }
 
 func isCoderelayChannel(ep *endpoint.Endpoint) bool {
@@ -195,9 +233,7 @@ func stripCoderelayUnsupportedFields(bodyBytes []byte, ep *endpoint.Endpoint) []
 	}
 
 	var payload any
-	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
-	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil {
+	if !decodeSingleJSON(bodyBytes, &payload) {
 		return bodyBytes
 	}
 
@@ -214,6 +250,16 @@ func stripCoderelayUnsupportedFields(bodyBytes []byte, ep *endpoint.Endpoint) []
 		return bodyBytes
 	}
 	return sanitizedBodyBytes
+}
+
+func decodeSingleJSON(bodyBytes []byte, target any) bool {
+	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
+	decoder.UseNumber()
+	if err := decoder.Decode(target); err != nil {
+		return false
+	}
+	var trailing any
+	return decoder.Decode(&trailing) == io.EOF
 }
 
 func isMywechatEndpoint(ep *endpoint.Endpoint) bool {
@@ -392,7 +438,7 @@ func ensureBetaFlag(header http.Header, flag string) {
 //   - detachUpstream 为 true 时创建独立 upstream context（下游断开后仍可短时 drain 尾部），返回其 release；
 //   - 非 SSE 请求恢复端点级总超时，SSE 保持无总超时，避免长流被硬切断。
 func (f *Forwarder) ForwardForPipeline(ctx context.Context, r *http.Request, bodyBytes []byte, ep *endpoint.Endpoint, isSSE, detachUpstream bool, onWroteRequest func(time.Time)) (*http.Response, context.CancelFunc, *UpstreamTraceState, error) {
-	bodyBytes = prepareBodyForEndpoint(bodyBytes, ep)
+	bodyBytes = prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
 
 	// 🛡️ 出站隐私过滤（PolicyError 由调用方短路，不进入换候选/标记）
 	bodyBytes, err := ApplyPrivacyFilterForEndpoint(f.privacyFilter, r, bodyBytes, ep)

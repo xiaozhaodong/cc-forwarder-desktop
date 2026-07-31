@@ -86,7 +86,21 @@ func decideEndpointForwardOutcome(forwardErr error, resp *http.Response, trace *
 	}
 
 	switch {
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+	case resp.StatusCode == http.StatusUnauthorized:
+		return EndpointFailureDecision{
+			Action: EndpointForwardNextCandidate,
+			Mark:   EndpointMarkAuthCooldown,
+			Reason: FailoverReasonAuthRejected,
+		}
+	case resp.StatusCode == http.StatusForbidden:
+		if isModelUnsupportedError(normalizeEndpointFailureBody(respBodySample)) {
+			return EndpointFailureDecision{
+				Action:       EndpointForwardNextCandidate,
+				Mark:         EndpointMarkNegativeCache,
+				FailureClass: handlers.FailureClassModelUnsupported,
+				Reason:       FailoverReasonModelUnsupported,
+			}
+		}
 		return EndpointFailureDecision{
 			Action: EndpointForwardNextCandidate,
 			Mark:   EndpointMarkAuthCooldown,
@@ -171,6 +185,7 @@ func isModelUnsupportedError(errText string) bool {
 		strings.Contains(errText, "no available channel for model") ||
 		strings.Contains(errText, "model is not supported") ||
 		strings.Contains(errText, "unsupported model") ||
+		strings.Contains(errText, "do not have access to model") ||
 		strings.Contains(errText, "does not have access to model")
 }
 

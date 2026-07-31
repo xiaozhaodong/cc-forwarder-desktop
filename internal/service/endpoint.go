@@ -6,10 +6,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/modelrewrite"
 	"cc-forwarder/internal/store"
 	"cc-forwarder/internal/utils"
 )
@@ -118,14 +120,39 @@ func (s *EndpointService) UpdateEndpoint(ctx context.Context, record *store.Endp
 	}
 
 	// 更新运行时管理器
-	cfg := s.recordToConfig(record)
-	if err := s.manager.UpdateEndpointConfig(record.Name, cfg); err != nil {
+	if err := s.syncEndpointRuntime(record); err != nil {
 		slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 更新运行时管理器失败: %v", err))
 		// 不回滚数据库，下次重启会同步
 	}
 
 	slog.Info(fmt.Sprintf("✅ [EndpointService] 更新端点成功: %s", record.Name))
 	return nil
+}
+
+// SyncEndpointRuntime 从数据库读取端点，并通过唯一映射入口同步到运行时管理器。
+func (s *EndpointService) SyncEndpointRuntime(ctx context.Context, name string) error {
+	record, err := s.store.Get(ctx, name)
+	if err != nil {
+		return fmt.Errorf("读取端点配置失败: %w", err)
+	}
+	if record == nil {
+		return fmt.Errorf("端点 '%s' 不存在", name)
+	}
+	return s.syncEndpointRuntime(record)
+}
+
+func (s *EndpointService) syncEndpointRuntime(record *store.EndpointRecord) error {
+	if record == nil {
+		return fmt.Errorf("端点配置不能为空")
+	}
+	if err := s.validateRecord(record); err != nil {
+		return err
+	}
+	cfg := s.recordToConfig(record)
+	if s.manager.GetEndpointByNameAny(record.Name) == nil {
+		return s.manager.AddEndpoint(cfg)
+	}
+	return s.manager.UpdateEndpointConfig(record.Name, cfg)
 }
 
 // DeleteEndpoint 删除端点
@@ -188,6 +215,16 @@ func (s *EndpointService) DisableAllEndpoints(ctx context.Context) error {
 // ImportFromYAML 从 YAML 配置导入端点
 // clearExisting: 是否清除现有端点
 func (s *EndpointService) ImportFromYAML(ctx context.Context, endpoints []config.EndpointConfig, clearExisting bool) (int, error) {
+	// 先完成全部转换与校验，避免 clearExisting 后才发现新配置无效。
+	records := make([]*store.EndpointRecord, 0, len(endpoints))
+	for _, ep := range endpoints {
+		record := s.configToRecord(ep)
+		if err := s.validateRecord(record); err != nil {
+			return 0, fmt.Errorf("端点 %q 配置无效: %w", record.Name, err)
+		}
+		records = append(records, record)
+	}
+
 	if clearExisting {
 		// 清除现有端点
 		existing, err := s.store.List(ctx)
@@ -205,13 +242,6 @@ func (s *EndpointService) ImportFromYAML(ctx context.Context, endpoints []config
 				return 0, fmt.Errorf("清除现有端点失败: %w", err)
 			}
 		}
-	}
-
-	// 转换并导入
-	records := make([]*store.EndpointRecord, 0, len(endpoints))
-	for _, ep := range endpoints {
-		record := s.configToRecord(ep)
-		records = append(records, record)
 	}
 
 	if err := s.store.BatchCreate(ctx, records); err != nil {
@@ -243,6 +273,9 @@ func (s *EndpointService) SyncFromDatabase(ctx context.Context) error {
 	endpoints := make([]config.EndpointConfig, len(records))
 	var enabledRecords []endpoint.EnabledEndpointRecord
 	for i, record := range records {
+		if err := s.validateRecord(record); err != nil {
+			return fmt.Errorf("端点 %q 配置无效: %w", record.Name, err)
+		}
 		endpoints[i] = s.recordToConfig(record)
 		if record.Enabled {
 			enabledRecords = append(enabledRecords, endpoint.EnabledEndpointRecord{
@@ -290,6 +323,7 @@ func (s *EndpointService) GetEndpointWithHealth(ctx context.Context, name string
 		"priority":                          record.Priority,
 		"failover_enabled":                  record.FailoverEnabled,
 		"timeout_seconds":                   record.TimeoutSeconds,
+		"model_rewrite_rules":               record.ModelRewriteRules,
 		"cost_multiplier":                   record.CostMultiplier,
 		"cache_creation_cost_multiplier_1h": record.CacheCreationCostMultiplier1h,
 		"enabled":                           record.Enabled,
@@ -322,6 +356,10 @@ func (s *EndpointService) validateRecord(record *store.EndpointRecord) error {
 	if record.Channel == "" {
 		return fmt.Errorf("端点渠道不能为空")
 	}
+	record.ModelRewriteRules = strings.TrimSpace(record.ModelRewriteRules)
+	if err := modelrewrite.ValidateExact(record.ModelRewriteRules, "/v1/messages", "/v1/messages/count_tokens"); err != nil {
+		return fmt.Errorf("模型兼容改写规则无效: %w", err)
+	}
 	return nil
 }
 
@@ -337,6 +375,7 @@ func (s *EndpointService) recordToConfig(record *store.EndpointRecord) config.En
 		Headers:             record.Headers,
 		Timeout:             time.Duration(record.TimeoutSeconds) * time.Second,
 		SupportsCountTokens: record.SupportsCountTokens,
+		ModelRewriteRules:   record.ModelRewriteRules,
 	}
 
 	// v5.0: 设置 Enabled（是否作为代理端点）
@@ -369,6 +408,7 @@ func (s *EndpointService) configToRecord(cfg config.EndpointConfig) *store.Endpo
 		FailoverEnabled:     true, // 默认参与故障转移
 		TimeoutSeconds:      int(cfg.Timeout.Seconds()),
 		SupportsCountTokens: cfg.SupportsCountTokens,
+		ModelRewriteRules:   cfg.ModelRewriteRules,
 		CostMultiplier:      1.0,
 		Enabled:             true,
 	}

@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS endpoints (
 
     -- ========== 功能支持 ==========
     supports_count_tokens INTEGER DEFAULT 0,        -- 是否支持 count_tokens 端点
+    model_rewrite_rules TEXT DEFAULT '',            -- CC 端点模型兼容改写规则 JSON
 
     -- ========== 成本倍率 ==========
     cost_multiplier REAL DEFAULT 1.0,               -- 总成本倍率

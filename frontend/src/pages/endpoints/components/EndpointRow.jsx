@@ -17,6 +17,7 @@ import {
   Timer
 } from 'lucide-react';
 import { getEndpointLastCheckDisplayValue } from '../utils/lastCheckDisplay.js';
+import { summarizeEndpointModelRewriteRules } from '../utils/modelRewrite.js';
 
 // ============================================
 // 连通性状态徽章
@@ -133,6 +134,7 @@ const EndpointRow = ({
   const isActive = isSqliteMode ? endpoint.enabled : endpoint.group_is_active;
   const responseTime = endpoint.response_time || endpoint.responseTimeMs || 0;
   const isNeverChecked = endpoint.never_checked === true || endpoint.neverChecked === true || (!endpoint.lastCheck && !endpoint.last_check);
+  const modelRewriteSummary = summarizeEndpointModelRewriteRules(endpoint.modelRewriteRules || endpoint.model_rewrite_rules || '');
 
   // 获取认证类型显示
   const getAuthType = () => {
@@ -230,6 +232,14 @@ const EndpointRow = ({
           >
             <Calculator size={14} />
           </div>
+          {modelRewriteSummary && (
+            <span
+              className="max-w-[220px] truncate rounded-md border border-cyan-100 bg-cyan-50 px-2 py-1 text-[10px] font-medium text-cyan-700"
+              title={modelRewriteSummary.title}
+            >
+              {modelRewriteSummary.label}
+            </span>
+          )}
         </div>
       </td>
 

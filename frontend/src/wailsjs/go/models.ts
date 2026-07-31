@@ -322,6 +322,7 @@ export namespace main {
 	    cooldown_seconds?: number;
 	    timeout_seconds: number;
 	    supports_count_tokens: boolean;
+	    model_rewrite_rules: string;
 	    cost_multiplier: number;
 	    input_cost_multiplier: number;
 	    output_cost_multiplier: number;
@@ -346,6 +347,7 @@ export namespace main {
 	        this.cooldown_seconds = source["cooldown_seconds"];
 	        this.timeout_seconds = source["timeout_seconds"];
 	        this.supports_count_tokens = source["supports_count_tokens"];
+	        this.model_rewrite_rules = source["model_rewrite_rules"];
 	        this.cost_multiplier = source["cost_multiplier"];
 	        this.input_cost_multiplier = source["input_cost_multiplier"];
 	        this.output_cost_multiplier = source["output_cost_multiplier"];
@@ -571,6 +573,7 @@ export namespace main {
 	    cooldown_seconds?: number;
 	    timeout_seconds: number;
 	    supports_count_tokens: boolean;
+	    model_rewrite_rules: string;
 	    cost_multiplier: number;
 	    input_cost_multiplier: number;
 	    output_cost_multiplier: number;
@@ -608,6 +611,7 @@ export namespace main {
 	        this.cooldown_seconds = source["cooldown_seconds"];
 	        this.timeout_seconds = source["timeout_seconds"];
 	        this.supports_count_tokens = source["supports_count_tokens"];
+	        this.model_rewrite_rules = source["model_rewrite_rules"];
 	        this.cost_multiplier = source["cost_multiplier"];
 	        this.input_cost_multiplier = source["input_cost_multiplier"];
 	        this.output_cost_multiplier = source["output_cost_multiplier"];

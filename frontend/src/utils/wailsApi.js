@@ -1306,6 +1306,7 @@ export const mapEndpointRecord = (record = {}) => ({
   cooldownSeconds: record.cooldown_seconds,
   timeoutSeconds: record.timeout_seconds,
   supportsCountTokens: record.supports_count_tokens,
+  modelRewriteRules: record.model_rewrite_rules || '',
   costMultiplier: record.cost_multiplier,
   inputCostMultiplier: record.input_cost_multiplier,
   outputCostMultiplier: record.output_cost_multiplier,
@@ -1326,6 +1327,27 @@ export const mapEndpointRecord = (record = {}) => ({
   cooldownUntil: record.cooldown_until,
   cooldown_reason: record.cooldown_reason,
   cooldownReason: record.cooldown_reason
+});
+
+export const buildEndpointRecordPayload = (input = {}, fallbackName = '') => ({
+  channel: input.channel || '',
+  name: input.name || fallbackName,
+  url: input.url || '',
+  token: input.token || '',
+  api_key: input.apiKey || '',
+  headers: input.headers || {},
+  priority: parseInt(input.priority) || 1,
+  failover_enabled: input.failoverEnabled !== false,
+  cooldown_seconds: input.cooldownSeconds ? parseInt(input.cooldownSeconds) : null,
+  timeout_seconds: parseInt(input.timeoutSeconds) || 300,
+  supports_count_tokens: input.supportsCountTokens || false,
+  model_rewrite_rules: String(input.modelRewriteRules || '').trim(),
+  cost_multiplier: parseFloat(input.costMultiplier) || 1.0,
+  input_cost_multiplier: parseFloat(input.inputCostMultiplier) || 1.0,
+  output_cost_multiplier: parseFloat(input.outputCostMultiplier) || 1.0,
+  cache_creation_cost_multiplier: parseFloat(input.cacheCreationCostMultiplier) || 1.0,
+  cache_creation_cost_multiplier_1h: parseFloat(input.cacheCreationCostMultiplier1h) || 1.0,
+  cache_read_cost_multiplier: parseFloat(input.cacheReadCostMultiplier) || 1.0
 });
 
 /**
@@ -1362,26 +1384,7 @@ export const createEndpointRecord = async (input) => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
 
-  // 转换为后端期望的格式
-  const record = {
-    channel: input.channel || '',
-    name: input.name || '',
-    url: input.url || '',
-    token: input.token || '',
-    api_key: input.apiKey || '',
-    headers: input.headers || {},
-    priority: parseInt(input.priority) || 1,
-    failover_enabled: input.failoverEnabled !== false,
-    cooldown_seconds: input.cooldownSeconds ? parseInt(input.cooldownSeconds) : null,
-    timeout_seconds: parseInt(input.timeoutSeconds) || 300,
-    supports_count_tokens: input.supportsCountTokens || false,
-    cost_multiplier: parseFloat(input.costMultiplier) || 1.0,
-    input_cost_multiplier: parseFloat(input.inputCostMultiplier) || 1.0,
-    output_cost_multiplier: parseFloat(input.outputCostMultiplier) || 1.0,
-    cache_creation_cost_multiplier: parseFloat(input.cacheCreationCostMultiplier) || 1.0,
-    cache_creation_cost_multiplier_1h: parseFloat(input.cacheCreationCostMultiplier1h) || 1.0,
-    cache_read_cost_multiplier: parseFloat(input.cacheReadCostMultiplier) || 1.0
-  };
+  const record = buildEndpointRecordPayload(input);
 
   await WailsApp.CreateEndpointRecord(record);
   return { success: true };
@@ -1397,26 +1400,7 @@ export const updateEndpointRecord = async (name, input) => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
 
-  // 转换为后端期望的格式
-  const record = {
-    channel: input.channel || '',
-    name: input.name || name,
-    url: input.url || '',
-    token: input.token || '',
-    api_key: input.apiKey || '',
-    headers: input.headers || {},
-    priority: parseInt(input.priority) || 1,
-    failover_enabled: input.failoverEnabled !== false,
-    cooldown_seconds: input.cooldownSeconds ? parseInt(input.cooldownSeconds) : null,
-    timeout_seconds: parseInt(input.timeoutSeconds) || 300,
-    supports_count_tokens: input.supportsCountTokens || false,
-    cost_multiplier: parseFloat(input.costMultiplier) || 1.0,
-    input_cost_multiplier: parseFloat(input.inputCostMultiplier) || 1.0,
-    output_cost_multiplier: parseFloat(input.outputCostMultiplier) || 1.0,
-    cache_creation_cost_multiplier: parseFloat(input.cacheCreationCostMultiplier) || 1.0,
-    cache_creation_cost_multiplier_1h: parseFloat(input.cacheCreationCostMultiplier1h) || 1.0,
-    cache_read_cost_multiplier: parseFloat(input.cacheReadCostMultiplier) || 1.0
-  };
+  const record = buildEndpointRecordPayload(input, name);
 
   await WailsApp.UpdateEndpointRecord(name, record);
   return { success: true };

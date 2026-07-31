@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"cc-forwarder/internal/accountauth"
+	"cc-forwarder/internal/modelrewrite"
 	"cc-forwarder/internal/privacy"
 	"cc-forwarder/internal/proxy/handlers"
 	svc "cc-forwarder/internal/service"
@@ -40,16 +41,7 @@ const (
 	chatGPTCodexModelsURL    = "https://chatgpt.com/backend-api/codex/models"
 	openAIBetaResponsesValue = "responses=experimental"
 	defaultOAuthOriginator   = "codex_cli_rs"
-	modelRewriteMatchExact   = "exact"
-	modelRewriteMatchPrefix  = "prefix"
 )
-
-type accountModelRewriteRule struct {
-	Paths []string `json:"paths"`
-	Match string   `json:"match"`
-	From  string   `json:"from"`
-	To    string   `json:"to"`
-}
 
 type accountUsageLimitErrorEnvelope struct {
 	Error accountUsageLimitErrorDetail `json:"error"`
@@ -590,74 +582,12 @@ func rewriteCodexAccountModel(acc *store.UpstreamAccountRecord, path, model stri
 	if acc == nil {
 		return "", false
 	}
-	model = strings.TrimSpace(model)
-	if model == "" {
+	target, rewritten, err := modelrewrite.Rewrite(acc.ModelRewriteRules, path, model)
+	if err != nil {
+		slog.Warn("⚠️ [账号模型改写] 忽略无效规则", "account", acc.AccountName, "error", err)
 		return "", false
 	}
-
-	rules := parseAccountModelRewriteRules(acc.ModelRewriteRules)
-	for _, rule := range rules {
-		target := strings.TrimSpace(rule.To)
-		if target == "" || !accountModelRewriteRuleMatchesPath(rule, path) || !accountModelRewriteRuleMatchesModel(rule, model) {
-			continue
-		}
-		if target == model {
-			return "", false
-		}
-		return target, true
-	}
-	return "", false
-}
-
-func parseAccountModelRewriteRules(raw string) []accountModelRewriteRule {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	var rules []accountModelRewriteRule
-	if err := json.Unmarshal([]byte(raw), &rules); err == nil {
-		return rules
-	}
-
-	var single accountModelRewriteRule
-	if err := json.Unmarshal([]byte(raw), &single); err != nil {
-		return nil
-	}
-	return []accountModelRewriteRule{single}
-}
-
-func accountModelRewriteRuleMatchesPath(rule accountModelRewriteRule, path string) bool {
-	if len(rule.Paths) == 0 {
-		return true
-	}
-	for _, allowedPath := range rule.Paths {
-		if strings.TrimSpace(allowedPath) == path {
-			return true
-		}
-	}
-	return false
-}
-
-func accountModelRewriteRuleMatchesModel(rule accountModelRewriteRule, model string) bool {
-	from := strings.TrimSpace(rule.From)
-	if from == "" {
-		return false
-	}
-	match := strings.TrimSpace(strings.ToLower(rule.Match))
-	if match == "" {
-		match = modelRewriteMatchExact
-	}
-
-	normalizedModel := strings.ToLower(model)
-	normalizedFrom := strings.ToLower(from)
-	switch match {
-	case modelRewriteMatchPrefix:
-		return strings.HasPrefix(normalizedModel, normalizedFrom)
-	case modelRewriteMatchExact:
-		return normalizedModel == normalizedFrom
-	default:
-		return false
-	}
+	return target, rewritten
 }
 
 func (h *Handler) isLocalNoAvailableProviders503Response(resp *http.Response) (bool, string) {

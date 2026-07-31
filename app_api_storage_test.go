@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"io"
 	"log/slog"
@@ -17,7 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestCreateEndpointRecord_PersistsCacheCreationCostMultiplier1h(t *testing.T) {
+func TestCreateEndpointRecord_PersistsModelRewriteRulesAndCacheCreationCostMultiplier1h(t *testing.T) {
 	app, cleanup := newEndpointStorageAPITestApp(t)
 	defer cleanup()
 
@@ -30,6 +31,7 @@ func TestCreateEndpointRecord_PersistsCacheCreationCostMultiplier1h(t *testing.T
 		FailoverEnabled:               true,
 		TimeoutSeconds:                120,
 		SupportsCountTokens:           true,
+		ModelRewriteRules:             `[{"paths":["/v1/messages","/v1/messages/count_tokens"],"match":"exact","from":"claude-sonnet-4-5","to":"provider-sonnet"}]`,
 		CostMultiplier:                1.2,
 		InputCostMultiplier:           1.3,
 		OutputCostMultiplier:          1.4,
@@ -52,6 +54,9 @@ func TestCreateEndpointRecord_PersistsCacheCreationCostMultiplier1h(t *testing.T
 	if got := records[0].CacheCreationCostMultiplier1h; got != 2.5 {
 		t.Fatalf("expected list API cache_creation_cost_multiplier_1h=2.5, got %v", got)
 	}
+	if got := records[0].ModelRewriteRules; got != input.ModelRewriteRules {
+		t.Fatalf("expected list API model_rewrite_rules=%q, got %q", input.ModelRewriteRules, got)
+	}
 
 	record, err := app.GetEndpointRecord("ep-cache-1h")
 	if err != nil {
@@ -60,9 +65,13 @@ func TestCreateEndpointRecord_PersistsCacheCreationCostMultiplier1h(t *testing.T
 	if got := record.CacheCreationCostMultiplier1h; got != 2.5 {
 		t.Fatalf("expected detail API cache_creation_cost_multiplier_1h=2.5, got %v", got)
 	}
+	if got := record.ModelRewriteRules; got != input.ModelRewriteRules {
+		t.Fatalf("expected detail API model_rewrite_rules=%q, got %q", input.ModelRewriteRules, got)
+	}
 
 	update := input
 	update.CacheCreationCostMultiplier1h = 3.5
+	update.ModelRewriteRules = `[{"paths":["/v1/messages","/v1/messages/count_tokens"],"match":"exact","from":"claude-opus-4-1","to":"provider-opus"}]`
 	if err := app.UpdateEndpointRecord("ep-cache-1h", update); err != nil {
 		t.Fatalf("UpdateEndpointRecord failed: %v", err)
 	}
@@ -73,6 +82,50 @@ func TestCreateEndpointRecord_PersistsCacheCreationCostMultiplier1h(t *testing.T
 	}
 	if got := updated.CacheCreationCostMultiplier1h; got != 3.5 {
 		t.Fatalf("expected updated detail API cache_creation_cost_multiplier_1h=3.5, got %v", got)
+	}
+	if got := updated.ModelRewriteRules; got != update.ModelRewriteRules {
+		t.Fatalf("expected updated detail API model_rewrite_rules=%q, got %q", update.ModelRewriteRules, got)
+	}
+	runtimeEndpoint := app.endpointManager.GetEndpointByNameAny("ep-cache-1h")
+	if runtimeEndpoint == nil || runtimeEndpoint.Config.ModelRewriteRules != update.ModelRewriteRules {
+		t.Fatalf("expected runtime model rewrite rules to update immediately, got %+v", runtimeEndpoint)
+	}
+}
+
+func TestImportFromYAML_InvalidModelRewriteRulesDoesNotClearExistingEndpoints(t *testing.T) {
+	app, cleanup := newEndpointStorageAPITestApp(t)
+	defer cleanup()
+
+	if err := app.CreateEndpointRecord(CreateEndpointInput{
+		Channel:         "existing",
+		Name:            "existing-endpoint",
+		URL:             "https://existing.example.com",
+		Token:           "sk-existing",
+		Priority:        1,
+		TimeoutSeconds:  30,
+		CostMultiplier:  1,
+		FailoverEnabled: true,
+	}); err != nil {
+		t.Fatalf("create existing endpoint failed: %v", err)
+	}
+
+	_, err := app.endpointService.ImportFromYAML(context.Background(), []config.EndpointConfig{{
+		Name:              "invalid-endpoint",
+		URL:               "https://invalid.example.com",
+		Priority:          1,
+		Timeout:           30 * time.Second,
+		ModelRewriteRules: `[{"paths":["/v1/messages"],"match":"exact","from":"source","to":"target"}]`,
+	}}, true)
+	if err == nil {
+		t.Fatal("expected invalid YAML model rewrite rules to fail")
+	}
+
+	records, listErr := app.endpointService.ListEndpoints(context.Background())
+	if listErr != nil {
+		t.Fatalf("list endpoints after failed import: %v", listErr)
+	}
+	if len(records) != 1 || records[0].Name != "existing-endpoint" {
+		t.Fatalf("existing endpoints must survive failed import, got %+v", records)
 	}
 }
 
@@ -105,6 +158,7 @@ func newEndpointStorageAPITestApp(t *testing.T) (*App, func()) {
 			cooldown_seconds INTEGER,
 			timeout_seconds INTEGER DEFAULT 300,
 			supports_count_tokens INTEGER DEFAULT 0,
+			model_rewrite_rules TEXT DEFAULT '',
 			cost_multiplier REAL DEFAULT 1.0,
 			input_cost_multiplier REAL DEFAULT 1.0,
 			output_cost_multiplier REAL DEFAULT 1.0,

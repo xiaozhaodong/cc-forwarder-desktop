@@ -4,7 +4,12 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { buildUpstreamAccountPayload, mapEndpointRecord, normalizeUpstreamAccount } from './wailsApi.js';
+import {
+  buildEndpointRecordPayload,
+  buildUpstreamAccountPayload,
+  mapEndpointRecord,
+  normalizeUpstreamAccount
+} from './wailsApi.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.resolve(__dirname, './wailsApi.js');
@@ -17,6 +22,24 @@ test('mapEndpointRecord preserves cacheCreationCostMultiplier1h from detail payl
   });
 
   assert.equal(result.cacheCreationCostMultiplier1h, 1.75);
+});
+
+test('mapEndpointRecord and endpoint payload preserve model rewrite rules', () => {
+  const modelRewriteRules = '[{"paths":["/v1/messages"],"match":"exact","from":"source","to":"target"}]';
+  const mapped = mapEndpointRecord({
+    id: 2,
+    name: 'cc-model-rewrite',
+    model_rewrite_rules: modelRewriteRules
+  });
+  const payload = buildEndpointRecordPayload({
+    name: 'cc-model-rewrite',
+    modelRewriteRules: `  ${modelRewriteRules}  `
+  });
+
+  assert.equal(mapped.modelRewriteRules, modelRewriteRules);
+  assert.equal(payload.model_rewrite_rules, modelRewriteRules);
+  assert.equal(payload.name, 'cc-model-rewrite');
+  assert.equal(buildEndpointRecordPayload({}, 'fallback-endpoint').name, 'fallback-endpoint');
 });
 
 test('normalizeUpstreamAccount keeps mirrored aliases in sync for mixed-case upstream payloads', () => {

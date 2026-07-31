@@ -4,9 +4,14 @@
 // ============================================
 
 import { useRef, useState } from 'react';
-import { X, Save, AlertCircle, ChevronDown, ChevronUp, Eye, EyeOff } from 'lucide-react';
+import { X, Save, AlertCircle, ChevronDown, ChevronUp, Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@components/ui';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
+import {
+  createEmptyEndpointModelRewriteRule,
+  parseEndpointModelRewriteSettings,
+  serializeEndpointModelRewriteRules
+} from '../utils/modelRewrite.js';
 
 // ============================================
 // 表单输入组件
@@ -100,6 +105,7 @@ const EndpointForm = ({
   // 计算初始表单数据
   const getInitialFormData = () => {
     if (endpoint) {
+      const modelRewriteSettings = parseEndpointModelRewriteSettings(endpoint.modelRewriteRules || '');
       return {
         channel: endpoint.channel || '',
         name: endpoint.name || '',
@@ -111,6 +117,8 @@ const EndpointForm = ({
         cooldownSeconds: endpoint.cooldownSeconds || '',
         timeoutSeconds: endpoint.timeoutSeconds || 300,
         supportsCountTokens: endpoint.supportsCountTokens || false,
+        modelRewriteEnabled: modelRewriteSettings.enabled,
+        modelRewriteRules: modelRewriteSettings.rules,
         costMultiplier: endpoint.costMultiplier || 1.0,
         inputCostMultiplier: endpoint.inputCostMultiplier || 1.0,
         outputCostMultiplier: endpoint.outputCostMultiplier || 1.0,
@@ -130,6 +138,8 @@ const EndpointForm = ({
       cooldownSeconds: '',
       timeoutSeconds: 300,
       supportsCountTokens: false,
+      modelRewriteEnabled: false,
+      modelRewriteRules: [createEmptyEndpointModelRewriteRule()],
       costMultiplier: 1.0,
       inputCostMultiplier: 1.0,
       outputCostMultiplier: 1.0,
@@ -172,6 +182,21 @@ const EndpointForm = ({
     }
   };
 
+  const updateModelRewriteRules = (updater) => {
+    setFormData(prev => {
+      const current = Array.isArray(prev.modelRewriteRules) && prev.modelRewriteRules.length > 0
+        ? prev.modelRewriteRules
+        : [createEmptyEndpointModelRewriteRule()];
+      return {
+        ...prev,
+        modelRewriteRules: updater(current)
+      };
+    });
+    if (errors.modelRewriteRules) {
+      setErrors(prev => ({ ...prev, modelRewriteRules: null }));
+    }
+  };
+
   // 表单验证
   const validateForm = () => {
     const newErrors = {};
@@ -190,6 +215,16 @@ const EndpointForm = ({
     if (!isEditMode && !formData.token.trim()) {
       newErrors.token = '请输入 Token';
     }
+    if (formData.modelRewriteEnabled) {
+      const rules = Array.isArray(formData.modelRewriteRules) ? formData.modelRewriteRules : [];
+      if (!rules.length) {
+        newErrors.modelRewriteRules = '请至少添加一条模型改写规则';
+      } else if (rules.some((rule) => !String(rule.source || '').trim() || !String(rule.target || '').trim())) {
+        newErrors.modelRewriteRules = '请完整填写每条规则的来源模型和目标模型';
+      } else if (rules.some((rule) => String(rule.source || '').trim().toLowerCase() === String(rule.target || '').trim().toLowerCase())) {
+        newErrors.modelRewriteRules = '来源模型和目标模型不能相同';
+      }
+    }
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -204,7 +239,12 @@ const EndpointForm = ({
     }
 
     try {
-      await onSave(formData);
+      await onSave({
+        ...formData,
+        modelRewriteRules: formData.modelRewriteEnabled
+          ? serializeEndpointModelRewriteRules(formData.modelRewriteRules)
+          : ''
+      });
     } catch (error) {
       console.error('保存失败:', error);
       setErrors({ submit: error.message || '保存失败' });
@@ -386,6 +426,101 @@ const EndpointForm = ({
                 help="端点是否支持 Token 计数 API"
               />
             </div>
+          </div>
+
+          {/* 模型兼容改写 */}
+          <div className="space-y-4 mb-6">
+            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">
+              模型兼容
+            </h3>
+
+            <label className="flex items-start gap-3 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={Boolean(formData.modelRewriteEnabled)}
+                onChange={(event) => {
+                  const enabled = event.target.checked;
+                  setFormData(prev => ({
+                    ...prev,
+                    modelRewriteEnabled: enabled,
+                    modelRewriteRules: Array.isArray(prev.modelRewriteRules) && prev.modelRewriteRules.length > 0
+                      ? prev.modelRewriteRules
+                      : [createEmptyEndpointModelRewriteRule()]
+                  }));
+                  if (errors.modelRewriteRules) {
+                    setErrors(prev => ({ ...prev, modelRewriteRules: null }));
+                  }
+                }}
+                className="mt-1 w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+              />
+              <span>
+                <span className="block font-medium">启用模型兼容改写</span>
+                <span className="block text-xs text-slate-400 mt-0.5">
+                  将 Claude Code 请求中的模型名精确替换为当前端点支持的模型
+                </span>
+              </span>
+            </label>
+
+            {formData.modelRewriteEnabled && (
+              <div className="p-4 bg-slate-50 rounded-lg space-y-3">
+                {(Array.isArray(formData.modelRewriteRules) && formData.modelRewriteRules.length > 0
+                  ? formData.modelRewriteRules
+                  : [createEmptyEndpointModelRewriteRule()]
+                ).map((rule, index, rules) => (
+                  <div key={index} className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto]">
+                    <FormInput
+                      label={`来源模型${rules.length > 1 ? ` ${index + 1}` : ''}`}
+                      value={rule.source || ''}
+                      onChange={(event) => updateModelRewriteRules(current => current.map((item, itemIndex) => (
+                        itemIndex === index ? { ...item, source: event.target.value } : item
+                      )))}
+                      placeholder="claude-sonnet-4-5"
+                    />
+                    <FormInput
+                      label={`目标模型${rules.length > 1 ? ` ${index + 1}` : ''}`}
+                      value={rule.target || ''}
+                      onChange={(event) => updateModelRewriteRules(current => current.map((item, itemIndex) => (
+                        itemIndex === index ? { ...item, target: event.target.value } : item
+                      )))}
+                      placeholder="provider-sonnet"
+                    />
+                    <div>
+                      <div className="mb-1 text-sm font-medium text-transparent select-none" aria-hidden="true">删除</div>
+                      <button
+                        type="button"
+                        aria-label={`删除模型改写规则 ${index + 1}`}
+                        title="删除规则"
+                        disabled={rules.length <= 1}
+                        onClick={() => updateModelRewriteRules(current => current.filter((_, itemIndex) => itemIndex !== index))}
+                        className={`inline-flex h-[38px] w-10 items-center justify-center rounded-lg border transition-colors ${
+                          rules.length <= 1
+                            ? 'cursor-not-allowed border-slate-100 text-slate-300'
+                            : 'border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-500'
+                        }`}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => updateModelRewriteRules(rules => [...rules, createEmptyEndpointModelRewriteRule()])}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
+                >
+                  <Plus size={15} />
+                  添加规则
+                </button>
+
+                {errors.modelRewriteRules && (
+                  <p className="text-xs text-rose-500">{errors.modelRewriteRules}</p>
+                )}
+                <p className="text-xs leading-5 text-slate-500">
+                  仅在 <code>/v1/messages</code> 与 <code>/v1/messages/count_tokens</code> 转发前生效；所有规则均为精确匹配，且按顺序使用第一条命中规则。
+                </p>
+              </div>
+            )}
           </div>
 
           {/* 高级选项（可折叠） */}

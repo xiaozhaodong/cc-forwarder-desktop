@@ -279,6 +279,12 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 			description: "Claude路由决策时间字段",
 		},
 		{
+			table:       "endpoints",
+			checkColumn: "model_rewrite_rules",
+			alterSQL:    "ALTER TABLE endpoints ADD COLUMN model_rewrite_rules TEXT DEFAULT ''",
+			description: "CC端点模型兼容改写规则字段",
+		},
+		{
 			table:       "upstream_accounts",
 			checkColumn: "group_key",
 			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN group_key TEXT DEFAULT ''",

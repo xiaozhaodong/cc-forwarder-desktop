@@ -40,6 +40,10 @@
   - `model_rewrite_rules`
   - 当前前端支持多条精确匹配规则，例如 `gpt-5.4 -> gpt-5.5`、`gpt-5.4-mini -> gpt-5.5`
   - 不按渠道自动生成规则，所有改写规则都由前端显式启用并维护
+- Claude 端点模型兼容改写：
+  - `endpoints.model_rewrite_rules`
+  - 前端支持多条精确匹配规则，默认关闭，不按渠道自动生成规则
+  - 固定作用于 `/v1/messages` 与 `/v1/messages/count_tokens`；故障转移时每个候选端点都从原始请求体重新应用自己的规则
 - Responses 计费口径修正：`/v1/responses` 的 `input_tokens` 已含缓存读，实际输入计费需按 `input_tokens - cache_read_tokens`
 - 出站隐私保护（v6.1）：
   - 单一模式字段 `关闭 / 仅检测 / 脱敏转发`，默认关闭
@@ -75,9 +79,11 @@
 - `internal/service/account_pool_scheduler.go`：可调度账号排序与最近一次调度快照
 - `internal/service/account_pool_profile.go`：账号画像与 quota 刷新
 - `internal/store/account_pool.go`：`upstream_accounts` 存储层
+- `internal/modelrewrite/`：Codex 账号池与 Claude 端点共用的模型改写解析、校验与匹配引擎
+- `internal/store/endpoint.go` / `internal/service/endpoint.go`：Claude 端点 `model_rewrite_rules` 的持久化、校验与运行时配置同步
 - `internal/proxy/account_pipeline.go`：账号池转发链路
 - `internal/proxy/handlers/streaming.go`：非账号池 streaming 重试与 tail drain 入口
-- `internal/proxy/handlers/forwarder.go`：streaming upstream request 构造
+- `internal/proxy/handlers/forwarder.go`：Claude 端点普通/流式 upstream request 构造与端点级模型改写
 - `internal/proxy/stream_processor.go`：流式 terminal / cancellation / tail drain 核心
 - `internal/tracking/tracker.go`：统一成本计算、倍率缓存、热池详情口径
 - `internal/tracking/archive_manager.go`：归档时成本计算口径

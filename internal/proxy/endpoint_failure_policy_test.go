@@ -80,6 +80,23 @@ func TestDecideEndpointForwardOutcome_Table(t *testing.T) {
 			wantMark:   EndpointMarkRateLimitCooldown,
 		},
 		{
+			name:             "403 明确模型不支持写模型负缓存而非鉴权冷却",
+			resp:             responseWithStatus(http.StatusForbidden, nil),
+			trace:            tracedState(true),
+			bodySample:       `{"error":{"message":"You do not have access to model provider-sonnet"}}`,
+			wantAction:       EndpointForwardNextCandidate,
+			wantMark:         EndpointMarkNegativeCache,
+			wantFailureClass: handlers.FailureClassModelUnsupported,
+		},
+		{
+			name:       "403 普通鉴权错误仍进入鉴权冷却",
+			resp:       responseWithStatus(http.StatusForbidden, nil),
+			trace:      tracedState(true),
+			bodySample: `{"error":{"message":"invalid api key"}}`,
+			wantAction: EndpointForwardNextCandidate,
+			wantMark:   EndpointMarkAuthCooldown,
+		},
+		{
 			name:           "429 带 Retry-After 使用响应头值",
 			resp:           responseWithStatus(http.StatusTooManyRequests, map[string]string{"Retry-After": "5"}),
 			trace:          tracedState(true),

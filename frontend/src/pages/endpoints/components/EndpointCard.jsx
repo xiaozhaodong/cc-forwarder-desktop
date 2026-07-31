@@ -18,6 +18,7 @@ import {
   Timer
 } from 'lucide-react';
 import { BrowserOpenURL } from '@wailsjs/runtime/runtime';
+import { summarizeEndpointModelRewriteRules } from '../utils/modelRewrite.js';
 
 // ============================================
 // 连通性状态徽章
@@ -92,6 +93,7 @@ const EndpointCard = ({
   const responseTime = endpoint.response_time || endpoint.responseTimeMs || 0;
   const isNeverChecked = endpoint.never_checked === true || endpoint.neverChecked === true || (!endpoint.lastCheck && !endpoint.last_check);
   const inCooldown = endpoint.in_cooldown || endpoint.inCooldown;
+  const modelRewriteSummary = summarizeEndpointModelRewriteRules(endpoint.modelRewriteRules || endpoint.model_rewrite_rules || '');
 
   // 获取认证类型显示
   const getAuthType = () => {
@@ -106,7 +108,7 @@ const EndpointCard = ({
       ${isActive ? 'border-slate-200/80' : 'border-slate-200/60 opacity-70'}
     `}>
       {/* 单行布局：开关 | 名称+状态 | 信息标签 | 操作按钮 */}
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         {/* 开关 */}
         <div
           className="cursor-pointer flex-shrink-0"
@@ -156,25 +158,36 @@ const EndpointCard = ({
         </div>
 
         {/* 信息标签区 */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+        <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
           {/* 优先级 */}
-          <span className="w-5 h-5 inline-flex items-center justify-center rounded bg-white border border-slate-200 font-bold text-slate-600 text-[10px]" title="优先级">
+          <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-slate-200 bg-white text-[10px] font-bold text-slate-600" title="优先级">
             {endpoint.priority || 1}
           </span>
 
           {/* 延迟 */}
-          <LatencyBadge ms={responseTime} />
+          <div className="shrink-0">
+            <LatencyBadge ms={responseTime} />
+          </div>
 
           {/* 倍率 */}
           {(endpoint.costMultiplier || 1) > 1.0 && (
-            <span className="text-[10px] font-mono font-medium px-1 py-0.5 rounded bg-orange-50 text-orange-600 border border-orange-100">
+            <span className="shrink-0 rounded border border-orange-100 bg-orange-50 px-1 py-0.5 font-mono text-[10px] font-medium text-orange-600">
               {endpoint.costMultiplier}x
+            </span>
+          )}
+
+          {modelRewriteSummary && (
+            <span
+              className="min-w-0 max-w-[150px] flex-1 truncate rounded border border-cyan-100 bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700"
+              title={modelRewriteSummary.title}
+            >
+              {modelRewriteSummary.label}
             </span>
           )}
 
           {/* 故障转移 */}
           <div
-            className={`p-1 rounded ${endpoint.failoverEnabled !== false ? 'bg-indigo-50 text-indigo-500' : 'bg-white text-slate-300 border border-slate-100'}`}
+            className={`shrink-0 rounded p-1 ${endpoint.failoverEnabled !== false ? 'bg-indigo-50 text-indigo-500' : 'bg-white text-slate-300 border border-slate-100'}`}
             title="故障转移"
           >
             <ArrowRightLeft size={11} />
@@ -182,7 +195,7 @@ const EndpointCard = ({
 
           {/* Token 计数 */}
           <div
-            className={`p-1 rounded ${endpoint.supportsCountTokens ? 'bg-purple-50 text-purple-500' : 'bg-white text-slate-300 border border-slate-100'}`}
+            className={`shrink-0 rounded p-1 ${endpoint.supportsCountTokens ? 'bg-purple-50 text-purple-500' : 'bg-white text-slate-300 border border-slate-100'}`}
             title="Token 计数"
           >
             <Calculator size={11} />
@@ -190,14 +203,14 @@ const EndpointCard = ({
 
           {/* 认证 */}
           {getAuthType() && (
-            <div className="p-1 rounded bg-amber-50 text-amber-500" title={`已配置 ${getAuthType()}`}>
+            <div className="shrink-0 rounded bg-amber-50 p-1 text-amber-500" title={`已配置 ${getAuthType()}`}>
               <ShieldCheck size={11} />
             </div>
           )}
         </div>
 
         {/* 操作按钮 */}
-        <div className="flex items-center gap-0.5 flex-shrink-0">
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
           {/* 复制 Token */}
           {(endpoint.token || endpoint.apiKey) && (
             <button

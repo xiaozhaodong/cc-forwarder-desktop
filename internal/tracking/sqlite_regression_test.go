@@ -544,6 +544,11 @@ func TestSQLiteMigrationRebuildsLegacyUpstreamAccountsAndRestoresForeignKeys(t *
 	require.NoError(t, err)
 	assert.Equal(t, 0, sourceIDColumnCount, "upstream_accounts.source_id should be removed by migration")
 
+	var endpointModelRewriteColumnCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('endpoints') WHERE name = 'model_rewrite_rules'`).Scan(&endpointModelRewriteColumnCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, endpointModelRewriteColumnCount, "endpoints.model_rewrite_rules should exist after migration")
+
 	for _, column := range []string{
 		"plan_type",
 		"chatgpt_account_id",

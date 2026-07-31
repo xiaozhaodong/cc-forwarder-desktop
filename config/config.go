@@ -12,6 +12,8 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"gopkg.in/yaml.v3"
+
+	"cc-forwarder/internal/modelrewrite"
 )
 
 type Config struct {
@@ -265,6 +267,7 @@ type EndpointConfig struct {
 	Timeout             time.Duration     `yaml:"timeout"`
 	Headers             map[string]string `yaml:"headers,omitempty"`
 	SupportsCountTokens bool              `yaml:"supports_count_tokens,omitempty"` // 是否支持count_tokens端点
+	ModelRewriteRules   string            `yaml:"model_rewrite_rules,omitempty"`   // CC 端点模型兼容改写规则 JSON
 	Enabled             *bool             `yaml:"enabled,omitempty"`               // v5.0: 是否激活为代理端点（SQLite模式），默认: true
 }
 
@@ -761,6 +764,13 @@ func (c *Config) validate() error {
 		}
 		if endpoint.Priority < 0 {
 			return fmt.Errorf("endpoint %s: priority must be non-negative", endpoint.Name)
+		}
+		if err := modelrewrite.ValidateExact(
+			strings.TrimSpace(endpoint.ModelRewriteRules),
+			"/v1/messages",
+			"/v1/messages/count_tokens",
+		); err != nil {
+			return fmt.Errorf("endpoint %s: model_rewrite_rules 无效: %w", endpoint.Name, err)
 		}
 		// 验证 token 和 tokens 互斥
 		if endpoint.Token != "" && len(endpoint.Tokens) > 0 {

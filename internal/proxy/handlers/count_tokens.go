@@ -98,8 +98,9 @@ func (h *CountTokensHandler) getSupportedEndpoints(ctx context.Context, profile 
 // tryForward 尝试转发到支持的端点
 func (h *CountTokensHandler) tryForward(ctx context.Context, r *http.Request, bodyBytes []byte, endpoints []*endpoint.Endpoint, connID string) ([]byte, bool, error) {
 	for _, ep := range endpoints {
+		endpointBody := prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
 		// 🛡️ 出站隐私过滤；策略拒绝时由调用方直返 413/422，不降级估算
-		preparedBody, err := ApplyPrivacyFilterForEndpoint(h.forwarder.privacyFilter, r, bodyBytes, ep)
+		preparedBody, err := ApplyPrivacyFilterForEndpoint(h.forwarder.privacyFilter, r, endpointBody, ep)
 		if err != nil {
 			return nil, false, err
 		}

@@ -33,7 +33,8 @@ type EndpointRecord struct {
 	TimeoutSeconds  int  `json:"timeout_seconds"`  // 请求超时（秒）
 
 	// 功能支持
-	SupportsCountTokens bool `json:"supports_count_tokens"` // 是否支持 count_tokens
+	SupportsCountTokens bool   `json:"supports_count_tokens"` // 是否支持 count_tokens
+	ModelRewriteRules   string `json:"model_rewrite_rules"`   // CC 端点模型兼容改写规则 JSON
 
 	// 成本倍率
 	CostMultiplier                float64 `json:"cost_multiplier"`
@@ -145,17 +146,17 @@ func (s *SQLiteEndpointStore) Create(ctx context.Context, record *EndpointRecord
 		INSERT INTO endpoints (
 			channel, name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
-			supports_count_tokens,
+			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			enabled
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := s.getQuerier().ExecContext(ctx, query,
 		record.Channel, record.Name, record.URL, record.Token, record.ApiKey, string(headersJSON),
 		record.Priority, boolToInt(record.FailoverEnabled), record.CooldownSeconds, record.TimeoutSeconds,
-		boolToInt(record.SupportsCountTokens),
+		boolToInt(record.SupportsCountTokens), record.ModelRewriteRules,
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
 		boolToInt(record.Enabled),
@@ -184,7 +185,7 @@ func (s *SQLiteEndpointStore) Get(ctx context.Context, name string) (*EndpointRe
 	query := `
 		SELECT id, channel, name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
-			supports_count_tokens,
+			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			enabled, created_at, updated_at
@@ -202,7 +203,7 @@ func (s *SQLiteEndpointStore) GetByID(ctx context.Context, id int64) (*EndpointR
 	query := `
 		SELECT id, channel, name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
-			supports_count_tokens,
+			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			enabled, created_at, updated_at
@@ -220,7 +221,7 @@ func (s *SQLiteEndpointStore) List(ctx context.Context) ([]*EndpointRecord, erro
 	query := `
 		SELECT id, channel, name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
-			supports_count_tokens,
+			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			enabled, created_at, updated_at
@@ -246,7 +247,7 @@ func (s *SQLiteEndpointStore) Update(ctx context.Context, record *EndpointRecord
 		UPDATE endpoints SET
 			channel = ?, url = ?, token = ?, api_key = ?, headers = ?,
 			priority = ?, failover_enabled = ?, cooldown_seconds = ?, timeout_seconds = ?,
-			supports_count_tokens = ?,
+			supports_count_tokens = ?, model_rewrite_rules = ?,
 			cost_multiplier = ?, input_cost_multiplier = ?, output_cost_multiplier = ?,
 			cache_creation_cost_multiplier = ?, cache_creation_cost_multiplier_1h = ?, cache_read_cost_multiplier = ?,
 			enabled = ?
@@ -256,7 +257,7 @@ func (s *SQLiteEndpointStore) Update(ctx context.Context, record *EndpointRecord
 	result, err := s.getQuerier().ExecContext(ctx, query,
 		record.Channel, record.URL, record.Token, record.ApiKey, string(headersJSON),
 		record.Priority, boolToInt(record.FailoverEnabled), record.CooldownSeconds, record.TimeoutSeconds,
-		boolToInt(record.SupportsCountTokens),
+		boolToInt(record.SupportsCountTokens), record.ModelRewriteRules,
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
 		boolToInt(record.Enabled),
@@ -387,11 +388,11 @@ func (s *SQLiteEndpointStore) BatchCreate(ctx context.Context, records []*Endpoi
 		INSERT INTO endpoints (
 			channel, name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
-			supports_count_tokens,
+			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			enabled
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	stmt, err := tx.PrepareContext(ctx, query)
@@ -432,7 +433,7 @@ func (s *SQLiteEndpointStore) BatchCreate(ctx context.Context, records []*Endpoi
 		_, err = stmt.ExecContext(ctx,
 			record.Channel, record.Name, record.URL, record.Token, record.ApiKey, string(headersJSON),
 			record.Priority, boolToInt(record.FailoverEnabled), record.CooldownSeconds, record.TimeoutSeconds,
-			boolToInt(record.SupportsCountTokens),
+			boolToInt(record.SupportsCountTokens), record.ModelRewriteRules,
 			record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 			record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
 			boolToInt(record.Enabled),
@@ -483,7 +484,7 @@ func (s *SQLiteEndpointStore) ListByChannel(ctx context.Context, channel string)
 	query := `
 		SELECT id, channel, name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
-			supports_count_tokens,
+			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			enabled, created_at, updated_at
@@ -503,7 +504,7 @@ func (s *SQLiteEndpointStore) ListEnabled(ctx context.Context) ([]*EndpointRecor
 	query := `
 		SELECT id, channel, name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
-			supports_count_tokens,
+			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			enabled, created_at, updated_at
@@ -549,7 +550,7 @@ func (s *SQLiteEndpointStore) scanEndpoint(row *sql.Row) (*EndpointRecord, error
 		&record.ID, &record.Channel, &record.Name, &record.URL,
 		&record.Token, &record.ApiKey, &headersJSON,
 		&record.Priority, &failoverEnabled, &cooldownSeconds, &record.TimeoutSeconds,
-		&supportsCountTokens,
+		&supportsCountTokens, &record.ModelRewriteRules,
 		&record.CostMultiplier, &record.InputCostMultiplier, &record.OutputCostMultiplier,
 		&record.CacheCreationCostMultiplier, &record.CacheCreationCostMultiplier1h, &record.CacheReadCostMultiplier,
 		&enabled, &createdAt, &updatedAt,
@@ -611,7 +612,7 @@ func (s *SQLiteEndpointStore) scanEndpointsWithArgs(ctx context.Context, query s
 			&record.ID, &record.Channel, &record.Name, &record.URL,
 			&record.Token, &record.ApiKey, &headersJSON,
 			&record.Priority, &failoverEnabled, &cooldownSeconds, &record.TimeoutSeconds,
-			&supportsCountTokens,
+			&supportsCountTokens, &record.ModelRewriteRules,
 			&record.CostMultiplier, &record.InputCostMultiplier, &record.OutputCostMultiplier,
 			&record.CacheCreationCostMultiplier, &record.CacheCreationCostMultiplier1h, &record.CacheReadCostMultiplier,
 			&enabled, &createdAt, &updatedAt,
