@@ -268,13 +268,22 @@ func TestDetectSSERequest_ImageEditMultipartStreamField(t *testing.T) {
 	}
 }
 
-func TestCopyImageAPIResponse_FlushesEventStream(t *testing.T) {
+func TestRelayValidatedImageAPIStream_AcceptsCompletedImageEdit(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	if err := copyImageAPIResponse(recorder, strings.NewReader("event: image_edit.completed\ndata: {}\n\n"), true); err != nil {
-		t.Fatalf("copy event stream failed: %v", err)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(
+			"event: image_edit.completed\n" +
+				`data: {"type":"image_edit.completed","b64_json":"ZWRpdGVk"}` + "\n\n",
+		)),
 	}
-	if !recorder.Flushed {
-		t.Fatal("expected event stream response to flush")
+	result, err := relayValidatedImageAPIStream(recorder, resp, openAIImagesEditsPath)
+	if err != nil {
+		t.Fatalf("relay event stream failed: %v", err)
+	}
+	if !result.Committed || !recorder.Flushed || !strings.Contains(recorder.Body.String(), "image_edit.completed") {
+		t.Fatalf("expected completed flushed event stream, result=%+v body=%s", result, recorder.Body.String())
 	}
 }
 

@@ -661,6 +661,9 @@ func (h *Handler) detectSSERequest(r *http.Request, bodyBytes []byte) bool {
 	if r != nil && r.URL.Path == codexStandaloneSearchPath {
 		return false
 	}
+	if r != nil && r.URL != nil && isImageAPIPath(r.URL.Path) {
+		return imageAPIRequestStreamEnabled(r, bodyBytes)
+	}
 
 	// 检查多种SSE请求模式:
 	acceptHeader := r.Header.Get("Accept")

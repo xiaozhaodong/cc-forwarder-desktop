@@ -1,12 +1,10 @@
 package proxy
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -91,6 +89,7 @@ func (h *Handler) handleImageAPIRequest(ctx context.Context, w http.ResponseWrit
 		return
 	}
 	lifecycleManager.SetModel(prepared.Model)
+	isStreaming := imageAPIRequestStreamEnabled(r, prepared.Body)
 
 	prepared.Body, err = h.applyImageAPIPrivacyFilter(r, prepared, providerName)
 	if err != nil {
@@ -119,6 +118,7 @@ func (h *Handler) handleImageAPIRequest(ctx context.Context, w http.ResponseWrit
 	copyImageAPIRequestHeaders(r, upstreamReq)
 	upstreamReq.Header.Set("Authorization", "Bearer "+config.APIKey)
 	upstreamReq.Header.Set("Content-Type", prepared.ContentType)
+	upstreamReq.Header.Set("Accept-Encoding", "identity")
 	if upstreamReq.Header.Get("Accept") == "" {
 		upstreamReq.Header.Set("Accept", "application/json")
 	}
@@ -143,25 +143,47 @@ func (h *Handler) handleImageAPIRequest(ctx context.Context, w http.ResponseWrit
 	}
 	defer resp.Body.Close()
 
-	h.responseProcessor.CopyResponseHeaders(resp, w)
-	w.Header().Del("Content-Length")
 	lifecycleManager.UpdateStatus("processing", 0, resp.StatusCode)
-	if resp.StatusCode >= http.StatusBadRequest {
-		bufferedBody := bufio.NewReaderSize(resp.Body, 8192)
-		responsePreview, _ := bufferedBody.Peek(8192)
-		w.WriteHeader(resp.StatusCode)
-		if _, writeErr := io.Copy(w, bufferedBody); writeErr != nil {
-			lifecycleManager.FailRequest("image_generation_response_write_error", writeErr.Error(), resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		status, reason, writeErr := writeImageAPIUpstreamFailure(w, resp)
+		if writeErr != nil {
+			lifecycleManager.FailRequest("image_generation_response_write_error", writeErr.Error(), status)
 			return
 		}
-		reason := summarizeImageGenerationUpstreamError(responsePreview, resp.StatusCode)
-		lifecycleManager.FailRequest("image_generation_upstream_error", reason, resp.StatusCode)
+		lifecycleManager.FailRequest("image_generation_upstream_error", reason, status)
 		return
 	}
 
-	w.WriteHeader(resp.StatusCode)
-	isEventStream := strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
-	if err := copyImageAPIResponse(w, resp.Body, isEventStream); err != nil {
+	if isStreaming {
+		result, relayErr := relayValidatedImageAPIStream(w, resp, r.URL.Path)
+		if relayErr != nil {
+			if result.WriteFailure {
+				lifecycleManager.FailRequest("image_generation_response_write_error", relayErr.Error(), resp.StatusCode)
+				return
+			}
+			if result.Committed {
+				writeImageAPIStreamError(w, "image_api_invalid_upstream_response", "Image upstream returned an invalid event stream")
+				lifecycleManager.FailRequest("image_api_invalid_upstream_response", relayErr.Error(), http.StatusBadGateway)
+				return
+			}
+			lifecycleManager.FailRequest("image_api_invalid_upstream_response", relayErr.Error(), http.StatusBadGateway)
+			writeImageGenerationError(w, http.StatusBadGateway, "image_api_invalid_upstream_response", "Image upstream returned an invalid event stream")
+			return
+		}
+		lifecycleManager.CompleteRequestWithCost(config.FixedPriceUSD)
+		return
+	}
+
+	responseBody, err := readValidatedImageAPIJSONResponse(resp)
+	if err != nil {
+		lifecycleManager.FailRequest("image_api_invalid_upstream_response", err.Error(), http.StatusBadGateway)
+		writeImageGenerationError(w, http.StatusBadGateway, "image_api_invalid_upstream_response", "Image upstream returned an invalid response")
+		return
+	}
+	copyImageAPIResponseHeaders(resp, w)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(responseBody); err != nil {
 		lifecycleManager.FailRequest("image_generation_response_write_error", err.Error(), resp.StatusCode)
 		return
 	}
@@ -271,7 +293,7 @@ func (h *Handler) applyImageAPIPrivacyFilter(r *http.Request, prepared preparedI
 func copyImageAPIRequestHeaders(src, dst *http.Request) {
 	for key, values := range src.Header {
 		switch strings.ToLower(key) {
-		case "host", "authorization", "x-api-key", "cookie", "content-length", "content-type":
+		case "host", "authorization", "x-api-key", "cookie", "content-length", "content-type", "accept-encoding":
 			continue
 		}
 		for _, value := range values {
@@ -350,32 +372,4 @@ func summarizeImageGenerationUpstreamError(body []byte, status int) string {
 		return envelope.Error.Message
 	}
 	return fmt.Sprintf("image generation upstream returned HTTP %d", status)
-}
-
-func copyImageAPIResponse(w http.ResponseWriter, body io.Reader, flush bool) error {
-	if !flush {
-		_, err := io.Copy(w, body)
-		return err
-	}
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		_, err := io.Copy(w, body)
-		return err
-	}
-	buffer := make([]byte, 32*1024)
-	for {
-		readCount, readErr := body.Read(buffer)
-		if readCount > 0 {
-			if _, writeErr := w.Write(buffer[:readCount]); writeErr != nil {
-				return writeErr
-			}
-			flusher.Flush()
-		}
-		if readErr == io.EOF {
-			return nil
-		}
-		if readErr != nil {
-			return readErr
-		}
-	}
 }
