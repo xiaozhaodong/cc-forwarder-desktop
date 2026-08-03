@@ -54,6 +54,8 @@ type Handler struct {
 	// 故障转移通知回调仅用于向桌面/前端推送结构化事件，不改变调度语义。
 	failoverNotifierMu  sync.RWMutex
 	onFailoverTriggered func(FailoverEvent)
+	// §9.2 规则 5：endpoint+scope 非阻塞 429 重试 gate，同一时刻只放行一个延迟重试
+	rateLimitRetryGates sync.Map
 }
 
 type CodexModelListProvider interface {
@@ -464,7 +466,8 @@ func (h *Handler) handleCodexModelsPassthrough(ctx context.Context, w http.Respo
 	ep := endpoints[0]
 	resp, err := h.forwarder.ForwardRequestToEndpoint(ctx, r, nil, ep)
 	if err != nil {
-		h.endpointManager.RecordFailure(ep.Config.Name)
+		// 附录 A #9：非 /v1/messages 消费者经显式 scope adapter 落同一 tracker
+		h.recordUnfencedEndpointSoftFailure(ep.Config.Name, endpoint.SoftFailureCategoryConnection, 0, "codex_models_forward_failed")
 		writeCodexModelsError(w, http.StatusBadGateway, "codex_upstream_error", fmt.Sprintf("failed to fetch upstream model list: %v", err))
 		return
 	}
@@ -472,7 +475,7 @@ func (h *Handler) handleCodexModelsPassthrough(ctx context.Context, w http.Respo
 
 	responseBytes, err := h.responseProcessor.ProcessResponseBody(resp)
 	if err != nil {
-		h.endpointManager.RecordFailure(ep.Config.Name)
+		h.recordUnfencedEndpointSoftFailure(ep.Config.Name, endpoint.SoftFailureCategoryTransport, 0, "codex_models_response_read_failed")
 		writeCodexModelsError(w, http.StatusBadGateway, "codex_upstream_response_error", "failed to read upstream model list")
 		return
 	}
@@ -480,7 +483,7 @@ func (h *Handler) handleCodexModelsPassthrough(ctx context.Context, w http.Respo
 	h.responseProcessor.CopyResponseHeaders(resp, w)
 	w.WriteHeader(resp.StatusCode)
 	if _, err := w.Write(responseBytes); err != nil {
-		h.endpointManager.RecordFailure(ep.Config.Name)
+		h.recordUnfencedEndpointSoftFailure(ep.Config.Name, endpoint.SoftFailureCategoryTransport, 0, "codex_models_write_failed")
 		return
 	}
 	h.endpointManager.RecordSuccess(ep.Config.Name)

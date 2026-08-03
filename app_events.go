@@ -96,10 +96,18 @@ func (a *App) emitFailoverNotification(event proxy.FailoverEvent) {
 		reason = fmt.Sprintf("%s（%s）", reason, event.ReasonDetail)
 	}
 
+	title := "发生故障转移"
+	message := fmt.Sprintf("%s已从「%s」切换到「%s」。原因：%s", laneLabel, event.From, event.To, reason)
+	if event.Lane == proxy.FailoverLaneCC {
+		// v8 §13.5：临时 fallback 不得描述为"主端点已切换"
+		title = "本次请求临时改用备用端点"
+		message = fmt.Sprintf("本次请求临时改用「%s」。原因：%s（原端点「%s」）", event.To, reason, event.From)
+	}
+
 	a.emitNotificationData(map[string]interface{}{
 		"level":         "warning",
-		"title":         "发生故障转移",
-		"message":       fmt.Sprintf("%s已从「%s」切换到「%s」。原因：%s", laneLabel, event.From, event.To, reason),
+		"title":         title,
+		"message":       message,
 		"kind":          event.Kind,
 		"lane":          event.Lane,
 		"from":          event.From,

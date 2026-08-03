@@ -194,7 +194,10 @@ func (m *Manager) GetManualFixedRouteBlock(profile RouteRequestProfile) *RouteBl
 			Reason:     "manual_fixed_endpoint_missing",
 		}
 	}
-	if enabled := ep.Config.Enabled; enabled != nil && !*enabled {
+	ep.mutex.RLock()
+	hardEnabled := ep.Config.IsAvailabilityEnabled()
+	ep.mutex.RUnlock()
+	if !hardEnabled {
 		return &RouteBlock{
 			StatusCode: http.StatusNotFound,
 			Code:       "endpoint_not_found",
@@ -212,29 +215,16 @@ func (m *Manager) GetManualFixedRouteBlock(profile RouteRequestProfile) *RouteBl
 			Reason:     reason,
 		}
 	}
-	if m.getConfigSnapshot().FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(override.EndpointName) {
+	// 复用统一的 path-aware 可路由判定：messages cooldown 不阻断 count_tokens，
+	// count_tokens scoped cooldown 也必须得到明确的 manual-fixed RouteBlock。
+	if routable, reason, availableAt := m.classifyEndpointRoutable(ep, profile); !routable {
 		return &RouteBlock{
 			StatusCode: http.StatusServiceUnavailable,
 			Code:       "route_blocked_manual_fixed",
-			Message:    "Manual fixed endpoint reached failure threshold and fallback is disabled.",
-			Endpoint:   override.EndpointName,
-			Reason:     "failure_tracker_threshold",
-			RetryAfter: retryAfterFromDuration(m.getConfigSnapshot().FailureTracker.TimeWindow),
-		}
-	}
-	inCooldown, until, reason := m.GetEndpointCooldownInfo(override.EndpointName)
-	if inCooldown {
-		retryAfter := int(time.Until(until).Seconds())
-		if retryAfter < 1 {
-			retryAfter = 1
-		}
-		return &RouteBlock{
-			StatusCode: http.StatusServiceUnavailable,
-			Code:       "route_blocked_manual_fixed",
-			Message:    "Manual fixed endpoint is in cooldown and fallback is disabled.",
+			Message:    "Manual fixed endpoint is temporarily unavailable and fallback is disabled.",
 			Endpoint:   override.EndpointName,
 			Reason:     reason,
-			RetryAfter: retryAfter,
+			RetryAfter: retryAfterFromDuration(time.Until(availableAt)),
 		}
 	}
 	return nil

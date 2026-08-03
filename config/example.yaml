@@ -256,10 +256,17 @@ proxy:
 # ========================================================
 
 endpoints:
+  # v8 端点调度字段说明：
+  #   availability_enabled: 硬启用（默认 true）。false 时任何路由模式都不会使用该端点。
+  #   failover_enabled:     参与自动调度（默认 true）。false 时 Auto 模式不自动选择，
+  #                         但仍可在请求页手动优选或固定使用（专用模型/测试/高成本端点场景）。
+  #   enabled:              legacy active 标记，v8 起 deprecated，不再作为调度资格。
   # ============ 主要组 (main) ============
   # 组定义端点 - 定义整个 main 组使用的密钥
   - name: "primary"
     url: "https://api.openai.com"
+    availability_enabled: true             # v8: 硬启用
+    failover_enabled: true                 # v8: 参与自动调度
     group: "main"                          # 组名
     group-priority: 1                      # 组优先级 (数字越小优先级越高)
     priority: 1                            # 组内优先级 (数字越小优先级越高)

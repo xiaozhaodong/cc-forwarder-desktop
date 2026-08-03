@@ -36,7 +36,8 @@ import {
   createEndpointRecord,
   updateEndpointRecord,
   deleteEndpointRecord,
-  toggleEndpointRecord,
+  setEndpointAvailability,
+  setClaudeRoutingOverride,
   getClaudeRoutingState,
   clearClaudeRoutingOverride,
   isWailsEnvironment,
@@ -220,6 +221,7 @@ const EndpointsPage = () => {
   const displayEndpoints = isSqliteMode ? storageEndpoints : endpoints;
   const routeMode = routingState?.mode || 'auto';
   const routeEndpointName = routingState?.endpointName || routingState?.endpoint_name || '';
+  const routeEffectiveEndpoint = routingState?.last_effective_endpoint || routingState?.lastEffectiveEndpoint || '';
   const routeModeLabel = routeMode === 'manual_fixed' ? '手动固定' : '手动优选';
   const snapshotOutcome = resolveSnapshotOutcome(scheduleSnapshot);
   const showScheduleAlert = !scheduleSnapshotUnsupported
@@ -302,14 +304,29 @@ const EndpointsPage = () => {
     setDeleteTarget(endpoint);
   };
 
-  // 切换端点启用状态
+  // v8：切换端点硬启用状态（关闭后任何模式都不会使用）
   const handleToggle = async (name, enabled) => {
     try {
-      await toggleEndpointRecord(name, enabled);
-      // 刷新列表
+      await setEndpointAvailability(name, enabled);
       await loadStorageStatus();
     } catch (err) {
-      console.error('切换端点状态失败:', err);
+      console.error('切换端点启用状态失败:', err);
+      alert(`操作失败: ${err.message}`);
+    }
+  };
+
+  // v8：行内路由动作（设为优选 / 固定使用 / 恢复自动）
+  const handleSetRouting = async (mode, endpointName) => {
+    try {
+      if (mode === 'auto') {
+        await clearClaudeRoutingOverride();
+      } else {
+        await setClaudeRoutingOverride({ mode, endpointName });
+      }
+      await loadClaudeRoutingState();
+      await loadStorageStatus();
+    } catch (err) {
+      console.error('设置路由模式失败:', err);
       alert(`操作失败: ${err.message}`);
     }
   };
@@ -493,14 +510,14 @@ const EndpointsPage = () => {
         </div>
         {isSqliteMode && (
           <div className="bg-white rounded-xl border border-indigo-200/60 p-4 shadow-sm">
-            <div className="text-2xl font-bold text-indigo-600">
-              {storageEndpoints.filter(e => e.enabled).length}
+            <div className="text-2xl font-bold text-indigo-600 truncate">
+              {routeEffectiveEndpoint || '—'}
             </div>
             <div className="text-sm text-slate-500">
-              当前激活
-              {storageEndpoints.find(e => e.enabled) && (
+              当前生效端点
+              {routeMode !== 'auto' && routeEndpointName && (
                 <div className="text-xs text-indigo-500 mt-1 truncate">
-                  {storageEndpoints.find(e => e.enabled).name}
+                  手动目标：{routeEndpointName}
                 </div>
               )}
             </div>
@@ -553,6 +570,8 @@ const EndpointsPage = () => {
                 onEdit={handleEdit}
                 onDelete={handleDelete}
                 onToggle={handleToggle}
+                routingState={routingState}
+                onSetRouting={handleSetRouting}
               />
             ))}
           </div>

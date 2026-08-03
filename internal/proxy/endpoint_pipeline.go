@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"cc-forwarder/internal/endpoint"
@@ -83,8 +85,32 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		return
 	}
 
+	maxCandidates := h.config.Failover.MaxCandidateAttempts
+	if maxCandidates <= 0 {
+		maxCandidates = 3
+	}
+
 	var lastErr error
-	for i, ep := range result.Candidates {
+	attemptedEndpoints := 0
+	// admission lease 只覆盖当前候选的 attempt：切换下一候选时立即释放上一轮 lease，
+	// 避免失败候选的 lease 持有到请求结束、无意义拖住停用/删除的 drain 等待；
+	// defer 兜底释放最后一轮（Release 幂等且 nil 安全，覆盖 panic 与提前 return）
+	var admission *endpoint.AttemptAdmission
+	defer func() { admission.Release() }()
+	for i := range result.Candidates {
+		admission.Release()
+		plan := result.Plans[i]
+		// §8.5 请求内尝试预算：最多尝试 maxCandidates 个不同端点
+		if attemptedEndpoints >= maxCandidates {
+			slog.Warn(fmt.Sprintf("⛔ [端点管线] [%s] 尝试预算耗尽（%d/%d），剩余 %d 个候选不再尝试",
+				connID, attemptedEndpoints, maxCandidates, len(result.Candidates)-i))
+			if lastErr != nil {
+				lastErr = fmt.Errorf("candidate attempt budget exhausted (%d): %w", maxCandidates, lastErr)
+			} else {
+				lastErr = fmt.Errorf("candidate attempt budget exhausted (%d)", maxCandidates)
+			}
+			break
+		}
 		select {
 		case <-ctx.Done():
 			lifecycleManager.CancelRequest("client disconnected", nil)
@@ -98,14 +124,28 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		default:
 		}
 
-		lifecycleManager.SetEndpoint(ep.Config.Name, ep.Config.Group, ep.Config.Channel)
+		// §14.2：attempt 前原子重校验（删除 / pending gate / hard disable / config revision）
+		var acquireErr error
+		admission, acquireErr = h.endpointManager.AcquireEndpointAttempt(plan)
+		if acquireErr != nil {
+			slog.Warn(fmt.Sprintf("⏭️ [端点管线] [%s] 候选 %s 跳过: %s", connID, plan.EndpointName, acquireErr.Error()))
+			h.endpointManager.RecordEndpointScheduleAttempt(connID, plan.EndpointName, endpoint.EndpointScheduleRuntimeTryNext, acquireErr.Error())
+			continue
+		}
+		attemptedEndpoints++
+		target := admission.Target
+		// 后续状态结算沿用 Endpoint 形态，但实例来自 admission 的独立配置副本，
+		// 不再触碰 Manager 内的可变 Endpoint。
+		ep := &endpoint.Endpoint{Config: target.Config()}
+
+		lifecycleManager.SetEndpointAttempt(ep.Config.Name, ep.Config.Group, ep.Config.Channel, target.Revision())
 		h.endpointManager.RecordEndpointScheduleAttempt(connID, ep.Config.Name, endpoint.EndpointScheduleRuntimeAttempting, "")
 		h.endpointManager.NoteRouteDecision(ep.Config.Name, "")
 		lifecycleManager.UpdateStatus("forwarding", i, 0)
 		*r = *r.WithContext(context.WithValue(r.Context(), "selected_endpoint", ep.Config.Name))
 
 		resp, upstreamCancel, traceState, forwardErr := h.forwarder.ForwardForPipeline(
-			ctx, r, bodyBytes, ep, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager.SetFirstTokenStartTime)
+			ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager.SetFirstTokenStartTime)
 		releaseUpstream := func() {
 			if upstreamCancel != nil {
 				upstreamCancel()
@@ -133,16 +173,114 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		decision := decideEndpointForwardOutcome(forwardErr, resp, traceState, bodySample)
 		lifecycleManager.IncrementAttempt()
 
+		// §9.2 普通 429 同端点短重试（最多 1 次；gate 未取得或等待超限则跳过）
+		if decision.Action == EndpointForwardRateLimited {
+			if delay, ok := h.rateLimitRetryDelay(decision.RetryAfter); ok && !hasCommitted() && ctx.Err() == nil {
+				if release := h.tryAcquireRateLimitRetryGate(ep.Config.Name, r.URL.Path); release != nil {
+					closeEndpointResponse(resp)
+					releaseUpstream()
+					// 首次 attempt 已结束；等待期不占用 admission，重试在真正发送前重新准入。
+					admission.Release()
+					admission = nil
+					if sleepWithContext(ctx, delay) {
+						retryAdmission, retryAcquireErr := h.endpointManager.AcquireEndpointAttempt(plan)
+						if retryAcquireErr == nil {
+							admission = retryAdmission
+							target = admission.Target
+							ep = &endpoint.Endpoint{Config: target.Config()}
+							slog.Info(fmt.Sprintf("🔁 [429短重试] [%s] 端点 %s 等待 %s 后同端点重试", connID, ep.Config.Name, delay))
+							resp, upstreamCancel, traceState, forwardErr = h.forwarder.ForwardForPipeline(
+								ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager.SetFirstTokenStartTime)
+							releaseUpstream = func() {
+								if upstreamCancel != nil {
+									upstreamCancel()
+									upstreamCancel = nil
+								}
+							}
+							bodySample = ""
+							if forwardErr == nil && resp != nil && resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
+								bodySample = readAndRestoreResponseBody(resp, endpointClientErrorBodySampleLimit)
+							}
+							decision = decideEndpointForwardOutcome(forwardErr, resp, traceState, bodySample)
+							lifecycleManager.IncrementAttempt()
+						}
+					}
+					release()
+				}
+			}
+		}
+
 		switch decision.Action {
+		case EndpointForwardRateLimited:
+			// 429 等待期间客户端取消：按取消终态处理，不计软失败、不回写 429（§9.2）
+			if ctx.Err() != nil && !hasCommitted() {
+				closeEndpointResponse(resp)
+				releaseUpstream()
+				lifecycleManager.CancelRequest("client disconnected", nil)
+				h.endpointManager.CompleteEndpointScheduleSnapshot(connID, ep.Config.Name, endpoint.EndpointScheduleOutcomeCancelled, "client disconnected during rate limit wait")
+				*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", 499))
+				return
+			}
+			// 最终仍为普通 429：一个客户端请求只结算一次 rate_limit 软失败（§9.2 规则 7）
+			detail := endpointFailureDetail(forwardErr, resp, ep.Config.Name)
+			retryAfterSeconds := 0
+			if decision.RetryAfter > 0 {
+				retryAfterSeconds = int(decision.RetryAfter.Seconds())
+				if retryAfterSeconds < 1 {
+					retryAfterSeconds = 1
+				}
+			}
+			closeEndpointResponse(resp)
+			releaseUpstream()
+			count, tripped := 0, false
+			applied := h.endpointManager.ApplyEndpointAttemptSettlement(ep.Config.Name, target.Revision(), func() {
+				count, tripped = h.endpointManager.RecordSoftFailure(ep.Config.Name, endpoint.SoftFailureScopeMessages, endpoint.SoftFailureCategoryRateLimit)
+				if tripped {
+					cooldown := endpointSoftFailureCooldown(h.config, endpoint.SoftFailureCategoryRateLimit, decision.RetryAfter)
+					h.endpointManager.SetEndpointCooldown(ep.Config.Name, cooldown, endpoint.SoftFailureCooldownReason(endpoint.SoftFailureCategoryRateLimit))
+					slog.Warn(fmt.Sprintf("🧊 [限流冷却] [%s] 端点 %s 达阈值进入冷却 %s", connID, ep.Config.Name, cooldown))
+				}
+			})
+			if applied {
+				slog.Warn(fmt.Sprintf("⏳ [限流软失败] [%s] 端点 %s rate_limit 计数 %d/%d",
+					connID, ep.Config.Name, count, h.endpointManager.SoftFailureThreshold()))
+			} else {
+				slog.Info("跳过旧配置 attempt 的限流结算", "endpoint", ep.Config.Name, "revision", target.Revision())
+			}
+			if tripped {
+				// §9.2 规则 9：阈值触发可在本次请求内换下一候选（action=reject 时不换）
+				if h.config.FailureTracker.Action != "reject" && i+1 < len(result.Candidates) && attemptedEndpoints < maxCandidates && ctx.Err() == nil {
+					lastErr = fmt.Errorf("%s: %s", decision.Reason, detail)
+					h.endpointManager.RecordEndpointScheduleAttempt(connID, ep.Config.Name, endpoint.EndpointScheduleRuntimeTryNext, detail)
+					h.notifyFailover(FailoverEvent{
+						Lane:         FailoverLaneCC,
+						From:         ep.Config.Name,
+						To:           result.Plans[i+1].EndpointName,
+						ReasonCode:   decision.Reason,
+						ReasonDetail: failoverHTTPDetail(http.StatusTooManyRequests, detail),
+						RequestID:    connID,
+						RequestPath:  r.URL.Path,
+						Attempt:      i + 1,
+					})
+					continue
+				}
+			}
+			// §9.2 规则 8：阈值前（或无可用候选）返回规范化 429，保留有效 Retry-After
+			*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", http.StatusTooManyRequests))
+			lifecycleManager.FailRequest("rate_limited", detail, http.StatusTooManyRequests)
+			h.endpointManager.CompleteEndpointScheduleSnapshot(connID, ep.Config.Name, endpoint.EndpointScheduleOutcomeRateLimited, detail)
+			h.writeEndpointPipelineError(w, isSSE, flusher, http.StatusTooManyRequests,
+				"Too Many Requests: upstream rate limited", retryAfterSeconds)
+			return
+
 		case EndpointForwardNextCandidate:
 			detail := endpointFailureDetail(forwardErr, resp, ep.Config.Name)
 			closeEndpointResponse(resp)
 			releaseUpstream()
 			lastErr = fmt.Errorf("%s: %s", decision.Reason, detail)
-			h.markEndpointFailure(ep, decision, profile, detail)
+			h.markEndpointFailure(ep.Config.Name, target.Revision(), decision, profile, detail)
 			h.endpointManager.RecordEndpointScheduleAttempt(connID, ep.Config.Name, endpoint.EndpointScheduleRuntimeTryNext, detail)
 			if i+1 < len(result.Candidates) && ctx.Err() == nil {
-				next := result.Candidates[i+1]
 				statusCode := 0
 				if resp != nil {
 					statusCode = resp.StatusCode
@@ -150,7 +288,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 				h.notifyFailover(FailoverEvent{
 					Lane:         FailoverLaneCC,
 					From:         ep.Config.Name,
-					To:           next.Config.Name,
+					To:           result.Plans[i+1].EndpointName,
 					ReasonCode:   decision.Reason,
 					ReasonDetail: failoverHTTPDetail(statusCode, detail),
 					RequestID:    connID,
@@ -166,7 +304,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			detail := endpointFailureDetail(forwardErr, resp, ep.Config.Name)
 			closeEndpointResponse(resp)
 			releaseUpstream()
-			h.markEndpointFailure(ep, decision, profile, detail)
+			h.markEndpointFailure(ep.Config.Name, target.Revision(), decision, profile, detail)
 			// 「真实码→500 + Retry-After」客户端重试控制转换仅此一份（§3.1）
 			*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", http.StatusInternalServerError))
 			lifecycleManager.FailRequest(decision.Reason, detail, http.StatusInternalServerError)
@@ -190,17 +328,23 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			var outcome EndpointProcessOutcome
 			var outcomeDetail string
 			if isSSE {
-				outcome, outcomeDetail = h.processEndpointStreamingResponse(ctx, w, r, resp, flusher, lifecycleManager, ep.Config.Name, upstreamCancel)
+				outcome, outcomeDetail = h.processEndpointStreamingResponse(ctx, w, r, resp, flusher, lifecycleManager, ep.Config.Name, target.Revision(), upstreamCancel)
 			} else {
 				outcome, outcomeDetail = h.processEndpointRegularResponse(w, r, resp, lifecycleManager, ep.Config.Name)
 			}
 			releaseUpstream()
 			h.endpointManager.CompleteEndpointScheduleSnapshot(connID, ep.Config.Name, endpointScheduleOutcomeName(outcome), outcomeDetail)
-			// Outcome 门控：仅完整成功驱动 activeEndpoint 迁移（QualityIncomplete 不足以证明端点优于当前 active）
-			if outcome == ProcessOutcomeFullSuccess && ep.Config.Name != result.ActiveEndpointAtSelection {
-				if h.endpointManager.TryMigrateActiveEndpoint(ep.Config.Name, result.ActiveRevision, result.RouteOverrideRevision) {
-					slog.Info(fmt.Sprintf("🔀 [成功驱动迁移] [%s] activeEndpoint: %s → %s",
-						connID, result.ActiveEndpointAtSelection, ep.Config.Name))
+			// v8 §11.2：FullSuccess 只更新运行时 retained，不再持久化 active（D9）；
+			// count_tokens 不建立 /v1/messages retained（§10 规则 6）
+			if outcome == ProcessOutcomeFullSuccess && r.URL.Path == "/v1/messages" {
+				retained := false
+				h.endpointManager.ApplyEndpointAttemptSettlement(ep.Config.Name, target.Revision(), func() {
+					retained = h.endpointManager.UpdateAutoRetention(
+						ep.Config.Name, ep.Config.Priority, plan.SelectionSource, result.RouteOverrideRevision,
+					)
+				})
+				if retained {
+					slog.Debug("同层 retained 已更新", "endpoint", ep.Config.Name, "priority", ep.Config.Priority)
 				}
 			}
 			return
@@ -219,29 +363,107 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		"Service Unavailable: "+reason, retryAfter)
 }
 
-// markEndpointFailure 按决策标记端点状态（§3.1 状态标记列）
-func (h *Handler) markEndpointFailure(ep *endpoint.Endpoint, decision EndpointFailureDecision, profile endpoint.RouteRequestProfile, detail string) {
-	name := ep.Config.Name
+// markEndpointFailure 按决策标记端点状态（§9.1 状态处理列）。
+// 429（EndpointForwardRateLimited）在管线内单独结算，不走本函数。
+func (h *Handler) markEndpointFailure(name string, revision int64, decision EndpointFailureDecision, profile endpoint.RouteRequestProfile, detail string) {
 	switch decision.Mark {
-	case EndpointMarkFailureWindow:
-		failCount := h.endpointManager.RecordFailure(name)
-		slog.Info(fmt.Sprintf("📊 [失败追踪] 端点 %s 记录失败（%s），窗口内失败次数: %d", name, decision.Reason, failCount))
+	case EndpointMarkSoftFailure:
+		h.recordEndpointAttemptSoftFailure(name, revision, decision.Category, decision.RetryAfter, decision.Reason)
 	case EndpointMarkAuthCooldown:
-		h.endpointManager.SetEndpointCooldown(name, endpointAuthCooldown(), decision.Reason)
-		slog.Warn(fmt.Sprintf("🔑 [鉴权冷却] 端点 %s 进入长冷却（%s）: %s", name, endpointAuthCooldown(), detail))
-	case EndpointMarkRateLimitCooldown:
-		cooldown := endpointRateLimitCooldown(decision)
-		h.endpointManager.SetEndpointCooldown(name, cooldown, decision.Reason)
-		slog.Warn(fmt.Sprintf("⏳ [限流冷却] 端点 %s 短冷却 %s（不计故障阈值）", name, cooldown))
+		h.endpointManager.ApplyEndpointAttemptSettlement(name, revision, func() {
+			cooldown := h.config.Failover.AuthCooldown
+			if cooldown <= 0 {
+				cooldown = 30 * time.Minute
+			}
+			h.endpointManager.SetEndpointCooldown(name, cooldown, decision.Reason)
+			slog.Warn(fmt.Sprintf("🔑 [鉴权冷却] 端点 %s 进入长冷却（%s）: %s", name, cooldown, detail))
+		})
 	case EndpointMarkNegativeCache:
-		h.endpointManager.RecordNegativeRouteHit(name, string(decision.FailureClass), profile, detail)
-		slog.Info(fmt.Sprintf("🧭 [路由负缓存] 端点 %s 记录 %s（不计失败窗口）", name, decision.FailureClass))
+		h.endpointManager.ApplyEndpointAttemptSettlement(name, revision, func() {
+			h.endpointManager.RecordNegativeRouteHit(name, string(decision.FailureClass), profile, detail)
+			slog.Info(fmt.Sprintf("🧭 [路由负缓存] 端点 %s 记录 %s（不计软失败窗口）", name, decision.FailureClass))
+		})
+	}
+}
+
+// recordEndpointAttemptSoftFailure 记录带 config revision fencing 的 messages scope 软失败。
+func (h *Handler) recordEndpointAttemptSoftFailure(name string, revision int64, category endpoint.SoftFailureCategory, retryAfter time.Duration, reason string) (int, bool) {
+	count, tripped := 0, false
+	h.endpointManager.ApplyEndpointAttemptSettlement(name, revision, func() {
+		count, tripped = h.endpointManager.RecordSoftFailure(name, endpoint.SoftFailureScopeMessages, category)
+		slog.Info(fmt.Sprintf("📊 [软失败] 端点 %s 记录 %s（%s），窗口内计数: %d/%d",
+			name, category, reason, count, h.endpointManager.SoftFailureThreshold()))
+		if tripped {
+			cooldown := endpointSoftFailureCooldown(h.config, category, retryAfter)
+			h.endpointManager.SetEndpointCooldown(name, cooldown, endpoint.SoftFailureCooldownReason(category))
+			slog.Warn(fmt.Sprintf("🧊 [软失败冷却] 端点 %s %s 达阈值，冷却 %s", name, category, cooldown))
+		}
+	})
+	return count, tripped
+}
+
+// recordUnfencedEndpointSoftFailure 仅供未经过 AttemptPlan、没有 config revision 的兼容链路使用。
+func (h *Handler) recordUnfencedEndpointSoftFailure(name string, category endpoint.SoftFailureCategory, retryAfter time.Duration, reason string) (int, bool) {
+	count, tripped := h.endpointManager.RecordSoftFailure(name, endpoint.SoftFailureScopeMessages, category)
+	slog.Info(fmt.Sprintf("📊 [软失败] 端点 %s 记录 %s（%s），窗口内计数: %d/%d",
+		name, category, reason, count, h.endpointManager.SoftFailureThreshold()))
+	if tripped {
+		cooldown := endpointSoftFailureCooldown(h.config, category, retryAfter)
+		h.endpointManager.SetEndpointCooldown(name, cooldown, endpoint.SoftFailureCooldownReason(category))
+		slog.Warn(fmt.Sprintf("🧊 [软失败冷却] 端点 %s %s 达阈值，冷却 %s", name, category, cooldown))
+	}
+	return count, tripped
+}
+
+// rateLimitRetryDelay 计算 429 本地重试等待（§9.2 规则 3/4）；ok=false 表示不重试
+func (h *Handler) rateLimitRetryDelay(retryAfter time.Duration) (time.Duration, bool) {
+	if !h.config.Failover.RateLimitRetryEnabled() {
+		return 0, false
+	}
+	maxWait := h.config.Failover.RateLimitRetry.MaxWait
+	if maxWait <= 0 {
+		maxWait = 2 * time.Second
+	}
+	if retryAfter > maxWait {
+		return 0, false // 超过上限不在服务端阻塞等待
+	}
+	if retryAfter > 0 {
+		return retryAfter, true
+	}
+	// 无 Retry-After：250ms-750ms 带 jitter 短等待
+	return 250*time.Millisecond + time.Duration(rand.Int63n(int64(500*time.Millisecond))), true
+}
+
+// tryAcquireRateLimitRetryGate 非阻塞获取 endpoint+path 的 429 重试 gate（§9.2 规则 5）；
+// 返回 nil 表示未取得（并发请求跳过本地等待）。
+func (h *Handler) tryAcquireRateLimitRetryGate(endpointName, path string) func() {
+	key := endpointName + "|" + path
+	value, _ := h.rateLimitRetryGates.LoadOrStore(key, new(int32))
+	flag := value.(*int32)
+	if !atomic.CompareAndSwapInt32(flag, 0, 1) {
+		return nil
+	}
+	return func() { atomic.StoreInt32(flag, 0) }
+}
+
+// sleepWithContext 可被客户端取消中断的等待；返回 false 表示已取消
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
 // processEndpointStreamingResponse P2 流式响应处理（自旧循环壳迁移，内部逻辑只搬不改；
 // 新增仅为 EndpointProcessOutcome 返回值包装）
-func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, resp *http.Response, flusher http.Flusher, lifecycleManager *RequestLifecycleManager, endpointName string, upstreamCancel context.CancelFunc) (EndpointProcessOutcome, string) {
+func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, resp *http.Response, flusher http.Flusher, lifecycleManager *RequestLifecycleManager, endpointName string, endpointRevision int64, upstreamCancel context.CancelFunc) (EndpointProcessOutcome, string) {
 	connID := lifecycleManager.GetRequestID()
 	lifecycleManager.UpdateStatus("processing", lifecycleManager.GetAttemptCount(), resp.StatusCode)
 	w.WriteHeader(resp.StatusCode)
@@ -310,9 +532,8 @@ func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.R
 		*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", statusCode))
 		slog.Warn(fmt.Sprintf("🔄 [流式处理失败] [%s] 端点: %s, 状态: %s, 错误: %v", connID, endpointName, status, err))
 
-		// 📊 [失败追踪] P2 流式失败计入失败窗口（§3.1，取消除外——已提前返回）
-		failCount := h.endpointManager.RecordFailure(endpointName)
-		slog.Info(fmt.Sprintf("📊 [失败追踪] [%s] 端点 %s 流式阶段失败，窗口内失败次数: %d", connID, endpointName, failCount))
+		// 📊 [软失败] P2 流式失败计入 messages+transport（§9.1，取消除外——已提前返回）
+		h.recordEndpointAttemptSoftFailure(endpointName, endpointRevision, endpoint.SoftFailureCategoryTransport, 0, "stream_failure")
 
 		if h.config.Streaming.EOFRetryHint {
 			interruptModelName := parsedModelName

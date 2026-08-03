@@ -413,19 +413,18 @@ func TestForwarder_Pipeline_StripsCoderelayCacheControlScope(t *testing.T) {
 
 	cfg := &config.Config{}
 	endpointManager := endpoint.NewManager(cfg)
+	t.Cleanup(endpointManager.Stop)
 	forwarder := NewForwarder(cfg, endpointManager)
-	ep := &endpoint.Endpoint{
-		Config: config.EndpointConfig{
-			Name:    "mywechat",
-			URL:     server.URL,
-			Channel: "coderelay",
-			Timeout: 30 * time.Second,
-		},
-	}
+	target := acquireForwarderTestTarget(t, endpointManager, config.EndpointConfig{
+		Name:    "mywechat",
+		URL:     server.URL,
+		Channel: "coderelay",
+		Timeout: 30 * time.Second,
+	})
 	bodyBytes := []byte(`{"system":[{"cache_control":{"type":"ephemeral","nested":{"scope":"global"}}}],"metadata":{"scope":"keep"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(bodyBytes))
 
-	resp, _, _, err := forwarder.ForwardForPipeline(context.Background(), req, bodyBytes, ep, false, false, nil)
+	resp, _, _, err := forwarder.ForwardForPipeline(context.Background(), req, bodyBytes, target, false, false, nil)
 	if err != nil {
 		t.Fatalf("ForwardForPipeline failed: %v", err)
 	}
@@ -453,6 +452,101 @@ func TestForwarder_Pipeline_StripsCoderelayCacheControlScope(t *testing.T) {
 	}
 }
 
+func TestForwarder_ForwardForPipelineUsesAdmittedSnapshotAfterLiveEdit(t *testing.T) {
+	oldRequest := make(chan http.Header, 1)
+	oldServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		oldRequest <- r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(oldServer.Close)
+
+	newRequest := make(chan struct{}, 1)
+	newServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		newRequest <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(newServer.Close)
+
+	cfg := &config.Config{}
+	manager := endpoint.NewManager(cfg)
+	t.Cleanup(manager.Stop)
+	forwarder := NewForwarder(cfg, manager)
+	target := acquireForwarderTestTarget(t, manager, config.EndpointConfig{
+		Name:    "snapshot",
+		URL:     oldServer.URL,
+		Token:   "old-token",
+		Headers: map[string]string{"X-Snapshot": "old"},
+		Timeout: time.Second,
+	})
+
+	if err := manager.UpdateEndpointConfig("snapshot", config.EndpointConfig{
+		Name:    "snapshot",
+		URL:     newServer.URL,
+		Token:   "new-token",
+		Headers: map[string]string{"X-Snapshot": "new"},
+		Timeout: time.Second,
+	}); err != nil {
+		t.Fatalf("update live endpoint: %v", err)
+	}
+
+	body := []byte(`{"model":"claude-test","messages":[]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	resp, _, _, err := forwarder.ForwardForPipeline(context.Background(), req, body, target, false, false, nil)
+	if err != nil {
+		t.Fatalf("forward admitted snapshot: %v", err)
+	}
+	defer resp.Body.Close()
+
+	select {
+	case headers := <-oldRequest:
+		if got := headers.Get("Authorization"); got != "Bearer old-token" {
+			t.Fatalf("expected snapshotted token, got %q", got)
+		}
+		if got := headers.Get("X-Snapshot"); got != "old" {
+			t.Fatalf("expected snapshotted custom header, got %q", got)
+		}
+	default:
+		t.Fatal("expected request to reach the admitted URL")
+	}
+	select {
+	case <-newRequest:
+		t.Fatal("request must not use the live config edited after admission")
+	default:
+	}
+}
+
+func TestForwarder_CopyAttemptHeadersDoesNotResolveCredentialsAgain(t *testing.T) {
+	cfg := &config.Config{}
+	manager := endpoint.NewManager(cfg)
+	t.Cleanup(manager.Stop)
+	forwarder := NewForwarder(cfg, manager)
+	target := acquireForwarderTestTarget(t, manager, config.EndpointConfig{
+		Name:    "snapshot-empty-credential",
+		URL:     "https://upstream.example.com",
+		Group:   "shared",
+		Timeout: time.Second,
+	})
+	if err := manager.AddEndpoint(config.EndpointConfig{
+		Name:   "late-credential-source",
+		Group:  "shared",
+		Token:  "late-token",
+		ApiKey: "late-key",
+	}); err != nil {
+		t.Fatalf("add late credential source: %v", err)
+	}
+
+	src := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	dst := httptest.NewRequest(http.MethodPost, "https://upstream.example.com/v1/messages", nil)
+	forwarder.CopyAttemptHeaders(src, dst, target)
+	if got := dst.Header.Get("Authorization"); got != "" {
+		t.Fatalf("empty credential snapshot must stay empty, got authorization %q", got)
+	}
+	if got := dst.Header.Get("X-Api-Key"); got != "" {
+		t.Fatalf("empty credential snapshot must stay empty, got api key %q", got)
+	}
+}
+
 func TestForwarder_ForwardForPipeline_NonSSETimeoutCoversResponseBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -466,15 +560,17 @@ func TestForwarder_ForwardForPipeline_NonSSETimeoutCoversResponseBody(t *testing
 	defer server.Close()
 
 	cfg := &config.Config{Streaming: config.StreamingConfig{ResponseHeaderTimeout: time.Second}}
-	forwarder := NewForwarder(cfg, endpoint.NewManager(cfg))
-	ep := &endpoint.Endpoint{Config: config.EndpointConfig{
+	manager := endpoint.NewManager(cfg)
+	t.Cleanup(manager.Stop)
+	forwarder := NewForwarder(cfg, manager)
+	target := acquireForwarderTestTarget(t, manager, config.EndpointConfig{
 		Name:    "regular-timeout",
 		URL:     server.URL,
 		Timeout: 80 * time.Millisecond,
-	}}
+	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader([]byte(`{"stream":false}`)))
 
-	resp, release, _, err := forwarder.ForwardForPipeline(context.Background(), req, []byte(`{"stream":false}`), ep, false, false, nil)
+	resp, release, _, err := forwarder.ForwardForPipeline(context.Background(), req, []byte(`{"stream":false}`), target, false, false, nil)
 	if err != nil {
 		t.Fatalf("expected response headers before timeout, got %v", err)
 	}
@@ -506,15 +602,17 @@ func TestForwarder_ForwardForPipeline_SSEIgnoresEndpointTotalTimeout(t *testing.
 	defer server.Close()
 
 	cfg := &config.Config{Streaming: config.StreamingConfig{ResponseHeaderTimeout: time.Second}}
-	forwarder := NewForwarder(cfg, endpoint.NewManager(cfg))
-	ep := &endpoint.Endpoint{Config: config.EndpointConfig{
+	manager := endpoint.NewManager(cfg)
+	t.Cleanup(manager.Stop)
+	forwarder := NewForwarder(cfg, manager)
+	target := acquireForwarderTestTarget(t, manager, config.EndpointConfig{
 		Name:    "stream-no-total-timeout",
 		URL:     server.URL,
 		Timeout: 40 * time.Millisecond,
-	}}
+	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader([]byte(`{"stream":true}`)))
 
-	resp, release, _, err := forwarder.ForwardForPipeline(context.Background(), req, []byte(`{"stream":true}`), ep, true, false, nil)
+	resp, release, _, err := forwarder.ForwardForPipeline(context.Background(), req, []byte(`{"stream":true}`), target, true, false, nil)
 	if err != nil {
 		t.Fatalf("SSE request should not use endpoint total timeout: %v", err)
 	}
@@ -530,6 +628,23 @@ func TestForwarder_ForwardForPipeline_SSEIgnoresEndpointTotalTimeout(t *testing.
 	if string(body) != "data: done\n\n" {
 		t.Fatalf("unexpected SSE body: %q", string(body))
 	}
+}
+
+func acquireForwarderTestTarget(t *testing.T, manager *endpoint.Manager, cfg config.EndpointConfig) *endpoint.EndpointAttemptTarget {
+	t.Helper()
+	if err := manager.AddEndpoint(cfg); err != nil {
+		t.Fatalf("add test endpoint: %v", err)
+	}
+	result := manager.PrepareRouteCandidates(context.Background(), endpoint.BuildRouteRequestProfile("/v1/messages", nil))
+	if len(result.Plans) != 1 {
+		t.Fatalf("expected one test attempt plan, got %d", len(result.Plans))
+	}
+	admission, err := manager.AcquireEndpointAttempt(result.Plans[0])
+	if err != nil {
+		t.Fatalf("acquire test attempt: %v", err)
+	}
+	t.Cleanup(admission.Release)
+	return admission.Target
 }
 
 func countCacheControlScopes(value any) (int, int) {

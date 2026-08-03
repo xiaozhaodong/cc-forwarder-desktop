@@ -21,6 +21,7 @@ import (
 func TestCreateEndpointRecord_PersistsModelRewriteRulesAndCacheCreationCostMultiplier1h(t *testing.T) {
 	app, cleanup := newEndpointStorageAPITestApp(t)
 	defer cleanup()
+	availabilityEnabled := false
 
 	input := CreateEndpointInput{
 		Channel:                       "openai",
@@ -29,6 +30,7 @@ func TestCreateEndpointRecord_PersistsModelRewriteRulesAndCacheCreationCostMulti
 		Token:                         "sk-test-token",
 		Priority:                      10,
 		FailoverEnabled:               true,
+		AvailabilityEnabled:           &availabilityEnabled,
 		TimeoutSeconds:                120,
 		SupportsCountTokens:           true,
 		ModelRewriteRules:             `[{"paths":["/v1/messages","/v1/messages/count_tokens"],"match":"exact","from":"claude-sonnet-4-5","to":"provider-sonnet"}]`,
@@ -57,6 +59,9 @@ func TestCreateEndpointRecord_PersistsModelRewriteRulesAndCacheCreationCostMulti
 	if got := records[0].ModelRewriteRules; got != input.ModelRewriteRules {
 		t.Fatalf("expected list API model_rewrite_rules=%q, got %q", input.ModelRewriteRules, got)
 	}
+	if records[0].AvailabilityEnabled {
+		t.Fatal("expected list API availability_enabled=false")
+	}
 
 	record, err := app.GetEndpointRecord("ep-cache-1h")
 	if err != nil {
@@ -68,8 +73,16 @@ func TestCreateEndpointRecord_PersistsModelRewriteRulesAndCacheCreationCostMulti
 	if got := record.ModelRewriteRules; got != input.ModelRewriteRules {
 		t.Fatalf("expected detail API model_rewrite_rules=%q, got %q", input.ModelRewriteRules, got)
 	}
+	if record.AvailabilityEnabled {
+		t.Fatal("expected detail API availability_enabled=false")
+	}
+	if runtimeEndpoint := app.endpointManager.GetEndpointByNameAny("ep-cache-1h"); runtimeEndpoint == nil || app.endpointManager.EndpointHardEnabled(runtimeEndpoint) {
+		t.Fatalf("expected created endpoint to be hard disabled, got %+v", runtimeEndpoint)
+	}
 
 	update := input
+	availabilityEnabled = true
+	update.AvailabilityEnabled = &availabilityEnabled
 	update.CacheCreationCostMultiplier1h = 3.5
 	update.ModelRewriteRules = `[{"paths":["/v1/messages","/v1/messages/count_tokens"],"match":"exact","from":"claude-opus-4-1","to":"provider-opus"}]`
 	if err := app.UpdateEndpointRecord("ep-cache-1h", update); err != nil {
@@ -86,9 +99,64 @@ func TestCreateEndpointRecord_PersistsModelRewriteRulesAndCacheCreationCostMulti
 	if got := updated.ModelRewriteRules; got != update.ModelRewriteRules {
 		t.Fatalf("expected updated detail API model_rewrite_rules=%q, got %q", update.ModelRewriteRules, got)
 	}
+	if !updated.AvailabilityEnabled {
+		t.Fatal("expected updated detail API availability_enabled=true")
+	}
 	runtimeEndpoint := app.endpointManager.GetEndpointByNameAny("ep-cache-1h")
 	if runtimeEndpoint == nil || runtimeEndpoint.Config.ModelRewriteRules != update.ModelRewriteRules {
 		t.Fatalf("expected runtime model rewrite rules to update immediately, got %+v", runtimeEndpoint)
+	}
+	if !app.endpointManager.EndpointHardEnabled(runtimeEndpoint) {
+		t.Fatal("expected updated endpoint to be hard enabled at runtime")
+	}
+}
+
+func TestCreateEndpointRecord_DefaultsAvailabilityEnabledToTrue(t *testing.T) {
+	app, cleanup := newEndpointStorageAPITestApp(t)
+	defer cleanup()
+
+	if err := app.CreateEndpointRecord(CreateEndpointInput{
+		Channel:         "default-availability",
+		Name:            "default-availability",
+		URL:             "https://default.example.com",
+		Priority:        1,
+		TimeoutSeconds:  30,
+		CostMultiplier:  1,
+		FailoverEnabled: true,
+	}); err != nil {
+		t.Fatalf("CreateEndpointRecord failed: %v", err)
+	}
+
+	record, err := app.GetEndpointRecord("default-availability")
+	if err != nil {
+		t.Fatalf("GetEndpointRecord failed: %v", err)
+	}
+	if !record.AvailabilityEnabled {
+		t.Fatal("omitted availability_enabled must default to true")
+	}
+
+	availabilityEnabled := false
+	if err := app.UpdateEndpointRecord("default-availability", CreateEndpointInput{
+		Channel:             "default-availability",
+		URL:                 "https://default.example.com",
+		Priority:            1,
+		TimeoutSeconds:      30,
+		CostMultiplier:      1,
+		FailoverEnabled:     true,
+		AvailabilityEnabled: &availabilityEnabled,
+	}); err != nil {
+		t.Fatalf("UpdateEndpointRecord hard disable failed: %v", err)
+	}
+	updated, err := app.GetEndpointRecord("default-availability")
+	if err != nil {
+		t.Fatalf("GetEndpointRecord after hard disable failed: %v", err)
+	}
+	if updated.AvailabilityEnabled {
+		t.Fatal("explicit availability_enabled=false must persist")
+	}
+	runtimeEndpoint := app.endpointManager.GetEndpointByNameAny("default-availability")
+	if runtimeEndpoint == nil || app.endpointManager.EndpointHardEnabled(runtimeEndpoint) {
+		t.Fatalf("explicit availability_enabled=false must hard disable runtime endpoint, got %+v", runtimeEndpoint)
 	}
 }
 
@@ -166,6 +234,7 @@ func newEndpointStorageAPITestApp(t *testing.T) (*App, func()) {
 			cache_creation_cost_multiplier_1h REAL DEFAULT 1.0,
 			cache_read_cost_multiplier REAL DEFAULT 1.0,
 			enabled INTEGER DEFAULT 1,
+			availability_enabled INTEGER NOT NULL DEFAULT 1,
 			created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
 			updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
 		);

@@ -114,6 +114,7 @@ const EndpointForm = ({
         apiKey: endpoint.apiKey || '', // v5.0: 本地桌面应用，直接显示已保存的 ApiKey
         priority: endpoint.priority || 1,
         failoverEnabled: endpoint.failoverEnabled !== false,
+        availabilityEnabled: endpoint.availabilityEnabled !== false,
         cooldownSeconds: endpoint.cooldownSeconds || '',
         timeoutSeconds: endpoint.timeoutSeconds || 300,
         supportsCountTokens: endpoint.supportsCountTokens || false,
@@ -135,6 +136,7 @@ const EndpointForm = ({
       apiKey: '',
       priority: 1,
       failoverEnabled: true,
+      availabilityEnabled: true,
       cooldownSeconds: '',
       timeoutSeconds: 300,
       supportsCountTokens: false,
@@ -411,11 +413,19 @@ const EndpointForm = ({
 
             <div className="flex gap-6">
               <FormCheckbox
-                label="参与故障转移"
+                label="端点启用"
+                name="availabilityEnabled"
+                checked={formData.availabilityEnabled}
+                onChange={handleChange}
+                help="关闭后任何模式都不会使用此端点"
+              />
+
+              <FormCheckbox
+                label="参与自动调度"
                 name="failoverEnabled"
                 checked={formData.failoverEnabled}
                 onChange={handleChange}
-                help="当此端点不可用时自动切换"
+                help="自动模式和临时 fallback 可以选择此端点；关闭后仍可手动优选或固定使用"
               />
 
               <FormCheckbox

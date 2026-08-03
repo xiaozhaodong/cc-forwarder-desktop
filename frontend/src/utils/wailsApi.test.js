@@ -42,6 +42,13 @@ test('mapEndpointRecord and endpoint payload preserve model rewrite rules', () =
   assert.equal(buildEndpointRecordPayload({}, 'fallback-endpoint').name, 'fallback-endpoint');
 });
 
+test('endpoint availability defaults to true and preserves an explicit false', () => {
+  assert.equal(mapEndpointRecord({}).availabilityEnabled, true);
+  assert.equal(mapEndpointRecord({ availability_enabled: false }).availabilityEnabled, false);
+  assert.equal(buildEndpointRecordPayload({}).availability_enabled, true);
+  assert.equal(buildEndpointRecordPayload({ availabilityEnabled: false }).availability_enabled, false);
+});
+
 test('normalizeUpstreamAccount keeps mirrored aliases in sync for mixed-case upstream payloads', () => {
   const result = normalizeUpstreamAccount({
     ID: '12',

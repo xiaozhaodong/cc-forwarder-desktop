@@ -37,7 +37,7 @@ func (m *Manager) GetGroupCompatViews() []GroupCompatView {
 			continue
 		}
 		ep.mutex.RLock()
-		cooldownUntil := ep.Status.CooldownUntil
+		cooldownUntil, _, inCooldown := ep.Status.EffectiveCooldown(now)
 		pausedUntil := ep.Status.PausedUntil
 		healthy := ep.Status.Healthy
 		neverChecked := ep.Status.NeverChecked
@@ -52,7 +52,7 @@ func (m *Manager) GetGroupCompatViews() []GroupCompatView {
 			Healthy:        healthy,
 			NeverChecked:   neverChecked,
 		}
-		if !cooldownUntil.IsZero() && now.Before(cooldownUntil) {
+		if inCooldown {
 			view.InCooldown = true
 			view.CooldownRemain = cooldownUntil.Sub(now)
 		}

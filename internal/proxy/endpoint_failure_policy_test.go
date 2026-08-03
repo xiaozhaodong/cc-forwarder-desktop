@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"cc-forwarder/config"
+	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/proxy/handlers"
 )
 
@@ -34,29 +36,33 @@ func TestDecideEndpointForwardOutcome_Table(t *testing.T) {
 		bodySample       string
 		wantAction       EndpointForwardAction
 		wantMark         EndpointFailureMark
+		wantCategory     endpoint.SoftFailureCategory
 		wantFailureClass handlers.FailureClass
 		wantRetryAfter   time.Duration
 	}{
 		{
-			name:       "P0 连接失败（WroteHeaders 前）重放安全换候选",
-			forwardErr: errors.New("dial tcp: connection refused"),
-			trace:      tracedState(false),
-			wantAction: EndpointForwardNextCandidate,
-			wantMark:   EndpointMarkFailureWindow,
+			name:         "P0 连接失败（WroteHeaders 前）重放安全换候选",
+			forwardErr:   errors.New("dial tcp: connection refused"),
+			trace:        tracedState(false),
+			wantAction:   EndpointForwardNextCandidate,
+			wantMark:     EndpointMarkSoftFailure,
+			wantCategory: endpoint.SoftFailureCategoryConnection,
 		},
 		{
-			name:       "P0 本地准备失败（trace 为 nil）视为未发出",
-			forwardErr: errors.New("failed to apply endpoint auth"),
-			trace:      nil,
-			wantAction: EndpointForwardNextCandidate,
-			wantMark:   EndpointMarkFailureWindow,
+			name:         "P0 本地准备失败（trace 为 nil）视为未发出",
+			forwardErr:   errors.New("failed to apply endpoint auth"),
+			trace:        nil,
+			wantAction:   EndpointForwardNextCandidate,
+			wantMark:     EndpointMarkSoftFailure,
+			wantCategory: endpoint.SoftFailureCategoryConnection,
 		},
 		{
-			name:       "P0 WroteHeaders 后失败为歧义，穿透",
-			forwardErr: errors.New("unexpected EOF"),
-			trace:      tracedState(true),
-			wantAction: EndpointForwardPassthroughError,
-			wantMark:   EndpointMarkFailureWindow,
+			name:         "P0 WroteHeaders 后失败为歧义，穿透",
+			forwardErr:   errors.New("unexpected EOF"),
+			trace:        tracedState(true),
+			wantAction:   EndpointForwardPassthroughError,
+			wantMark:     EndpointMarkSoftFailure,
+			wantCategory: endpoint.SoftFailureCategoryTransport,
 		},
 		{
 			name:       "401 鉴权失败换候选并长冷却",
@@ -73,11 +79,13 @@ func TestDecideEndpointForwardOutcome_Table(t *testing.T) {
 			wantMark:   EndpointMarkAuthCooldown,
 		},
 		{
-			name:       "429 无 Retry-After 换候选并短冷却",
-			resp:       responseWithStatus(http.StatusTooManyRequests, nil),
-			trace:      tracedState(true),
-			wantAction: EndpointForwardNextCandidate,
-			wantMark:   EndpointMarkRateLimitCooldown,
+			// [Phase1 §9.2] 普通 429 交由管线执行同端点短重试与软失败结算
+			name:         "429 无 Retry-After 进入限流软失败流程",
+			resp:         responseWithStatus(http.StatusTooManyRequests, nil),
+			trace:        tracedState(true),
+			wantAction:   EndpointForwardRateLimited,
+			wantMark:     EndpointMarkSoftFailure,
+			wantCategory: endpoint.SoftFailureCategoryRateLimit,
 		},
 		{
 			name:             "403 明确模型不支持写模型负缓存而非鉴权冷却",
@@ -97,11 +105,13 @@ func TestDecideEndpointForwardOutcome_Table(t *testing.T) {
 			wantMark:   EndpointMarkAuthCooldown,
 		},
 		{
-			name:           "429 带 Retry-After 使用响应头值",
+			// [Phase1 §9.2] Retry-After 用于本地重试等待（<=2s）与阈值后 cooldown
+			name:           "429 带 Retry-After 解析响应头值",
 			resp:           responseWithStatus(http.StatusTooManyRequests, map[string]string{"Retry-After": "5"}),
 			trace:          tracedState(true),
-			wantAction:     EndpointForwardNextCandidate,
-			wantMark:       EndpointMarkRateLimitCooldown,
+			wantAction:     EndpointForwardRateLimited,
+			wantMark:       EndpointMarkSoftFailure,
+			wantCategory:   endpoint.SoftFailureCategoryRateLimit,
 			wantRetryAfter: 5 * time.Second,
 		},
 		{
@@ -138,18 +148,20 @@ func TestDecideEndpointForwardOutcome_Table(t *testing.T) {
 			wantMark:   EndpointMarkNone,
 		},
 		{
-			name:       "500 服务器错误穿透并计失败窗口",
-			resp:       responseWithStatus(http.StatusInternalServerError, nil),
-			trace:      tracedState(true),
-			wantAction: EndpointForwardPassthroughError,
-			wantMark:   EndpointMarkFailureWindow,
+			name:         "500 服务器错误穿透并计 server_error 软失败",
+			resp:         responseWithStatus(http.StatusInternalServerError, nil),
+			trace:        tracedState(true),
+			wantAction:   EndpointForwardPassthroughError,
+			wantMark:     EndpointMarkSoftFailure,
+			wantCategory: endpoint.SoftFailureCategoryServerError,
 		},
 		{
-			name:       "503 服务器错误穿透并计失败窗口",
-			resp:       responseWithStatus(http.StatusServiceUnavailable, nil),
-			trace:      tracedState(true),
-			wantAction: EndpointForwardPassthroughError,
-			wantMark:   EndpointMarkFailureWindow,
+			name:         "503 服务器错误穿透并计 server_error 软失败",
+			resp:         responseWithStatus(http.StatusServiceUnavailable, nil),
+			trace:        tracedState(true),
+			wantAction:   EndpointForwardPassthroughError,
+			wantMark:     EndpointMarkSoftFailure,
+			wantCategory: endpoint.SoftFailureCategoryServerError,
 		},
 		{
 			name:       "200 进入响应处理",
@@ -159,11 +171,12 @@ func TestDecideEndpointForwardOutcome_Table(t *testing.T) {
 			wantMark:   EndpointMarkNone,
 		},
 		{
-			name:       "无错误无响应按歧义保守处理",
-			resp:       nil,
-			trace:      tracedState(true),
-			wantAction: EndpointForwardPassthroughError,
-			wantMark:   EndpointMarkFailureWindow,
+			name:         "无错误无响应按歧义保守处理",
+			resp:         nil,
+			trace:        tracedState(true),
+			wantAction:   EndpointForwardPassthroughError,
+			wantMark:     EndpointMarkSoftFailure,
+			wantCategory: endpoint.SoftFailureCategoryTransport,
 		},
 	}
 
@@ -176,6 +189,9 @@ func TestDecideEndpointForwardOutcome_Table(t *testing.T) {
 			if decision.Mark != tc.wantMark {
 				t.Fatalf("mark: got %v want %v (reason=%s)", decision.Mark, tc.wantMark, decision.Reason)
 			}
+			if decision.Category != tc.wantCategory {
+				t.Fatalf("category: got %q want %q", decision.Category, tc.wantCategory)
+			}
 			if decision.FailureClass != tc.wantFailureClass {
 				t.Fatalf("failureClass: got %q want %q", decision.FailureClass, tc.wantFailureClass)
 			}
@@ -186,16 +202,25 @@ func TestDecideEndpointForwardOutcome_Table(t *testing.T) {
 	}
 }
 
-func TestEndpointRateLimitCooldown(t *testing.T) {
-	withHeader := EndpointFailureDecision{Mark: EndpointMarkRateLimitCooldown, RetryAfter: 5 * time.Second}
-	if got := endpointRateLimitCooldown(withHeader); got != 5*time.Second {
-		t.Fatalf("expected Retry-After driven cooldown, got %v", got)
+func TestEndpointSoftFailureCooldown(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Failover.RateLimitRetry.DefaultCooldown = 180 * time.Second
+	cfg.Failover.ServerErrorCooldown = 120 * time.Second
+	cfg.Failover.ConnectionCooldown = 90 * time.Second
+
+	if got := endpointSoftFailureCooldown(cfg, endpoint.SoftFailureCategoryRateLimit, 5*time.Second); got != 5*time.Second {
+		t.Fatalf("rate_limit 应优先 Retry-After，got %v", got)
 	}
-	withoutHeader := EndpointFailureDecision{Mark: EndpointMarkRateLimitCooldown}
-	if got := endpointRateLimitCooldown(withoutHeader); got != defaultEndpointRateLimitCooldown {
-		t.Fatalf("expected default rate limit cooldown, got %v", got)
+	if got := endpointSoftFailureCooldown(cfg, endpoint.SoftFailureCategoryRateLimit, 0); got != 180*time.Second {
+		t.Fatalf("rate_limit 无头应用默认 180s，got %v", got)
 	}
-	if endpointAuthCooldown() != defaultEndpointAuthCooldown {
-		t.Fatalf("unexpected auth cooldown")
+	if got := endpointSoftFailureCooldown(cfg, endpoint.SoftFailureCategoryServerError, 0); got != 120*time.Second {
+		t.Fatalf("server_error 应为 120s，got %v", got)
+	}
+	if got := endpointSoftFailureCooldown(cfg, endpoint.SoftFailureCategoryConnection, 0); got != 90*time.Second {
+		t.Fatalf("connection 应为 90s，got %v", got)
+	}
+	if got := endpointSoftFailureCooldown(cfg, endpoint.SoftFailureCategoryTransport, 0); got != 90*time.Second {
+		t.Fatalf("transport 应复用 connection 冷却 90s，got %v", got)
 	}
 }

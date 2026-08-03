@@ -453,6 +453,8 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 			{Category: CategoryClaudeRouting, Key: "set_by", Value: "", ValueType: ValueTypeString, Label: "设置来源", Description: "最近一次路由模式修改来源", DisplayOrder: 3},
 			{Category: CategoryClaudeRouting, Key: "set_at", Value: "", ValueType: ValueTypeString, Label: "设置时间", Description: "最近一次路由模式修改时间", DisplayOrder: 4},
 			{Category: CategoryClaudeRouting, Key: "fallback_enabled", Value: "true", ValueType: ValueTypeBool, Label: "允许回退", Description: "手动优选模式下允许失败后回退其他端点", DisplayOrder: 5},
+			{Category: CategoryClaudeRouting, Key: "revision", Value: "0", ValueType: ValueTypeInt, Label: "状态修订号", Description: "路由状态持久化修订号（协调器并发保护）", DisplayOrder: 6},
+			{Category: CategoryClaudeRouting, Key: "state_model_version", Value: "1", ValueType: ValueTypeInt, Label: "状态模型版本", Description: "v8 调度状态模型迁移标记（2=已迁移）", DisplayOrder: 7},
 		}
 
 	case CategoryImageGeneration:

@@ -84,6 +84,14 @@ func (f *fakeEndpointStore) ActivateExclusive(_ context.Context, name string) er
 	return nil
 }
 
+func (f *fakeEndpointStore) SetAvailabilityEnabled(_ context.Context, name string, enabled bool) error {
+	return nil
+}
+
+func (f *fakeEndpointStore) SetFailoverEnabled(_ context.Context, name string, enabled bool) error {
+	return nil
+}
+
 func (f *fakeEndpointStore) SetEnabled(_ context.Context, name string, enabled bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

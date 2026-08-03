@@ -318,6 +318,14 @@ export function SetDefaultModelPricing(arg1) {
   return window['go']['main']['App']['SetDefaultModelPricing'](arg1);
 }
 
+export function SetEndpointAutoSchedule(arg1, arg2) {
+  return window['go']['main']['App']['SetEndpointAutoSchedule'](arg1, arg2);
+}
+
+export function SetEndpointAvailability(arg1, arg2) {
+  return window['go']['main']['App']['SetEndpointAvailability'](arg1, arg2);
+}
+
 export function SetEndpointPriority(arg1, arg2) {
   return window['go']['main']['App']['SetEndpointPriority'](arg1, arg2);
 }

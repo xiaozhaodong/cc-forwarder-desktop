@@ -6,6 +6,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"cc-forwarder/config"
 )
 
 // 端点调度器（方案 §4.2）：纯读候选计算，无路由状态写副作用
@@ -45,6 +47,7 @@ const (
 	EndpointScheduleOutcomeManualFixedBlocked       = "manual_fixed_blocked"
 	EndpointScheduleOutcomeAllCandidatesFailed      = "all_candidates_failed"
 	EndpointScheduleOutcomeRejectedByFailureTracker = "rejected_by_failure_tracker"
+	EndpointScheduleOutcomeRateLimited              = "rate_limited"
 	endpointScheduleSnapshotPendingTTL              = 5 * time.Minute
 )
 
@@ -60,6 +63,7 @@ type EndpointScheduleSnapshot struct {
 	RouteEndpointName         string                     `json:"route_endpoint_name"`
 	RouteFallbackEnabled      bool                       `json:"route_fallback_enabled"`
 	FailoverEnabled           bool                       `json:"failover_enabled"`
+	CandidateAttemptBudget    int                        `json:"candidate_attempt_budget,omitempty"`
 	FinalOutcome              string                     `json:"final_outcome"`
 	FinalError                string                     `json:"final_error"`
 	Summary                   string                     `json:"summary"`
@@ -272,14 +276,12 @@ func (m *Manager) BeginEndpointScheduleSnapshot(requestID, requestPath string, s
 	if snapshot == nil {
 		cfg := m.getConfigSnapshot()
 		override := m.routeOverride.Snapshot()
-		active, _ := m.GetActiveEndpointSelection()
 		snapshot = &EndpointScheduleSnapshot{
-			CapturedAt:                time.Now(),
-			ActiveEndpointAtSelection: active,
-			RouteMode:                 override.Mode,
-			RouteEndpointName:         override.EndpointName,
-			RouteFallbackEnabled:      override.FallbackEnabled,
-			FailoverEnabled:           cfg.Failover.Enabled,
+			CapturedAt:           time.Now(),
+			RouteMode:            override.Mode,
+			RouteEndpointName:    override.EndpointName,
+			RouteFallbackEnabled: override.FallbackEnabled,
+			FailoverEnabled:      cfg.Failover.Enabled,
 		}
 	}
 	m.scheduleSnapshots.saveDraft(requestID, requestPath, snapshot)
@@ -327,41 +329,88 @@ func (s *EndpointScheduleSnapshot) EarliestAvailableAt() time.Time {
 	return earliest
 }
 
-// EndpointScheduleResult 调度结果：候选序 + CAS 迁移所需的 revision 快照
+// EndpointScheduleResult 调度结果：不可变候选计划 + revision 快照（v8 §8.1/§14.1）
 type EndpointScheduleResult struct {
-	Candidates                []*Endpoint
-	ActiveEndpointAtSelection string
-	ActiveRevision            int64
+	Candidates                []*Endpoint // 与 Plans 对齐；attempt 前必须经 AcquireEndpointAttempt 重校验
+	Plans                     []EndpointAttemptPlan
+	ActiveEndpointAtSelection string // v8：仅供快照展示（retained 或空），不再参与调度输入
+	ActiveRevision            int64  // v8：保留字段，恒为 0
 	RouteOverrideRevision     int64
 	Snapshot                  *EndpointScheduleSnapshot
 }
 
-// PrepareRouteCandidates 计算本次请求的候选端点序（§4.2）。
-// 候选序：[activeEndpoint（若可路由）] + 其余 failover_enabled 端点按策略排序；
-// 过滤：冷却 / tripped / PausedUntil / 负缓存；skipped 记录 availableAt（四来源）。
-// manual_fixed 只考虑目标端点；Failover.Enabled=false 时只返回单候选且禁用请求内换候选。
+// endpointScheduleCandidateSnapshot 是一次调度计算使用的端点值快照。
+// 资格判断、分层、排序和 Plan 生成必须只消费这里的数据，live 仅用于兼容返回 Candidates。
+type endpointScheduleCandidateSnapshot struct {
+	live     *Endpoint
+	config   config.EndpointConfig
+	status   EndpointStatus
+	revision int64
+	token    string
+	apiKey   string
+}
+
+func (m *Manager) snapshotEndpointCandidates() []endpointScheduleCandidateSnapshot {
+	// 同一 generation barrier 下同时捕获 Config/revision 与当前活动凭据，
+	// UpdateEndpointConfig 无法在两者之间发布半套状态。
+	m.endpointConfigMu.RLock()
+	defer m.endpointConfigMu.RUnlock()
+
+	m.endpointsMu.RLock()
+	snapshots := make([]endpointScheduleCandidateSnapshot, 0, len(m.endpoints))
+	for _, ep := range m.endpoints {
+		if ep == nil {
+			continue
+		}
+		ep.mutex.RLock()
+		snapshots = append(snapshots, endpointScheduleCandidateSnapshot{
+			live:     ep,
+			config:   cloneEndpointConfig(ep.Config),
+			status:   ep.Status,
+			revision: ep.configRevision,
+		})
+		ep.mutex.RUnlock()
+	}
+	m.endpointsMu.RUnlock()
+
+	for idx := range snapshots {
+		token, apiKey := m.resolveAttemptCredentials(snapshots[idx].config)
+		snapshots[idx].token = token
+		snapshots[idx].apiKey = apiKey
+	}
+	return snapshots
+}
+
+func findEndpointCandidateSnapshot(snapshot []endpointScheduleCandidateSnapshot, name string) *endpointScheduleCandidateSnapshot {
+	for idx := range snapshot {
+		if snapshot[idx].config.Name == name {
+			return &snapshot[idx]
+		}
+	}
+	return nil
+}
+
+// PrepareRouteCandidates 计算本次请求的候选端点序（v8 §8.2/§8.3）。
+// Auto：硬启用 + 参与自动调度 + 健康过滤后按 priority 层级选最优可用层，
+// 层内 retained 优先、其余按策略排序；低优先级层仅供重放安全硬失败 fallback。
+// manual_preferred：目标置首（不受 auto flag 影响）；manual_fixed 只考虑目标端点。
+// Failover.Enabled=false 时只保留第一个逻辑候选。
 func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteRequestProfile) EndpointScheduleResult {
 	cfg := m.getConfigSnapshot()
 	override := m.routeOverride.Snapshot()
-	activeName, activeRevision := m.GetActiveEndpointSelection()
 
-	m.endpointsMu.RLock()
-	snapshot := make([]*Endpoint, len(m.endpoints))
-	copy(snapshot, m.endpoints)
-	m.endpointsMu.RUnlock()
+	snapshot := m.snapshotEndpointCandidates()
 
 	result := EndpointScheduleResult{
-		ActiveEndpointAtSelection: activeName,
-		ActiveRevision:            activeRevision,
-		RouteOverrideRevision:     override.Revision,
+		RouteOverrideRevision: override.Revision,
 		Snapshot: &EndpointScheduleSnapshot{
-			CapturedAt:                time.Now(),
-			ActiveEndpointAtSelection: activeName,
-			RouteMode:                 override.Mode,
-			RouteEndpointName:         override.EndpointName,
-			RouteFallbackEnabled:      override.FallbackEnabled,
-			FailoverEnabled:           cfg.Failover.Enabled,
-			FinalOutcome:              EndpointScheduleOutcomePending,
+			CapturedAt:             time.Now(),
+			RouteMode:              override.Mode,
+			RouteEndpointName:      override.EndpointName,
+			RouteFallbackEnabled:   override.FallbackEnabled,
+			FailoverEnabled:        cfg.Failover.Enabled,
+			CandidateAttemptBudget: cfg.Failover.MaxCandidateAttempts,
+			FinalOutcome:           EndpointScheduleOutcomePending,
 		},
 	}
 
@@ -374,90 +423,153 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 		})
 	}
 
+	// §6.4：启动读取失败时 Claude 路由 not ready，不生成任何候选
+	if !m.IsClaudeRoutingReady() {
+		record("", endpointDecisionSkipped, "routing_not_ready", time.Time{})
+		return result
+	}
+
+	appendPlan := func(candidate endpointScheduleCandidateSnapshot, source string) {
+		plan := EndpointAttemptPlan{
+			EndpointName:        candidate.config.Name,
+			Priority:            candidate.config.Priority,
+			URL:                 candidate.config.URL,
+			Channel:             candidate.config.Channel,
+			Timeout:             candidate.config.Timeout,
+			SupportsCountTokens: candidate.config.SupportsCountTokens,
+			ConfigRevision:      candidate.revision,
+			SelectionSource:     source,
+			resolvedToken:       candidate.token,
+			resolvedAPIKey:      candidate.apiKey,
+		}
+		result.Candidates = append(result.Candidates, candidate.live)
+		result.Plans = append(result.Plans, plan)
+		record(plan.EndpointName, endpointDecisionCandidate, source, time.Time{})
+	}
+
 	// manual_fixed：只考虑目标端点，不可路由时不静默转移
 	if override.Mode == RouteModeManualFixed && override.EndpointName != "" {
-		target := findEndpointInSnapshot(snapshot, override.EndpointName)
+		target := findEndpointCandidateSnapshot(snapshot, override.EndpointName)
 		if target == nil {
 			record(override.EndpointName, endpointDecisionSkipped, "manual_fixed_target_missing", time.Time{})
 			return result
 		}
-		if ok, reason, availableAt := m.classifyEndpointRoutable(target, profile); !ok {
-			record(target.Config.Name, endpointDecisionSkipped, "manual_fixed_"+reason, availableAt)
+		if !target.config.IsAvailabilityEnabled() {
+			record(target.config.Name, endpointDecisionSkipped, "manual_fixed_availability_disabled", time.Time{})
 			return result
 		}
-		record(target.Config.Name, endpointDecisionCandidate, "manual_fixed", time.Time{})
-		result.Candidates = []*Endpoint{target}
+		if ok, reason, availableAt := m.classifyEndpointSnapshotRoutable(*target, profile); !ok {
+			record(target.config.Name, endpointDecisionSkipped, "manual_fixed_"+reason, availableAt)
+			return result
+		}
+		appendPlan(*target, "manual_fixed")
 		return result
 	}
 
-	// Failover.Enabled=false：单候选规则（reject 模式未触发拒绝时同样不得静默尝试备用端点）
-	if !cfg.Failover.Enabled {
-		if activeName == "" {
-			return result
+	// manual_preferred 目标（不受 auto flag 影响，§8.2）
+	var preferredTarget *endpointScheduleCandidateSnapshot
+	if override.Mode == RouteModeManualPreferred && override.EndpointName != "" {
+		if target := findEndpointCandidateSnapshot(snapshot, override.EndpointName); target == nil {
+			record(override.EndpointName, endpointDecisionSkipped, "manual_preferred_target_missing", time.Time{})
+		} else if !target.config.IsAvailabilityEnabled() {
+			record(target.config.Name, endpointDecisionSkipped, "manual_preferred_availability_disabled", time.Time{})
+		} else if ok, reason, availableAt := m.classifyEndpointSnapshotRoutable(*target, profile); !ok {
+			record(target.config.Name, endpointDecisionSkipped, "manual_preferred_"+reason, availableAt)
+		} else {
+			preferredTarget = target
 		}
-		active := findEndpointInSnapshot(snapshot, activeName)
-		if active == nil {
-			record(activeName, endpointDecisionSkipped, "active_endpoint_missing", time.Time{})
-			return result
-		}
-		if ok, reason, availableAt := m.classifyEndpointRoutable(active, profile); !ok {
-			record(active.Config.Name, endpointDecisionSkipped, reason, availableAt)
-			return result
-		}
-		record(active.Config.Name, endpointDecisionCandidate, "active_failover_disabled", time.Time{})
-		result.Candidates = []*Endpoint{active}
-		return result
 	}
 
-	// 常规候选序：[active] + 其余 failover_enabled 端点
-	candidates := make([]*Endpoint, 0, len(snapshot))
-	if activeName != "" {
-		if active := findEndpointInSnapshot(snapshot, activeName); active != nil {
-			if ok, reason, availableAt := m.classifyEndpointRoutable(active, profile); ok {
-				candidates = append(candidates, active)
-				record(active.Config.Name, endpointDecisionCandidate, "active", time.Time{})
+	// Auto 候选：硬启用 + auto schedule + 健康过滤（preferred 目标去重）
+	eligible := make([]endpointScheduleCandidateSnapshot, 0, len(snapshot))
+	for _, candidate := range snapshot {
+		if preferredTarget != nil && candidate.config.Name == preferredTarget.config.Name {
+			continue
+		}
+		if !candidate.config.IsAvailabilityEnabled() {
+			record(candidate.config.Name, endpointDecisionSkipped, "availability_disabled", time.Time{})
+			continue
+		}
+		if !candidate.config.IsAutoScheduleEnabled() {
+			record(candidate.config.Name, endpointDecisionSkipped, "auto_schedule_disabled", time.Time{})
+			continue
+		}
+		if ok, reason, availableAt := m.classifyEndpointSnapshotRoutable(candidate, profile); !ok {
+			record(candidate.config.Name, endpointDecisionSkipped, reason, availableAt)
+			continue
+		}
+		eligible = append(eligible, candidate)
+	}
+
+	// §8.3：priority 层级；最优层内 retained 优先，其余按策略排序
+	sort.SliceStable(eligible, func(i, j int) bool {
+		return eligible[i].config.Priority < eligible[j].config.Priority
+	})
+	if preferredTarget != nil {
+		appendPlan(*preferredTarget, "manual_preferred")
+	}
+	if len(eligible) > 0 {
+		bestPriority := eligible[0].config.Priority
+		bestTier := make([]endpointScheduleCandidateSnapshot, 0, len(eligible))
+		lowerTiers := make([]endpointScheduleCandidateSnapshot, 0, len(eligible))
+		for _, candidate := range eligible {
+			if candidate.config.Priority == bestPriority {
+				bestTier = append(bestTier, candidate)
 			} else {
-				record(active.Config.Name, endpointDecisionSkipped, reason, availableAt)
+				lowerTiers = append(lowerTiers, candidate)
 			}
 		}
+
+		bestTier = m.sortEndpointCandidateSnapshots(ctx, bestTier)
+		retainedName := m.RetainedInTier(bestPriority)
+		if retainedName != "" {
+			for i, candidate := range bestTier {
+				if candidate.config.Name == retainedName && i > 0 {
+					bestTier = append([]endpointScheduleCandidateSnapshot{candidate}, append(bestTier[:i:i], bestTier[i+1:]...)...)
+					break
+				}
+			}
+		}
+
+		for _, candidate := range bestTier {
+			source := "auto_priority"
+			if candidate.config.Name == retainedName {
+				source = "auto_retained"
+			} else if preferredTarget != nil {
+				source = "fallback"
+			}
+			appendPlan(candidate, source)
+		}
+		for _, candidate := range lowerTiers {
+			appendPlan(candidate, "fallback")
+		}
+		result.ActiveEndpointAtSelection = ""
+		result.Snapshot.ActiveEndpointAtSelection = ""
 	}
 
-	rest := make([]*Endpoint, 0, len(snapshot))
-	for _, ep := range snapshot {
-		if ep == nil || ep.Config.Name == activeName {
-			continue
+	// §8.2：Failover.Enabled=false 时只保留第一个逻辑候选（不冻结后续请求）
+	if !cfg.Failover.Enabled && len(result.Candidates) > 1 {
+		for _, plan := range result.Plans[1:] {
+			for idx := range result.Snapshot.Decisions {
+				d := &result.Snapshot.Decisions[idx]
+				if d.Name == plan.EndpointName && d.Decision == endpointDecisionCandidate {
+					d.Decision = endpointDecisionSkipped
+					d.Reason = "failover_disabled_single_candidate"
+				}
+			}
 		}
-		failoverEnabled := true
-		if ep.Config.FailoverEnabled != nil {
-			failoverEnabled = *ep.Config.FailoverEnabled
-		}
-		if !failoverEnabled {
-			record(ep.Config.Name, endpointDecisionSkipped, "failover_disabled_endpoint", time.Time{})
-			continue
-		}
-		if ok, reason, availableAt := m.classifyEndpointRoutable(ep, profile); !ok {
-			record(ep.Config.Name, endpointDecisionSkipped, reason, availableAt)
-			continue
-		}
-		rest = append(rest, ep)
+		result.Candidates = result.Candidates[:1]
+		result.Plans = result.Plans[:1]
 	}
 
-	rest = m.sortRestForSchedule(ctx, rest)
-	for _, ep := range rest {
-		record(ep.Config.Name, endpointDecisionCandidate, "failover_candidate", time.Time{})
-	}
-	candidates = append(candidates, rest...)
-
-	// manual_preferred：目标端点提到候选序最前（保持其余相对顺序）
-	result.Candidates = m.applyRouteOverrideOrder(candidates)
-	result.Snapshot.Decisions = orderEndpointScheduleDecisions(result.Snapshot.Decisions, result.Candidates)
+	result.Snapshot.Decisions = orderEndpointScheduleDecisions(result.Snapshot.Decisions, result.Plans)
 	return result
 }
 
 // orderEndpointScheduleDecisions 让候选决策顺序与实际尝试顺序一致，
 // 跳过项保持原解释顺序并排在候选项之后。
-func orderEndpointScheduleDecisions(decisions []EndpointScheduleDecision, candidates []*Endpoint) []EndpointScheduleDecision {
-	if len(decisions) == 0 || len(candidates) == 0 {
+func orderEndpointScheduleDecisions(decisions []EndpointScheduleDecision, plans []EndpointAttemptPlan) []EndpointScheduleDecision {
+	if len(decisions) == 0 || len(plans) == 0 {
 		return decisions
 	}
 	byName := make(map[string]EndpointScheduleDecision, len(decisions))
@@ -468,13 +580,10 @@ func orderEndpointScheduleDecisions(decisions []EndpointScheduleDecision, candid
 	}
 
 	ordered := make([]EndpointScheduleDecision, 0, len(decisions))
-	for _, candidate := range candidates {
-		if candidate == nil {
-			continue
-		}
-		if decision, ok := byName[candidate.Config.Name]; ok {
+	for _, plan := range plans {
+		if decision, ok := byName[plan.EndpointName]; ok {
 			ordered = append(ordered, decision)
-			delete(byName, candidate.Config.Name)
+			delete(byName, plan.EndpointName)
 		}
 	}
 	for _, decision := range decisions {
@@ -490,6 +599,33 @@ func orderEndpointScheduleDecisions(decisions []EndpointScheduleDecision, candid
 	return ordered
 }
 
+func (m *Manager) classifyEndpointSnapshotRoutable(candidate endpointScheduleCandidateSnapshot, profile RouteRequestProfile) (bool, string, time.Time) {
+	now := time.Now()
+	if !candidate.status.PausedUntil.IsZero() && now.Before(candidate.status.PausedUntil) {
+		return false, "paused", candidate.status.PausedUntil
+	}
+	blockingUntil := time.Time{}
+	if !candidate.status.GlobalCooldownUntil.IsZero() && now.Before(candidate.status.GlobalCooldownUntil) {
+		blockingUntil = candidate.status.GlobalCooldownUntil
+	}
+	if !profile.IsCountTokens && !candidate.status.CooldownUntil.IsZero() && now.Before(candidate.status.CooldownUntil) &&
+		candidate.status.CooldownUntil.After(blockingUntil) {
+		blockingUntil = candidate.status.CooldownUntil
+	}
+	if !blockingUntil.IsZero() {
+		return false, "cooldown", blockingUntil
+	}
+	if profile.IsCountTokens {
+		if active, until, _ := m.ScopedCooldownActive(candidate.config.Name, SoftFailureScopeCountTokens); active {
+			return false, "count_tokens_scoped_cooldown", until
+		}
+	}
+	if hit, failureClass, expiresAt := m.routeState.NegativeHitWithExpiry(candidate.config.Name, profile); hit {
+		return false, "negative_cache_" + failureClass, expiresAt
+	}
+	return true, "", time.Time{}
+}
+
 // classifyEndpointRoutable 判定端点是否可路由；不可路由时给出原因与预计可用时间。
 // availableAt 四来源（§3.1 补充规则）：暂停到期、冷却到期、tripped 窗口到期（保守估计）、
 // 负缓存条目 expiresAt。
@@ -499,51 +635,80 @@ func (m *Manager) classifyEndpointRoutable(ep *Endpoint, profile RouteRequestPro
 	}
 
 	ep.mutex.RLock()
+	name := ep.Config.Name
 	pausedUntil := ep.Status.PausedUntil
-	cooldownUntil := ep.Status.CooldownUntil
+	messagesCooldownUntil := ep.Status.CooldownUntil
+	globalCooldownUntil := ep.Status.GlobalCooldownUntil
 	ep.mutex.RUnlock()
 
 	now := time.Now()
 	if !pausedUntil.IsZero() && now.Before(pausedUntil) {
 		return false, "paused", pausedUntil
 	}
-	if !cooldownUntil.IsZero() && now.Before(cooldownUntil) {
-		return false, "cooldown", cooldownUntil
+	// global 槽阻断双 path；messages 槽不阻断 count_tokens（§14.4）
+	blockingUntil := time.Time{}
+	if !globalCooldownUntil.IsZero() && now.Before(globalCooldownUntil) {
+		blockingUntil = globalCooldownUntil
+	}
+	if !profile.IsCountTokens && !messagesCooldownUntil.IsZero() && now.Before(messagesCooldownUntil) &&
+		messagesCooldownUntil.After(blockingUntil) {
+		blockingUntil = messagesCooldownUntil
+	}
+	if !blockingUntil.IsZero() {
+		return false, "cooldown", blockingUntil
 	}
 
-	cfg := m.getConfigSnapshot()
-	if cfg.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(ep.Config.Name) {
-		return false, "failure_threshold_tripped", m.failureTracker.TrippedUntil(ep.Config.Name)
+	// §10：count_tokens 请求叠加进程内 scoped cooldown 过滤（不影响 /v1/messages）
+	if profile.IsCountTokens {
+		if active, until, _ := m.ScopedCooldownActive(name, SoftFailureScopeCountTokens); active {
+			return false, "count_tokens_scoped_cooldown", until
+		}
 	}
 
-	if hit, failureClass, expiresAt := m.routeState.NegativeHitWithExpiry(ep.Config.Name, profile); hit {
+	// v8：软失败阈值触发即写入 cooldown（上方已检查），不再单独判定 tracker tripped（§9.3）
+	if hit, failureClass, expiresAt := m.routeState.NegativeHitWithExpiry(name, profile); hit {
 		return false, "negative_cache_" + failureClass, expiresAt
 	}
 
 	return true, "", time.Time{}
 }
 
-// sortRestForSchedule 备选端点排序：fastest+实时测速时按测速结果，否则按策略排序
-// （priority / fastest 缓存）。测速只更新测速缓存，非路由状态。
-func (m *Manager) sortRestForSchedule(ctx context.Context, rest []*Endpoint) []*Endpoint {
+// sortEndpointCandidateSnapshots 只使用值快照排序；实时测速也使用脱离 Manager 的配置副本。
+func (m *Manager) sortEndpointCandidateSnapshots(ctx context.Context, rest []endpointScheduleCandidateSnapshot) []endpointScheduleCandidateSnapshot {
 	cfg := m.getConfigSnapshot()
 	if cfg.Strategy.Type == "fastest" && cfg.Strategy.FastTestEnabled && len(rest) > 1 && m.fastTester != nil {
-		results, _ := m.fastTester.TestEndpointsParallel(ctx, rest)
-		if ordered := orderByFastTestResults(rest, results); len(ordered) == len(rest) {
+		testEndpoints := make([]*Endpoint, 0, len(rest))
+		for _, candidate := range rest {
+			testConfig := cloneEndpointConfig(candidate.config)
+			// 强制命中快照凭据（即使为空），禁止 FastTester 再回查运行态组内继承。
+			testConfig.Token = ""
+			testConfig.Tokens = []config.TokenConfig{{Name: "schedule-snapshot", Value: candidate.token}}
+			testEndpoints = append(testEndpoints, &Endpoint{Config: testConfig, Status: candidate.status})
+		}
+		results, _ := m.fastTester.TestEndpointsParallel(ctx, testEndpoints)
+		if ordered := orderEndpointSnapshotsByFastTestResults(rest, results); len(ordered) == len(rest) {
 			return ordered
 		}
 	}
-	return m.sortHealthyEndpoints(rest, false)
+	if cfg.Strategy.Type == "fastest" {
+		sort.SliceStable(rest, func(i, j int) bool {
+			if rest[i].status.ResponseTime == rest[j].status.ResponseTime {
+				return rest[i].config.Priority < rest[j].config.Priority
+			}
+			return rest[i].status.ResponseTime < rest[j].status.ResponseTime
+		})
+	}
+	return rest
 }
 
-// orderByFastTestResults 按实时测速结果排序：成功者按响应时间升序在前，
+// orderEndpointSnapshotsByFastTestResults 按实时测速结果排序：成功者按响应时间升序在前，
 // 失败/未覆盖者保持原相对顺序在后。
-func orderByFastTestResults(rest []*Endpoint, results []*FastTestResult) []*Endpoint {
+func orderEndpointSnapshotsByFastTestResults(rest []endpointScheduleCandidateSnapshot, results []*FastTestResult) []endpointScheduleCandidateSnapshot {
 	if len(results) == 0 {
 		return nil
 	}
 	type timing struct {
-		ep           *Endpoint
+		candidate    endpointScheduleCandidateSnapshot
 		responseTime time.Duration
 	}
 	successTimes := make(map[string]time.Duration, len(results))
@@ -553,23 +718,23 @@ func orderByFastTestResults(rest []*Endpoint, results []*FastTestResult) []*Endp
 		}
 	}
 	fast := make([]timing, 0, len(rest))
-	var slow []*Endpoint
-	for _, ep := range rest {
-		if responseTime, ok := successTimes[ep.Config.Name]; ok {
-			fast = append(fast, timing{ep: ep, responseTime: responseTime})
+	slow := make([]endpointScheduleCandidateSnapshot, 0, len(rest))
+	for _, candidate := range rest {
+		if responseTime, ok := successTimes[candidate.config.Name]; ok {
+			fast = append(fast, timing{candidate: candidate, responseTime: responseTime})
 		} else {
-			slow = append(slow, ep)
+			slow = append(slow, candidate)
 		}
 	}
 	sort.SliceStable(fast, func(i, j int) bool {
 		if fast[i].responseTime == fast[j].responseTime {
-			return fast[i].ep.Config.Priority < fast[j].ep.Config.Priority
+			return fast[i].candidate.config.Priority < fast[j].candidate.config.Priority
 		}
 		return fast[i].responseTime < fast[j].responseTime
 	})
-	ordered := make([]*Endpoint, 0, len(rest))
+	ordered := make([]endpointScheduleCandidateSnapshot, 0, len(rest))
 	for _, item := range fast {
-		ordered = append(ordered, item.ep)
+		ordered = append(ordered, item.candidate)
 	}
 	return append(ordered, slow...)
 }

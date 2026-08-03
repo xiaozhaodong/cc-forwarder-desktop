@@ -769,6 +769,26 @@ export const toggleEndpoint = async (name, enabled) => {
 };
 
 /**
+ * v8：设置端点硬启用状态（关闭后任何模式都不会使用）
+ */
+export const setEndpointAvailability = async (name, enabled) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.setEndpointAvailability(name, enabled);
+  }
+  throw new Error('HTTP 环境暂不支持端点存储功能');
+};
+
+/**
+ * v8：设置端点是否参与自动调度（关闭后仍可手动优选或固定使用）
+ */
+export const setEndpointAutoSchedule = async (name, enabled) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.setEndpointAutoSchedule(name, enabled);
+  }
+  throw new Error('HTTP 环境暂不支持端点存储功能');
+};
+
+/**
  * 获取所有渠道
  * @returns {Promise<Array>} - 渠道列表
  */

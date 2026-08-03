@@ -255,7 +255,7 @@ func TestManagerStartCleansExpiredFailureTrackerEntries(t *testing.T) {
 		FailureTracker: config.FailureTrackerConfig{
 			Enabled:    true,
 			TimeWindow: 10 * time.Millisecond,
-			Threshold:  1,
+			Threshold:  3,
 		},
 		Endpoints: []config.EndpointConfig{
 			{
@@ -266,11 +266,11 @@ func TestManagerStartCleansExpiredFailureTrackerEntries(t *testing.T) {
 	}
 
 	manager := NewManager(cfg)
-	manager.RecordFailure("tracked-endpoint")
+	manager.RecordSoftFailure("tracked-endpoint", SoftFailureScopeMessages, SoftFailureCategoryConnection)
 	trackedEndpointCount := func() int {
-		manager.failureTracker.mu.RLock()
-		defer manager.failureTracker.mu.RUnlock()
-		return len(manager.failureTracker.endpointFailures)
+		manager.softFailures.mu.Lock()
+		defer manager.softFailures.mu.Unlock()
+		return len(manager.softFailures.events)
 	}
 
 	if got := trackedEndpointCount(); got != 1 {

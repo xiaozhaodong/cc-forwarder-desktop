@@ -33,6 +33,21 @@ func IsRetryableStatus(statusCode int) bool {
 	}
 }
 
+// IsModelUnsupportedError 判断错误文本是否明确表示模型不可用或无权访问。
+func IsModelUnsupportedError(errText string) bool {
+	lower := strings.ToLower(errText)
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "model_not_found") ||
+		strings.Contains(lower, "model not found") ||
+		strings.Contains(lower, "no available channel for model") ||
+		strings.Contains(lower, "model is not supported") ||
+		strings.Contains(lower, "unsupported model") ||
+		strings.Contains(lower, "do not have access to model") ||
+		strings.Contains(lower, "does not have access to model")
+}
+
 // GetStatusCodeFromError 从错误和响应中提取状态码
 // 优先级：
 // 1. 首先从 http.Response 获取状态码

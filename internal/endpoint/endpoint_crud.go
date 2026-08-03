@@ -15,6 +15,9 @@ import (
 // SyncEndpoints 从数据库同步端点（v5.0 Desktop 专用）
 // 用于启动时从数据库加载端点，替换现有端点列表
 func (m *Manager) SyncEndpoints(configs []config.EndpointConfig) {
+	m.endpointConfigMu.Lock()
+	defer m.endpointConfigMu.Unlock()
+
 	// 创建新端点列表
 	endpoints := make([]*Endpoint, len(configs))
 	for i, cfg := range configs {
@@ -24,6 +27,7 @@ func (m *Manager) SyncEndpoints(configs []config.EndpointConfig) {
 				Healthy:      false,
 				NeverChecked: true,
 			},
+			configRevision: NextEndpointConfigRevision(),
 		}
 
 		// 初始化 Key 管理状态
@@ -49,11 +53,14 @@ func (m *Manager) SyncEndpoints(configs []config.EndpointConfig) {
 // AddEndpoint 动态添加端点（v5.0+ 新增）
 // 线程安全地将新端点添加到管理器中
 func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
+	m.endpointConfigMu.Lock()
+
 	// 验证端点名称唯一性
 	m.endpointsMu.RLock()
 	for _, ep := range m.endpoints {
 		if ep.Config.Name == cfg.Name {
 			m.endpointsMu.RUnlock()
+			m.endpointConfigMu.Unlock()
 			return fmt.Errorf("端点 '%s' 已存在", cfg.Name)
 		}
 	}
@@ -66,6 +73,7 @@ func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
 			Healthy:      false,
 			NeverChecked: true,
 		},
+		configRevision: NextEndpointConfigRevision(),
 	}
 
 	// 初始化 Key 管理状态
@@ -83,6 +91,7 @@ func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
 	m.endpointsMu.Lock()
 	m.endpoints = append(m.endpoints, endpoint)
 	m.endpointsMu.Unlock()
+	m.endpointConfigMu.Unlock()
 
 	// 发布事件通知
 	if m.eventBus != nil {
@@ -106,8 +115,8 @@ func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
 // RemoveEndpoint 动态移除端点（v5.0+ 新增）
 // 线程安全地从管理器中移除端点
 func (m *Manager) RemoveEndpoint(name string) error {
+	m.endpointConfigMu.Lock()
 	m.endpointsMu.Lock()
-	defer m.endpointsMu.Unlock()
 
 	// 查找并移除端点
 	index := -1
@@ -119,20 +128,36 @@ func (m *Manager) RemoveEndpoint(name string) error {
 	}
 
 	if index == -1 {
+		m.endpointsMu.Unlock()
+		m.endpointConfigMu.Unlock()
 		return fmt.Errorf("端点 '%s' 未找到", name)
 	}
 
 	// 移除端点（保持切片顺序）
 	removedEndpoint := m.endpoints[index]
 	m.endpoints = append(m.endpoints[:index], m.endpoints[index+1:]...)
+	removedEndpoint.mutex.RLock()
+	removedURL := removedEndpoint.Config.URL
+	removedEndpoint.mutex.RUnlock()
+	m.endpointsMu.Unlock()
 
 	// 清理 KeyManager 状态
 	m.keyManager.RemoveEndpoint(name)
 
-	// 清理 FailureTracker 记录（避免内存泄漏）
-	if m.failureTracker != nil {
-		m.failureTracker.ClearEndpoint(name)
+	// 清理软失败记录（避免内存泄漏）
+	if m.softFailures != nil {
+		m.softFailures.ClearEndpoint(name)
 	}
+	if m.scopedCooldowns != nil {
+		m.scopedCooldowns.ClearEndpoint(name)
+	}
+	if m.routeState != nil {
+		m.routeState.ClearNegativeHits(name)
+	}
+	if m.autoRetention != nil {
+		m.ClearAutoRetentionFor(name)
+	}
+	m.endpointConfigMu.Unlock()
 
 	// 发布事件通知
 	if m.eventBus != nil {
@@ -142,7 +167,7 @@ func (m *Manager) RemoveEndpoint(name string) error {
 			Priority: events.PriorityHigh,
 			Data: map[string]interface{}{
 				"name":      name,
-				"url":       removedEndpoint.Config.URL,
+				"url":       removedURL,
 				"timestamp": time.Now().Format("2006-01-02 15:04:05"),
 			},
 		})
@@ -155,6 +180,7 @@ func (m *Manager) RemoveEndpoint(name string) error {
 // UpdateEndpointConfig 更新端点配置（v5.0+ 新增）
 // 更新现有端点的配置（不包括名称）
 func (m *Manager) UpdateEndpointConfig(name string, cfg config.EndpointConfig) error {
+	m.endpointConfigMu.Lock()
 	m.endpointsMu.RLock()
 	var targetEndpoint *Endpoint
 	for _, ep := range m.endpoints {
@@ -166,15 +192,17 @@ func (m *Manager) UpdateEndpointConfig(name string, cfg config.EndpointConfig) e
 	m.endpointsMu.RUnlock()
 
 	if targetEndpoint == nil {
+		m.endpointConfigMu.Unlock()
 		return fmt.Errorf("端点 '%s' 未找到", name)
 	}
 
 	// 保留原名称
 	cfg.Name = name
 
-	// 更新配置
+	// 更新配置（v8：递增 config revision，使已快照的 AttemptPlan 在 admission 重校验时失效）
 	targetEndpoint.mutex.Lock()
 	targetEndpoint.Config = cfg
+	targetEndpoint.configRevision = NextEndpointConfigRevision()
 	targetEndpoint.mutex.Unlock()
 
 	// 更新 Key 管理状态
@@ -187,6 +215,7 @@ func (m *Manager) UpdateEndpointConfig(name string, cfg config.EndpointConfig) e
 		apiKeyCount = 1
 	}
 	m.keyManager.UpdateEndpointKeyCount(name, tokenCount, apiKeyCount)
+	m.endpointConfigMu.Unlock()
 
 	// 发布事件通知
 	if m.eventBus != nil {
@@ -215,6 +244,7 @@ func (m *Manager) UpdateEndpointPriority(name string, newPriority int) error {
 		return fmt.Errorf("优先级必须大于等于1")
 	}
 
+	m.endpointConfigMu.Lock()
 	m.endpointsMu.RLock()
 	// Find the endpoint
 	var targetEndpoint *Endpoint
@@ -227,13 +257,16 @@ func (m *Manager) UpdateEndpointPriority(name string, newPriority int) error {
 	m.endpointsMu.RUnlock()
 
 	if targetEndpoint == nil {
+		m.endpointConfigMu.Unlock()
 		return fmt.Errorf("端点 '%s' 未找到", name)
 	}
 
 	// Update the priority with lock
 	targetEndpoint.mutex.Lock()
 	targetEndpoint.Config.Priority = newPriority
+	targetEndpoint.configRevision = NextEndpointConfigRevision()
 	targetEndpoint.mutex.Unlock()
+	m.endpointConfigMu.Unlock()
 
 	slog.Info(fmt.Sprintf("🔄 端点优先级已更新: %s -> %d", name, newPriority))
 

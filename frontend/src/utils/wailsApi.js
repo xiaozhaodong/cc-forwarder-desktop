@@ -1318,6 +1318,8 @@ export const mapEndpointRecord = (record = {}) => ({
   cacheCreationCostMultiplier1h: record.cache_creation_cost_multiplier_1h,
   cacheReadCostMultiplier: record.cache_read_cost_multiplier,
   enabled: record.enabled,
+  availability_enabled: record.availability_enabled !== false,
+  availabilityEnabled: record.availability_enabled !== false,
   createdAt: record.created_at,
   updatedAt: record.updated_at,
   healthy: record.healthy,
@@ -1342,6 +1344,7 @@ export const buildEndpointRecordPayload = (input = {}, fallbackName = '') => ({
   headers: input.headers || {},
   priority: parseInt(input.priority) || 1,
   failover_enabled: input.failoverEnabled !== false,
+  availability_enabled: input.availabilityEnabled !== false,
   cooldown_seconds: input.cooldownSeconds ? parseInt(input.cooldownSeconds) : null,
   timeout_seconds: parseInt(input.timeoutSeconds) || 300,
   supports_count_tokens: input.supportsCountTokens || false,
@@ -1434,6 +1437,26 @@ export const toggleEndpointRecord = async (name, enabled) => {
   if (!WailsApp) throw new Error('Wails not available');
 
   await WailsApp.ToggleEndpointRecord(name, enabled);
+  return { success: true };
+};
+
+/**
+ * 设置端点硬启用状态（v8：关闭后任何模式都不会使用）
+ */
+export const setEndpointAvailability = async (name, enabled) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+  await WailsApp.SetEndpointAvailability(name, enabled);
+  return { success: true };
+};
+
+/**
+ * 设置端点是否参与自动调度（v8：关闭后仍可手动优选或固定使用）
+ */
+export const setEndpointAutoSchedule = async (name, enabled) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+  await WailsApp.SetEndpointAutoSchedule(name, enabled);
   return { success: true };
 };
 

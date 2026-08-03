@@ -19,6 +19,11 @@ import (
 
 func newEndpointPipelineTestHandler(t *testing.T, endpoints ...config.EndpointConfig) (*Handler, *endpoint.Manager) {
 	t.Helper()
+	return newEndpointPipelineTestHandlerWithAction(t, "failover", endpoints...)
+}
+
+func newEndpointPipelineTestHandlerWithAction(t *testing.T, failureTrackerAction string, endpoints ...config.EndpointConfig) (*Handler, *endpoint.Manager) {
+	t.Helper()
 
 	cfg := &config.Config{
 		Strategy: config.StrategyConfig{Type: "priority"},
@@ -30,7 +35,7 @@ func newEndpointPipelineTestHandler(t *testing.T, endpoints ...config.EndpointCo
 			Enabled:    true,
 			TimeWindow: 5 * time.Minute,
 			Threshold:  3,
-			Action:     "failover",
+			Action:     failureTrackerAction,
 		},
 		Streaming: config.StreamingConfig{
 			ResponseHeaderTimeout: 2 * time.Second,
@@ -101,7 +106,8 @@ func requireLatestEndpointScheduleSnapshot(t *testing.T, manager *endpoint.Manag
 	return snapshot
 }
 
-func TestEndpointPipeline_ConnectionFailureBeforeWroteHeaders_FailsOverAndMigratesActive(t *testing.T) {
+// [Phase3 §11.2 D9] fallback 成功只更新运行时 retained，active/legacy 状态不变
+func TestEndpointPipeline_ConnectionFailure_FailsOverAndRetainsWithoutMigratingActive(t *testing.T) {
 	var backupHits int32
 	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&backupHits, 1)
@@ -123,19 +129,23 @@ func TestEndpointPipeline_ConnectionFailureBeforeWroteHeaders_FailsOverAndMigrat
 	if got := atomic.LoadInt32(&backupHits); got != 1 {
 		t.Fatalf("expected backup to be called once, got %d", got)
 	}
-	if active, _ := manager.GetActiveEndpointSelection(); active != "backup" {
-		t.Fatalf("expected active endpoint to migrate to backup, got %q", active)
+	if active, _ := manager.GetActiveEndpointSelection(); active != "primary" {
+		t.Fatalf("v8: fallback success must not migrate active, got %q", active)
+	}
+	if got := manager.RetainedInTier(2); got != "backup" {
+		t.Fatalf("expected backup retained in tier 2, got %q", got)
 	}
 	if got := manager.GetFailureStats()["primary"]; got != 1 {
 		t.Fatalf("expected primary failure count 1, got %d", got)
 	}
 	snapshot := requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomeSuccess, "backup")
-	if snapshot.ActiveEndpointAtSelection != "primary" || snapshot.Decisions[0].RuntimeOutcome != endpoint.EndpointScheduleRuntimeTryNext || snapshot.Decisions[1].RuntimeOutcome != endpoint.EndpointScheduleOutcomeSuccess {
+	if snapshot.Decisions[0].RuntimeOutcome != endpoint.EndpointScheduleRuntimeTryNext || snapshot.Decisions[1].RuntimeOutcome != endpoint.EndpointScheduleOutcomeSuccess {
 		t.Fatalf("unexpected failover attempt decisions: %+v", snapshot.Decisions)
 	}
 }
 
-func TestEndpointPipeline_Unauthorized_FailsOverAndMigratesActive(t *testing.T) {
+// [Phase3 §11.2] auth failover 成功后 active 不迁移；auth cooldown 断言保留
+func TestEndpointPipeline_Unauthorized_FailsOverWithoutMigratingActive(t *testing.T) {
 	var primaryHits, backupHits int32
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&primaryHits, 1)
@@ -164,8 +174,8 @@ func TestEndpointPipeline_Unauthorized_FailsOverAndMigratesActive(t *testing.T) 
 	if got := atomic.LoadInt32(&backupHits); got != 1 {
 		t.Fatalf("expected backup to be called once, got %d", got)
 	}
-	if active, _ := manager.GetActiveEndpointSelection(); active != "backup" {
-		t.Fatalf("expected active endpoint to migrate to backup, got %q", active)
+	if active, _ := manager.GetActiveEndpointSelection(); active != "primary" {
+		t.Fatalf("v8: fallback success must not migrate active, got %q", active)
 	}
 	if primaryEndpoint := manager.GetEndpointByNameAny("primary"); primaryEndpoint == nil || !primaryEndpoint.IsInCooldown() {
 		t.Fatal("expected unauthorized primary endpoint to enter auth cooldown")
@@ -374,4 +384,188 @@ func TestEndpointPipeline_PrivacyBlockRecordsSnapshotWithoutFailover(t *testing.
 		t.Fatalf("privacy block must not reach upstream, hits=%d", got)
 	}
 	requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomePrivacyBlocked, "primary")
+}
+
+// [Phase1 §9.2] 普通 429：同端点最多重试一次；两次均 429 只记一次 rate_limit 软失败，
+// 阈值前不换端点，把规范化 429（保留 Retry-After）返回客户端，不进入冷却。
+func TestEndpointPipeline_Ordinary429RetriesSameEndpointThenReturns429(t *testing.T) {
+	var primaryHits, backupHits int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&primaryHits, 1)
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, `{"error":{"type":"rate_limit_error"}}`, http.StatusTooManyRequests)
+	}))
+	t.Cleanup(primary.Close)
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&backupHits, 1)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(backup.Close)
+
+	handler, manager := newEndpointPipelineTestHandler(t,
+		endpointPipelineConfig("primary", primary.URL, 1),
+		endpointPipelineConfig("backup", backup.URL, 2),
+	)
+	manager.RestoreActiveEndpoint("primary")
+
+	recorder := performEndpointPipelineRequest(t, handler, false)
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected normalized 429, got status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Retry-After"); got != "1" {
+		t.Fatalf("expected Retry-After preserved, got %q", got)
+	}
+	if got := atomic.LoadInt32(&primaryHits); got != 2 {
+		t.Fatalf("expected exactly one same-endpoint retry (2 upstream hits), got %d", got)
+	}
+	if got := atomic.LoadInt32(&backupHits); got != 0 {
+		t.Fatalf("threshold not reached: must not switch endpoint, backup hits=%d", got)
+	}
+	if primaryEndpoint := manager.GetEndpointByNameAny("primary"); primaryEndpoint.IsInCooldown() {
+		t.Fatal("single logical 429 must not enter cooldown before threshold")
+	}
+	if got := manager.GetFailureStats()["primary"]; got != 1 {
+		t.Fatalf("two upstream 429 must settle as one soft failure, got %d", got)
+	}
+	if active, _ := manager.GetActiveEndpointSelection(); active != "primary" {
+		t.Fatalf("429 must not change active selection, got %q", active)
+	}
+	requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomeRateLimited, "primary")
+}
+
+// [Phase1 §9.2 规则 6] 首次 429 后本地重试成功：返回 200，本次不记软失败
+func TestEndpointPipeline_Ordinary429RetrySucceedsWithoutSoftFailure(t *testing.T) {
+	var primaryHits int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&primaryHits, 1) == 1 {
+			http.Error(w, `{"error":{"type":"rate_limit_error"}}`, http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(primary.Close)
+
+	handler, manager := newEndpointPipelineTestHandler(t,
+		endpointPipelineConfig("primary", primary.URL, 1),
+	)
+	manager.RestoreActiveEndpoint("primary")
+
+	recorder := performEndpointPipelineRequest(t, handler, false)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected retry success 200, got status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := atomic.LoadInt32(&primaryHits); got != 2 {
+		t.Fatalf("expected two upstream hits (429 then 200), got %d", got)
+	}
+	if got := manager.GetFailureStats()["primary"]; got != 0 {
+		t.Fatalf("retry success must not record soft failure, got %d", got)
+	}
+}
+
+// [Phase1 §9.2 规则 9] 第 3 个逻辑 429 达阈值：进入冷却并允许本请求内换下一候选
+func TestEndpointPipeline_Ordinary429ThirdLogicalFailureTripsCooldownAndFailsOver(t *testing.T) {
+	var primaryHits, backupHits int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&primaryHits, 1)
+		http.Error(w, `{"error":{"type":"rate_limit_error"}}`, http.StatusTooManyRequests)
+	}))
+	t.Cleanup(primary.Close)
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&backupHits, 1)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(backup.Close)
+
+	handler, manager := newEndpointPipelineTestHandler(t,
+		endpointPipelineConfig("primary", primary.URL, 1),
+		endpointPipelineConfig("backup", backup.URL, 2),
+	)
+	manager.RestoreActiveEndpoint("primary")
+
+	// 前两个逻辑失败（每个客户端请求只记一次）
+	for i := 0; i < 2; i++ {
+		recorder := performEndpointPipelineRequest(t, handler, false)
+		if recorder.Code != http.StatusTooManyRequests {
+			t.Fatalf("request %d: expected 429 before threshold, got %d", i+1, recorder.Code)
+		}
+	}
+	if got := manager.GetFailureStats()["primary"]; got != 2 {
+		t.Fatalf("expected 2 soft failures before threshold, got %d", got)
+	}
+
+	// 第 3 个逻辑失败触发阈值：冷却 + 换候选成功
+	recorder := performEndpointPipelineRequest(t, handler, false)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected threshold-triggered failover success, got status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := atomic.LoadInt32(&backupHits); got != 1 {
+		t.Fatalf("expected backup hit after threshold, got %d", got)
+	}
+	if primaryEndpoint := manager.GetEndpointByNameAny("primary"); !primaryEndpoint.IsInCooldown() {
+		t.Fatal("expected primary in cooldown after threshold")
+	}
+	if got := manager.GetFailureStats()["primary"]; got != 0 {
+		t.Fatalf("threshold trip should clear the triggering window, got %d", got)
+	}
+}
+
+// [Phase1 §8.5] 请求内尝试预算：最多尝试 3 个不同端点，不穿透剩余候选
+func TestEndpointPipeline_CandidateAttemptBudgetStopsAtThree(t *testing.T) {
+	var fourthHits int32
+	fourth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&fourthHits, 1)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(fourth.Close)
+
+	handler, manager := newEndpointPipelineTestHandler(t,
+		endpointPipelineConfig("e1", endpointPipelineClosedURL(t), 1),
+		endpointPipelineConfig("e2", endpointPipelineClosedURL(t), 2),
+		endpointPipelineConfig("e3", endpointPipelineClosedURL(t), 3),
+		endpointPipelineConfig("e4", fourth.URL, 4),
+	)
+	manager.RestoreActiveEndpoint("e1")
+
+	recorder := performEndpointPipelineRequest(t, handler, false)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 after budget exhausted, got status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := atomic.LoadInt32(&fourthHits); got != 0 {
+		t.Fatalf("4th endpoint beyond budget must not be attempted, hits=%d", got)
+	}
+	if !strings.Contains(recorder.Body.String(), "budget exhausted") {
+		t.Fatalf("expected budget exhausted reason, got %s", recorder.Body.String())
+	}
+}
+
+// [Phase1 D15 §12] reject 语义：第一逻辑候选处于软失败阈值型冷却即拒绝，
+// 不尝试健康备用端点。
+func TestEndpointPipeline_RejectModeRejectsWhenFirstLogicalCandidateTripped(t *testing.T) {
+	var backupHits int32
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&backupHits, 1)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(backup.Close)
+
+	handler, manager := newEndpointPipelineTestHandlerWithAction(t, "reject",
+		endpointPipelineConfig("primary", endpointPipelineClosedURL(t), 1),
+		endpointPipelineConfig("backup", backup.URL, 2),
+	)
+	manager.RestoreActiveEndpoint("primary")
+	manager.SetEndpointCooldown("primary", time.Minute,
+		endpoint.SoftFailureCooldownReason(endpoint.SoftFailureCategoryRateLimit))
+
+	recorder := performEndpointPipelineRequest(t, handler, false)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected reject-mode 503, got status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "failure threshold reached") {
+		t.Fatalf("expected failure threshold message, got %s", recorder.Body.String())
+	}
+	if got := atomic.LoadInt32(&backupHits); got != 0 {
+		t.Fatalf("reject mode must skip healthy backup, hits=%d", got)
+	}
+	requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomeRejectedByFailureTracker, "")
 }

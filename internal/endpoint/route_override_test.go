@@ -105,7 +105,7 @@ func TestManualFixedSelectionDoesNotFailoverPastPinnedEndpoint(t *testing.T) {
 		SetBy:           RouteCallerUser,
 		FallbackEnabled: false,
 	})
-	manager.RecordFailure("primary")
+	manager.SetEndpointCooldown("primary", time.Minute, SoftFailureCooldownReason(SoftFailureCategoryServerError))
 
 	healthy := manager.GetHealthyEndpoints()
 	if len(healthy) != 0 {

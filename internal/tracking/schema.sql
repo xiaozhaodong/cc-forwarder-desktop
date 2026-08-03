@@ -167,12 +167,31 @@ CREATE TABLE IF NOT EXISTS endpoints (
     cache_read_cost_multiplier REAL DEFAULT 1.0,    -- 缓存读取成本倍率
 
     -- ========== 状态 ==========
-    enabled INTEGER DEFAULT 1,                      -- 是否启用 (1=启用, 0=禁用)
+    enabled INTEGER DEFAULT 1,                      -- legacy active 标记（v8 起新版停止写入，仅供回滚读取）
+    availability_enabled INTEGER NOT NULL DEFAULT 1,-- v8 硬启用：0=任何模式都不可使用
 
     -- ========== 审计字段 ==========
     created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
     updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
 );
+
+-- v8 端点运行态（收敛方案 §7.2）：按 scope 保存达到阈值后的持久化 cooldown。
+-- scope=global：认证失败/可靠 quota，阻断两个 path；messages：生成请求 cooldown；
+-- count_tokens：预留，第一版不写入。软失败事件列表不落库。
+CREATE TABLE IF NOT EXISTS endpoint_runtime_states (
+    endpoint_id INTEGER NOT NULL,
+    scope TEXT NOT NULL CHECK (scope IN ('global', 'messages', 'count_tokens')),
+    state TEXT NOT NULL DEFAULT 'active',
+    cooldown_until DATETIME,
+    cooldown_reason TEXT NOT NULL DEFAULT '',
+    revision INTEGER NOT NULL DEFAULT 0,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (endpoint_id, scope),
+    FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_endpoint_runtime_states_cooldown
+ON endpoint_runtime_states(scope, cooldown_until);
 
 -- 端点表索引
 CREATE INDEX IF NOT EXISTS idx_endpoints_channel ON endpoints(channel);

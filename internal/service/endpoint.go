@@ -16,6 +16,9 @@ import (
 	"cc-forwarder/internal/utils"
 )
 
+// endpointAdmissionDrainTimeout 停用/删除时等待 in-flight admission 排空的上限（§7.6 规则 8）
+const endpointAdmissionDrainTimeout = 3 * time.Second
+
 // EndpointService 端点管理业务服务
 // 连接 EndpointStore（数据持久化）和 EndpointManager（运行时管理）
 type EndpointService struct {
@@ -158,6 +161,7 @@ func (s *EndpointService) syncEndpointRuntime(record *store.EndpointRecord) erro
 // DeleteEndpoint 删除端点
 // v7：删除经 writer coordinator 串行——DB 删除成功后才移除内存；
 // DB 删除失败时内存不动、返回错误（替代旧的"先删内存再删 DB、失败不恢复"顺序）
+// v8 §7.6：删除前设置 pending gate 阻断新 attempt 并等待 in-flight admission 排空
 func (s *EndpointService) DeleteEndpoint(ctx context.Context, name string) error {
 	// 验证端点存在
 	existing, err := s.store.Get(ctx, name)
@@ -168,9 +172,16 @@ func (s *EndpointService) DeleteEndpoint(ctx context.Context, name string) error
 		return fmt.Errorf("端点 '%s' 不存在", name)
 	}
 
+	s.manager.SetPendingAvailabilityGate(name, true)
+	if !s.manager.WaitAdmissionsDrained(name, endpointAdmissionDrainTimeout) {
+		slog.Warn("⚠️ 端点删除等待 in-flight attempt 排空超时，gate 继续生效", "endpoint", name)
+	}
+
 	if err := s.manager.DeleteEndpointCoordinated(name); err != nil {
+		s.manager.SetPendingAvailabilityGate(name, false)
 		return err
 	}
+	s.manager.SetPendingAvailabilityGate(name, false)
 
 	slog.Info(fmt.Sprintf("✅ [EndpointService] 删除端点成功: %s", name))
 	return nil
@@ -188,6 +199,79 @@ func (s *EndpointService) ToggleEndpoint(ctx context.Context, name string, enabl
 
 	record.Enabled = enabled
 	return s.UpdateEndpoint(ctx, record)
+}
+
+// SetEndpointAvailability 更新硬启用状态（v8 §7.6：persist-then-publish）。
+// 停用先设置 pending gate 阻断新 attempt；事务写库成功后原子发布运行时；
+// 写库失败清除 gate、运行态不变；发布失败执行补偿事务回滚 DB，不返回假成功。
+func (s *EndpointService) SetEndpointAvailability(ctx context.Context, name string, enabled bool) error {
+	record, err := s.store.Get(ctx, name)
+	if err != nil {
+		return fmt.Errorf("获取端点失败: %w", err)
+	}
+	if record == nil {
+		return fmt.Errorf("端点 '%s' 不存在", name)
+	}
+	previous := record.IsAvailabilityEnabled()
+
+	if !enabled && s.manager != nil {
+		s.manager.SetPendingAvailabilityGate(name, true)
+	}
+
+	if err := s.store.SetAvailabilityEnabled(ctx, name, enabled); err != nil {
+		if !enabled && s.manager != nil {
+			s.manager.SetPendingAvailabilityGate(name, false)
+		}
+		return fmt.Errorf("持久化硬启用状态失败: %w", err)
+	}
+
+	if s.manager != nil {
+		// v8 §7.6 规则 8：停用发布前等待已取得的 admission 退出；
+		// 超时不阻塞停用（gate 持续生效，泄漏的 lease 不能永久阻塞）
+		if !enabled && !s.manager.WaitAdmissionsDrained(name, endpointAdmissionDrainTimeout) {
+			slog.Warn("⚠️ 端点停用等待 in-flight attempt 排空超时，gate 继续生效", "endpoint", name)
+		}
+		if err := s.manager.PublishEndpointAvailability(name, enabled); err != nil {
+			// 补偿事务：回滚 DB，绝不在运行态未生效时返回成功
+			if rollbackErr := s.store.SetAvailabilityEnabled(ctx, name, previous); rollbackErr != nil {
+				slog.Error("硬启用发布失败且回滚失败，状态可能不一致", "endpoint", name, "error", rollbackErr)
+			}
+			s.manager.SetPendingAvailabilityGate(name, false)
+			return fmt.Errorf("发布端点硬启用运行态失败: %w", err)
+		}
+		s.manager.SetPendingAvailabilityGate(name, false)
+	}
+
+	slog.Info("✅ [EndpointService] 端点硬启用状态已更新", "endpoint", name, "enabled", enabled)
+	return nil
+}
+
+// SetEndpointAutoSchedule 更新“参与自动调度”状态（复用同一协调顺序，§7.6 规则 5）
+func (s *EndpointService) SetEndpointAutoSchedule(ctx context.Context, name string, enabled bool) error {
+	record, err := s.store.Get(ctx, name)
+	if err != nil {
+		return fmt.Errorf("获取端点失败: %w", err)
+	}
+	if record == nil {
+		return fmt.Errorf("端点 '%s' 不存在", name)
+	}
+	previous := record.FailoverEnabled
+
+	if err := s.store.SetFailoverEnabled(ctx, name, enabled); err != nil {
+		return fmt.Errorf("持久化自动调度状态失败: %w", err)
+	}
+
+	if s.manager != nil {
+		if err := s.manager.PublishEndpointAutoSchedule(name, enabled); err != nil {
+			if rollbackErr := s.store.SetFailoverEnabled(ctx, name, previous); rollbackErr != nil {
+				slog.Error("自动调度发布失败且回滚失败，状态可能不一致", "endpoint", name, "error", rollbackErr)
+			}
+			return fmt.Errorf("发布端点自动调度运行态失败: %w", err)
+		}
+	}
+
+	slog.Info("✅ [EndpointService] 端点自动调度状态已更新", "endpoint", name, "enabled", enabled)
+	return nil
 }
 
 // DisableAllEndpoints 禁用所有端点
@@ -327,6 +411,7 @@ func (s *EndpointService) GetEndpointWithHealth(ctx context.Context, name string
 		"cost_multiplier":                   record.CostMultiplier,
 		"cache_creation_cost_multiplier_1h": record.CacheCreationCostMultiplier1h,
 		"enabled":                           record.Enabled,
+		"availability_enabled":              record.IsAvailabilityEnabled(),
 		"created_at":                        record.CreatedAt,
 		"updated_at":                        record.UpdatedAt,
 		"health": map[string]interface{}{
@@ -382,9 +467,13 @@ func (s *EndpointService) recordToConfig(record *store.EndpointRecord) config.En
 	enabled := record.Enabled
 	cfg.Enabled = &enabled
 
-	// 设置 FailoverEnabled
+	// 设置 FailoverEnabled（v8 语义：参与自动调度）
 	fe := record.FailoverEnabled
 	cfg.FailoverEnabled = &fe
+
+	// v8: 硬启用
+	avail := record.IsAvailabilityEnabled()
+	cfg.AvailabilityEnabled = &avail
 
 	// 设置 Cooldown
 	if record.CooldownSeconds != nil {
@@ -416,6 +505,10 @@ func (s *EndpointService) configToRecord(cfg config.EndpointConfig) *store.Endpo
 	if cfg.FailoverEnabled != nil {
 		record.FailoverEnabled = *cfg.FailoverEnabled
 	}
+
+	// v8: 硬启用（nil 默认 true）
+	avail := cfg.IsAvailabilityEnabled()
+	record.AvailabilityEnabled = &avail
 
 	if cfg.Cooldown != nil {
 		cd := int(cfg.Cooldown.Seconds())

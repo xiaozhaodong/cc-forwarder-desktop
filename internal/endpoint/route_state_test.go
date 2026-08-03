@@ -1,8 +1,11 @@
 package endpoint
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"cc-forwarder/config"
 )
 
 func TestNegativeHitCacheModelSchemaAndPayloadAreRouteScoped(t *testing.T) {
@@ -85,4 +88,58 @@ func TestNegativeHitCacheExpiredEntriesDoNotHit(t *testing.T) {
 	if hit, reason := cache.Has("primary", profile); hit {
 		t.Fatalf("expected expired count_tokens hit to be ignored, hit=%v reason=%q", hit, reason)
 	}
+}
+
+func TestGetManualFixedRouteBlockUsesHardAvailability(t *testing.T) {
+	legacyEnabled := true
+	hardEnabled := false
+	manager := newSchedulerTestManager(t, &config.Config{Endpoints: []config.EndpointConfig{{
+		Name: "fixed", URL: "https://example.com", Priority: 1,
+		Enabled: &legacyEnabled, AvailabilityEnabled: &hardEnabled,
+	}}})
+	manager.SetClaudeRoutingOverride(RouteOverrideState{Mode: RouteModeManualFixed, EndpointName: "fixed"})
+
+	block := manager.GetManualFixedRouteBlock(RouteRequestProfile{Path: "/v1/messages"})
+	if block == nil || block.Reason != "manual_fixed_endpoint_disabled" {
+		t.Fatalf("expected hard availability block, got %+v", block)
+	}
+}
+
+func TestGetManualFixedRouteBlockUsesPathScopedCooldown(t *testing.T) {
+	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "fixed"))
+	manager.SetClaudeRoutingOverride(RouteOverrideState{Mode: RouteModeManualFixed, EndpointName: "fixed"})
+	profile := RouteRequestProfile{Path: "/v1/messages/count_tokens", IsCountTokens: true}
+
+	manager.SetEndpointCooldown("fixed", time.Minute, SoftFailureCooldownReason(SoftFailureCategoryServerError))
+	if block := manager.GetManualFixedRouteBlock(profile); block != nil {
+		t.Fatalf("messages cooldown must not block count_tokens, got %+v", block)
+	}
+
+	manager.SetScopedCooldown("fixed", SoftFailureScopeCountTokens, time.Minute, SoftFailureCooldownReason(SoftFailureCategoryRateLimit))
+	block := manager.GetManualFixedRouteBlock(profile)
+	if block == nil || block.Reason != "count_tokens_scoped_cooldown" {
+		t.Fatalf("expected count_tokens scoped block, got %+v", block)
+	}
+}
+
+func TestLegacyRouteHelpersReadConfigRaceFree(t *testing.T) {
+	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "fixed", "backup"))
+	manager.SetClaudeRoutingOverride(RouteOverrideState{Mode: RouteModeManualFixed, EndpointName: "fixed"})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			cfg := schedulerTestConfig(true, "fixed", "backup").Endpoints[0]
+			cfg.Priority = 1 + i%2
+			_ = manager.UpdateEndpointConfig("fixed", cfg)
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		_ = manager.GetEndpointByNameAny("fixed")
+		_ = manager.firstLogicalCandidateName()
+		_ = manager.GetManualFixedRouteBlock(RouteRequestProfile{Path: "/v1/messages"})
+		_ = manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{Path: "/v1/messages"})
+	}
+	<-done
 }

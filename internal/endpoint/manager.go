@@ -14,7 +14,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cc-forwarder/config"
@@ -30,10 +32,25 @@ type EndpointStatus struct {
 	LastCheck        time.Time
 	ResponseTime     time.Duration
 	ConsecutiveFails int
-	NeverChecked     bool      // 表示从未被检测过
-	CooldownUntil    time.Time // 请求失败冷却截止时间
-	CooldownReason   string    // 冷却原因（如 "HTTP 503"）
-	PausedUntil      time.Time // 手动暂停截止时间（零值=未暂停；到期读取时自愈）
+	NeverChecked     bool // 表示从未被检测过
+	// 冷却运行态按 scope 分槽（§14.4），互不覆盖：
+	// messages 槽仅阻断 /v1/messages；global 槽（auth/quota）阻断双 path
+	CooldownUntil        time.Time // messages scope 冷却截止时间
+	CooldownReason       string    // messages scope 冷却原因
+	GlobalCooldownUntil  time.Time // global scope 冷却截止时间
+	GlobalCooldownReason string    // global scope 冷却原因
+	PausedUntil          time.Time // 手动暂停截止时间（零值=未暂停；到期读取时自愈）
+}
+
+// EffectiveCooldown 返回当前生效冷却中截止最晚的一条（展示与 messages path 判定口径）
+func (s EndpointStatus) EffectiveCooldown(now time.Time) (until time.Time, reason string, active bool) {
+	if !s.CooldownUntil.IsZero() && now.Before(s.CooldownUntil) {
+		until, reason, active = s.CooldownUntil, s.CooldownReason, true
+	}
+	if !s.GlobalCooldownUntil.IsZero() && now.Before(s.GlobalCooldownUntil) && s.GlobalCooldownUntil.After(until) {
+		until, reason, active = s.GlobalCooldownUntil, s.GlobalCooldownReason, true
+	}
+	return until, reason, active
 }
 
 // Endpoint represents an endpoint with its configuration and status
@@ -41,6 +58,9 @@ type Endpoint struct {
 	Config config.EndpointConfig
 	Status EndpointStatus
 	mutex  sync.RWMutex
+	// v8：配置修订号（publish 时递增，AttemptPlan CAS 依据）与在途 admission 计数
+	configRevision int64
+	admissions     atomic.Int64
 }
 
 // RLock 锁定端点状态读锁（供外部安全读取状态）
@@ -53,11 +73,12 @@ func (e *Endpoint) RUnlock() {
 	e.mutex.RUnlock()
 }
 
-// IsInCooldown 检查端点是否处于冷却状态
+// IsInCooldown 检查端点是否处于冷却状态（任一 scope 生效即视为冷却，/v1/messages 口径）
 func (e *Endpoint) IsInCooldown() bool {
 	e.mutex.RLock()
 	defer e.mutex.RUnlock()
-	return !e.Status.CooldownUntil.IsZero() && time.Now().Before(e.Status.CooldownUntil)
+	_, _, active := e.Status.EffectiveCooldown(time.Now())
+	return active
 }
 
 // IsPaused 检查端点是否处于手动暂停状态（PausedUntil 到期自动视为恢复）
@@ -69,20 +90,30 @@ func (e *Endpoint) IsPaused() bool {
 
 // Manager manages endpoints and their health status
 type Manager struct {
-	endpoints         []*Endpoint
-	endpointsMu       sync.RWMutex // v5.0+: 保护 endpoints 切片的并发访问
-	configMu          sync.RWMutex
-	config            *config.Config
-	client            *http.Client
-	ctx               context.Context
-	cancel            context.CancelFunc
-	wg                sync.WaitGroup
-	fastTester        *FastTester
-	keyManager        *KeyManager     // 管理多 API Key 状态
-	failureTracker    *FailureTracker // 失败追踪器，用于检测端点持续故障
-	routeOverride     *RouteOverride
-	routeState        *RouteState
-	scheduleSnapshots *endpointScheduleSnapshotStore
+	endpoints           []*Endpoint
+	endpointsMu         sync.RWMutex // v5.0+: 保护 endpoints 切片的并发访问
+	endpointConfigMu    sync.RWMutex // v8：配置/revision/KeyManager 发布与 attempt 结算的 generation barrier
+	configMu            sync.RWMutex
+	config              *config.Config
+	client              *http.Client
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	wg                  sync.WaitGroup
+	fastTester          *FastTester
+	keyManager          *KeyManager         // 管理多 API Key 状态
+	softFailures        *SoftFailureTracker // 分类软失败追踪器（§9.3）
+	pendingGates        *pendingGateSet     // §7.6 停用中的安全阻断 gate
+	autoRetention       *autoRetentionState // §8.4 Auto retained 运行态
+	scopedCooldowns     *ScopedCooldowns    // §10 count_tokens 进程内 scoped cooldown（D17）
+	routingNotReady     atomic.Bool         // §6.4：启动读取失败时 Claude 路由 not ready
+	cooldownPersistMu   sync.RWMutex
+	cooldownPersistHook func(name string, until time.Time, reason string, revision int64) // §14.4 冷却持久化钩子
+	cooldownClearHook   func(name string, revision int64)                                 // 手动清冷却时写 tombstone 覆盖持久化记录
+	routeDecisionMu     sync.RWMutex
+	routeDecisionNotify func(RouteOverrideState) // last_effective_endpoint 变更通知（UI 事件桥接）
+	routeOverride       *RouteOverride
+	routeState          *RouteState
+	scheduleSnapshots   *endpointScheduleSnapshotStore
 	// EventBus for decoupled event publishing
 	eventBus events.EventBus
 	// 健康检查完成回调（用于推送 Wails 事件）
@@ -122,9 +153,12 @@ func NewManager(cfg *config.Config) *Manager {
 		fastTester:        NewFastTester(cfg),
 		keyManager:        NewKeyManager(), // 初始化 Key 管理器
 		routeOverride:     NewRouteOverride(),
+		pendingGates:      newPendingGateSet(),
+		autoRetention:     newAutoRetentionState(),
+		scopedCooldowns:   NewScopedCooldowns(),
 		routeState:        NewRouteState(),
 		scheduleSnapshots: newEndpointScheduleSnapshotStore(),
-		failureTracker: NewFailureTracker(
+		softFailures: NewSoftFailureTracker(
 			cfg.FailureTracker.Enabled,
 			cfg.FailureTracker.TimeWindow,
 			cfg.FailureTracker.Threshold,
@@ -139,6 +173,7 @@ func NewManager(cfg *config.Config) *Manager {
 				Healthy:      false,
 				NeverChecked: true, // 标记为未检测，等待手动/批量连通性测试或真实请求结果
 			},
+			configRevision: NextEndpointConfigRevision(),
 		}
 		manager.endpoints = append(manager.endpoints, endpoint)
 
@@ -163,7 +198,7 @@ func NewManager(cfg *config.Config) *Manager {
 // Start starts endpoint background routines.
 // 2026-03: 后台健康轮询已停用，避免持续探测 /v1/models。
 func (m *Manager) Start() {
-	if m.failureTracker != nil {
+	if m.softFailures != nil {
 		m.wg.Add(1)
 		go m.failureTrackerCleanupLoop()
 	}
@@ -191,9 +226,9 @@ func (m *Manager) UpdateConfig(cfg *config.Config) {
 		m.fastTester.UpdateConfig(cfg)
 	}
 
-	// 🔧 [热更新] 同步更新失败追踪器配置
-	if m.failureTracker != nil {
-		m.failureTracker.UpdateConfig(cfg.FailureTracker.Enabled, cfg.FailureTracker.TimeWindow, cfg.FailureTracker.Threshold)
+	// 🔧 [热更新] 同步更新软失败追踪器配置
+	if m.softFailures != nil {
+		m.softFailures.UpdateConfig(cfg.FailureTracker.Enabled, cfg.FailureTracker.TimeWindow, cfg.FailureTracker.Threshold)
 	}
 
 	// Recreate transport with new proxy configuration
@@ -312,25 +347,55 @@ func (m *Manager) getConfigSnapshot() *config.Config {
 	return cfg
 }
 
-// RecordFailure 记录端点失败，返回当前窗口内失败次数
-func (m *Manager) RecordFailure(endpointName string) int {
-	return m.failureTracker.RecordFailure(endpointName)
+// RecordSoftFailure 记录一次分类软失败，返回窗口内计数与是否达到阈值（§9.3）
+func (m *Manager) RecordSoftFailure(endpointName string, scope SoftFailureScope, category SoftFailureCategory) (int, bool) {
+	return m.softFailures.Record(endpointName, scope, category)
 }
 
-// RecordSuccess 记录端点成功，清空失败记录
+// RecordSuccess FullSuccess 清空端点 messages scope 的全部软失败类别。
+// count_tokens scope 由其 handler 自行清理（Phase 3 接入）。
 func (m *Manager) RecordSuccess(endpointName string) {
-	m.failureTracker.RecordSuccess(endpointName)
+	m.softFailures.ClearScope(endpointName, SoftFailureScopeMessages)
 }
 
-// GetFailureStats 获取失败统计信息
+// RecordSuccessSince FullSuccess 仅清除 since（请求开始时刻）之前的 messages 软失败：
+// 慢请求的成功不会抹掉请求进行期间新记录的失败证据（IfNoNewerFailure）。
+func (m *Manager) RecordSuccessSince(endpointName string, since time.Time) {
+	m.softFailures.ClearScopeBefore(endpointName, SoftFailureScopeMessages, since)
+}
+
+// ClearSoftFailureScope 清空指定 scope 的软失败类别与 scoped cooldown
+func (m *Manager) ClearSoftFailureScope(endpointName string, scope SoftFailureScope) {
+	m.softFailures.ClearScope(endpointName, scope)
+	m.scopedCooldowns.Clear(endpointName, scope)
+}
+
+// SetScopedCooldown 写入进程内 scoped cooldown（count_tokens 专用，D17）
+func (m *Manager) SetScopedCooldown(endpointName string, scope SoftFailureScope, duration time.Duration, reason string) {
+	if duration <= 0 {
+		return
+	}
+	m.scopedCooldowns.Set(endpointName, scope, time.Now().Add(duration), reason)
+}
+
+// ScopedCooldownActive 查询 scoped cooldown
+func (m *Manager) ScopedCooldownActive(endpointName string, scope SoftFailureScope) (bool, time.Time, string) {
+	return m.scopedCooldowns.Active(endpointName, scope)
+}
+
+// GetFailureStats 获取失败统计信息（按端点聚合，兼容旧展示口径）
 func (m *Manager) GetFailureStats() map[string]int {
-	return m.failureTracker.GetStats()
+	return m.softFailures.Stats()
 }
 
-// ShouldTriggerFailureAction 检查指定端点是否达到失败阈值
-// 用于健康检查回退逻辑中过滤端点
-func (m *Manager) ShouldTriggerFailureAction(endpointName string) bool {
-	return m.failureTracker.ShouldTriggerAction(endpointName)
+// GetSoftFailureCounts 返回端点在指定 scope 的分类软失败计数（快照解释用）
+func (m *Manager) GetSoftFailureCounts(endpointName string, scope SoftFailureScope) map[SoftFailureCategory]int {
+	return m.softFailures.CountsFor(endpointName, scope)
+}
+
+// SoftFailureThreshold 当前软失败阈值
+func (m *Manager) SoftFailureThreshold() int {
+	return m.softFailures.Threshold()
 }
 
 func (m *Manager) failureTrackerCleanupLoop() {
@@ -343,7 +408,7 @@ func (m *Manager) failureTrackerCleanupLoop() {
 		case <-m.ctx.Done():
 			return
 		case <-ticker.C:
-			m.failureTracker.CleanupExpiredEvents()
+			m.softFailures.CleanupExpiredEvents()
 		}
 	}
 }
@@ -355,38 +420,77 @@ func (m *Manager) IsEndpointRoutable(ep *Endpoint) bool {
 		return false
 	}
 
-	cfg := m.getConfigSnapshot()
-	if cfg.FailureTracker.Enabled && m.failureTracker.ShouldTriggerAction(ep.Config.Name) {
-		return false
-	}
-
+	// v8：软失败阈值触发即写入 cooldown，可路由性只看 cooldown（§9.3）
 	return !ep.IsInCooldown()
 }
 
 // UpdateFailureTrackerConfig 热更新失败追踪器配置
 func (m *Manager) UpdateFailureTrackerConfig(enabled bool, timeWindow time.Duration, threshold int) {
-	m.failureTracker.UpdateConfig(enabled, timeWindow, threshold)
+	m.softFailures.UpdateConfig(enabled, timeWindow, threshold)
 }
 
-// ShouldRejectRequest 检查是否应该拒绝请求
-// 当 FailureTracker 配置为 "reject" 模式且当前 active 端点达到失败阈值时返回 true
-// 返回: (shouldReject, rejectedEndpointName)
+// ShouldRejectRequest 检查是否应该拒绝请求（D15 冻结语义，§12）：
+// action=reject 时，检查"第一逻辑候选"是否处于软失败阈值型 cooldown；
+// tripped 即拒绝，不尝试备用端点。第一逻辑候选优先取 manual fixed/preferred
+// 目标，否则按 hard 资格 + 自动调度资格取 priority 最小值端点。
 func (m *Manager) ShouldRejectRequest() (bool, string) {
 	cfg := m.getConfigSnapshot()
-
-	// 未启用失败追踪或不是 reject 模式，不拒绝
 	if !cfg.FailureTracker.Enabled || cfg.FailureTracker.Action != "reject" {
 		return false, ""
 	}
 
-	// v7：活跃端点 = activeEndpoint（组体系已退役）
-	activeName, _ := m.GetActiveEndpointSelection()
-	if activeName == "" {
+	name := m.firstLogicalCandidateName()
+	if name == "" {
 		return false, ""
 	}
-	if m.failureTracker.ShouldTriggerAction(activeName) {
-		return true, activeName
+	// 直接读 messages 槽：effective cooldown 取"截止最晚"者，更晚到期的 global
+	// auth/quota 冷却会掩盖软失败 reason，导致 reject 误放行（§12）
+	ep := m.GetEndpointByNameAny(name)
+	if ep == nil {
+		return false, ""
+	}
+	ep.mutex.RLock()
+	until := ep.Status.CooldownUntil
+	reason := ep.Status.CooldownReason
+	ep.mutex.RUnlock()
+	if !until.IsZero() && time.Now().Before(until) && strings.HasPrefix(reason, SoftFailureCooldownReasonPrefix) {
+		return true, name
+	}
+	return false, ""
+}
+
+// firstLogicalCandidateName 计算第一逻辑候选（忽略健康/冷却状态）：
+// manual fixed/preferred 目标优先（硬启用时）；否则按 hard 资格 + 自动调度资格
+// 取 priority 最小值端点（v8：legacy active 已退役，不再参与判定）。
+func (m *Manager) firstLogicalCandidateName() string {
+	override := m.routeOverride.Snapshot()
+	if override.Mode != RouteModeAuto && override.EndpointName != "" {
+		if ep := m.GetEndpointByNameAny(override.EndpointName); ep != nil && m.EndpointHardEnabled(ep) {
+			return override.EndpointName
+		}
 	}
 
-	return false, ""
+	m.endpointsMu.RLock()
+	defer m.endpointsMu.RUnlock()
+	bestName := ""
+	bestPriority := 0
+	for _, ep := range m.endpoints {
+		if ep == nil {
+			continue
+		}
+		ep.mutex.RLock()
+		name := ep.Config.Name
+		priority := ep.Config.Priority
+		hardEnabled := ep.Config.IsAvailabilityEnabled()
+		autoScheduleEnabled := ep.Config.IsAutoScheduleEnabled()
+		ep.mutex.RUnlock()
+		if !hardEnabled || !autoScheduleEnabled {
+			continue
+		}
+		if bestName == "" || priority < bestPriority {
+			bestName = name
+			bestPriority = priority
+		}
+	}
+	return bestName
 }

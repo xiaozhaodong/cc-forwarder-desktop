@@ -98,6 +98,30 @@ func (ro *RouteOverride) Set(state RouteOverrideState) RouteOverrideState {
 	return ro.state
 }
 
+// ApplyPersisted 原子发布已持久化的完整路由状态（§6.4：persist-then-publish，
+// revision 以数据库为准，不再自增）。较旧 revision 不得覆盖较新状态。
+func (ro *RouteOverride) ApplyPersisted(state RouteOverrideState) RouteOverrideState {
+	if ro == nil {
+		return RouteOverrideState{Mode: RouteModeAuto, FallbackEnabled: true}
+	}
+
+	ro.mu.Lock()
+	defer ro.mu.Unlock()
+
+	if state.Revision != 0 && state.Revision < ro.state.Revision {
+		return ro.state // 并发保护：旧提交不覆盖新状态
+	}
+	state.Mode = NormalizeRouteMode(state.Mode)
+	if state.Mode == RouteModeAuto {
+		state.EndpointName = ""
+		state.FallbackEnabled = true
+	} else if !state.FallbackEnabled && state.Mode == RouteModeManualPreferred {
+		state.FallbackEnabled = true
+	}
+	ro.state = state
+	return ro.state
+}
+
 func (ro *RouteOverride) Clear(setBy string) RouteOverrideState {
 	return ro.Set(RouteOverrideState{
 		Mode:            RouteModeAuto,
@@ -139,12 +163,34 @@ func (m *Manager) SetClaudeRoutingOverride(state RouteOverrideState) RouteOverri
 	return m.routeOverride.Set(state)
 }
 
+// ApplyPersistedClaudeRoutingState 发布已持久化路由状态（§6.4）
+func (m *Manager) ApplyPersistedClaudeRoutingState(state RouteOverrideState) RouteOverrideState {
+	return m.routeOverride.ApplyPersisted(state)
+}
+
 func (m *Manager) ClearClaudeRoutingOverride(setBy string) RouteOverrideState {
 	return m.routeOverride.Clear(setBy)
 }
 
 func (m *Manager) NoteRouteDecision(effectiveEndpoint, fallbackReason string) RouteOverrideState {
-	return m.routeOverride.NoteDecision(effectiveEndpoint, fallbackReason)
+	prev := m.routeOverride.Snapshot().LastEffectiveEndpoint
+	state := m.routeOverride.NoteDecision(effectiveEndpoint, fallbackReason)
+	if state.LastEffectiveEndpoint != prev {
+		m.routeDecisionMu.RLock()
+		notify := m.routeDecisionNotify
+		m.routeDecisionMu.RUnlock()
+		if notify != nil {
+			go notify(state)
+		}
+	}
+	return state
+}
+
+// SetRouteDecisionNotifier 注入 last_effective_endpoint 变更回调（App 层桥接前端事件）
+func (m *Manager) SetRouteDecisionNotifier(notify func(RouteOverrideState)) {
+	m.routeDecisionMu.Lock()
+	m.routeDecisionNotify = notify
+	m.routeDecisionMu.Unlock()
 }
 
 func (m *Manager) AllowSystemRouteSwitch(fromEndpoint, toEndpoint, callerKind string) (bool, string) {

@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"net"
@@ -50,7 +51,8 @@ type App struct {
 	// v5.0+ 端点存储 (SQLite)
 	endpointStore         store.EndpointStore      // 端点数据持久化
 	endpointService       *service.EndpointService // 端点业务服务
-	endpointRuntimeWriter *endpoint.RuntimeWriter  // v7: activeEndpoint 持久化协调器
+	endpointRuntimeWriter *endpoint.RuntimeWriter  // v7: activeEndpoint 持久化协调器（兼容期保留）
+	routingMu             sync.Mutex               // v8 §6.4: Claude 路由串行协调器
 
 	// v5.0+ 模型定价存储 (SQLite)
 	modelPricingStore   store.ModelPricingStore      // 模型定价数据持久化
@@ -140,6 +142,11 @@ func (a *App) startup(ctx context.Context) {
 	// v7：故障转移回调仅用于前端事件；DB 写入统一走 endpoint runtime writer
 	a.endpointManager.SetOnFailoverTriggered(func(failedEndpoint, newEndpoint string) {
 		a.emitEndpointUpdate()
+	})
+
+	// v8 Phase 4：last_effective_endpoint 变化时推送路由事件，前端不再依赖 legacy active
+	a.endpointManager.SetRouteDecisionNotifier(func(state endpoint.RouteOverrideState) {
+		a.emitClaudeRoutingUpdate(a.buildClaudeRoutingState(state))
 	})
 
 	// 7. 初始化端点存储 (v5.0+ SQLite, 需要在创建 Manager 之后)
@@ -369,6 +376,105 @@ func (a *App) setupEndpointStore() {
 		a.logger.Warn("⚠️ 从数据库同步端点失败，使用 YAML 配置", "error", err)
 	} else {
 		a.logger.Info("✅ 端点存储已启用 (SQLite)")
+	}
+
+	// v8 §14.4：cooldown 持久化（global auth/quota 与 messages）与启动恢复
+	a.setupEndpointRuntimeStates(ctx, db)
+}
+
+// setupEndpointRuntimeStates 桥接 endpoint_runtime_states：注入持久化钩子并恢复未过期 cooldown。
+// scope 判定：auth/quota 型 reason → global（阻断两个 path）；其余软失败 → messages。
+// count_tokens 普通 cooldown 保持进程内态（D17），不经过本桥接。
+func (a *App) setupEndpointRuntimeStates(ctx context.Context, db *sql.DB) {
+	runtimeStateStore := store.NewSQLiteEndpointRuntimeStateStore(db)
+
+	// 用库内最大 revision 播种发号器：兜底时钟回拨/数据库迁移场景，
+	// 保证本进程新发号严格大于全部历史记录，Upsert 不被静默丢弃
+	if maxRevision, err := runtimeStateStore.MaxRevision(ctx); err != nil {
+		a.logger.Warn("⚠️ 读取端点运行态最大 revision 失败，跳过播种", "error", err)
+	} else if maxRevision > 0 {
+		endpoint.SeedCooldownRevision(maxRevision)
+	}
+
+	endpointIDByName := func(name string) (int64, bool) {
+		record, err := a.endpointStore.Get(context.Background(), name)
+		if err != nil || record == nil {
+			return 0, false
+		}
+		return record.ID, true
+	}
+
+	a.endpointManager.SetCooldownPersistHook(func(name string, until time.Time, reason string, revision int64) {
+		id, ok := endpointIDByName(name)
+		if !ok {
+			return
+		}
+		scope := endpoint.CooldownScopeForReason(reason)
+		persistCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		untilCopy := until
+		if err := runtimeStateStore.Upsert(persistCtx, &store.EndpointRuntimeStateRecord{
+			EndpointID:     id,
+			Scope:          scope,
+			State:          "cooldown",
+			CooldownUntil:  &untilCopy,
+			CooldownReason: reason,
+			Revision:       revision, // Set 侧锁内生成：落库顺序与内存写入顺序一致，旧任务被 Upsert 丢弃
+		}); err != nil {
+			a.logger.Warn("⚠️ 端点 cooldown 持久化失败", "endpoint", name, "error", err)
+		}
+	})
+
+	// 手动清冷却（如手动激活）时写更高 revision 的 tombstone（state=active、until=NULL）：
+	// 物理 DELETE 会让 revision 比较失效，晚执行的旧 persist 任务能把冷却重新写回；
+	// tombstone 让乱序的新旧任务都按 revision 正确裁决，ListActiveCooldowns 已过滤空 until
+	a.endpointManager.SetCooldownClearHook(func(name string, revision int64) {
+		id, ok := endpointIDByName(name)
+		if !ok {
+			return
+		}
+		clearCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, scope := range []string{store.EndpointRuntimeScopeGlobal, store.EndpointRuntimeScopeMessages} {
+			if err := runtimeStateStore.Upsert(clearCtx, &store.EndpointRuntimeStateRecord{
+				EndpointID: id,
+				Scope:      scope,
+				State:      "active",
+				Revision:   revision,
+			}); err != nil {
+				a.logger.Warn("⚠️ 端点 cooldown tombstone 写入失败", "endpoint", name, "scope", scope, "error", err)
+			}
+		}
+	})
+
+	// 启动恢复：仅内存 restore，不回写
+	records, err := runtimeStateStore.ListActiveCooldowns(ctx, time.Now())
+	if err != nil {
+		a.logger.Warn("⚠️ 读取端点运行态失败，跳过 cooldown 恢复", "error", err)
+		return
+	}
+	if len(records) == 0 {
+		return
+	}
+	endpointRecords, err := a.endpointStore.List(ctx)
+	if err != nil {
+		return
+	}
+	nameByID := make(map[int64]string, len(endpointRecords))
+	for _, record := range endpointRecords {
+		nameByID[record.ID] = record.Name
+	}
+	restored := 0
+	for _, record := range records {
+		name, ok := nameByID[record.EndpointID]
+		if !ok || record.CooldownUntil == nil {
+			continue
+		}
+		a.endpointManager.RestoreEndpointCooldown(name, record.Scope, *record.CooldownUntil, record.CooldownReason)
+		restored++
+	}
+	if restored > 0 {
+		a.logger.Info("✅ 已恢复端点持久化 cooldown", "count", restored)
 	}
 }
 
@@ -1168,13 +1274,10 @@ func (a *App) applySettingsToConfig() {
 		}
 	}
 
-	// 根据失败处理动作自动启用对应功能（Failover.Enabled 即「请求内换候选 + 成功驱动迁移」总开关）
-	switch a.config.FailureTracker.Action {
-	case "reject":
-		a.config.Failover.Enabled = false
-	default: // failover（默认）
-		a.config.Failover.Enabled = true
-	}
+	// v8：failure_action 与 Failover.Enabled 独立——reject 语义由 ShouldRejectRequest
+	// 在请求入口判定（§12 D15），不再关闭「请求内换候选」总开关；
+	// count_tokens 与重放安全硬失败 fallback 不受 failure_action 影响
+	a.config.Failover.Enabled = true
 	// 🔧 同步更新旧字段
 	a.config.Group.AutoSwitchBetweenGroups = a.config.Failover.Enabled
 

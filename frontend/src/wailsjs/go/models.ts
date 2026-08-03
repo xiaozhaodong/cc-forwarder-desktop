@@ -319,6 +319,7 @@ export namespace main {
 	    headers: Record<string, string>;
 	    priority: number;
 	    failover_enabled: boolean;
+	    availability_enabled?: boolean;
 	    cooldown_seconds?: number;
 	    timeout_seconds: number;
 	    supports_count_tokens: boolean;
@@ -344,6 +345,7 @@ export namespace main {
 	        this.headers = source["headers"];
 	        this.priority = source["priority"];
 	        this.failover_enabled = source["failover_enabled"];
+	        this.availability_enabled = source["availability_enabled"];
 	        this.cooldown_seconds = source["cooldown_seconds"];
 	        this.timeout_seconds = source["timeout_seconds"];
 	        this.supports_count_tokens = source["supports_count_tokens"];
@@ -583,6 +585,7 @@ export namespace main {
 	    cache_creation_cost_multiplier_1h: number;
 	    cache_read_cost_multiplier: number;
 	    enabled: boolean;
+	    availability_enabled: boolean;
 	    created_at: string;
 	    updated_at: string;
 	    healthy: boolean;
@@ -621,6 +624,7 @@ export namespace main {
 	        this.cache_creation_cost_multiplier_1h = source["cache_creation_cost_multiplier_1h"];
 	        this.cache_read_cost_multiplier = source["cache_read_cost_multiplier"];
 	        this.enabled = source["enabled"];
+	        this.availability_enabled = source["availability_enabled"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
 	        this.healthy = source["healthy"];

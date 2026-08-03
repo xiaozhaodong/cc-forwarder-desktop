@@ -53,19 +53,68 @@ func skippedReason(t *testing.T, result EndpointScheduleResult, name string) (st
 	return "", time.Time{}
 }
 
-func TestPrepareRouteCandidates_ActiveFirstThenPriorityOrder(t *testing.T) {
+// [Phase3 §8.2/§8.3] priority 层级序：legacy active 不再压过更高优先级端点；
+// retained 只在同层内提供粘性
+func TestPrepareRouteCandidates_PriorityTierOrder(t *testing.T) {
 	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "a", "b", "c"))
-	manager.RestoreActiveEndpoint("c")
+	manager.RestoreActiveEndpoint("c") // v8：不影响候选顺序
 
 	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
-	if got := candidateNames(result); len(got) != 3 || got[0] != "c" || got[1] != "a" || got[2] != "b" {
-		t.Fatalf("expected [c a b], got %v", got)
+	if got := candidateNames(result); len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
+		t.Fatalf("expected [a b c] priority order, got %v", got)
 	}
-	if result.ActiveEndpointAtSelection != "c" {
-		t.Fatalf("expected active snapshot c, got %q", result.ActiveEndpointAtSelection)
+	if len(result.Plans) != 3 || result.Plans[0].SelectionSource != "auto_priority" ||
+		result.Plans[1].SelectionSource != "fallback" {
+		t.Fatalf("unexpected plan sources: %+v", result.Plans)
 	}
-	if result.ActiveRevision == 0 {
-		t.Fatal("expected non-zero active revision in snapshot")
+}
+
+// [Phase3 §8.4] 同层 retained 粘性与高优先级恢复回归
+func TestPrepareRouteCandidates_RetainedStickyWithinTierOnly(t *testing.T) {
+	cfg := schedulerTestConfig(true, "a1", "a2", "b1")
+	cfg.Endpoints[0].Priority = 1
+	cfg.Endpoints[1].Priority = 1
+	cfg.Endpoints[2].Priority = 2
+	manager := newSchedulerTestManager(t, cfg)
+
+	// 同层（priority 1）retained：a2 优先于 a1
+	if !manager.UpdateAutoRetention("a2", 1, "auto_retained", 0) {
+		t.Fatal("expected retained update for a2")
+	}
+	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
+	if got := candidateNames(result); got[0] != "a2" || result.Plans[0].SelectionSource != "auto_retained" {
+		t.Fatalf("expected retained a2 first in tier, got %v (%+v)", got, result.Plans)
+	}
+
+	// 低优先级 retained 不阻挡高优先级层（§8.4 规则 6）
+	manager.UpdateAutoRetention("b1", 2, "auto_retained", 0)
+	result = manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
+	if got := candidateNames(result); got[0] != "a2" {
+		t.Fatalf("low-tier retained must not override best tier, got %v", got)
+	}
+}
+
+func TestUpdateAutoRetentionIgnoresManualTargetButKeepsPreferredFallback(t *testing.T) {
+	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "a", "b"))
+	fixed := manager.SetClaudeRoutingOverride(RouteOverrideState{Mode: RouteModeManualFixed, EndpointName: "a"})
+	if manager.UpdateAutoRetention("a", 1, "manual_fixed", fixed.Revision) {
+		t.Fatal("manual fixed success must not update auto retained")
+	}
+
+	preferred := manager.SetClaudeRoutingOverride(RouteOverrideState{Mode: RouteModeManualPreferred, EndpointName: "a"})
+	if manager.UpdateAutoRetention("a", 1, "manual_preferred", preferred.Revision) {
+		t.Fatal("manual preferred target success must not update auto retained")
+	}
+	if !manager.UpdateAutoRetention("b", 1, "fallback", preferred.Revision) {
+		t.Fatal("manual preferred automatic fallback may update auto retained")
+	}
+	if got := manager.RetainedInTier(1); got != "b" {
+		t.Fatalf("expected fallback endpoint retained, got %q", got)
+	}
+
+	manager.ClearClaudeRoutingOverride("test")
+	if manager.UpdateAutoRetention("a", 1, "auto_priority", preferred.Revision) {
+		t.Fatal("stale route revision must not update retained")
 	}
 }
 
@@ -87,9 +136,13 @@ func TestPrepareRouteCandidates_FiltersWithAvailableAtSources(t *testing.T) {
 	paused.Status.PausedUntil = pausedUntil
 	paused.mutex.Unlock()
 
-	for i := 0; i < 3; i++ {
-		manager.RecordFailure("tripped")
-	}
+	// v8：软失败阈值触发即写入 cooldown，tripped 状态以 cooldown 表达（§9.3）
+	trippedUntil := now.Add(3 * time.Minute)
+	tripped := manager.GetEndpointByNameAny("tripped")
+	tripped.mutex.Lock()
+	tripped.Status.CooldownUntil = trippedUntil
+	tripped.Status.CooldownReason = SoftFailureCooldownReason(SoftFailureCategoryRateLimit)
+	tripped.mutex.Unlock()
 
 	profile := RouteRequestProfile{Model: "gpt-test"}
 	manager.RecordNegativeRouteHit("negcached", "model_unsupported", profile, "model not found")
@@ -105,40 +158,36 @@ func TestPrepareRouteCandidates_FiltersWithAvailableAtSources(t *testing.T) {
 	if reason, availableAt := skippedReason(t, result, "paused"); reason != "paused" || !availableAt.Equal(pausedUntil) {
 		t.Fatalf("paused: got reason=%q availableAt=%v", reason, availableAt)
 	}
-	if reason, availableAt := skippedReason(t, result, "tripped"); reason != "failure_threshold_tripped" || availableAt.IsZero() {
+	if reason, availableAt := skippedReason(t, result, "tripped"); reason != "cooldown" || !availableAt.Equal(trippedUntil) {
 		t.Fatalf("tripped: got reason=%q availableAt=%v", reason, availableAt)
-	} else if availableAt.Before(now) || availableAt.After(now.Add(6*time.Minute)) {
-		t.Fatalf("tripped availableAt should be ~earliest failure + window, got %v", availableAt)
 	}
 	if reason, availableAt := skippedReason(t, result, "negcached"); reason != "negative_cache_model_unsupported" || availableAt.IsZero() {
 		t.Fatalf("negcached: got reason=%q availableAt=%v", reason, availableAt)
 	}
 
-	// 四来源中最早的是 tripped（最早失败 + 5m 窗口），早于 10m 冷却与 30m 暂停
-	if earliest := result.Snapshot.EarliestAvailableAt(); earliest.IsZero() ||
-		earliest.Before(now) || earliest.After(now.Add(6*time.Minute)) {
-		t.Fatalf("expected earliest availableAt from tripped window (~5m), got %v", earliest)
+	// 各来源中最早的是 tripped 的 3m 软失败冷却，早于 10m 冷却与 30m 暂停
+	if earliest := result.Snapshot.EarliestAvailableAt(); !earliest.Equal(trippedUntil) {
+		t.Fatalf("expected earliest availableAt from tripped cooldown (3m), got %v", earliest)
 	}
 }
 
 func TestPrepareRouteCandidates_FailoverDisabledSingleCandidate(t *testing.T) {
 	manager := newSchedulerTestManager(t, schedulerTestConfig(false, "a", "b", "c"))
-	manager.RestoreActiveEndpoint("b")
 
 	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
-	if got := candidateNames(result); len(got) != 1 || got[0] != "b" {
-		t.Fatalf("expected single candidate [b], got %v", got)
+	if got := candidateNames(result); len(got) != 1 || got[0] != "a" {
+		t.Fatalf("expected single candidate [a], got %v", got)
 	}
 
-	// active 不可路由时不得静默尝试备用端点
-	active := manager.GetEndpointByNameAny("b")
+	// v8：第一逻辑候选冷却时，下一请求重新选择首候选（不冻结未来请求，§8.2）
+	active := manager.GetEndpointByNameAny("a")
 	active.mutex.Lock()
 	active.Status.CooldownUntil = time.Now().Add(time.Minute)
 	active.mutex.Unlock()
 
 	result = manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
-	if len(result.Candidates) != 0 {
-		t.Fatalf("expected empty candidates when active cooling and failover disabled, got %v", candidateNames(result))
+	if got := candidateNames(result); len(got) != 1 || got[0] != "b" {
+		t.Fatalf("expected next request to pick [b] when a cooling, got %v", candidateNames(result))
 	}
 }
 
@@ -196,7 +245,7 @@ func TestEndpointScheduleSnapshot_RecordsAttemptsAndFinalOutcome(t *testing.T) {
 	if snapshot.RequestID != "req-snapshot" || snapshot.RequestPath != "/v1/messages" {
 		t.Fatalf("unexpected request metadata: %+v", snapshot)
 	}
-	if snapshot.ActiveEndpointAtSelection != "primary" || snapshot.SelectedEndpoint != "backup" {
+	if snapshot.SelectedEndpoint != "backup" {
 		t.Fatalf("unexpected endpoint selection metadata: %+v", snapshot)
 	}
 	if snapshot.FinalOutcome != EndpointScheduleOutcomeSuccess || snapshot.FinalError != "" {
@@ -242,6 +291,20 @@ func TestEndpointScheduleSnapshot_OlderCompletionDoesNotReplaceNewerRequest(t *t
 	}
 }
 
+func TestBeginEndpointScheduleSnapshotNilDoesNotExposeLegacyActive(t *testing.T) {
+	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "legacy"))
+	manager.RestoreActiveEndpoint("legacy")
+	manager.BeginEndpointScheduleSnapshot("req-rejected", "/v1/messages", nil)
+
+	snapshot := manager.GetLatestEndpointScheduleSnapshot()
+	if snapshot == nil {
+		t.Fatal("expected snapshot")
+	}
+	if snapshot.ActiveEndpointAtSelection != "" {
+		t.Fatalf("legacy active must not appear in v8 snapshot, got %q", snapshot.ActiveEndpointAtSelection)
+	}
+}
+
 func TestPrepareRouteCandidates_ManualPreferredMovesTargetFirst(t *testing.T) {
 	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "a", "b", "c"))
 	manager.RestoreActiveEndpoint("a")
@@ -268,7 +331,7 @@ func TestPrepareRouteCandidates_FailoverDisabledEndpointExcluded(t *testing.T) {
 	if got := candidateNames(result); len(got) != 2 || got[0] != "a" || got[1] != "b" {
 		t.Fatalf("expected [a b] with c excluded, got %v", got)
 	}
-	if reason, _ := skippedReason(t, result, "c"); reason != "failover_disabled_endpoint" {
-		t.Fatalf("expected failover_disabled_endpoint reason, got %q", reason)
+	if reason, _ := skippedReason(t, result, "c"); reason != "auto_schedule_disabled" {
+		t.Fatalf("expected auto_schedule_disabled reason, got %q", reason)
 	}
 }

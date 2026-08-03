@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"cc-forwarder/config"
@@ -16,13 +17,24 @@ import (
 	"cc-forwarder/internal/transport"
 )
 
-// CountTokensHandler 处理 /v1/messages/count_tokens 请求
-// 策略：优先转发到标记了 supports_count_tokens 的端点，失败则本地估算
+// CountTokensHandler 处理 /v1/messages/count_tokens 请求（v8 收敛方案 §10/§10.1）。
+// Auto/Preferred：统一调度候选 + 尝试预算 + count_tokens scoped 软失败，耗尽后本地估算；
+// Manual Fixed：只用目标端点，不 fallback、不估算，失败返回明确错误。
+// 与 /v1/messages 的不对称是有意设计：纯计数请求无计费副作用、天然重放安全、
+// 有估算兜底，因此普通 429/5xx 允许请求内换候选。
 type CountTokensHandler struct {
 	config          *config.Config
 	endpointManager *endpoint.Manager
 	forwarder       *Forwarder
 }
+
+// 估算原因白名单（§10.1：不得包含端点名、凭据或原始错误 body）
+const (
+	estimationReasonNoEligibleEndpoint    = "no_eligible_endpoint"
+	estimationReasonUnsupported           = "unsupported"
+	estimationReasonUpstreamFailed        = "upstream_failed"
+	estimationReasonAttemptBudgetExceeded = "attempt_budget_exhausted"
+)
 
 // NewCountTokensHandler 创建 CountTokensHandler
 func NewCountTokensHandler(cfg *config.Config, em *endpoint.Manager, f *Forwarder) *CountTokensHandler {
@@ -46,107 +58,293 @@ type CountTokensResponse struct {
 	InputTokens int `json:"input_tokens"`
 }
 
-// Handle 处理count_tokens请求 - 极简逻辑
+// countTokensAttemptOutcome 单端点尝试结果
+type countTokensAttemptOutcome int
+
+const (
+	countTokensAttemptSuccess countTokensAttemptOutcome = iota
+	countTokensAttemptRetryNext
+	countTokensAttemptPrivacyBlocked
+)
+
+// Handle 处理 count_tokens 请求（§10.1 终态矩阵）
 func (h *CountTokensHandler) Handle(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, connID string) {
 	slog.Info(fmt.Sprintf("🔢 [Token计数] [%s] 收到count_tokens请求", connID))
 	routeProfile := endpoint.BuildRouteRequestProfile(r.URL.Path, bodyBytes)
+	override := h.endpointManager.GetClaudeRoutingOverride()
 
-	// 1. 找配置了 supports_count_tokens: true 的端点
-	supportedEndpoints := h.getSupportedEndpoints(ctx, routeProfile)
+	// Manual Fixed：只用目标，不 fallback、不估算（§10.1）
+	if override.Mode == endpoint.RouteModeManualFixed {
+		h.handleManualFixed(ctx, w, r, bodyBytes, routeProfile, connID)
+		return
+	}
 
-	// 2. 如果有，尝试转发
-	if len(supportedEndpoints) > 0 {
-		if result, ok, err := h.tryForward(ctx, r, bodyBytes, supportedEndpoints, connID); err != nil {
-			if policyErr := AsPrivacyPolicyError(err); policyErr != nil {
-				slog.Warn(fmt.Sprintf("🛡️ [隐私保护] [%s] count_tokens 被策略拒绝: %s", connID, policyErr.Code))
-				WritePrivacyPolicyErrorResponse(w, policyErr)
-				return
-			}
-			slog.Warn(fmt.Sprintf("⚠️ [Token计数] [%s] 转发前处理失败，降级到本地估算: %v", connID, err))
-		} else if ok {
+	result := h.endpointManager.PrepareRouteCandidates(ctx, routeProfile)
+	type countTokensCandidate struct {
+		plan endpoint.EndpointAttemptPlan
+	}
+	supported := make([]countTokensCandidate, 0, len(result.Candidates))
+	sawCandidate := len(result.Candidates) > 0
+	for _, plan := range result.Plans {
+		if plan.SupportsCountTokens {
+			supported = append(supported, countTokensCandidate{plan: plan})
+		}
+	}
+
+	if len(supported) == 0 {
+		reason := estimationReasonNoEligibleEndpoint
+		if sawCandidate {
+			reason = estimationReasonUnsupported
+		}
+		slog.Info(fmt.Sprintf("🔍 [Token计数] [%s] 无支持端点，使用本地估算 (%s)", connID, reason))
+		h.respondWithEstimation(w, bodyBytes, connID, reason)
+		return
+	}
+
+	// §10 规则 7：独立请求尝试预算
+	budget := h.config.Failover.MaxCandidateAttempts
+	if budget <= 0 {
+		budget = 3
+	}
+	attempted := 0
+	budgetExhausted := false
+	for _, candidate := range supported {
+		if attempted >= budget {
+			budgetExhausted = true
+			break
+		}
+
+		// §14.2：attempt 前原子重校验（删除 / pending gate / hard disable / config revision）
+		admission, acquireErr := h.endpointManager.AcquireEndpointAttempt(candidate.plan)
+		if acquireErr != nil {
+			slog.Warn(fmt.Sprintf("⏭️ [Token计数] [%s] 候选 %s 跳过: %s", connID, candidate.plan.EndpointName, acquireErr.Error()))
+			continue
+		}
+		attempted++
+		target := admission.Target
+
+		responseBytes, outcome, err := func() ([]byte, countTokensAttemptOutcome, error) {
+			defer admission.Release()
+			return h.attemptEndpoint(ctx, r, bodyBytes, target, routeProfile, connID)
+		}()
+		switch outcome {
+		case countTokensAttemptPrivacyBlocked:
+			policyErr := AsPrivacyPolicyError(err)
+			slog.Warn(fmt.Sprintf("🛡️ [隐私保护] [%s] count_tokens 被策略拒绝: %s", connID, policyErr.Code))
+			WritePrivacyPolicyErrorResponse(w, policyErr)
+			return
+		case countTokensAttemptSuccess:
+			// FullSuccess：清同 path scope 软失败（§9.3 规则 2）；不更新 /v1/messages retained（§10 规则 6）
+			h.endpointManager.ApplyEndpointAttemptSettlement(target.Name(), target.Revision(), func() {
+				h.endpointManager.ClearSoftFailureScope(target.Name(), endpoint.SoftFailureScopeCountTokens)
+			})
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write(result)
-			slog.Info(fmt.Sprintf("✅ [Token计数-转发] [%s] 转发成功", connID))
+			_, _ = w.Write(responseBytes)
+			slog.Info(fmt.Sprintf("✅ [Token计数-转发] [%s] 端点 %s 转发成功", connID, target.Name()))
+			return
+		default:
+			continue
+		}
+	}
+
+	reason := estimationReasonUpstreamFailed
+	if budgetExhausted {
+		reason = estimationReasonAttemptBudgetExceeded
+	}
+	slog.Warn(fmt.Sprintf("⚠️ [Token计数] [%s] 转发失败，降级到本地估算 (%s)", connID, reason))
+	h.respondWithEstimation(w, bodyBytes, connID, reason)
+}
+
+// handleManualFixed 固定模式：目标不可用返回明确错误，不估算（§10.1）
+func (h *CountTokensHandler) handleManualFixed(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, profile endpoint.RouteRequestProfile, connID string) {
+	result := h.endpointManager.PrepareRouteCandidates(ctx, profile)
+	if len(result.Candidates) == 0 {
+		if block := h.endpointManager.GetManualFixedRouteBlock(profile); block != nil {
+			writeCountTokensError(w, block.StatusCode, block.Code, block.Message)
 			return
 		}
-		// 转发失败，降级到估算
-		slog.Warn(fmt.Sprintf("⚠️ [Token计数] [%s] 转发失败，降级到本地估算", connID))
-	} else {
-		slog.Info(fmt.Sprintf("🔍 [Token计数] [%s] 无支持端点，使用本地估算", connID))
+		writeCountTokensError(w, http.StatusServiceUnavailable, "route_blocked_manual_fixed",
+			"Manual fixed endpoint is not routable for count_tokens.")
+		return
 	}
 
-	// 3. 本地估算
-	h.respondWithEstimation(w, bodyBytes, connID)
-}
-
-// getSupportedEndpoints 获取支持count_tokens的端点
-// v7：改用无写副作用的调度器候选输出；只读候选，不做失败标记（现状语义）
-func (h *CountTokensHandler) getSupportedEndpoints(ctx context.Context, profile endpoint.RouteRequestProfile) []*endpoint.Endpoint {
-	result := h.endpointManager.PrepareRouteCandidates(ctx, profile)
-	var supported []*endpoint.Endpoint
-
-	for _, ep := range result.Candidates {
-		if ep.Config.SupportsCountTokens {
-			supported = append(supported, ep)
-		}
+	if !result.Plans[0].SupportsCountTokens {
+		writeCountTokensError(w, http.StatusUnprocessableEntity, "endpoint_capability_mismatch",
+			"Manual fixed endpoint does not support count_tokens.")
+		return
 	}
 
-	return supported
+	// §14.2：attempt 前原子重校验
+	admission, acquireErr := h.endpointManager.AcquireEndpointAttempt(result.Plans[0])
+	if acquireErr != nil {
+		writeCountTokensError(w, http.StatusServiceUnavailable, "route_blocked_manual_fixed",
+			fmt.Sprintf("Manual fixed endpoint is not admittable: %s", acquireErr.Error()))
+		return
+	}
+	target := admission.Target
+
+	responseBytes, outcome, err := func() ([]byte, countTokensAttemptOutcome, error) {
+		defer admission.Release()
+		return h.attemptEndpoint(ctx, r, bodyBytes, target, profile, connID)
+	}()
+	switch outcome {
+	case countTokensAttemptPrivacyBlocked:
+		WritePrivacyPolicyErrorResponse(w, AsPrivacyPolicyError(err))
+	case countTokensAttemptSuccess:
+		h.endpointManager.ApplyEndpointAttemptSettlement(target.Name(), target.Revision(), func() {
+			h.endpointManager.ClearSoftFailureScope(target.Name(), endpoint.SoftFailureScopeCountTokens)
+		})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(responseBytes)
+	default:
+		writeCountTokensError(w, http.StatusBadGateway, "count_tokens_upstream_error",
+			"Manual fixed endpoint failed to serve count_tokens.")
+	}
 }
 
-// tryForward 尝试转发到支持的端点
-func (h *CountTokensHandler) tryForward(ctx context.Context, r *http.Request, bodyBytes []byte, endpoints []*endpoint.Endpoint, connID string) ([]byte, bool, error) {
-	for _, ep := range endpoints {
-		endpointBody := prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
-		// 🛡️ 出站隐私过滤；策略拒绝时由调用方直返 413/422，不降级估算
-		preparedBody, err := ApplyPrivacyFilterForEndpoint(h.forwarder.privacyFilter, r, endpointBody, ep)
-		if err != nil {
-			return nil, false, err
+// attemptEndpoint 单端点一次尝试；失败时按 §10 记录 count_tokens scoped 软失败或负缓存
+func (h *CountTokensHandler) attemptEndpoint(ctx context.Context, r *http.Request, bodyBytes []byte, target *endpoint.EndpointAttemptTarget, profile endpoint.RouteRequestProfile, connID string) ([]byte, countTokensAttemptOutcome, error) {
+	ep := &endpoint.Endpoint{Config: target.Config()}
+	endpointBody := prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
+	// 🛡️ 出站隐私过滤；策略拒绝直返，不降级估算、不计失败
+	preparedBody, err := ApplyPrivacyFilterForEndpoint(h.forwarder.privacyFilter, r, endpointBody, ep)
+	if err != nil {
+		if AsPrivacyPolicyError(err) != nil {
+			return nil, countTokensAttemptPrivacyBlocked, err
 		}
+		slog.Warn(fmt.Sprintf("⚠️ [Token计数] [%s] 请求准备失败: %v", connID, err))
+		return nil, countTokensAttemptRetryNext, err
+	}
 
-		targetURL := ep.Config.URL + "/v1/messages/count_tokens"
-		req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(preparedBody))
-		if err != nil {
-			continue
+	targetURL := ep.Config.URL + "/v1/messages/count_tokens"
+	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(preparedBody))
+	if err != nil {
+		return nil, countTokensAttemptRetryNext, err
+	}
+	h.forwarder.CopyAttemptHeaders(r, req, target)
+
+	httpTransport, err := transport.CreateTransport(h.config)
+	if err != nil {
+		return nil, countTokensAttemptRetryNext, err
+	}
+	client := &http.Client{Timeout: ep.Config.Timeout, Transport: httpTransport}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		slog.Debug(fmt.Sprintf("❌ [转发失败] [%s] 端点: %s, 错误: %v", connID, ep.Config.Name, err))
+		h.recordScopedSoftFailure(ep.Config.Name, target.Revision(), endpoint.SoftFailureCategoryConnection, 0)
+		return nil, countTokensAttemptRetryNext, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		responseBytes, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			h.recordScopedSoftFailure(ep.Config.Name, target.Revision(), endpoint.SoftFailureCategoryTransport, 0)
+			return nil, countTokensAttemptRetryNext, readErr
 		}
+		return responseBytes, countTokensAttemptSuccess, nil
+	}
 
-		h.forwarder.CopyHeaders(r, req, ep)
+	errorBody, _ := io.ReadAll(resp.Body)
+	errorText := string(errorBody)
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized:
+		// §10 规则 4：凭据两个 path 共用，认证失败写端点全局 auth cooldown
+		h.recordAuthCooldown(ep.Config.Name, target.Revision(), connID)
+	case isCountTokensUnsupported(resp.StatusCode, errorText):
+		// 须在 403 鉴权和 >=500 之前判定：明确的路径能力错误不应连坐 messages。
+		h.recordCountTokensNegativeHit(ep.Config.Name, target.Revision(), endpoint.FailureClassCountTokensUnsupported, profile, errorText, connID)
+	case resp.StatusCode == http.StatusForbidden && IsModelUnsupportedError(errorText):
+		// 403 也可能表示当前模型不可用；按模型负缓存，不写全局 auth cooldown。
+		h.recordCountTokensNegativeHit(ep.Config.Name, target.Revision(), endpoint.FailureClassModelUnsupported, profile, errorText, connID)
+	case resp.StatusCode == http.StatusForbidden:
+		h.recordAuthCooldown(ep.Config.Name, target.Revision(), connID)
+	case resp.StatusCode == http.StatusTooManyRequests:
+		h.recordScopedSoftFailure(ep.Config.Name, target.Revision(), endpoint.SoftFailureCategoryRateLimit, parseCountTokensRetryAfter(resp))
+	case resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError && IsModelUnsupportedError(errorText):
+		h.recordCountTokensNegativeHit(ep.Config.Name, target.Revision(), endpoint.FailureClassModelUnsupported, profile, errorText, connID)
+	case resp.StatusCode >= http.StatusInternalServerError:
+		h.recordScopedSoftFailure(ep.Config.Name, target.Revision(), endpoint.SoftFailureCategoryServerError, 0)
+	}
+	return nil, countTokensAttemptRetryNext, fmt.Errorf("upstream returned %d", resp.StatusCode)
+}
 
-		httpTransport, err := transport.CreateTransport(h.config)
-		if err != nil {
-			continue
+func (h *CountTokensHandler) recordAuthCooldown(endpointName string, revision int64, connID string) {
+	cooldown := h.config.Failover.AuthCooldown
+	if cooldown <= 0 {
+		cooldown = 30 * time.Minute
+	}
+	h.endpointManager.ApplyEndpointAttemptSettlement(endpointName, revision, func() {
+		h.endpointManager.SetEndpointCooldown(endpointName, cooldown, "auth_rejected")
+		slog.Warn(fmt.Sprintf("🔑 [Token计数] [%s] 端点 %s 认证失败，写入全局鉴权冷却", connID, endpointName))
+	})
+}
+
+func (h *CountTokensHandler) recordCountTokensNegativeHit(endpointName string, revision int64, failureClass string, profile endpoint.RouteRequestProfile, detail, connID string) {
+	h.endpointManager.ApplyEndpointAttemptSettlement(endpointName, revision, func() {
+		h.endpointManager.RecordNegativeRouteHit(endpointName, failureClass, profile, detail)
+		slog.Info(fmt.Sprintf("🧭 [Token计数] [%s] 端点 %s 记录 %s 负向缓存", connID, endpointName, failureClass))
+	})
+}
+
+// recordScopedSoftFailure count_tokens scope 软失败；达阈值只写进程内 scoped cooldown（D17），
+// 不得冷却 /v1/messages（§10 规则 5）
+func (h *CountTokensHandler) recordScopedSoftFailure(endpointName string, revision int64, category endpoint.SoftFailureCategory, retryAfter time.Duration) {
+	h.endpointManager.ApplyEndpointAttemptSettlement(endpointName, revision, func() {
+		count, tripped := h.endpointManager.RecordSoftFailure(endpointName, endpoint.SoftFailureScopeCountTokens, category)
+		slog.Debug("count_tokens 软失败", "endpoint", endpointName, "category", category, "count", count)
+		if !tripped {
+			return
 		}
-
-		client := &http.Client{
-			Timeout:   ep.Config.Timeout,
-			Transport: httpTransport,
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			slog.Debug(fmt.Sprintf("❌ [转发失败] [%s] 端点: %s, 错误: %v", connID, ep.Config.Name, err))
-			continue
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode == http.StatusOK {
-			if bodyBytes, err := io.ReadAll(resp.Body); err == nil {
-				slog.Info(fmt.Sprintf("✅ [转发成功] [%s] 端点: %s", connID, ep.Config.Name))
-				return bodyBytes, true, nil
+		cooldown := retryAfter
+		if cooldown <= 0 {
+			switch category {
+			case endpoint.SoftFailureCategoryRateLimit:
+				cooldown = 180 * time.Second
+				if h.config.Failover.RateLimitRetry.DefaultCooldown > 0 {
+					cooldown = h.config.Failover.RateLimitRetry.DefaultCooldown
+				}
+			case endpoint.SoftFailureCategoryServerError:
+				cooldown = 120 * time.Second
+				if h.config.Failover.ServerErrorCooldown > 0 {
+					cooldown = h.config.Failover.ServerErrorCooldown
+				}
+			default:
+				cooldown = 90 * time.Second
+				if h.config.Failover.ConnectionCooldown > 0 {
+					cooldown = h.config.Failover.ConnectionCooldown
+				}
 			}
-			continue
 		}
+		h.endpointManager.SetScopedCooldown(endpointName, endpoint.SoftFailureScopeCountTokens, cooldown,
+			endpoint.SoftFailureCooldownReason(category))
+	})
+}
 
-		errorBody, _ := io.ReadAll(resp.Body)
-		if isCountTokensUnsupported(resp.StatusCode, string(errorBody)) {
-			profile := endpoint.BuildRouteRequestProfile(r.URL.Path, bodyBytes)
-			h.endpointManager.RecordNegativeRouteHit(ep.Config.Name, endpoint.FailureClassCountTokensUnsupported, profile, string(errorBody))
-			slog.Info(fmt.Sprintf("🧭 [Token计数] [%s] 端点 %s 不支持 count_tokens，写入负向缓存", connID, ep.Config.Name))
-		}
+func parseCountTokensRetryAfter(resp *http.Response) time.Duration {
+	if resp == nil {
+		return 0
 	}
+	value := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if value == "" {
+		return 0
+	}
+	var seconds int
+	if _, err := fmt.Sscanf(value, "%d", &seconds); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	return 0
+}
 
-	return nil, false, nil
+func writeCountTokensError(w http.ResponseWriter, statusCode int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]string{"type": code, "message": message},
+	})
 }
 
 func isCountTokensUnsupported(statusCode int, body string) bool {
@@ -166,8 +364,9 @@ func isCountTokensUnsupported(statusCode int, body string) bool {
 		strings.Contains(lower, "not supported")
 }
 
-// respondWithEstimation 返回本地估算结果
-func (h *CountTokensHandler) respondWithEstimation(w http.ResponseWriter, bodyBytes []byte, connID string) {
+// respondWithEstimation 返回本地估算结果（§10.1：估算不是上游 FullSuccess，
+// 不清软失败、不更新 retained；reason 只允许白名单值）
+func (h *CountTokensHandler) respondWithEstimation(w http.ResponseWriter, bodyBytes []byte, connID, reason string) {
 	tokens, err := h.estimateTokens(bodyBytes)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to estimate tokens: %v", err), http.StatusBadRequest)
@@ -179,10 +378,11 @@ func (h *CountTokensHandler) respondWithEstimation(w http.ResponseWriter, bodyBy
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Token-Estimation", "true") // 标记这是估算值
+	w.Header().Set("X-Token-Estimation-Reason", reason)
 	w.WriteHeader(http.StatusOK)
-	w.Write(responseBytes)
+	_, _ = w.Write(responseBytes)
 
-	slog.Info(fmt.Sprintf("📊 [Token估算] [%s] 估算结果: %d tokens", connID, tokens))
+	slog.Info(fmt.Sprintf("📊 [Token估算] [%s] 估算结果: %d tokens (reason=%s)", connID, tokens, reason))
 }
 
 // estimateTokens 本地估算token数量
@@ -221,7 +421,11 @@ func (h *CountTokensHandler) estimateTokens(bodyBytes []byte) (int, error) {
 	}
 
 	// 应用估算比例
-	estimatedTokens := int(float64(totalChars) / h.config.TokenCounting.EstimationRatio)
+	ratio := h.config.TokenCounting.EstimationRatio
+	if ratio <= 0 {
+		ratio = 4.0
+	}
+	estimatedTokens := int(float64(totalChars) / ratio)
 
 	// 基础开销
 	estimatedTokens += 50

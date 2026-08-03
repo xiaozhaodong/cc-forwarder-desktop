@@ -280,6 +280,12 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		},
 		{
 			table:       "endpoints",
+			checkColumn: "availability_enabled",
+			alterSQL:    "ALTER TABLE endpoints ADD COLUMN availability_enabled INTEGER NOT NULL DEFAULT 1",
+			description: "端点硬启用字段（v8）",
+		},
+		{
+			table:       "endpoints",
 			checkColumn: "model_rewrite_rules",
 			alterSQL:    "ALTER TABLE endpoints ADD COLUMN model_rewrite_rules TEXT DEFAULT ''",
 			description: "CC端点模型兼容改写规则字段",
@@ -415,11 +421,28 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		}
 	}
 
+	// v8：endpoint_runtime_states 运行态表（幂等；旧库升级路径）
+	runtimeStateSQL := `CREATE TABLE IF NOT EXISTS endpoint_runtime_states (
+		endpoint_id INTEGER NOT NULL,
+		scope TEXT NOT NULL CHECK (scope IN ('global', 'messages', 'count_tokens')),
+		state TEXT NOT NULL DEFAULT 'active',
+		cooldown_until DATETIME,
+		cooldown_reason TEXT NOT NULL DEFAULT '',
+		revision INTEGER NOT NULL DEFAULT 0,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (endpoint_id, scope),
+		FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE CASCADE
+	)`
+	if _, err := s.db.ExecContext(ctx, runtimeStateSQL); err != nil {
+		return fmt.Errorf("failed to create endpoint_runtime_states: %w", err)
+	}
+
 	// 索引迁移（幂等）
 	indexSQLs := []string{
 		"CREATE INDEX IF NOT EXISTS idx_request_logs_upstream_type ON request_logs(upstream_type)",
 		"CREATE INDEX IF NOT EXISTS idx_request_logs_upstream_name ON request_logs(upstream_name)",
 		"CREATE INDEX IF NOT EXISTS idx_upstream_accounts_group_key ON upstream_accounts(group_key)",
+		"CREATE INDEX IF NOT EXISTS idx_endpoint_runtime_states_cooldown ON endpoint_runtime_states(scope, cooldown_until)",
 	}
 	for _, sqlStmt := range indexSQLs {
 		if _, err := s.db.ExecContext(ctx, sqlStmt); err != nil {

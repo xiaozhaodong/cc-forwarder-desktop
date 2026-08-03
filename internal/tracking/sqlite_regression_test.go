@@ -110,6 +110,81 @@ func TestSQLiteSchemaInit_OldRequestLogsWithoutUpstreamColumns(t *testing.T) {
 	}
 }
 
+// [v8 §17.2] 旧库幂等升级：endpoints 增加 availability_enabled（默认 1）、
+// 创建 endpoint_runtime_states 表；legacy enabled 原值保持不变；重复初始化幂等。
+func TestSQLiteSchemaInit_V8EndpointSchedulingMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "v8-endpoint-schema.db")
+
+	rawDB, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = rawDB.Exec(`
+		CREATE TABLE IF NOT EXISTS endpoints (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			channel TEXT DEFAULT '',
+			name TEXT UNIQUE NOT NULL,
+			url TEXT NOT NULL,
+			token TEXT, api_key TEXT, headers TEXT,
+			priority INTEGER DEFAULT 1,
+			failover_enabled INTEGER DEFAULT 1,
+			cooldown_seconds INTEGER,
+			timeout_seconds INTEGER DEFAULT 300,
+			supports_count_tokens INTEGER DEFAULT 0,
+			cost_multiplier REAL DEFAULT 1.0,
+			input_cost_multiplier REAL DEFAULT 1.0,
+			output_cost_multiplier REAL DEFAULT 1.0,
+			cache_creation_cost_multiplier REAL DEFAULT 1.0,
+			cache_creation_cost_multiplier_1h REAL DEFAULT 1.0,
+			cache_read_cost_multiplier REAL DEFAULT 1.0,
+			enabled INTEGER DEFAULT 1,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		INSERT INTO endpoints (name, url, enabled, failover_enabled) VALUES
+			('legacy-active', 'https://a.example', 1, 1),
+			('legacy-standby', 'https://b.example', 0, 0);
+	`)
+	require.NoError(t, err)
+	require.NoError(t, rawDB.Close())
+
+	cfg := &Config{
+		Enabled:         true,
+		DatabasePath:    dbPath,
+		BufferSize:      10,
+		BatchSize:       5,
+		FlushInterval:   100 * time.Millisecond,
+		MaxRetry:        3,
+		CleanupInterval: 24 * time.Hour,
+		RetentionDays:   30,
+	}
+
+	for round := 0; round < 2; round++ { // 幂等：连续初始化两次
+		tracker, err := NewUsageTracker(cfg)
+		require.NoErrorf(t, err, "round %d: v8 迁移初始化不应失败", round)
+
+		db := tracker.GetReadDB()
+		var count int
+		require.NoError(t, db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('endpoints') WHERE name = 'availability_enabled'`).Scan(&count))
+		assert.Equal(t, 1, count, "availability_enabled 列应存在")
+
+		require.NoError(t, db.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='endpoint_runtime_states'`).Scan(&count))
+		assert.Equal(t, 1, count, "endpoint_runtime_states 表应存在")
+
+		// availability_enabled 默认 1；legacy enabled 原值不被改写
+		var avail, legacyActive, legacyStandby int
+		require.NoError(t, db.QueryRow(
+			`SELECT availability_enabled, enabled FROM endpoints WHERE name='legacy-active'`).Scan(&avail, &legacyActive))
+		assert.Equal(t, 1, avail)
+		assert.Equal(t, 1, legacyActive, "legacy enabled 原值必须保持")
+		require.NoError(t, db.QueryRow(
+			`SELECT enabled FROM endpoints WHERE name='legacy-standby'`).Scan(&legacyStandby))
+		assert.Equal(t, 0, legacyStandby, "legacy enabled=0 原值必须保持")
+
+		tracker.Close()
+	}
+}
+
 func TestSQLiteSchemaInit_BackfillsCompletionMsForExistingRows(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "completion-backfill.db")
 

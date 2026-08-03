@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"cc-forwarder/internal/endpoint"
@@ -61,6 +62,17 @@ func (a *App) SetClaudeRoutingOverride(input SetClaudeRoutingOverrideInput) (Cla
 	if manager == nil {
 		return ClaudeRoutingState{}, fmt.Errorf("端点管理器未初始化")
 	}
+	if !manager.IsClaudeRoutingReady() {
+		return ClaudeRoutingState{}, fmt.Errorf("Claude 路由未就绪（routing_not_ready），请稍后重试")
+	}
+
+	// v8 §6.4：串行协调器，事务持久化成功后再原子发布运行态；
+	// 用户意图只写 route override，不再先激活 endpoint（§11.2 规则 4）。
+	// 端点存在性检查必须在 routingMu 内：删除流程同样持 routingMu，
+	// 消除「检查存在 → 端点被删 → 写入 fixed」的竞态窗口
+	a.routingMu.Lock()
+	defer a.routingMu.Unlock()
+
 	if manager.GetEndpointByNameAny(input.EndpointName) == nil {
 		return ClaudeRoutingState{}, fmt.Errorf("端点 '%s' 不存在", input.EndpointName)
 	}
@@ -68,25 +80,25 @@ func (a *App) SetClaudeRoutingOverride(input SetClaudeRoutingOverrideInput) (Cla
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := a.activateClaudeEndpoint(ctx, input.EndpointName); err != nil {
-		return ClaudeRoutingState{}, err
-	}
-
 	fallbackEnabled := input.FallbackEnabled
 	if mode == endpoint.RouteModeManualPreferred {
 		fallbackEnabled = true
 	}
-	state := manager.SetClaudeRoutingOverride(endpoint.RouteOverrideState{
+	current := manager.GetClaudeRoutingOverride()
+	next := endpoint.RouteOverrideState{
 		Mode:            mode,
 		EndpointName:    input.EndpointName,
 		SetBy:           endpoint.RouteCallerUser,
 		SetAt:           time.Now(),
 		FallbackEnabled: fallbackEnabled,
-	})
-
-	if err := a.persistClaudeRoutingState(ctx, state); err != nil {
-		return ClaudeRoutingState{}, err
+		Revision:        current.Revision + 1,
 	}
+
+	if err := a.persistClaudeRoutingState(ctx, next); err != nil {
+		// 写库失败：不修改运行态、不发事件（§6.4 规则 5）
+		return ClaudeRoutingState{}, fmt.Errorf("持久化路由状态失败，未生效: %w", err)
+	}
+	state := manager.ApplyPersistedClaudeRoutingState(next)
 
 	result := a.buildClaudeRoutingState(state)
 	a.emitClaudeRoutingUpdate(result)
@@ -102,16 +114,56 @@ func (a *App) ClearClaudeRoutingOverride() (ClaudeRoutingState, error) {
 		return ClaudeRoutingState{Mode: endpoint.RouteModeAuto, FallbackEnabled: true}, nil
 	}
 
-	state := manager.ClearClaudeRoutingOverride(endpoint.RouteCallerUser)
+	a.routingMu.Lock()
+	defer a.routingMu.Unlock()
+
+	return a.clearClaudeRoutingOverrideLocked(manager)
+}
+
+// clearClaudeRoutingOverrideLocked 清回 Auto 并持久化（调用方必须已持有 routingMu）
+func (a *App) clearClaudeRoutingOverrideLocked(manager *endpoint.Manager) (ClaudeRoutingState, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := a.persistClaudeRoutingState(ctx, state); err != nil {
-		return ClaudeRoutingState{}, err
+
+	current := manager.GetClaudeRoutingOverride()
+	next := endpoint.RouteOverrideState{
+		Mode:            endpoint.RouteModeAuto,
+		SetBy:           endpoint.RouteCallerUser,
+		SetAt:           time.Now(),
+		FallbackEnabled: true,
+		Revision:        current.Revision + 1,
 	}
+	if err := a.persistClaudeRoutingState(ctx, next); err != nil {
+		return ClaudeRoutingState{}, fmt.Errorf("持久化路由状态失败，未生效: %w", err)
+	}
+	state := manager.ApplyPersistedClaudeRoutingState(next)
 
 	result := a.buildClaudeRoutingState(state)
 	a.emitClaudeRoutingUpdate(result)
 	return result, nil
+}
+
+// restoreClaudeRoutingOverrideLocked 补偿性恢复此前的 manual override
+// （删除端点失败时回滚；调用方必须已持有 routingMu）
+func (a *App) restoreClaudeRoutingOverrideLocked(manager *endpoint.Manager, prev endpoint.RouteOverrideState) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	current := manager.GetClaudeRoutingOverride()
+	next := endpoint.RouteOverrideState{
+		Mode:            prev.Mode,
+		EndpointName:    prev.EndpointName,
+		SetBy:           prev.SetBy,
+		SetAt:           time.Now(),
+		FallbackEnabled: prev.FallbackEnabled,
+		Revision:        current.Revision + 1,
+	}
+	if err := a.persistClaudeRoutingState(ctx, next); err != nil {
+		return err
+	}
+	state := manager.ApplyPersistedClaudeRoutingState(next)
+	a.emitClaudeRoutingUpdate(a.buildClaudeRoutingState(state))
+	return nil
 }
 
 func (a *App) ClearNegativeHitCache(endpointName string) error {
@@ -132,73 +184,131 @@ func (a *App) loadClaudeRoutingOverride(ctx context.Context) {
 		return
 	}
 
-	mode, _ := a.settingsService.GetValue(ctx, service.CategoryClaudeRouting, "mode")
-	mode = endpoint.NormalizeRouteMode(mode)
+	// §6.4 规则 7：一次读取完整 category；任何读取失败保持 not_ready，不按默认 Auto 覆盖
+	records, err := a.settingsService.GetByCategory(ctx, service.CategoryClaudeRouting)
+	if err != nil {
+		slog.Error("❌ [Claude路由] 启动读取路由状态失败，Claude 路由保持 not_ready", "error", err)
+		manager.SetClaudeRoutingReady(false)
+		return
+	}
+	values := make(map[string]string, len(records))
+	for _, record := range records {
+		if record != nil {
+			values[record.Key] = record.Value
+		}
+	}
+
+	mode := endpoint.NormalizeRouteMode(values["mode"])
+	revision, _ := strconv.ParseInt(values["revision"], 10, 64)
+
 	if mode == endpoint.RouteModeAuto {
-		manager.ClearClaudeRoutingOverride(endpoint.RouteCallerStartupRecovery)
+		manager.ApplyPersistedClaudeRoutingState(endpoint.RouteOverrideState{
+			Mode: endpoint.RouteModeAuto, SetBy: endpoint.RouteCallerStartupRecovery,
+			FallbackEnabled: true, Revision: revision,
+		})
+		manager.SetClaudeRoutingReady(true)
+		a.migrateLegacyActiveState(ctx, manager)
 		return
 	}
 
-	endpointName, _ := a.settingsService.GetValue(ctx, service.CategoryClaudeRouting, "endpoint_name")
+	endpointName := values["endpoint_name"]
 	if endpointName == "" || manager.GetEndpointByNameAny(endpointName) == nil {
+		// 完整快照读取成功且目标确实缺失/不存在，才允许写回 Auto
 		slog.Warn("⚠️ [Claude路由] 持久化手动端点不存在，已恢复自动路由", "endpoint", endpointName)
-		state := manager.ClearClaudeRoutingOverride(endpoint.RouteCallerStartupRecovery)
-		if err := a.persistClaudeRoutingState(ctx, state); err != nil {
+		next := endpoint.RouteOverrideState{
+			Mode: endpoint.RouteModeAuto, SetBy: endpoint.RouteCallerStartupRecovery,
+			SetAt: time.Now(), FallbackEnabled: true, Revision: revision + 1,
+		}
+		if err := a.persistClaudeRoutingState(ctx, next); err != nil {
 			slog.Warn("⚠️ [Claude路由] 恢复自动路由持久化失败", "error", err)
 		}
+		manager.ApplyPersistedClaudeRoutingState(next)
+		manager.SetClaudeRoutingReady(true)
+		a.migrateLegacyActiveState(ctx, manager)
 		return
 	}
 
-	fallbackEnabled := a.settingsService.GetBool(ctx, service.CategoryClaudeRouting, "fallback_enabled", mode == endpoint.RouteModeManualPreferred)
-	setBy, _ := a.settingsService.GetValue(ctx, service.CategoryClaudeRouting, "set_by")
-	setAtValue, _ := a.settingsService.GetValue(ctx, service.CategoryClaudeRouting, "set_at")
+	fallbackEnabled := mode == endpoint.RouteModeManualPreferred
+	if raw, ok := values["fallback_enabled"]; ok && raw != "" {
+		fallbackEnabled = raw == "true" || raw == "1" || raw == "yes"
+	}
 	setAt := time.Now()
-	if parsed, err := time.Parse(time.RFC3339, setAtValue); err == nil {
+	if parsed, err := time.Parse(time.RFC3339, values["set_at"]); err == nil {
 		setAt = parsed
 	}
-
-	if err := a.activateClaudeEndpointWith(manager, endpointName); err != nil {
-		slog.Warn("⚠️ [Claude路由] 恢复手动端点激活失败，已恢复自动路由", "endpoint", endpointName, "error", err)
-		state := manager.ClearClaudeRoutingOverride(endpoint.RouteCallerStartupRecovery)
-		if err := a.persistClaudeRoutingState(ctx, state); err != nil {
-			slog.Warn("⚠️ [Claude路由] 恢复自动路由持久化失败", "error", err)
-		}
-		return
-	}
-
+	setBy := values["set_by"]
 	if setBy == "" {
 		setBy = endpoint.RouteCallerStartupRecovery
 	}
-	state := manager.SetClaudeRoutingOverride(endpoint.RouteOverrideState{
+
+	state := manager.ApplyPersistedClaudeRoutingState(endpoint.RouteOverrideState{
 		Mode:            mode,
 		EndpointName:    endpointName,
 		SetBy:           setBy,
 		SetAt:           setAt,
 		FallbackEnabled: fallbackEnabled,
+		Revision:        revision,
 	})
+	manager.SetClaudeRoutingReady(true)
+	a.migrateLegacyActiveState(ctx, manager)
 	slog.Info("✅ [Claude路由] 已恢复持久化路由状态", "mode", state.Mode, "endpoint", state.EndpointName)
 }
 
-func (a *App) activateClaudeEndpoint(ctx context.Context, endpointName string) error {
-	_ = ctx
-	a.mu.RLock()
-	manager := a.endpointManager
-	a.mu.RUnlock()
-
-	return a.activateClaudeEndpointWith(manager, endpointName)
-}
-
-func (a *App) activateClaudeEndpointWith(manager *endpoint.Manager, endpointName string) error {
-	if manager == nil {
-		return fmt.Errorf("端点管理器未初始化")
+// migrateLegacyActiveState v8 §7.3：legacy active 一次性启动迁移。
+// 同一数据库只执行一次（state_model_version >= 2 跳过）。
+func (a *App) migrateLegacyActiveState(ctx context.Context, manager *endpoint.Manager) {
+	if a.settingsService == nil {
+		return
 	}
-	if manager.GetEndpointByNameAny(endpointName) == nil {
-		return fmt.Errorf("端点 '%s' 不存在", endpointName)
+	versionValue, _ := a.settingsService.GetValue(ctx, service.CategoryClaudeRouting, "state_model_version")
+	if version, _ := strconv.Atoi(versionValue); version >= 2 {
+		return
 	}
 
-	// v7：持久化统一经 runtime writer（ManualActivateGroup 内部等待 ACK，
-	// 返回成功 ⇒ 已落库；失败时内存回滚到 lastPersisted 并返回错误）
-	return manager.ManualActivateGroup(endpointName)
+	override := manager.GetClaudeRoutingOverride()
+	legacyActive, _ := manager.GetActiveEndpointSelection()
+
+	switch {
+	case override.Mode != endpoint.RouteModeAuto:
+		// 规则 1：manual override 是唯一用户意图，忽略 legacy active
+		slog.Info("🔀 [状态迁移] 存在 manual override，忽略 legacy active", "mode", override.Mode)
+	case legacyActive == "":
+		// 规则 4：无 legacy active，直接按 priority 自动选择
+	default:
+		ep := manager.GetEndpointByNameAny(legacyActive)
+		switch {
+		case ep == nil || !manager.EndpointHardEnabled(ep):
+			// 规则 4：指向硬停用/已删除端点，按 priority 自动选择
+		case ep.Config.IsAutoScheduleEnabled():
+			// 规则 2：仅初始化本进程 retained，不写回数据库
+			manager.UpdateAutoRetention(legacyActive, ep.Config.Priority, "auto_retained", override.Revision)
+			slog.Info("🔀 [状态迁移] legacy active 初始化为 retained", "endpoint", legacyActive)
+		default:
+			// 规则 3（D11）：failover_enabled=false 的专用 active 迁为 manual_preferred
+			next := endpoint.RouteOverrideState{
+				Mode:            endpoint.RouteModeManualPreferred,
+				EndpointName:    legacyActive,
+				SetBy:           endpoint.RouteCallerStartupRecovery,
+				SetAt:           time.Now(),
+				FallbackEnabled: true,
+				Revision:        override.Revision + 1,
+			}
+			if err := a.persistClaudeRoutingState(ctx, next); err != nil {
+				slog.Warn("⚠️ [状态迁移] 专用 active 迁移持久化失败，跳过（下次启动重试）", "error", err)
+				return
+			}
+			manager.ApplyPersistedClaudeRoutingState(next)
+			slog.Info("🔀 [状态迁移] 专用 legacy active 已迁移为 manual_preferred（D11）", "endpoint", legacyActive)
+		}
+	}
+
+	if err := a.settingsStore.BatchUpdateValues(ctx, []*store.SettingRecord{
+		{Category: service.CategoryClaudeRouting, Key: "state_model_version", Value: "2"},
+	}); err != nil {
+		slog.Warn("⚠️ [状态迁移] state_model_version 写入失败（下次启动重试）", "error", err)
+		return
+	}
+	slog.Info("✅ [状态迁移] Claude 调度状态模型已迁移至 v2")
 }
 
 func (a *App) persistClaudeRoutingState(ctx context.Context, state endpoint.RouteOverrideState) error {
@@ -212,11 +322,16 @@ func (a *App) persistClaudeRoutingState(ctx context.Context, state endpoint.Rout
 		"set_by":           state.SetBy,
 		"set_at":           formatRouteTime(state.SetAt),
 		"fallback_enabled": fmt.Sprintf("%t", state.FallbackEnabled),
+		"revision":         strconv.FormatInt(state.Revision, 10),
 	}
 
 	records := make([]*store.SettingRecord, 0, len(values))
 	for _, defaultRecord := range a.settingsService.GetAllDefaults() {
 		if defaultRecord.Category != service.CategoryClaudeRouting {
+			continue
+		}
+		// state_model_version 由迁移逻辑独立维护，路由写入不得重置（§7.3）
+		if defaultRecord.Key == "state_model_version" {
 			continue
 		}
 		record := *defaultRecord

@@ -131,7 +131,8 @@ const EndpointRow = ({
   };
 
   const isSqliteMode = storageMode === 'sqlite';
-  const isActive = isSqliteMode ? endpoint.enabled : endpoint.group_is_active;
+  // v8：开关表达硬启用（availability），不再表达 legacy active
+  const isActive = isSqliteMode ? endpoint.availabilityEnabled !== false : endpoint.group_is_active;
   const responseTime = endpoint.response_time || endpoint.responseTimeMs || 0;
   const isNeverChecked = endpoint.never_checked === true || endpoint.neverChecked === true || (!endpoint.lastCheck && !endpoint.last_check);
   const modelRewriteSummary = summarizeEndpointModelRewriteRules(endpoint.modelRewriteRules || endpoint.model_rewrite_rules || '');
@@ -222,7 +223,7 @@ const EndpointRow = ({
         <div className="flex items-center space-x-2">
           <div
             className={`p-1.5 rounded-md ${endpoint.failoverEnabled !== false ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-300'}`}
-            title="故障转移"
+            title={endpoint.failoverEnabled !== false ? '参与自动调度' : '不参与自动调度（仍可手动优选或固定使用）'}
           >
             <ArrowRightLeft size={14} />
           </div>

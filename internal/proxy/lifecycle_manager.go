@@ -54,6 +54,7 @@ type RequestLifecycleManager struct {
 	modelName            string                        // 模型名称
 	channel              string                        // 渠道标签
 	endpointName         string                        // 端点名称
+	endpointRevision     int64                         // AttemptPlan 配置 revision；0 表示非端点快照链路
 	groupName            string                        // 组名称
 	upstreamType         string                        // 上游类型：endpoint/account
 	upstreamSourceName   string                        // 上游来源名（订阅源等）
@@ -79,6 +80,7 @@ type RequestLifecycleManager struct {
 type lifecycleStateSnapshot struct {
 	channel            string
 	endpointName       string
+	endpointRevision   int64
 	groupName          string
 	upstreamType       string
 	upstreamSourceName string
@@ -97,6 +99,7 @@ func (rlm *RequestLifecycleManager) snapshotState() lifecycleStateSnapshot {
 	return lifecycleStateSnapshot{
 		channel:            rlm.channel,
 		endpointName:       rlm.endpointName,
+		endpointRevision:   rlm.endpointRevision,
 		groupName:          rlm.groupName,
 		upstreamType:       rlm.upstreamType,
 		upstreamSourceName: rlm.upstreamSourceName,
@@ -341,9 +344,15 @@ func (rlm *RequestLifecycleManager) notifyStatusChange(status string, retryCount
 func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage) {
 	duration := time.Since(rlm.startTime)
 	state := rlm.snapshotState()
-	// 📊 [失败追踪] 记录端点成功，清空失败计数
+	// 📊 [失败追踪] 记录端点成功；只清请求开始前的失败，保留进行期间的新失败证据
 	if rlm.endpointManager != nil && state.endpointName != "" {
-		rlm.endpointManager.RecordSuccess(state.endpointName)
+		if state.endpointRevision > 0 {
+			rlm.endpointManager.ApplyEndpointAttemptSettlement(state.endpointName, state.endpointRevision, func() {
+				rlm.endpointManager.RecordSuccessSince(state.endpointName, rlm.startTime)
+			})
+		} else {
+			rlm.endpointManager.RecordSuccessSince(state.endpointName, rlm.startTime)
+		}
 	}
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		// 使用线程安全的方式获取模型信息
@@ -416,10 +425,7 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.
 	duration := time.Since(rlm.startTime)
 	state := rlm.snapshotState()
 
-	// 📊 [失败追踪] 记录端点成功，清空失败计数
-	if rlm.endpointManager != nil && state.endpointName != "" {
-		rlm.endpointManager.RecordSuccess(state.endpointName)
-	}
+	// §9.1 不变量 10：QualityIncomplete 不视为完整成功，不清软失败、不更新 retained
 
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		modelName := rlm.GetModelName()
@@ -514,9 +520,19 @@ func (rlm *RequestLifecycleManager) analyzeResponseType(responseContent string) 
 // SetEndpoint 设置端点信息
 // v5.0: 立即更新热池中的端点和渠道信息，确保前端实时显示
 func (rlm *RequestLifecycleManager) SetEndpoint(endpointName, groupName, channel string) {
+	rlm.setEndpoint(endpointName, groupName, channel, 0)
+}
+
+// SetEndpointAttempt 设置由 AttemptPlan 选中的端点，并保存配置 revision 供成功结算 fencing。
+func (rlm *RequestLifecycleManager) SetEndpointAttempt(endpointName, groupName, channel string, revision int64) {
+	rlm.setEndpoint(endpointName, groupName, channel, revision)
+}
+
+func (rlm *RequestLifecycleManager) setEndpoint(endpointName, groupName, channel string, revision int64) {
 	rlm.stateMu.Lock()
 	rlm.channel = channel
 	rlm.endpointName = endpointName
+	rlm.endpointRevision = revision
 	rlm.groupName = groupName
 	if rlm.upstreamType == "" {
 		rlm.upstreamType = "endpoint"

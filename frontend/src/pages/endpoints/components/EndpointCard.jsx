@@ -15,7 +15,10 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
-  Timer
+  Timer,
+  Star,
+  Pin,
+  RotateCcw
 } from 'lucide-react';
 import { BrowserOpenURL } from '@wailsjs/runtime/runtime';
 import { summarizeEndpointModelRewriteRules } from '../utils/modelRewrite.js';
@@ -84,12 +87,21 @@ const EndpointCard = ({
   onActivateGroup,
   onEdit,
   onDelete,
-  onToggle
+  onToggle,
+  routingState,
+  onSetRouting
 }) => {
   if (!endpoint) return null;
 
   const isSqliteMode = storageMode === 'sqlite';
-  const isActive = isSqliteMode ? endpoint.enabled : endpoint.group_is_active;
+  // v8：开关表达硬启用（availability），不再表达 legacy active
+  const isActive = isSqliteMode ? endpoint.availabilityEnabled !== false : endpoint.group_is_active;
+  const routeMode = routingState?.mode || 'auto';
+  const routeTarget = routingState?.endpoint_name || routingState?.endpointName || '';
+  const currentEffective = routingState?.last_effective_endpoint || routingState?.lastEffectiveEndpoint || '';
+  const isPreferred = routeMode === 'manual_preferred' && routeTarget === endpoint.name;
+  const isFixed = routeMode === 'manual_fixed' && routeTarget === endpoint.name;
+  const isCurrentHit = currentEffective === endpoint.name;
   const responseTime = endpoint.response_time || endpoint.responseTimeMs || 0;
   const isNeverChecked = endpoint.never_checked === true || endpoint.neverChecked === true || (!endpoint.lastCheck && !endpoint.last_check);
   const inCooldown = endpoint.in_cooldown || endpoint.inCooldown;
@@ -109,9 +121,10 @@ const EndpointCard = ({
     `}>
       {/* 单行布局：开关 | 名称+状态 | 信息标签 | 操作按钮 */}
       <div className="flex min-w-0 items-center gap-3">
-        {/* 开关 */}
+        {/* 开关：端点启用（hard availability，关闭后任何模式都不会使用） */}
         <div
           className="cursor-pointer flex-shrink-0"
+          title={isActive ? '端点已启用（点击停用：任何模式都不会使用）' : '端点已停用（点击启用）'}
           onClick={() => {
             if (isSqliteMode) {
               onToggle?.(endpoint.name, !isActive);
@@ -131,7 +144,7 @@ const EndpointCard = ({
           )}
         </div>
 
-        {/* 名称 + 连通性状态 */}
+        {/* 名称 + 连通性状态 + 路由徽章 */}
         <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
           <span className="font-semibold text-slate-800 text-sm truncate max-w-[120px]" title={endpoint.name}>
             {endpoint.name}
@@ -141,6 +154,15 @@ const EndpointCard = ({
             neverChecked={isNeverChecked}
             inCooldown={inCooldown}
           />
+          {isPreferred && (
+            <span className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-600">已优选</span>
+          )}
+          {isFixed && (
+            <span className="inline-flex items-center rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-[10px] font-medium text-purple-600">已固定</span>
+          )}
+          {isCurrentHit && (
+            <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-600">当前命中</span>
+          )}
         </div>
 
         {/* URL - 可伸缩区域 */}
@@ -185,10 +207,10 @@ const EndpointCard = ({
             </span>
           )}
 
-          {/* 故障转移 */}
+          {/* 参与自动调度（v8：关闭后仍可手动优选或固定使用） */}
           <div
             className={`shrink-0 rounded p-1 ${endpoint.failoverEnabled !== false ? 'bg-indigo-50 text-indigo-500' : 'bg-white text-slate-300 border border-slate-100'}`}
-            title="故障转移"
+            title={endpoint.failoverEnabled !== false ? '参与自动调度' : '不参与自动调度（仍可手动优选或固定使用）'}
           >
             <ArrowRightLeft size={11} />
           </div>
@@ -226,6 +248,32 @@ const EndpointCard = ({
           )}
           {isSqliteMode && (
             <>
+              {(isPreferred || isFixed) ? (
+                <button
+                  onClick={() => onSetRouting?.('auto', endpoint.name)}
+                  className="p-1.5 text-slate-400 hover:bg-slate-100 hover:text-emerald-600 rounded transition-colors"
+                  title="恢复自动调度"
+                >
+                  <RotateCcw size={14} />
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={() => onSetRouting?.('manual_preferred', endpoint.name)}
+                    className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 rounded transition-colors"
+                    title="设为优选（不可用时允许回退）"
+                  >
+                    <Star size={14} />
+                  </button>
+                  <button
+                    onClick={() => onSetRouting?.('manual_fixed', endpoint.name)}
+                    className="p-1.5 text-slate-400 hover:bg-purple-50 hover:text-purple-600 rounded transition-colors"
+                    title="固定使用（不回退）"
+                  >
+                    <Pin size={14} />
+                  </button>
+                </>
+              )}
               <button
                 onClick={() => onEdit?.(endpoint)}
                 className="p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600 rounded transition-colors"

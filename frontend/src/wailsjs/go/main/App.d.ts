@@ -161,6 +161,10 @@ export function SetClaudeRoutingOverride(arg1:main.SetClaudeRoutingOverrideInput
 
 export function SetDefaultModelPricing(arg1:string):Promise<void>;
 
+export function SetEndpointAutoSchedule(arg1:string,arg2:boolean):Promise<void>;
+
+export function SetEndpointAvailability(arg1:string,arg2:boolean):Promise<void>;
+
 export function SetEndpointPriority(arg1:string,arg2:number):Promise<void>;
 
 export function SetGroupActiveAccount(arg1:string,arg2:number):Promise<main.SetGroupActiveAccountResult>;

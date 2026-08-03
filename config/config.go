@@ -108,10 +108,30 @@ type GroupConfig struct {
 	AutoSwitchBetweenGroups bool          `yaml:"auto_switch_between_groups"` // Whether to automatically switch between groups, default: true
 }
 
-// FailoverConfig v4.0 故障转移配置
+// FailoverConfig v4.0 故障转移配置（v8 收敛方案 §12 扩展）
 type FailoverConfig struct {
-	Enabled         bool          `yaml:"enabled"`          // 启用故障转移，默认: true
-	DefaultCooldown time.Duration `yaml:"default_cooldown"` // 默认冷却时间，默认: 10m
+	Enabled              bool                 `yaml:"enabled"`                // 请求内是否允许换不同端点，默认: true
+	DefaultCooldown      time.Duration        `yaml:"default_cooldown"`       // 默认冷却时间，默认: 10m
+	MaxCandidateAttempts int                  `yaml:"max_candidate_attempts"` // 单请求最多尝试的不同端点数，默认: 3
+	RateLimitRetry       RateLimitRetryConfig `yaml:"rate_limit_retry"`       // 普通 429 同端点短重试
+	AuthCooldown         time.Duration        `yaml:"auth_cooldown"`          // 鉴权失败冷却，默认: 30m
+	ServerErrorCooldown  time.Duration        `yaml:"server_error_cooldown"`  // server_error 阈值冷却，默认: 120s
+	ConnectionCooldown   time.Duration        `yaml:"connection_cooldown"`    // connection/transport 阈值冷却，默认: 90s
+}
+
+// RateLimitRetryConfig 普通 429 同端点短重试配置（§9.2）
+type RateLimitRetryConfig struct {
+	Enabled         *bool         `yaml:"enabled"`          // 默认: true
+	MaxWait         time.Duration `yaml:"max_wait"`         // 服务端等待上限，默认: 2s
+	DefaultCooldown time.Duration `yaml:"default_cooldown"` // 阈值触发且无 Retry-After 时的冷却，默认: 180s
+}
+
+// RateLimitRetryEnabled 429 短重试是否启用（默认 true）
+func (c *FailoverConfig) RateLimitRetryEnabled() bool {
+	if c.RateLimitRetry.Enabled != nil {
+		return *c.RateLimitRetry.Enabled
+	}
+	return true
 }
 
 // FailureTrackerConfig v5.2.6 失败追踪器配置
@@ -268,7 +288,24 @@ type EndpointConfig struct {
 	Headers             map[string]string `yaml:"headers,omitempty"`
 	SupportsCountTokens bool              `yaml:"supports_count_tokens,omitempty"` // 是否支持count_tokens端点
 	ModelRewriteRules   string            `yaml:"model_rewrite_rules,omitempty"`   // CC 端点模型兼容改写规则 JSON
-	Enabled             *bool             `yaml:"enabled,omitempty"`               // v5.0: 是否激活为代理端点（SQLite模式），默认: true
+	Enabled             *bool             `yaml:"enabled,omitempty"`               // v5.0: legacy active（v8 起 deprecated，不再作为调度资格）
+	AvailabilityEnabled *bool             `yaml:"availability_enabled,omitempty"`  // v8: 硬启用，false=任何模式都不可使用，默认: true
+}
+
+// IsAvailabilityEnabled 硬启用状态（nil 默认 true）
+func (c *EndpointConfig) IsAvailabilityEnabled() bool {
+	if c.AvailabilityEnabled == nil {
+		return true
+	}
+	return *c.AvailabilityEnabled
+}
+
+// IsAutoScheduleEnabled 是否参与自动调度（物理键 failover_enabled，nil 默认 true）
+func (c *EndpointConfig) IsAutoScheduleEnabled() bool {
+	if c.FailoverEnabled == nil {
+		return true
+	}
+	return *c.FailoverEnabled
 }
 
 // TokenConfig Token 配置项，用于多 Token 切换功能
@@ -471,6 +508,24 @@ func (c *Config) setDefaults() {
 	// Note: We check for zero value and set default here
 	if c.Failover.DefaultCooldown == 0 {
 		c.Failover.DefaultCooldown = 600 * time.Second // Default 10 minutes cooldown
+	}
+	if c.Failover.MaxCandidateAttempts <= 0 {
+		c.Failover.MaxCandidateAttempts = 3 // §8.5 D4
+	}
+	if c.Failover.RateLimitRetry.MaxWait <= 0 {
+		c.Failover.RateLimitRetry.MaxWait = 2 * time.Second // §9.2 D3
+	}
+	if c.Failover.RateLimitRetry.DefaultCooldown <= 0 {
+		c.Failover.RateLimitRetry.DefaultCooldown = 180 * time.Second // §9.2 规则 10
+	}
+	if c.Failover.AuthCooldown <= 0 {
+		c.Failover.AuthCooldown = 30 * time.Minute
+	}
+	if c.Failover.ServerErrorCooldown <= 0 {
+		c.Failover.ServerErrorCooldown = 120 * time.Second
+	}
+	if c.Failover.ConnectionCooldown <= 0 {
+		c.Failover.ConnectionCooldown = 90 * time.Second
 	}
 	// Failover.Enabled has no explicit default here - will be set by LoadConfig compatibility logic
 

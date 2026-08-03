@@ -353,6 +353,18 @@ func (f *Forwarder) buildStreamingTransport() (*http.Transport, error) {
 
 // CopyHeaders 复制头部逻辑
 func (f *Forwarder) CopyHeaders(src *http.Request, dst *http.Request, ep *endpoint.Endpoint) {
+	f.copyHeaders(src, dst, ep.Config.URL, ep.Config.Channel, ep.Config.Headers,
+		f.endpointManager.GetTokenForEndpoint(ep), f.endpointManager.GetApiKeyForEndpoint(ep))
+}
+
+// CopyAttemptHeaders 只使用 admission 快照中已解析的凭据与 headers。
+// 即使快照凭据为空，也不得回退到运行态组内继承。
+func (f *Forwarder) CopyAttemptHeaders(src *http.Request, dst *http.Request, target *endpoint.EndpointAttemptTarget) {
+	cfg := target.Config()
+	f.copyHeaders(src, dst, cfg.URL, cfg.Channel, cfg.Headers, cfg.Token, cfg.ApiKey)
+}
+
+func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL, channel string, headers map[string]string, token, apiKey string) {
 	// List of headers to skip/remove
 	skipHeaders := map[string]bool{
 		"host":          true, // We'll set this based on target endpoint
@@ -372,29 +384,27 @@ func (f *Forwarder) CopyHeaders(src *http.Request, dst *http.Request, ep *endpoi
 	}
 
 	// Set Host header based on target endpoint URL
-	if u, err := url.Parse(ep.Config.URL); err == nil {
+	if u, err := url.Parse(targetURL); err == nil {
 		dst.Header.Set("Host", u.Host)
 		// Also set the Host field directly on the request for proper HTTP/1.1 behavior
 		dst.Host = u.Host
 	}
 
-	// Add or override Authorization header with dynamically resolved token
-	token := f.endpointManager.GetTokenForEndpoint(ep)
+	// Add or override Authorization header
 	if token != "" {
 		dst.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	// Add or override X-Api-Key header with dynamically resolved api-key
-	apiKey := f.endpointManager.GetApiKeyForEndpoint(ep)
+	// Add or override X-Api-Key header
 	if apiKey != "" {
 		dst.Header.Set("X-Api-Key", apiKey)
 	}
 
 	// Add custom headers from endpoint configuration
-	for key, value := range ep.Config.Headers {
+	for key, value := range headers {
 		dst.Header.Set(key, value)
 	}
-	if strings.EqualFold(strings.TrimSpace(ep.Config.Channel), anyrouteChannel) {
+	if strings.EqualFold(strings.TrimSpace(channel), anyrouteChannel) {
 		ensureBetaFlag(dst.Header, anyrouteContextBetaFlag)
 	}
 
@@ -437,7 +447,10 @@ func ensureBetaFlag(header http.Header, flag string) {
 //   - 保留 4xx/5xx 响应结构（分类交给决策表，不在此转换为 error）；
 //   - detachUpstream 为 true 时创建独立 upstream context（下游断开后仍可短时 drain 尾部），返回其 release；
 //   - 非 SSE 请求恢复端点级总超时，SSE 保持无总超时，避免长流被硬切断。
-func (f *Forwarder) ForwardForPipeline(ctx context.Context, r *http.Request, bodyBytes []byte, ep *endpoint.Endpoint, isSSE, detachUpstream bool, onWroteRequest func(time.Time)) (*http.Response, context.CancelFunc, *UpstreamTraceState, error) {
+func (f *Forwarder) ForwardForPipeline(ctx context.Context, r *http.Request, bodyBytes []byte, target *endpoint.EndpointAttemptTarget, isSSE, detachUpstream bool, onWroteRequest func(time.Time)) (*http.Response, context.CancelFunc, *UpstreamTraceState, error) {
+	// Config 返回 admission 快照的独立副本；后续 helper 继续复用既有逻辑，
+	// 但不会再读取 Manager 持有的可变 Endpoint 或动态凭据状态。
+	ep := &endpoint.Endpoint{Config: target.Config()}
 	bodyBytes = prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
 
 	// 🛡️ 出站隐私过滤（PolicyError 由调用方短路，不进入换候选/标记）
@@ -465,7 +478,7 @@ func (f *Forwarder) ForwardForPipeline(ctx context.Context, r *http.Request, bod
 		}
 		return nil, nil, traceState, fmt.Errorf("failed to create request: %w", err)
 	}
-	f.CopyHeaders(r, req, ep)
+	f.CopyAttemptHeaders(r, req, target)
 
 	httpTransport, err := f.buildStreamingTransport()
 	if err != nil {

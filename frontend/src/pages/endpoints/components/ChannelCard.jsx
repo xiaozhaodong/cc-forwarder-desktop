@@ -17,7 +17,9 @@ const ChannelCard = ({
   onActivateGroup,
   onEdit,
   onDelete,
-  onToggle
+  onToggle,
+  routingState,
+  onSetRouting
 }) => {
   const [expanded, setExpanded] = useState(false);
 
@@ -97,6 +99,8 @@ const ChannelCard = ({
               onEdit={onEdit}
               onDelete={onDelete}
               onToggle={onToggle}
+              routingState={routingState}
+              onSetRouting={onSetRouting}
             />
           ))}
         </div>

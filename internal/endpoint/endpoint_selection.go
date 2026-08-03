@@ -162,7 +162,10 @@ func (m *Manager) GetEndpointByNameAny(name string) *Endpoint {
 	defer m.endpointsMu.RUnlock()
 
 	for _, endpoint := range m.endpoints {
-		if endpoint.Config.Name == name {
+		endpoint.mutex.RLock()
+		matches := endpoint.Config.Name == name
+		endpoint.mutex.RUnlock()
+		if matches {
 			return endpoint
 		}
 	}

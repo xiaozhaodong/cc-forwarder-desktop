@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/store"
 	"cc-forwarder/internal/utils"
 )
@@ -43,6 +44,7 @@ type EndpointRecordInfo struct {
 	CacheCreationCostMultiplier1h float64           `json:"cache_creation_cost_multiplier_1h"`
 	CacheReadCostMultiplier       float64           `json:"cache_read_cost_multiplier"`
 	Enabled                       bool              `json:"enabled"`
+	AvailabilityEnabled           bool              `json:"availability_enabled"` // v8 硬启用状态
 	CreatedAt                     string            `json:"created_at"`
 	UpdatedAt                     string            `json:"updated_at"`
 	// 运行时健康状态
@@ -66,6 +68,7 @@ type CreateEndpointInput struct {
 	Headers                       map[string]string `json:"headers"`
 	Priority                      int               `json:"priority"`
 	FailoverEnabled               bool              `json:"failover_enabled"`
+	AvailabilityEnabled           *bool             `json:"availability_enabled,omitempty"`
 	CooldownSeconds               *int              `json:"cooldown_seconds"`
 	TimeoutSeconds                int               `json:"timeout_seconds"`
 	SupportsCountTokens           bool              `json:"supports_count_tokens"`
@@ -151,11 +154,11 @@ func (a *App) GetEndpointRecords() ([]EndpointRecordInfo, error) {
 			if !status.LastCheck.IsZero() {
 				info.LastCheck = status.LastCheck.Format("2006-01-02 15:04:05")
 			}
-			// 冷却状态
-			if !status.CooldownUntil.IsZero() && status.CooldownUntil.After(time.Now()) {
+			// 冷却状态（两个 scope 槽取生效且截止最晚者）
+			if until, reason, active := status.EffectiveCooldown(time.Now()); active {
 				info.InCooldown = true
-				info.CooldownUntil = status.CooldownUntil.Format("2006-01-02 15:04:05")
-				info.CooldownReason = status.CooldownReason
+				info.CooldownUntil = until.Format("2006-01-02 15:04:05")
+				info.CooldownReason = reason
 			}
 		}
 
@@ -222,6 +225,9 @@ func (a *App) GetEndpointRecord(name string) (EndpointRecordInfo, error) {
 	if v, ok := detail["enabled"].(bool); ok {
 		info.Enabled = v
 	}
+	if v, ok := detail["availability_enabled"].(bool); ok {
+		info.AvailabilityEnabled = v
+	}
 
 	// 健康状态
 	if health, ok := detail["health"].(map[string]interface{}); ok {
@@ -261,6 +267,10 @@ func (a *App) CreateEndpointRecord(input CreateEndpointInput) error {
 	if input.CostMultiplier == 0 {
 		input.CostMultiplier = 1.0
 	}
+	availabilityEnabled := true
+	if input.AvailabilityEnabled != nil {
+		availabilityEnabled = *input.AvailabilityEnabled
+	}
 
 	record := &store.EndpointRecord{
 		Channel:                       input.Channel,
@@ -282,6 +292,7 @@ func (a *App) CreateEndpointRecord(input CreateEndpointInput) error {
 		CacheCreationCostMultiplier1h: input.CacheCreationCostMultiplier1h,
 		CacheReadCostMultiplier:       input.CacheReadCostMultiplier,
 		Enabled:                       false, // v5.0: 新建端点默认不激活，需手动激活
+		AvailabilityEnabled:           &availabilityEnabled,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -354,11 +365,26 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 		CacheCreationCostMultiplier:   input.CacheCreationCostMultiplier,
 		CacheCreationCostMultiplier1h: input.CacheCreationCostMultiplier1h,
 		CacheReadCostMultiplier:       input.CacheReadCostMultiplier,
-		Enabled:                       existingRecord.Enabled, // 保持原有激活状态
+		Enabled:                       existingRecord.Enabled,             // 保持原有激活状态
+		AvailabilityEnabled:           existingRecord.AvailabilityEnabled, // v8: 硬启用状态只能通过 SetEndpointAvailability 修改，编辑保留原值
 	}
 
+	availabilityChanged := input.AvailabilityEnabled != nil && *input.AvailabilityEnabled != existingRecord.IsAvailabilityEnabled()
+	if availabilityChanged && !*input.AvailabilityEnabled {
+		// 停用必须先关闭 admission，再发布其余配置，避免编辑期间出现短暂可调度窗口。
+		if err := a.endpointService.SetEndpointAvailability(ctx, name, false); err != nil {
+			return fmt.Errorf("更新端点硬启用状态失败: %w", err)
+		}
+		record.AvailabilityEnabled = input.AvailabilityEnabled
+	}
 	if err := a.endpointService.UpdateEndpoint(ctx, record); err != nil {
 		return fmt.Errorf("更新端点失败: %w", err)
+	}
+	if availabilityChanged && *input.AvailabilityEnabled {
+		// 启用最后发布，确保新配置完整可见后才重新开放 admission。
+		if err := a.endpointService.SetEndpointAvailability(ctx, name, true); err != nil {
+			return fmt.Errorf("更新端点硬启用状态失败: %w", err)
+		}
 	}
 
 	if a.logger != nil {
@@ -374,17 +400,50 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 
 // DeleteEndpointRecord 删除端点
 func (a *App) DeleteEndpointRecord(name string) error {
+	// 只在快照期间持 a.mu 读锁，避免与内部再取 a.mu 的调用重入自锁
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	endpointService := a.endpointService
+	manager := a.endpointManager
+	a.mu.RUnlock()
 
-	if a.endpointService == nil {
+	if endpointService == nil {
 		return fmt.Errorf("端点存储服务未启用")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := a.endpointService.DeleteEndpoint(ctx, name); err != nil {
+	// v8 §11.2 规则 6：与 SetClaudeRoutingOverride 共用 routingMu 串行化，
+	// 消除「检查存在 → 删除 → 写入 fixed」竞态。序列：
+	// 1) override 指向该端点时先持久化清回 Auto（失败即中止删除，无任何丢失）；
+	// 2) 删除端点；删除失败则补偿性恢复原 override（恢复失败时状态停留在 Auto，
+	//    安全且无悬空目标）。manual fixed 的删除确认由前端在调用本 API 前完成。
+	a.routingMu.Lock()
+	defer a.routingMu.Unlock()
+
+	var clearedOverride *endpoint.RouteOverrideState
+	if manager != nil {
+		override := manager.GetClaudeRoutingOverride()
+		if override.EndpointName == name && override.Mode != "auto" {
+			if _, err := a.clearClaudeRoutingOverrideLocked(manager); err != nil {
+				return fmt.Errorf("清除手动路由目标失败，已中止删除: %w", err)
+			}
+			clearedOverride = &override
+			if a.logger != nil {
+				a.logger.Info("🔀 已清除手动路由目标端点，恢复自动路由", "name", name, "mode", override.Mode)
+			}
+		}
+	}
+
+	if err := endpointService.DeleteEndpoint(ctx, name); err != nil {
+		if clearedOverride != nil && manager != nil {
+			if restoreErr := a.restoreClaudeRoutingOverrideLocked(manager, *clearedOverride); restoreErr != nil {
+				if a.logger != nil {
+					a.logger.Warn("⚠️ 删除失败后恢复手动路由失败，当前保持自动路由",
+						"name", name, "error", restoreErr)
+				}
+			}
+		}
 		return fmt.Errorf("删除端点失败: %w", err)
 	}
 
@@ -399,41 +458,45 @@ func (a *App) DeleteEndpointRecord(name string) error {
 }
 
 // ToggleEndpointRecord 切换端点启用状态
-// v5.0: enabled=true 时激活组，enabled=false 时不操作（组管理器会自动处理）
+// Deprecated: v8 §7.5 兼容映射——true 映射为 manual preferred，false 仅在目标为
+// 当前手动目标时清回 Auto；不得映射为 hard disable。新前端应使用
+// SetClaudeRoutingOverride / SetEndpointAvailability / SetEndpointAutoSchedule。
 func (a *App) ToggleEndpointRecord(name string, enabled bool) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	manager := a.endpointManager
+	service := a.endpointService
+	a.mu.RUnlock()
 
-	if a.endpointService == nil {
+	if service == nil {
 		return fmt.Errorf("端点存储服务未启用")
+	}
+	if a.logger != nil {
+		a.logger.Warn("⚠️ [Deprecated] ToggleEndpointRecord 已废弃，按 v8 兼容规则映射", "name", name, "enabled", enabled)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// v7: 激活/停用统一走 activeEndpoint 契约（writer 单事务落库）
 	if enabled {
-		// 1. 确保端点在内存中存在（处理新建端点的情况）
-		if a.endpointManager != nil {
-			if err := a.endpointService.SyncEndpointRuntime(ctx, name); err != nil {
+		if manager != nil {
+			if err := service.SyncEndpointRuntime(ctx, name); err != nil {
 				return fmt.Errorf("同步端点配置到运行时失败: %w", err)
 			}
-
-			// 2. 激活端点：writer ACK 内单事务完成「禁用其余 + 启用目标」
-			if err := a.endpointManager.ManualActivateGroup(name); err != nil {
-				return fmt.Errorf("激活端点失败: %w", err)
+		}
+		if _, err := a.SetClaudeRoutingOverride(SetClaudeRoutingOverrideInput{
+			Mode:         "manual_preferred",
+			EndpointName: name,
+		}); err != nil {
+			return fmt.Errorf("兼容映射为手动优选失败: %w", err)
+		}
+	} else if manager != nil {
+		override := manager.GetClaudeRoutingOverride()
+		if override.EndpointName == name && override.Mode != "auto" {
+			if _, err := a.ClearClaudeRoutingOverride(); err != nil {
+				return fmt.Errorf("兼容映射恢复自动路由失败: %w", err)
 			}
 		}
-	} else {
-		// 停用端点：目标为当前 active 时按 revision 顺序清空激活态并由 writer 协调
-		// DB disable 写入；非 active 端点仅更新数据库
-		if a.endpointManager != nil && a.endpointManager.GetActiveGroupName() == name {
-			if err := a.endpointManager.DeactivateActiveEndpointManually(name); err != nil {
-				return fmt.Errorf("停用激活端点失败: %w", err)
-			}
-		} else if err := a.endpointService.ToggleEndpoint(ctx, name, false); err != nil {
-			return fmt.Errorf("切换端点状态失败: %w", err)
-		}
+		// 非当前手动目标：no-op（绝不 hard disable）
 	}
 
 	status := "启用"
@@ -518,11 +581,11 @@ func (a *App) GetEndpointsByChannel(channel string) ([]EndpointRecordInfo, error
 			if !status.LastCheck.IsZero() {
 				info.LastCheck = status.LastCheck.Format("2006-01-02 15:04:05")
 			}
-			// 冷却状态
-			if !status.CooldownUntil.IsZero() && status.CooldownUntil.After(time.Now()) {
+			// 冷却状态（两个 scope 槽取生效且截止最晚者）
+			if until, reason, active := status.EffectiveCooldown(time.Now()); active {
 				info.InCooldown = true
-				info.CooldownUntil = status.CooldownUntil.Format("2006-01-02 15:04:05")
-				info.CooldownReason = status.CooldownReason
+				info.CooldownUntil = until.Format("2006-01-02 15:04:05")
+				info.CooldownReason = reason
 			}
 		}
 
@@ -557,6 +620,7 @@ func (a *App) recordToInfo(r *store.EndpointRecord) EndpointRecordInfo {
 		CacheCreationCostMultiplier1h: r.CacheCreationCostMultiplier1h,
 		CacheReadCostMultiplier:       r.CacheReadCostMultiplier,
 		Enabled:                       r.Enabled,
+		AvailabilityEnabled:           r.IsAvailabilityEnabled(),
 	}
 
 	if !r.CreatedAt.IsZero() {
