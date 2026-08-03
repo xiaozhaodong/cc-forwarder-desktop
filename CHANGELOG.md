@@ -5,6 +5,26 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### ✨ 新功能 (Features)
+
+- **Claude 端点扁平化管理**：移除 channel/group/组密钥和单激活端点模型，端点改为 SQLite 中的独立记录。
+- **启动迁移与恢复页**：迁移前自动备份数据库和配置，校验完整性与 SHA-256；失败时进入只读恢复状态并支持重试。
+- **请求来源统一**：历史记录改用 `request_family` 和 `upstream_*` 表达 Claude、Codex、Image 与 Other 请求的实际上游。
+
+### 🔧 改进 (Improvements)
+
+- Claude 端点页改为高密度表格，支持硬启用、自动调度、手动优选/固定、批量健康检查与调度快照。
+- 端点 Token 和 API Key 可单独或同时配置，编辑时不回显明文，删除凭据需显式操作。
+- CodeRelay 不再改写业务请求体；AnyRoute 仅对精确 HTTPS 主机名应用兼容头。
+- Codex `/v1/models` 在本地目录和账号池都不可用时返回稳定的 503，不再回退 Claude 端点。
+
+### ⚠️ 升级注意 (Upgrade Notes)
+
+- 运行时仅支持 SQLite 端点存储；旧 YAML `endpoints`、`group`、`tokens` 和 `api-keys` 只在首次升级时读取。
+- 旧 API 和旧数据库列已物理删除；代码降级必须同时离线恢复迁移前数据库与配置备份。详见 `UPGRADING.md`。
+
 ## [5.2.5] - 2025-12-24
 
 ### ✨ 新功能 (Features)

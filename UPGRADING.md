@@ -1,0 +1,53 @@
+# AI Switchboard 升级说明
+
+## Claude 端点扁平化版本
+
+本版本将 Claude 端点改为 SQLite 中的扁平独立记录，并物理删除旧 channel/group/单激活端点/组密钥运行时模型。升级前请先保留当前安装包或可执行文件，不要手工删除应用生成的迁移备份。
+
+### 升级时会发生什么
+
+1. 应用在代理、健康检查和后台写入启动前检查数据库与配置格式。
+2. 如果需要迁移，先用 SQLite 一致性快照备份数据库，并备份完整活动配置。
+3. 备份目录权限为 `0700`，数据库、配置和 manifest 权限为 `0600`。Manifest 记录文件大小、SHA-256 和 SQLite `integrity_check` 结果。
+4. 迁移器根据升级前配置声明的事实源执行转换：
+   - `endpoints_storage.type: yaml` 或空值：解析 YAML 端点、组继承和多 Token/API Key，再替换 SQLite 端点。
+   - `endpoints_storage.type: sqlite`：仅以旧 SQLite `endpoints` 表为事实源，忽略活动配置中残留的 YAML endpoints。
+5. 多 Token 和多 API Key 会按笛卡尔积拆成独立端点；派生端点默认关闭，避免升级后意外扩大流量。
+6. 请求历史保留记录数、Token 与成本，来源维度改为 `request_family` 和 `upstream_*`。
+7. 成功后活动配置固定为 `endpoints_storage.type: sqlite`，并删除 YAML `endpoints` 和 legacy `group`。
+
+备份默认位于应用数据目录的：
+
+```text
+migration-backups/20260803-claude-endpoint-flatten-<timestamp>/
+├── usage.db
+├── config.yaml
+└── manifest.json
+```
+
+### 迁移失败
+
+迁移失败后，应用进入只读恢复页，不启动代理、批量连通性检查、调度器或请求记录写入。恢复页会显示经脱敏的错误、迁移阶段、数据库/配置路径和备份目录。
+
+先处理文件权限、磁盘空间、配置 YAML 语法或 SQLite 完整性问题，然后在恢复页重试。迁移帐本记录 `prepared` / `db_committed` / `config_committed` / `completed` 阶段，重试不会重复拆分已经提交的端点。
+
+### 升级后检查
+
+- 「Claude 端点」页能看到扁平端点表，并能执行单点/批量健康检查。
+- 请求页使用「类型」和「上游」筛选，不再显示 channel/group。
+- 旧多凭据拆分生成的派生端点默认处于硬关闭状态；核对后再手动启用。
+- 活动配置中只保留 `endpoints_storage.type: sqlite`，不再存在 YAML `endpoints` 或 `group`。
+- 保留 `migration-backups` 目录；这是物理降级所需的唯一完整数据快照。
+
+### 离线回滚到旧版本
+
+本版本已物理删除旧列和旧 API，不支持仅替换旧可执行文件的原地降级。回滚必须在应用完全退出后进行：
+
+1. 完全退出 AI Switchboard，确认没有代理或后台进程读写数据库。
+2. 将当前新版数据库和配置另行备份，不覆盖迁移前备份。
+3. 在 `migration-backups/<timestamp>/manifest.json` 中核对原路径、文件大小和 SHA-256。
+4. 将同一个备份目录中的 `usage.db` 和 `config.yaml` 分别恢复到 manifest 记录的原路径。
+5. 检查恢复后文件权限为 `0600`，并对 SQLite 运行 `PRAGMA integrity_check`。
+6. 启动与该备份 schema/配置兼容的旧版本。
+
+新版本读取迁移前备份时会再次执行迁移，因此「恢复旧文件」和「启动旧应用版本」必须成对完成。

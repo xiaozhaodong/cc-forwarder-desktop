@@ -65,11 +65,6 @@ streaming:
   response_header_timeout: "60s"   # 响应头超时，默认: 60s
   eof_retry_hint: false             # 流式传输中断时发送客户端重试提示，默认: false
 
-# 组管理配置
-group:
-  cooldown: "600s"                      # 组失败后的冷却时间，默认: 600s
-  auto_switch_between_groups: true      # 组间自动切换：true=自动切换到其他组，false=需要手动切换，默认: true
-
 # 账号池路由配置 (v6.0+)
 # /v1/responses 专用于 Codex 账号池链路；endpoint 主要承载 Claude 相关请求
 # 当 enabled=true 时，/v1/responses 走账号池链路；当 enabled=false 时，该端点不会回退到 endpoint
@@ -119,16 +114,13 @@ token_counting:
   estimation_ratio: 4.0      # Token估算比例 (1 token ≈ 4 字符)，默认: 4.0
 
 # =================================================================
-# 🗄️  端点存储配置 (v5.0+ 新增)
+# 🗄️  Claude 端点存储配置
 # =================================================================
-# 支持从 YAML 文件或 SQLite 数据库加载端点配置
-# - yaml: 从当前配置文件的 endpoints 数组加载（默认，向后兼容）
-# - sqlite: 从 SQLite 数据库加载，支持动态增删改查
+# Runtime 只支持 SQLite；端点请在桌面端的「Claude 端点」页面管理。
+# 旧 YAML endpoints 仅在首次升级迁移时读取，成功后会从活动配置中删除。
 # =================================================================
 endpoints_storage:
-  type: "yaml"                # 存储类型: "yaml" | "sqlite"，默认: "yaml"
-                              # 设置为 "sqlite" 后，endpoints 数组将被忽略
-                              # 端点配置从 data/usage.db 的 endpoints 表加载
+  type: "sqlite"
 
 # 使用跟踪配置
 # =================================================================
@@ -244,123 +236,6 @@ proxy:
   # username: "proxy_user"    # 代理用户名
   # password: "proxy_pass"    # 代理密码
 
-# 端点配置
-# ==================== 组密钥配置说明 ====================
-# 每个组的第一个端点应该定义该组使用的 token 和 api-key
-# 组内其他端点如果没有定义 token/api-key，会自动使用组内第一个端点的密钥
-# 如果某个端点需要使用不同的密钥，可以显式指定 token/api-key 来覆盖组默认值
-#
-# 🆕 多 API Key 切换功能 (v3.6.0+):
-# 每个端点支持配置多个 token 或 api-key，通过 Web UI 或 API 手动切换
-# 使用 tokens/api-keys 数组配置（与单个 token/api-key 互斥）
-# ========================================================
-
-endpoints:
-  # v8 端点调度字段说明：
-  #   availability_enabled: 硬启用（默认 true）。false 时任何路由模式都不会使用该端点。
-  #   failover_enabled:     参与自动调度（默认 true）。false 时 Auto 模式不自动选择，
-  #                         但仍可在请求页手动优选或固定使用（专用模型/测试/高成本端点场景）。
-  #   enabled:              legacy active 标记，v8 起 deprecated，不再作为调度资格。
-  # ============ 主要组 (main) ============
-  # 组定义端点 - 定义整个 main 组使用的密钥
-  - name: "primary"
-    url: "https://api.openai.com"
-    availability_enabled: true             # v8: 硬启用
-    failover_enabled: true                 # v8: 参与自动调度
-    group: "main"                          # 组名
-    group-priority: 1                      # 组优先级 (数字越小优先级越高)
-    priority: 1                            # 组内优先级 (数字越小优先级越高)
-    timeout: "300s"
-    token: "sk-your-openai-api-key"        # 🔑 此密钥会被同组其他端点共享
-    api-key: "your-api-key-value"          # 🔑 此API密钥会被同组其他端点共享
-    supports_count_tokens: true            # ✅ 此端点支持count_tokens (如Anthropic官方API)
-    headers:
-      User-Agent: "Claude-Request-Forwarder/1.0"
-      X-Custom-Header: "custom-value"
-
-  # 主要组备用端点 - 自动使用 main 组的密钥
-  - name: "primary_backup"
-    url: "https://api.anthropic.com"
-    priority: 2                            # 组内优先级 2
-    timeout: "300s"
-    supports_count_tokens: false           # ❌ 此端点不支持count_tokens (如某些代理)
-    # 🔄 自动继承: group: "main", group-priority: 1
-    # 🔑 自动使用 main 组的密钥: token 和 api-key 会动态解析为 primary 端点的值
-    # 📋 headers 继承自 primary 端点
-
-  # ============ 备用组 (backup) ============
-  # 组定义端点 - 定义整个 backup 组使用的密钥
-  - name: "backup1"
-    url: "https://api.example.com"
-    group: "backup"                        # 新的组名
-    group-priority: 2                      # 备用组优先级
-    priority: 1                            # 组内优先级
-    timeout: "300s"
-    token: "sk-backup-group-api-key"       # 🔑 此密钥会被同组其他端点共享
-    api-key: "backup-group-api-key"        # 🔑 此API密钥会被同组其他端点共享
-    headers:
-      Authorization: "Bearer custom-token"
-      X-API-Version: "2024-01"
-
-  # 备用组的第二个端点 - 自动使用 backup 组的密钥
-  - name: "backup2"
-    url: "https://api.backup2.com"
-    priority: 2                            # 组内优先级 2
-    timeout: "300s"
-    # 🔄 自动继承: group: "backup", group-priority: 2
-    # 🔑 自动使用 backup 组的密钥: 会动态解析为 backup1 端点的密钥
-
-  # 备用组的第三个端点 - 使用自定义密钥覆盖组默认值
-  - name: "backup3"
-    url: "https://api.backup3.com"
-    priority: 3                            # 组内优先级 3
-    timeout: "300s"
-    token: "sk-custom-override-key"        # 🔑 覆盖组默认密钥，只有这个端点使用此密钥
-    # 🔄 group 和 group-priority 仍然继承自 backup 组
-    # 🔑 api-key 仍然使用组默认值 (backup1 的 api-key)
-
-  # ============ 本地组 (local) ============
-  # 本地服务组 - 通常不需要密钥
-  - name: "local"
-    url: "http://localhost:11434"
-    group: "local"                         # 本地组
-    group-priority: 3                      # 最低组优先级
-    priority: 1                            # 组内优先级
-    timeout: "300s"
-    # 🔓 本地服务通常不需要 token 和 api-key
-
-  # 本地组备用端点
-  - name: "local_backup"
-    url: "http://localhost:8080"
-    priority: 2                            # 组内优先级 2
-    timeout: "300s"
-    # 🔄 自动继承: group: "local", group-priority: 3
-    # 🔓 无密钥配置，适用于本地服务
-
-  # ============ 多 Key 切换示例 (multi-key) ============
-  # 🆕 v3.6.0+ 新功能：单个端点配置多个 API Key，支持手动切换
-  # 适用场景：同一渠道有多个 Key，需要在限流或配额耗尽时手动切换
-  - name: "multi-key-endpoint"
-    url: "https://api.anthropic.com"
-    group: "multi-key"                     # 新组
-    group-priority: 4                      # 组优先级
-    priority: 1                            # 组内优先级
-    timeout: "300s"
-    supports_count_tokens: true
-    # 🔑 多 Token 配置 - 通过 Web UI 或 API 手动切换
-    # ⚠️ 注意: tokens 和 token 不能同时配置
-    tokens:
-      - name: "主要 Key"                   # Key 名称（用于 UI 显示）
-        value: "sk-ant-api03-primary-key"  # Token 值
-      - name: "备用 Key-1"
-        value: "sk-ant-api03-backup-key-1"
-      - name: "备用 Key-2"
-        value: "sk-ant-api03-backup-key-2"
-    # 🔑 多 API Key 配置（可选）
-    # api-keys:
-    #   - name: "X-Api-Key 主要"
-    #     value: "api-key-primary"
-    #   - name: "X-Api-Key 备用"
-    #     value: "api-key-backup"
-    headers:
-      anthropic-version: "2023-06-01"
+# Claude 端点表中每行是一条独立记录，可分别设置 Token、API Key、
+# 优先级、硬启用、自动调度、count_tokens、模型改写和成本倍率。
+# 一条记录可同时携带 Token 与 API Key；密钥仅能显式更新或删除，不会回显明文。

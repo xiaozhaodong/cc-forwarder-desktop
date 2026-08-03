@@ -10,24 +10,10 @@ token_counting:
   enabled: true              # 启用count_tokens支持
   estimation_ratio: 4.0      # 1 token ≈ 4 字符
 
-endpoints:
-  # 支持count_tokens的端点（会尝试转发）
-  - name: "anthropic-official"
-    url: "https://api.anthropic.com"
-    group: "main"
-    priority: 1
-    timeout: "30s"
-    token: "sk-ant-your-api-key-here"
-    supports_count_tokens: true   # ✅ 标记支持，会转发到此端点
+endpoints_storage:
+  type: "sqlite"
 
-  # 不支持count_tokens的端点（会使用估算）
-  - name: "cloudflare-proxy"
-    url: "https://gateway.ai.cloudflare.com/v1/xxx"
-    group: "backup"
-    priority: 2
-    timeout: "30s"
-    token: "sk-your-token"
-    supports_count_tokens: false  # ❌ 不支持，会使用本地估算
+# 测试端点需预先在测试 SQLite 数据库中创建，并分别设置 supports_count_tokens。
 
 logging:
   level: "info"
@@ -40,3 +26,6 @@ web:
 
 usage_tracking:
   enabled: false
+  database:
+    type: "sqlite"
+    path: "data/test_count_tokens.db"

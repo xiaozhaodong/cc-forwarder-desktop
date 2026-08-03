@@ -46,15 +46,6 @@ failover:
   enabled: true                    # 启用故障转移，默认: true
   default_cooldown: "10m"          # 默认冷却时间，默认: 10m
 
-# ==================== v3.x 兼容配置 (可选) ====================
-# ⚠️  以下 group 配置已弃用，保留仅为向后兼容
-# 推荐使用上面的 failover 配置
-# 如果同时存在 failover 和 group 配置，优先使用 failover
-# ========================================================
-# group:
-#   cooldown: "10m"                      # 自动映射到 failover.default_cooldown
-#   auto_switch_between_groups: true     # 自动映射到 failover.enabled
-
 # 请求挂起配置
 request_suspend:
   enabled: false
@@ -84,6 +75,10 @@ token_counting:
   enabled: true
   estimation_ratio: 4.0
 
+# Claude 端点只从 SQLite 读取，通过桌面端管理。
+endpoints_storage:
+  type: "sqlite"
+
 # 使用跟踪配置
 usage_tracking:
   enabled: false
@@ -101,92 +96,5 @@ usage_tracking:
     cleanup_interval: "1m"     # 僵尸请求清理间隔，默认: 1m
     archive_on_cleanup: true   # 清理时是否归档到数据库，默认: true
 
-# ==================== v4.0 端点配置 ====================
-# 🆕 v4.0 简化配置: 移除 group 和 group-priority
-# 直接使用 priority 和 failover_enabled
-# ========================================================
-endpoints:
-  # 优先级 1 端点 (最高优先级)
-  - name: "instcopilot-sg"
-    url: "https://api.instcopilot.com"
-    priority: 1                    # 端点优先级（数字越小优先级越高）
-    failover_enabled: true         # 参与故障转移，默认: true
-    # cooldown: "5m"               # 端点级冷却时间（可选），默认使用全局配置
-    timeout: "300s"
-    token: "sk-your-primary-token"
-    supports_count_tokens: true    # 支持count_tokens端点
-    headers:
-      anthropic-version: "2023-06-01"
-
-  # 优先级 2 端点 (备用)
-  - name: "openai-us"
-    url: "https://api.openai.com"
-    priority: 2
-    failover_enabled: true         # 参与故障转移
-    timeout: "300s"
-    token: "sk-your-backup-token"
-    supports_count_tokens: false
-
-  # 优先级 3 端点 (第二备用)
-  - name: "anthropic-official"
-    url: "https://api.anthropic.com"
-    priority: 3
-    failover_enabled: true
-    timeout: "300s"
-    token: "sk-your-anthropic-token"
-    supports_count_tokens: true
-
-  # 专用端点 (不参与故障转移)
-  # 适用场景: 仅用于特定模型，不希望作为其他端点的备用
-  - name: "special-model-only"
-    url: "https://special.api.com"
-    priority: 1
-    failover_enabled: false        # 🔒 不参与故障转移（专用端点）
-    timeout: "300s"
-    token: "sk-special-token"
-    # 此端点失败不会切换到其他端点
-
-# ==================== 配置迁移指南 ====================
-# v3.x → v4.0 自动迁移:
-#
-# v3.x 配置 (仍然支持):
-# endpoints:
-#   - name: "endpoint1"
-#     group: "main"          # 自动忽略
-#     group-priority: 1      # 自动映射到 priority
-#     priority: 1
-#
-# group:
-#   cooldown: "10m"                      # 自动映射到 failover.default_cooldown
-#   auto_switch_between_groups: true     # 自动映射到 failover.enabled
-#
-# v4.0 新配置 (推荐):
-# endpoints:
-#   - name: "endpoint1"
-#     priority: 1            # 直接使用 priority
-#     failover_enabled: true # 是否参与故障转移
-#
-# failover:
-#   enabled: true
-#   default_cooldown: "10m"
-#
-# ========================================================
-
-# ==================== 使用场景示例 ====================
-#
-# 场景1: 普通故障转移
-# - 设置多个端点,按 priority 排序
-# - 所有端点 failover_enabled: true
-# - failover.enabled: true
-# → 端点按优先级故障转移
-#
-# 场景2: 专用端点（不参与故障转移）
-# - 通用端点: failover_enabled: true
-# - 专用端点: failover_enabled: false
-# → 专用端点仅用于特定请求,失败不切换
-#
-# 场景3: 禁用全局故障转移
-# - failover.enabled: false
-# → 端点失败直接返回错误,不进行故障转移
-#
-# ========================================================
+# 端点的优先级、硬启用、自动调度、冷却与认证信息均保存在 SQLite。
+# 旧 YAML endpoints/group/多凭据数组只用于首次升级迁移，迁移成功后不再是运行时事实源。

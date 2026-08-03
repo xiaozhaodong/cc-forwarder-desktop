@@ -51,9 +51,10 @@ AI Switchboard 是一款基于 [Wails](https://wails.io) 构建的跨平台桌�
 ### 🎛️ 端点管理
 
 - **可视化配置** - 图形界面管理端点，无需编辑配置文件
-- **渠道分组** - 按渠道标签组织端点，清晰分类
+- **扁平化管理** - 每个 Claude 端点都是独立记录，不依赖渠道、组或共享密钥
+- **三态路由** - 支持自动调度、手动优选和手动固定端点
 - **状态监控** - 实时显示端点健康状态和响应延迟
-- **灵活配置** - 支持自定义请求头、超时时间、成本倍率等
+- **灵活配置** - 支持 Token/API Key、自定义 Header、超时、模型改写和成本倍率
 
 ### 🔧 其他特性
 
@@ -118,17 +119,21 @@ claude config set --global apiBaseUrl http://127.0.0.1:8080
 
 ### 端点配置
 
-端点通过应用内「端点管理」页面进行管理，支持以下配置项：
+端点通过应用内「Claude 端点」页面进行管理，并保存到应用核心 SQLite 数据库。Runtime 不再从 YAML 加载端点。
 
 | 配置项 | 说明 | 示例 |
 |--------|------|------|
-| 渠道 | 分组标签 | `官方`、`第三方` |
-| 名称 | 唯一标识（不可修改） | `claude-primary` |
+| 名称 | 唯一标识 | `claude-primary` |
 | URL | API 端点地址 | `https://api.anthropic.com` |
-| Token | Bearer Token | `sk-ant-xxx` |
+| Token / API Key | 可单独或同时使用；已存储密钥不回显明文 | `sk-ant-xxx` |
 | 优先级 | 数字越小优先级越高 | `1` |
-| 故障转移 | 是否参与自动切换 | `启用` |
+| 硬启用 | 关闭后任何路由模式都不使用该端点 | `启用` |
+| 自动调度 | 是否参与 Auto 路由和故障转移 | `启用` |
 | 成本倍率 | 费用计算倍率 | `1.0` |
+
+### 从旧版升级
+
+首次启动新版时，应用会在启动代理前执行一次迁移：先对数据库和活动配置创建带校验清单的完整备份，再将旧渠道/组/多凭据结构拆分为独立端点。迁移失败时应用仅显示只读恢复页，不启动代理或后台写入。详见 [UPGRADING.md](UPGRADING.md)。
 
 ### 全局配置
 
@@ -155,10 +160,17 @@ streaming:
 # 使用统计
 usage_tracking:
   enabled: true
+  database:
+    type: "sqlite"
+    path: "data/usage.db"
   hot_pool:
     enabled: true             # 内存热池，提升写入性能
     max_age: "30m"
     max_size: 10000
+
+# Claude 端点只使用 SQLite
+endpoints_storage:
+  type: "sqlite"
 ```
 
 ## 技术架构

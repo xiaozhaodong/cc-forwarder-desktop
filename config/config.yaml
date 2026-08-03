@@ -42,35 +42,15 @@ token_counting:
   estimation_ratio: 4.0
 
 endpoints_storage:
-    type: "sqlite"
+  type: "sqlite"
 
 # 使用跟踪配置
 usage_tracking:
   enabled: true                          # 是否启用使用跟踪，默认: false
-  # 数据库配置 - 新增功能
+  # 应用核心数据库：Claude 端点、请求记录与运行状态共用同一 SQLite 文件。
   database:
-    # 数据库类型选择: "sqlite" | "mysql"
     type: "sqlite"
-
-    # # sqlite配置（向后兼容，当type=sqlite时使用）
-    # database_path: "data/usage.db"
-
-    # # MySQL配置（当type=mysql时使用）
-    # host: "127.0.0.1"
-    # port: 3306
-    # database: "ccusage"
-    # username: "root"
-    # password: "root@123456"
-
-    # # 连接池配置（MySQL专用）
-    # max_open_conns: 10      # 最大打开连接数
-    # max_idle_conns: 5       # 最大空闲连接数
-    # conn_max_lifetime: "1h"  # 连接最大生命周期
-    # conn_max_idle_time: "10m" # 连接最大空闲时间
-
-    # # MySQL特定配置
-    # charset: "utf8mb4"           # 字符集
-    # timezone: "Asia/Shanghai"    # 时区设置
+    # path: "data/usage.db"       # 可选；桌面端默认使用应用数据目录下的 data/usage.db
   hot_pool:
       enabled: true           # 是否启用热池模式
       max_age: 30m            # 最大存活时间
@@ -102,12 +82,7 @@ proxy:
   # username: "proxy_user"    # 代理用户名
   # password: "proxy_pass"    # 代理密码
 
-# 端点配置
-# ==================== 组密钥配置说明 ====================
-# 每个组的第一个端点应该定义该组使用的 token 和 api-key
-# 组内其他端点如果没有定义 token/api-key，会自动使用组内第一个端点的密钥
-# 如果某个端点需要使用不同的密钥，可以显式指定 token/api-key 来覆盖组默认值
-# ========================================================
+# Claude 端点只在桌面端的「Claude 端点」页面管理，不再从 YAML 读取。
 
 # 账号池配置 (v6.0+)
 # /v1/responses 专用于 Codex 账号池链路；endpoint 主要承载 Claude 相关请求
@@ -130,7 +105,3 @@ account_pool:
       processing_failure: "60s"                 # 响应处理异常的冷却时间，默认: 60s
       rate_limit_default: "180s"                # 429 无 Retry-After 时的默认冷却时间，默认: 180s
       server_error: "120s"                      # 普通 5xx 的冷却时间，默认: 120s
-
-endpoints: []
-# ========== 临时注释全部端点配置 - 测试纯数据库加载 ==========
-# 原配置已备份，测试完成后恢复
