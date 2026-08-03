@@ -61,7 +61,6 @@ func setupTestSuite(t *testing.T) *StreamingTokenPreservationTestSuite {
 				URL:      "https://api.test.com",
 				Token:    "test-token",
 				Priority: 1,
-				Group:    "test-group",
 			},
 		},
 	}

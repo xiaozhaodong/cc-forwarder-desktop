@@ -78,7 +78,6 @@ func TestDatabaseOperations(t *testing.T) {
 			Timestamp: time.Now(),
 			Data: RequestUpdateData{
 				EndpointName: "test-endpoint",
-				GroupName:    "test-group",
 				Status:       "success",
 				RetryCount:   0,
 				HTTPStatus:   200,

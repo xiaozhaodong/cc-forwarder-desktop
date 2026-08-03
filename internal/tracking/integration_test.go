@@ -202,7 +202,7 @@ func TestWebIntegration(t *testing.T) {
 
 		opts := UpdateOptions{
 			EndpointName: stringPtr(req.endpoint),
-			GroupName:    stringPtr(req.group),
+			UpstreamName: stringPtr(req.endpoint),
 			Status:       stringPtr(status),
 			RetryCount:   intPtr(0),
 			HttpStatus:   intPtr(httpStatus),
@@ -486,7 +486,7 @@ func TestConcurrentWebRequests(t *testing.T) {
 		// Add request update to ensure complete records
 		opts := UpdateOptions{
 			EndpointName: stringPtr("test-endpoint"),
-			GroupName:    stringPtr("test-group"),
+			UpstreamName: stringPtr("test-endpoint"),
 			Status:       stringPtr("success"),
 			RetryCount:   intPtr(0),
 			HttpStatus:   intPtr(200),

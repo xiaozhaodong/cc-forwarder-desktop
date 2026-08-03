@@ -71,7 +71,7 @@ func TestQueryOperations(t *testing.T) {
 
 		opts := UpdateOptions{
 			EndpointName: stringPtr(data.endpoint),
-			GroupName:    stringPtr(data.group),
+			UpstreamName: stringPtr(data.endpoint),
 			Status:       stringPtr(status),
 			RetryCount:   intPtr(0),
 			HttpStatus:   intPtr(httpStatus),
@@ -153,7 +153,7 @@ func TestQueryOperations(t *testing.T) {
 		}
 
 		// Test filtering by endpoint
-		endpoint1Logs, err := tracker.GetRequestLogs(ctx, time.Now().AddDate(0, 0, -1), time.Now().AddDate(0, 0, 1), "", "endpoint-1", "", 10, 0)
+		endpoint1Logs, err := tracker.GetRequestLogs(ctx, time.Now().AddDate(0, 0, -1), time.Now().AddDate(0, 0, 1), "", "", "endpoint-1", 10, 0)
 		if err != nil {
 			t.Fatalf("Failed to get endpoint-1 logs: %v", err)
 		}
@@ -162,14 +162,14 @@ func TestQueryOperations(t *testing.T) {
 			t.Errorf("Expected 3 endpoint-1 logs, got %d", len(endpoint1Logs))
 		}
 
-		// Test filtering by group
-		groupALogs, err := tracker.GetRequestLogs(ctx, time.Now().AddDate(0, 0, -1), time.Now().AddDate(0, 0, 1), "", "", "group-a", 10, 0)
+		// Test filtering by request family
+		claudeLogs, err := tracker.GetRequestLogs(ctx, time.Now().AddDate(0, 0, -1), time.Now().AddDate(0, 0, 1), "", RequestFamilyClaude, "", 10, 0)
 		if err != nil {
-			t.Fatalf("Failed to get group-a logs: %v", err)
+			t.Fatalf("Failed to get Claude logs: %v", err)
 		}
 
-		if len(groupALogs) != 3 {
-			t.Errorf("Expected 3 group-a logs, got %d", len(groupALogs))
+		if len(claudeLogs) != 5 {
+			t.Errorf("Expected 5 Claude logs, got %d", len(claudeLogs))
 		}
 	})
 
@@ -209,9 +209,6 @@ func TestQueryOperations(t *testing.T) {
 			t.Errorf("Expected 2 endpoints in stats, got %d", len(stats.EndpointStats))
 		}
 
-		if len(stats.GroupStats) != 2 {
-			t.Errorf("Expected 2 groups in stats, got %d", len(stats.GroupStats))
-		}
 	})
 
 	// Test pagination
@@ -316,7 +313,7 @@ func TestExportOperations(t *testing.T) {
 
 		opts := UpdateOptions{
 			EndpointName: stringPtr("export-endpoint"),
-			GroupName:    stringPtr("export-group"),
+			UpstreamName: stringPtr("export-endpoint"),
 			Status:       stringPtr("success"),
 			RetryCount:   intPtr(0),
 			HttpStatus:   intPtr(200),

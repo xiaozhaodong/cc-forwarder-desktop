@@ -31,16 +31,16 @@ func TestCreateBackupAndRestore_PreservesCoreTables(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := tracker.db.ExecContext(ctx, `
-		INSERT INTO request_logs (request_id, start_time, status, endpoint_name, group_name)
-		VALUES (?, ?, ?, ?, ?)
-	`, "req-backup-1", now, "completed", "claude-endpoint", "claude-group"); err != nil {
+		INSERT INTO request_logs (request_id, start_time, status, request_family, endpoint_name, upstream_type, upstream_name)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, "req-backup-1", now, "completed", "claude", "claude-endpoint", "endpoint", "claude-endpoint"); err != nil {
 		t.Fatalf("failed to insert request_logs seed: %v", err)
 	}
 
 	if _, err := tracker.db.ExecContext(ctx, `
-		INSERT INTO usage_summary (date, model_name, endpoint_name, group_name, request_count, success_count, error_count, total_input_tokens, total_output_tokens, total_cache_creation_tokens, total_cache_read_tokens, total_cost_usd, avg_duration_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, "2026-03-06", "gpt-5-codex", "claude-endpoint", "claude-group", 1, 1, 0, 10, 5, 0, 0, 1.25, 120); err != nil {
+		INSERT INTO usage_summary (date, model_name, request_family, upstream_type, upstream_name, upstream_id, request_count, success_count, error_count, total_input_tokens, total_output_tokens, total_cache_creation_tokens, total_cache_read_tokens, total_cost_usd, avg_duration_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "2026-03-06", "gpt-5-codex", "codex", "account", "account-1", 10, 1, 1, 0, 10, 5, 0, 0, 1.25, 120); err != nil {
 		t.Fatalf("failed to insert usage_summary seed: %v", err)
 	}
 

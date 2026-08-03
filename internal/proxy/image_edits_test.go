@@ -369,7 +369,7 @@ func assertTrackedImageEdit(t *testing.T, tracker *tracking.UsageTracker, reques
 		if detail.Status != "completed" || detail.Path != openAIImagesEditsPath || detail.ModelName != "gpt-image-2" {
 			t.Fatalf("unexpected tracked image edit: %+v", detail)
 		}
-		if detail.Channel != "image" || detail.UpstreamSourceName != "image_generation" || detail.TotalCostUSD != expectedCost {
+		if detail.RequestFamily != tracking.RequestFamilyImage || detail.UpstreamSourceName != "image_generation" || detail.TotalCostUSD != expectedCost {
 			t.Fatalf("unexpected tracked image edit source/cost: %+v", detail)
 		}
 		return

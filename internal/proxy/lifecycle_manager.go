@@ -52,10 +52,9 @@ type RequestLifecycleManager struct {
 	modelMu              sync.RWMutex                  // 保护模型字段的读写锁
 	stateMu              sync.RWMutex                  // 保护生命周期状态字段
 	modelName            string                        // 模型名称
-	channel              string                        // 渠道标签
+	requestFamily        string                        // 请求类型 claude/codex/image/other
 	endpointName         string                        // 端点名称
 	endpointRevision     int64                         // AttemptPlan 配置 revision；0 表示非端点快照链路
-	groupName            string                        // 组名称
 	upstreamType         string                        // 上游类型：endpoint/account
 	upstreamSourceName   string                        // 上游来源名（订阅源等）
 	upstreamName         string                        // 上游名称（账号或端点）
@@ -78,10 +77,9 @@ type RequestLifecycleManager struct {
 }
 
 type lifecycleStateSnapshot struct {
-	channel            string
+	requestFamily      string
 	endpointName       string
 	endpointRevision   int64
-	groupName          string
 	upstreamType       string
 	upstreamSourceName string
 	upstreamName       string
@@ -97,10 +95,9 @@ func (rlm *RequestLifecycleManager) snapshotState() lifecycleStateSnapshot {
 	defer rlm.stateMu.RUnlock()
 
 	return lifecycleStateSnapshot{
-		channel:            rlm.channel,
+		requestFamily:      rlm.requestFamily,
 		endpointName:       rlm.endpointName,
 		endpointRevision:   rlm.endpointRevision,
-		groupName:          rlm.groupName,
 		upstreamType:       rlm.upstreamType,
 		upstreamSourceName: rlm.upstreamSourceName,
 		upstreamName:       rlm.upstreamName,
@@ -122,6 +119,7 @@ func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringM
 		requestID:            requestID,
 		startTime:            time.Now(),
 		lastStatus:           "pending",
+		requestFamily:        tracking.RequestFamilyOther,
 		upstreamType:         "endpoint",
 	}
 	manager.firstTokenStartTime = manager.startTime
@@ -135,7 +133,7 @@ func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, pa
 
 	// 原有的数据记录逻辑
 	if rlm.usageTracker != nil && rlm.requestID != "" {
-		rlm.usageTracker.RecordRequestStart(rlm.requestID, clientIP, userAgent, method, path, isStreaming)
+		rlm.usageTracker.RecordRequestStartWithFamily(rlm.requestID, clientIP, userAgent, method, path, state.requestFamily, isStreaming)
 		slog.Info(fmt.Sprintf("🚀 Request started [%s]", rlm.requestID))
 	}
 
@@ -151,6 +149,7 @@ func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, pa
 				"user_agent":           userAgent,
 				"method":               method,
 				"path":                 path,
+				"request_family":       state.requestFamily,
 				"is_streaming":         isStreaming,
 				"upstream_type":        state.upstreamType,
 				"upstream_source_name": state.upstreamSourceName,
@@ -206,8 +205,7 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 			// 第一次有模型信息时，执行带模型的更新
 			opts := tracking.UpdateOptions{
 				EndpointName:       &state.endpointName,
-				Channel:            &state.channel,
-				GroupName:          &state.groupName,
+				RequestFamily:      &state.requestFamily,
 				UpstreamType:       &state.upstreamType,
 				UpstreamSourceName: &state.upstreamSourceName,
 				UpstreamName:       &state.upstreamName,
@@ -223,8 +221,7 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 			// 正常状态更新（模型已更新过或尚未就绪）
 			opts := tracking.UpdateOptions{
 				EndpointName:       &state.endpointName,
-				Channel:            &state.channel,
-				GroupName:          &state.groupName,
+				RequestFamily:      &state.requestFamily,
 				UpstreamType:       &state.upstreamType,
 				UpstreamSourceName: &state.upstreamSourceName,
 				UpstreamName:       &state.upstreamName,
@@ -251,9 +248,8 @@ func (rlm *RequestLifecycleManager) notifyStatusChange(status string, retryCount
 	rlm.retryCount = retryCount
 	rlm.lastStatus = status
 	state := lifecycleStateSnapshot{
-		channel:            rlm.channel,
+		requestFamily:      rlm.requestFamily,
 		endpointName:       rlm.endpointName,
-		groupName:          rlm.groupName,
 		upstreamType:       rlm.upstreamType,
 		upstreamSourceName: rlm.upstreamSourceName,
 		upstreamName:       rlm.upstreamName,
@@ -292,9 +288,8 @@ func (rlm *RequestLifecycleManager) notifyStatusChange(status string, retryCount
 			Priority: priority,
 			Data: map[string]interface{}{
 				"request_id":           rlm.requestID,
+				"request_family":       state.requestFamily,
 				"endpoint_name":        state.endpointName,
-				"channel":              state.channel, // v5.0: 渠道标签
-				"group_name":           state.groupName,
 				"upstream_type":        state.upstreamType,
 				"upstream_source_name": state.upstreamSourceName,
 				"upstream_name":        state.upstreamName,
@@ -382,8 +377,8 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 				rlm.requestID, modelName, tokens.InputTokens, tokens.OutputTokens,
 				totalTokens, cacheTokens, duration.Milliseconds()))
 		} else {
-			slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s, 组: %s, 模型: %s, 耗时: %dms (无Token统计)",
-				rlm.requestID, state.endpointName, state.groupName, modelName, duration.Milliseconds()))
+			slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s, 模型: %s, 耗时: %dms (无Token统计)",
+				rlm.requestID, state.endpointName, modelName, duration.Milliseconds()))
 		}
 		// 记录请求成功完成到使用跟踪器（包括状态、耗时、Token、成本）
 		rlm.usageTracker.RecordRequestSuccess(rlm.requestID, modelName, tokens, duration)
@@ -517,23 +512,20 @@ func (rlm *RequestLifecycleManager) analyzeResponseType(responseContent string) 
 	return "non_token_response"
 }
 
-// SetEndpoint 设置端点信息
-// v5.0: 立即更新热池中的端点和渠道信息，确保前端实时显示
-func (rlm *RequestLifecycleManager) SetEndpoint(endpointName, groupName, channel string) {
-	rlm.setEndpoint(endpointName, groupName, channel, 0)
+// SetEndpoint 设置端点或账号显示名。保留旧参数以兼容测试调用，运行态不再保存 group/channel。
+func (rlm *RequestLifecycleManager) SetEndpoint(endpointName string, _ ...string) {
+	rlm.setEndpoint(endpointName, 0)
 }
 
 // SetEndpointAttempt 设置由 AttemptPlan 选中的端点，并保存配置 revision 供成功结算 fencing。
-func (rlm *RequestLifecycleManager) SetEndpointAttempt(endpointName, groupName, channel string, revision int64) {
-	rlm.setEndpoint(endpointName, groupName, channel, revision)
+func (rlm *RequestLifecycleManager) SetEndpointAttempt(endpointName string, revision int64) {
+	rlm.setEndpoint(endpointName, revision)
 }
 
-func (rlm *RequestLifecycleManager) setEndpoint(endpointName, groupName, channel string, revision int64) {
+func (rlm *RequestLifecycleManager) setEndpoint(endpointName string, revision int64) {
 	rlm.stateMu.Lock()
-	rlm.channel = channel
 	rlm.endpointName = endpointName
 	rlm.endpointRevision = revision
-	rlm.groupName = groupName
 	if rlm.upstreamType == "" {
 		rlm.upstreamType = "endpoint"
 	}
@@ -546,18 +538,23 @@ func (rlm *RequestLifecycleManager) setEndpoint(endpointName, groupName, channel
 	upstreamID := rlm.upstreamID
 	rlm.stateMu.Unlock()
 
-	// 立即更新热池中的端点和渠道信息
+	// 立即更新热池中的端点与上游信息
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
 			EndpointName:       &endpointName,
-			GroupName:          &groupName,
-			Channel:            &channel,
 			UpstreamType:       &upstreamType,
 			UpstreamSourceName: &upstreamSourceName,
 			UpstreamName:       &upstreamName,
 			UpstreamID:         &upstreamID,
 		})
 	}
+}
+
+// SetRequestFamily 在开始记录前由入口设置请求类型。
+func (rlm *RequestLifecycleManager) SetRequestFamily(requestFamily string) {
+	rlm.stateMu.Lock()
+	rlm.requestFamily = requestFamily
+	rlm.stateMu.Unlock()
 }
 
 // SetUpstream 设置上游来源维度信息（账号链路/端点链路通用）
@@ -664,20 +661,6 @@ func (rlm *RequestLifecycleManager) GetEndpointName() string {
 	rlm.stateMu.RLock()
 	defer rlm.stateMu.RUnlock()
 	return rlm.endpointName
-}
-
-// GetGroupName 获取组名称
-func (rlm *RequestLifecycleManager) GetGroupName() string {
-	rlm.stateMu.RLock()
-	defer rlm.stateMu.RUnlock()
-	return rlm.groupName
-}
-
-// GetChannel 获取渠道标签
-func (rlm *RequestLifecycleManager) GetChannel() string {
-	rlm.stateMu.RLock()
-	defer rlm.stateMu.RUnlock()
-	return rlm.channel
 }
 
 // GetDuration 获取请求持续时间
@@ -787,14 +770,14 @@ func (rlm *RequestLifecycleManager) IsCompleted() bool {
 func (rlm *RequestLifecycleManager) GetStats() map[string]any {
 	state := rlm.snapshotState()
 	stats := map[string]any{
-		"request_id":  rlm.requestID,
-		"endpoint":    state.endpointName,
-		"group":       state.groupName,
-		"model":       rlm.GetModelName(), // 线程安全获取
-		"status":      state.lastStatus,
-		"retry_count": state.retryCount,
-		"duration_ms": time.Since(rlm.startTime).Milliseconds(),
-		"start_time":  rlm.startTime.Format(time.RFC3339),
+		"request_id":     rlm.requestID,
+		"request_family": state.requestFamily,
+		"endpoint":       state.endpointName,
+		"model":          rlm.GetModelName(), // 线程安全获取
+		"status":         state.lastStatus,
+		"retry_count":    state.retryCount,
+		"duration_ms":    time.Since(rlm.startTime).Milliseconds(),
+		"start_time":     rlm.startTime.Format(time.RFC3339),
 	}
 
 	// 如果有错误信息，包含在统计中
@@ -802,7 +785,7 @@ func (rlm *RequestLifecycleManager) GetStats() map[string]any {
 		stats["last_error"] = state.lastError.Error()
 
 		// 使用错误恢复管理器分析错误类型
-		errorCtx := rlm.errorRecovery.ClassifyError(state.lastError, rlm.requestID, state.endpointName, state.groupName, state.retryCount)
+		errorCtx := rlm.errorRecovery.ClassifyError(state.lastError, rlm.requestID, state.endpointName, state.retryCount)
 		stats["error_type"] = rlm.errorRecovery.getErrorTypeName(errorCtx.ErrorType)
 		stats["retryable"] = rlm.errorRecovery.ShouldRetry(errorCtx)
 	}
@@ -826,7 +809,6 @@ func (rlm *RequestLifecycleManager) PrepareErrorContext(errorCtx *handlers.Error
 	converted := &ErrorContext{
 		RequestID:      errorCtx.RequestID,
 		EndpointName:   errorCtx.EndpointName,
-		GroupName:      errorCtx.GroupName,
 		AttemptCount:   errorCtx.AttemptCount,
 		ErrorType:      ErrorType(errorCtx.ErrorType),
 		OriginalError:  errorCtx.OriginalError,
@@ -880,7 +862,7 @@ func (rlm *RequestLifecycleManager) HandleError(err error) {
 	errorCtx := rlm.consumePreparedErrorContext(err)
 	if errorCtx == nil {
 		state := rlm.snapshotState()
-		errorCtx = rlm.errorRecovery.ClassifyError(err, rlm.requestID, state.endpointName, state.groupName, state.retryCount)
+		errorCtx = rlm.errorRecovery.ClassifyError(err, rlm.requestID, state.endpointName, state.retryCount)
 	}
 
 	// Phase 3核心逻辑: 状态与错误分离
@@ -999,11 +981,11 @@ func (rlm *RequestLifecycleManager) CancelRequest(cancelReason string, tokens *t
 
 	if tokens != nil {
 		totalTokens := tokens.InputTokens + tokens.OutputTokens
-		slog.Info(fmt.Sprintf("🚫 [请求被取消] [%s] 端点: %s, 组: %s, 耗时: %dms, 原因: %s, Token: %d",
-			rlm.requestID, state.endpointName, state.groupName, duration.Milliseconds(), cancelReason, totalTokens))
+		slog.Info(fmt.Sprintf("🚫 [请求被取消] [%s] 端点: %s, 耗时: %dms, 原因: %s, Token: %d",
+			rlm.requestID, state.endpointName, duration.Milliseconds(), cancelReason, totalTokens))
 	} else {
-		slog.Info(fmt.Sprintf("🚫 [请求被取消] [%s] 端点: %s, 组: %s, 耗时: %dms, 原因: %s",
-			rlm.requestID, state.endpointName, state.groupName, duration.Milliseconds(), cancelReason))
+		slog.Info(fmt.Sprintf("🚫 [请求被取消] [%s] 端点: %s, 耗时: %dms, 原因: %s",
+			rlm.requestID, state.endpointName, duration.Milliseconds(), cancelReason))
 	}
 
 	// 调用统一的状态通知方法
@@ -1135,7 +1117,7 @@ func (rlm *RequestLifecycleManager) OnRetryDecision(decision RetryDecision, http
 func (rlm *RequestLifecycleManager) GetRetryContext(endpoint *endpoint.Endpoint, err error, attempt int) RetryContext {
 	errorRecovery := rlm.errorRecovery
 	state := rlm.snapshotState()
-	errorCtx := errorRecovery.ClassifyError(err, rlm.requestID, state.endpointName, state.groupName, attempt-1)
+	errorCtx := errorRecovery.ClassifyError(err, rlm.requestID, state.endpointName, attempt-1)
 
 	return RetryContext{
 		RequestID:     rlm.requestID,

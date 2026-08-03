@@ -12,7 +12,6 @@ type Request struct {
 	Method       string `json:"method"`
 	UpstreamType string `json:"upstream_type"` // endpoint/account
 	EndpointName string `json:"endpoint_name"`
-	Channel      string `json:"channel"`
 	AccountID    int64  `json:"account_id"`
 	ProviderType string `json:"provider_type"`
 	ContentType  string `json:"content_type"`

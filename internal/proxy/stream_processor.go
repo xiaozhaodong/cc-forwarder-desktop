@@ -236,7 +236,7 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 						sp.beginDownstreamTailDrain(writeErr.Error())
 					} else {
 						// 使用错误恢复管理器处理转发错误
-						errorCtx := sp.errorRecovery.ClassifyError(writeErr, sp.requestID, sp.endpoint, "", 0)
+						errorCtx := sp.errorRecovery.ClassifyError(writeErr, sp.requestID, sp.endpoint, 0)
 						sp.errorRecovery.HandleFinalFailure(errorCtx)
 						slog.Error(fmt.Sprintf("❌ [流式错误] [%s] 转发到客户端失败: %v", sp.requestID, writeErr))
 						return nil, fmt.Errorf("failed to forward to client: %w", writeErr)

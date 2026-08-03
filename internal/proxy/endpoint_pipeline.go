@@ -138,7 +138,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		// 不再触碰 Manager 内的可变 Endpoint。
 		ep := &endpoint.Endpoint{Config: target.Config()}
 
-		lifecycleManager.SetEndpointAttempt(ep.Config.Name, ep.Config.Group, ep.Config.Channel, target.Revision())
+		lifecycleManager.SetEndpointAttempt(ep.Config.Name, target.Revision())
 		h.endpointManager.RecordEndpointScheduleAttempt(connID, ep.Config.Name, endpoint.EndpointScheduleRuntimeAttempting, "")
 		h.endpointManager.NoteRouteDecision(ep.Config.Name, "")
 		lifecycleManager.UpdateStatus("forwarding", i, 0)

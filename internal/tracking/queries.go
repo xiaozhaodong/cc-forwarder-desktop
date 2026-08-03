@@ -22,9 +22,8 @@ const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(client_ip, '') as client_ip,
 	COALESCE(user_agent, '') as user_agent,
 	method, path, start_time, end_time, duration_ms, first_token_ms, completion_ms,
-	COALESCE(channel, '') as channel,
+	COALESCE(request_family, 'other') as request_family,
 	COALESCE(endpoint_name, '') as endpoint_name,
-	COALESCE(group_name, '') as group_name,
 	COALESCE(upstream_type, 'endpoint') as upstream_type,
 	COALESCE(upstream_source_name, '') as upstream_source_name,
 	COALESCE(upstream_name, '') as upstream_name,
@@ -112,17 +111,17 @@ func appendRequestQueryFilters(query string, args []interface{}, opts *QueryOpti
 		args = append(args, opts.ModelName)
 	}
 
-	if opts.Channel != "" {
-		query += " AND channel = ?"
-		args = append(args, opts.Channel)
+	if opts.RequestFamily != "" {
+		query += " AND request_family = ?"
+		args = append(args, normalizeRequestFamily(opts.RequestFamily))
 	}
 	if opts.EndpointName != "" {
 		query += " AND endpoint_name = ?"
 		args = append(args, opts.EndpointName)
 	}
-	if opts.GroupName != "" {
-		query += " AND group_name = ?"
-		args = append(args, opts.GroupName)
+	if opts.UpstreamName != "" {
+		query += " AND upstream_name = ?"
+		args = append(args, opts.UpstreamName)
 	}
 
 	switch source {
@@ -174,7 +173,7 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 			&detail.ID, &detail.RequestID,
 			&detail.ClientIP, &detail.UserAgent, &detail.Method, &detail.Path,
 			&detail.StartTime, &detail.EndTime, &detail.DurationMs, &detail.FirstTokenMs, &detail.CompletionMs,
-			&detail.Channel, &detail.EndpointName, &detail.GroupName,
+			&detail.RequestFamily, &detail.EndpointName,
 			&detail.UpstreamType, &detail.UpstreamSourceName, &detail.UpstreamName, &detail.UpstreamID,
 			&detail.RouteMode, &detail.RequestedEndpoint, &detail.EffectiveEndpoint, &detail.FallbackReason, &detail.RouteDecisionAt,
 			&detail.ModelName, &detail.IsStreaming,
@@ -272,27 +271,29 @@ func (ut *UsageTracker) countRequestDetailsOverlapsByRequestIDs(ctx context.Cont
 
 // QueryOptions represents options for querying usage data
 type QueryOptions struct {
-	StartDate    *time.Time
-	EndDate      *time.Time
-	ModelName    string
-	Channel      string
-	EndpointName string
-	GroupName    string
-	UpstreamType string
-	Status       string
-	Limit        int
-	Offset       int
+	StartDate     *time.Time
+	EndDate       *time.Time
+	ModelName     string
+	RequestFamily string
+	EndpointName  string
+	UpstreamName  string
+	UpstreamType  string
+	Status        string
+	Limit         int
+	Offset        int
 }
 
 // UsageSummary represents a summary of usage data
 type UsageSummary struct {
-	Date         string `json:"date"`
-	ModelName    string `json:"model_name"`
-	EndpointName string `json:"endpoint_name"`
-	GroupName    string `json:"group_name"`
-	RequestCount int    `json:"request_count"`
-	SuccessCount int    `json:"success_count"`
-	ErrorCount   int    `json:"error_count"`
+	Date          string `json:"date"`
+	ModelName     string `json:"model_name"`
+	RequestFamily string `json:"request_family"`
+	UpstreamType  string `json:"upstream_type"`
+	UpstreamName  string `json:"upstream_name"`
+	UpstreamID    int64  `json:"upstream_id"`
+	RequestCount  int    `json:"request_count"`
+	SuccessCount  int    `json:"success_count"`
+	ErrorCount    int    `json:"error_count"`
 
 	TotalInputTokens         int64   `json:"total_input_tokens"`
 	TotalOutputTokens        int64   `json:"total_output_tokens"`
@@ -320,9 +321,8 @@ type RequestDetail struct {
 	FirstTokenMs *int64     `json:"first_token_ms"`
 	CompletionMs *int64     `json:"completion_ms"`
 
-	Channel            string     `json:"channel"` // 渠道标签
+	RequestFamily      string     `json:"request_family"`
 	EndpointName       string     `json:"endpoint_name"`
-	GroupName          string     `json:"group_name"`
 	UpstreamType       string     `json:"upstream_type"`
 	UpstreamSourceName string     `json:"upstream_source_name"`
 	UpstreamName       string     `json:"upstream_name"`
@@ -571,12 +571,14 @@ func (ut *UsageTracker) QueryAggregatedRequestStatsWithHotPool(ctx context.Conte
 
 // EndpointCostSummary represents cost summary data for an endpoint
 type EndpointCostSummary struct {
-	EndpointName string  `json:"endpoint_name"`
-	GroupName    string  `json:"group_name"`
-	TotalTokens  int64   `json:"total_tokens"`
-	TotalCostUSD float64 `json:"total_cost_usd"`
-	RequestCount int     `json:"request_count"`
-	SuccessCount int     `json:"success_count"`
+	RequestFamily string  `json:"request_family"`
+	UpstreamType  string  `json:"upstream_type"`
+	UpstreamName  string  `json:"upstream_name"`
+	UpstreamID    int64   `json:"upstream_id"`
+	TotalTokens   int64   `json:"total_tokens"`
+	TotalCostUSD  float64 `json:"total_cost_usd"`
+	RequestCount  int     `json:"request_count"`
+	SuccessCount  int     `json:"success_count"`
 
 	InputTokens         int64 `json:"input_tokens"`
 	OutputTokens        int64 `json:"output_tokens"`
@@ -613,8 +615,7 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 		opts = &QueryOptions{}
 	}
 
-	query := `SELECT date, model_name, endpoint_name, 
-		COALESCE(group_name, '') as group_name,
+	query := `SELECT date, model_name, request_family, upstream_type, upstream_name, upstream_id,
 		request_count, success_count, error_count,
 		total_input_tokens, total_output_tokens, 
 		total_cache_creation_tokens, total_cache_read_tokens,
@@ -635,13 +636,13 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 		query += " AND model_name = ?"
 		args = append(args, opts.ModelName)
 	}
-	if opts.EndpointName != "" {
-		query += " AND endpoint_name = ?"
-		args = append(args, opts.EndpointName)
+	if opts.RequestFamily != "" {
+		query += " AND request_family = ?"
+		args = append(args, normalizeRequestFamily(opts.RequestFamily))
 	}
-	if opts.GroupName != "" {
-		query += " AND group_name = ?"
-		args = append(args, opts.GroupName)
+	if opts.UpstreamName != "" {
+		query += " AND upstream_name = ?"
+		args = append(args, opts.UpstreamName)
 	}
 
 	query += " ORDER BY date DESC, total_cost_usd DESC"
@@ -665,7 +666,7 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 	for rows.Next() {
 		var summary UsageSummary
 		err := rows.Scan(
-			&summary.Date, &summary.ModelName, &summary.EndpointName, &summary.GroupName,
+			&summary.Date, &summary.ModelName, &summary.RequestFamily, &summary.UpstreamType, &summary.UpstreamName, &summary.UpstreamID,
 			&summary.RequestCount, &summary.SuccessCount, &summary.ErrorCount,
 			&summary.TotalInputTokens, &summary.TotalOutputTokens,
 			&summary.TotalCacheCreationTokens, &summary.TotalCacheReadTokens,
@@ -812,8 +813,10 @@ func (ut *UsageTracker) GetEndpointCostsForDate(ctx context.Context, date string
 	endOfDay := time.Date(startTime.Year(), startTime.Month(), startTime.Day(), 23, 59, 59, 999999999, location)
 
 	query := `SELECT
-		COALESCE(endpoint_name, '') as endpoint_name,
-		COALESCE(group_name, '') as group_name,
+		request_family,
+		COALESCE(upstream_type, '') as upstream_type,
+		COALESCE(upstream_name, '') as upstream_name,
+		COALESCE(upstream_id, 0) as upstream_id,
 		COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
 		COALESCE(SUM(total_cost_usd), 0.0) as total_cost_usd,
 		COUNT(*) as request_count,
@@ -828,7 +831,7 @@ func (ut *UsageTracker) GetEndpointCostsForDate(ctx context.Context, date string
 		COALESCE(SUM(cache_read_cost_usd), 0.0) as cache_read_cost_usd
 		FROM request_logs
 		WHERE start_time >= ? AND start_time <= ?
-		GROUP BY endpoint_name, group_name
+		GROUP BY request_family, upstream_type, upstream_name, upstream_id
 		ORDER BY total_cost_usd DESC`
 
 	rows, err := ut.readDB.QueryContext(ctx, query, startOfDay, endOfDay)
@@ -842,7 +845,7 @@ func (ut *UsageTracker) GetEndpointCostsForDate(ctx context.Context, date string
 	for rows.Next() {
 		var cost EndpointCostSummary
 		err := rows.Scan(
-			&cost.EndpointName, &cost.GroupName, &cost.TotalTokens, &cost.TotalCostUSD,
+			&cost.RequestFamily, &cost.UpstreamType, &cost.UpstreamName, &cost.UpstreamID, &cost.TotalTokens, &cost.TotalCostUSD,
 			&cost.RequestCount, &cost.SuccessCount,
 			&cost.InputTokens, &cost.OutputTokens,
 			&cost.CacheCreationTokens, &cost.CacheReadTokens,

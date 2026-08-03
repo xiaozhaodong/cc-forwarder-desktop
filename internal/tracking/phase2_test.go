@@ -64,7 +64,8 @@ func TestPhase2_UpdateOptions(t *testing.T) {
 func TestPhase2_UpdateOptionsFields(t *testing.T) {
 	// 创建包含所有字段的UpdateOptions
 	endpoint := "test-endpoint"
-	group := "test-group"
+	requestFamily := RequestFamilyClaude
+	upstreamName := "test-endpoint"
 	status := "processing"
 	retryCount := 1
 	httpStatus := 200
@@ -75,7 +76,8 @@ func TestPhase2_UpdateOptionsFields(t *testing.T) {
 
 	opts := UpdateOptions{
 		EndpointName:  &endpoint,
-		GroupName:     &group,
+		RequestFamily: &requestFamily,
+		UpstreamName:  &upstreamName,
 		Status:        &status,
 		RetryCount:    &retryCount,
 		HttpStatus:    &httpStatus,

@@ -61,10 +61,10 @@ func (f *fakePrivacyFilter) calls() int {
 	return f.applyCalls
 }
 
-func newPrivacyTestEndpoint(name, channel string) *endpoint.Endpoint {
+func newPrivacyTestEndpoint(name string) *endpoint.Endpoint {
 	cfg := &config.Config{
 		Endpoints: []config.EndpointConfig{
-			{Name: name, Channel: channel, URL: "https://upstream.example.com", Priority: 1, Timeout: 5 * time.Second},
+			{Name: name, URL: "https://upstream.example.com", Priority: 1, Timeout: 5 * time.Second},
 		},
 	}
 	manager := endpoint.NewManager(cfg)
@@ -83,7 +83,7 @@ func newPrivacyTestRequest(t *testing.T, state *PrivacyRequestState) *http.Reque
 
 func TestApplyPrivacyFilterForEndpointNilFilterPassthrough(t *testing.T) {
 	body := []byte(`{"messages":[]}`)
-	out, err := ApplyPrivacyFilterForEndpoint(nil, newPrivacyTestRequest(t, nil), body, newPrivacyTestEndpoint("ep-a", "ch"))
+	out, err := ApplyPrivacyFilterForEndpoint(nil, newPrivacyTestRequest(t, nil), body, newPrivacyTestEndpoint("ep-a"))
 	if err != nil {
 		t.Fatalf("nil filter must not error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestApplyPrivacyFilterAttemptCacheReusesResult(t *testing.T) {
 	filter := &fakePrivacyFilter{redactTo: []byte(`{"redacted":true}`), version: 7}
 	state := NewPrivacyRequestState("req-cache-01")
 	req := newPrivacyTestRequest(t, state)
-	ep := newPrivacyTestEndpoint("ep-a", "ch")
+	ep := newPrivacyTestEndpoint("ep-a")
 
 	first, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{"original":true}`), ep)
 	if err != nil {
@@ -123,10 +123,10 @@ func TestApplyPrivacyFilterDifferentEndpointsScannedSeparately(t *testing.T) {
 	state := NewPrivacyRequestState("req-scope-01")
 	req := newPrivacyTestRequest(t, state)
 
-	if _, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{}`), newPrivacyTestEndpoint("ep-a", "ch")); err != nil {
+	if _, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{}`), newPrivacyTestEndpoint("ep-a")); err != nil {
 		t.Fatalf("apply ep-a failed: %v", err)
 	}
-	if _, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{}`), newPrivacyTestEndpoint("ep-b", "ch")); err != nil {
+	if _, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{}`), newPrivacyTestEndpoint("ep-b")); err != nil {
 		t.Fatalf("apply ep-b failed: %v", err)
 	}
 	if filter.calls() != 2 {
@@ -142,10 +142,10 @@ func TestApplyPrivacyFilterScopeFingerprintReusesAcrossEndpoints(t *testing.T) {
 	state := NewPrivacyRequestState("req-global-scope-01")
 	req := newPrivacyTestRequest(t, state)
 
-	if _, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{"same":true}`), newPrivacyTestEndpoint("ep-a", "ch-a")); err != nil {
+	if _, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{"same":true}`), newPrivacyTestEndpoint("ep-a")); err != nil {
 		t.Fatalf("apply ep-a failed: %v", err)
 	}
-	if _, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{"same":true}`), newPrivacyTestEndpoint("ep-b", "ch-b")); err != nil {
+	if _, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{"same":true}`), newPrivacyTestEndpoint("ep-b")); err != nil {
 		t.Fatalf("apply ep-b failed: %v", err)
 	}
 	if filter.calls() != 1 {
@@ -161,10 +161,10 @@ func TestApplyPrivacyFilterBodyHashSeparatesCacheEntries(t *testing.T) {
 	state := NewPrivacyRequestState("req-body-hash-01")
 	req := newPrivacyTestRequest(t, state)
 
-	if _, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{"body":"a"}`), newPrivacyTestEndpoint("ep-a", "ch-a")); err != nil {
+	if _, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{"body":"a"}`), newPrivacyTestEndpoint("ep-a")); err != nil {
 		t.Fatalf("apply body a failed: %v", err)
 	}
-	if _, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{"body":"b"}`), newPrivacyTestEndpoint("ep-b", "ch-b")); err != nil {
+	if _, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{"body":"b"}`), newPrivacyTestEndpoint("ep-b")); err != nil {
 		t.Fatalf("apply body b failed: %v", err)
 	}
 	if filter.calls() != 2 {
@@ -177,7 +177,7 @@ func TestApplyPrivacyFilterPolicyErrorCachedAndReturned(t *testing.T) {
 	filter := &fakePrivacyFilter{err: policyErr, version: 1}
 	state := NewPrivacyRequestState("req-policy-01")
 	req := newPrivacyTestRequest(t, state)
-	ep := newPrivacyTestEndpoint("ep-a", "ch")
+	ep := newPrivacyTestEndpoint("ep-a")
 
 	_, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{}`), ep)
 	if AsPrivacyPolicyError(err) == nil {
@@ -218,7 +218,7 @@ func TestPrivacyFailureReasonMapping(t *testing.T) {
 func TestApplyPrivacyFilterWithoutStateStillFilters(t *testing.T) {
 	filter := &fakePrivacyFilter{redactTo: []byte(`{"redacted":true}`), version: 1}
 	req := newPrivacyTestRequest(t, nil) // 无请求级状态（如 count_tokens 拦截路径）
-	out, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{"x":1}`), newPrivacyTestEndpoint("ep-a", "ch"))
+	out, err := ApplyPrivacyFilterForEndpoint(filter, req, []byte(`{"x":1}`), newPrivacyTestEndpoint("ep-a"))
 	if err != nil {
 		t.Fatalf("apply failed: %v", err)
 	}

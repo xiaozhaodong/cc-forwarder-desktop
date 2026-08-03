@@ -96,7 +96,7 @@ func TestImageGeneration_ForwardsConfiguredProviderAndTracksRequest(t *testing.T
 		if detail.Status != "completed" || detail.Path != openAIImagesGenerationsPath {
 			t.Fatalf("unexpected tracked status/path: %+v", detail)
 		}
-		if detail.Channel != "image" || detail.UpstreamSourceName != "image_generation" {
+		if detail.RequestFamily != tracking.RequestFamilyImage || detail.UpstreamSourceName != "image_generation" {
 			t.Fatalf("unexpected tracked image source: %+v", detail)
 		}
 		if detail.ModelName != "gpt-image-2" {

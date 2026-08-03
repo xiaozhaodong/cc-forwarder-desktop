@@ -803,7 +803,6 @@ func queryBillingRecordsDirectly(t *testing.T, tracker *tracking.UsageTracker, r
 				CacheReadCost:       detail.CacheReadCostUSD,
 				TotalCost:           detail.TotalCostUSD,
 				Endpoint:            detail.EndpointName,
-				EndpointGroup:       detail.GroupName,
 				ClientIP:            detail.ClientIP,
 				UserAgent:           detail.UserAgent,
 				Method:              detail.Method,
@@ -840,7 +839,6 @@ type DatabaseBillingRecord struct {
 	CacheReadCost       float64
 	TotalCost           float64
 	Endpoint            string
-	EndpointGroup       string
 	ClientIP            string
 	UserAgent           string
 	Method              string

@@ -106,7 +106,6 @@ func privacyScopeFingerprint(filter PrivacyFilter, req privacy.Request, snapshot
 		req.Path,
 		req.UpstreamType,
 		req.EndpointName,
-		req.Channel,
 		strconv.FormatInt(req.AccountID, 10),
 		req.ProviderType,
 		strconv.FormatInt(snapshotVersion, 10),
@@ -166,7 +165,6 @@ func ApplyPrivacyFilterForEndpoint(filter PrivacyFilter, r *http.Request, body [
 		Method:       r.Method,
 		UpstreamType: privacy.UpstreamTypeEndpoint,
 		EndpointName: ep.Config.Name,
-		Channel:      ep.Config.Channel,
 		ContentType:  r.Header.Get("Content-Type"),
 	}
 	return ApplyPrivacyFilter(filter, r, req, body)

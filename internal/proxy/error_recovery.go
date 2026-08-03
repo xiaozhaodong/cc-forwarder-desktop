@@ -41,7 +41,6 @@ const (
 type ErrorContext struct {
 	RequestID      string
 	EndpointName   string
-	GroupName      string
 	AttemptCount   int
 	ErrorType      ErrorType
 	OriginalError  error
@@ -76,11 +75,16 @@ func NewErrorRecoveryManager(usageTracker *tracking.UsageTracker) *ErrorRecovery
 }
 
 // ClassifyError 分类错误类型并创建错误上下文
-func (erm *ErrorRecoveryManager) ClassifyError(err error, requestID, endpoint, group string, attempt int) *ErrorContext {
+func (erm *ErrorRecoveryManager) ClassifyError(err error, requestID, endpoint string, legacyArgs ...interface{}) *ErrorContext {
+	attempt := 0
+	for _, arg := range legacyArgs {
+		if value, ok := arg.(int); ok {
+			attempt = value
+		}
+	}
 	errorCtx := &ErrorContext{
 		RequestID:     requestID,
 		EndpointName:  endpoint,
-		GroupName:     group,
 		AttemptCount:  attempt,
 		OriginalError: err,
 		MaxRetries:    erm.maxRetries,
@@ -354,7 +358,6 @@ func (erm *ErrorRecoveryManager) ExecuteRetry(ctx context.Context, errorCtx *Err
 	if erm.usageTracker != nil && errorCtx.RequestID != "" {
 		opts := tracking.UpdateOptions{
 			EndpointName: &errorCtx.EndpointName,
-			GroupName:    &errorCtx.GroupName,
 			Status:       stringPtr("retry"),
 			RetryCount:   &errorCtx.AttemptCount,
 			HttpStatus:   intPtr(0),
@@ -394,7 +397,6 @@ func (erm *ErrorRecoveryManager) HandleFinalFailure(errorCtx *ErrorContext) {
 
 		opts := tracking.UpdateOptions{
 			EndpointName: &errorCtx.EndpointName,
-			GroupName:    &errorCtx.GroupName,
 			Status:       &status,
 			RetryCount:   &errorCtx.AttemptCount,
 			HttpStatus:   intPtr(0),

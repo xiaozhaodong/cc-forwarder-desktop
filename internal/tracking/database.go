@@ -394,8 +394,8 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 	if upstreamType == "" {
 		upstreamType = "endpoint"
 	}
-	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
+	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "updated_at"}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
 
 	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
@@ -405,6 +405,7 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 		data.UserAgent,
 		data.Method,
 		data.Path,
+		normalizeRequestFamily(data.RequestFamily),
 		event.Timestamp,
 		data.IsStreaming,
 		upstreamType,
@@ -423,8 +424,8 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 		return "", nil, fmt.Errorf("invalid update event data type")
 	}
 
-	// 如果端点名和组名都为空，只更新状态相关字段
-	if data.EndpointName == "" && data.GroupName == "" {
+	// 如果端点名为空，只更新状态相关字段
+	if data.EndpointName == "" {
 		query := fmt.Sprintf(`UPDATE request_logs SET
 			status = ?,
 			retry_count = ?,
@@ -444,14 +445,13 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 
 	// 使用适配器构建INSERT OR REPLACE查询
 	// 重新加入start_time，但在UPSERT时保护已有值不被覆盖
-	columns := []string{"request_id", "endpoint_name", "group_name", "status", "retry_count", "http_status_code", "start_time", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
+	columns := []string{"request_id", "endpoint_name", "status", "retry_count", "http_status_code", "start_time", "updated_at"}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
 	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
 	args := []interface{}{
 		event.RequestID,
 		data.EndpointName,
-		data.GroupName,
 		data.Status,
 		data.RetryCount,
 		data.HTTPStatus,
@@ -478,13 +478,9 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 		setParts = append(setParts, "endpoint_name = ?")
 		args = append(args, *opts.EndpointName)
 	}
-	if opts.Channel != nil {
-		setParts = append(setParts, "channel = ?")
-		args = append(args, *opts.Channel)
-	}
-	if opts.GroupName != nil {
-		setParts = append(setParts, "group_name = ?")
-		args = append(args, *opts.GroupName)
+	if opts.RequestFamily != nil {
+		setParts = append(setParts, "request_family = ?")
+		args = append(args, normalizeRequestFamily(*opts.RequestFamily))
 	}
 	if opts.UpstreamType != nil {
 		setParts = append(setParts, "upstream_type = ?")
@@ -831,8 +827,8 @@ func (ut *UsageTracker) insertRequestStart(ctx context.Context, tx *sql.Tx, even
 	if upstreamType == "" {
 		upstreamType = "endpoint"
 	}
-	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
+	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "updated_at"}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
 	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
 	_, err := tx.ExecContext(ctx, query,
@@ -841,6 +837,7 @@ func (ut *UsageTracker) insertRequestStart(ctx context.Context, tx *sql.Tx, even
 		data.UserAgent,
 		data.Method,
 		data.Path,
+		normalizeRequestFamily(data.RequestFamily),
 		event.Timestamp,
 		data.IsStreaming,
 		upstreamType,
@@ -858,8 +855,8 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 		return fmt.Errorf("invalid update event data type")
 	}
 
-	// 如果端点名和组名都为空，只更新状态相关字段
-	if data.EndpointName == "" && data.GroupName == "" {
+	// 如果端点名为空，只更新状态相关字段
+	if data.EndpointName == "" {
 		query := fmt.Sprintf(`UPDATE request_logs SET
 			status = ?,
 			retry_count = ?,
@@ -905,7 +902,6 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 	// 正常更新所有字段
 	query := fmt.Sprintf(`UPDATE request_logs SET
 		endpoint_name = ?,
-		group_name = ?,
 		status = ?,
 		retry_count = ?,
 		http_status_code = ?,
@@ -914,7 +910,6 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 
 	result, err := tx.ExecContext(ctx, query,
 		data.EndpointName,
-		data.GroupName,
 		data.Status,
 		data.RetryCount,
 		data.HTTPStatus,
@@ -932,14 +927,13 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 
 	if rowsAffected == 0 {
 		// 记录不存在，使用适配器构建INSERT OR REPLACE查询
-		columns := []string{"request_id", "endpoint_name", "group_name", "status", "retry_count", "http_status_code", "start_time", "updated_at"}
-		placeholders := []string{"?", "?", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
+		columns := []string{"request_id", "endpoint_name", "status", "retry_count", "http_status_code", "start_time", "updated_at"}
+		placeholders := []string{"?", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
 		insertQuery := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
 		_, err = tx.ExecContext(ctx, insertQuery,
 			event.RequestID,
 			data.EndpointName,
-			data.GroupName,
 			data.Status,
 			data.RetryCount,
 			data.HTTPStatus,
@@ -1247,7 +1241,7 @@ func (ut *UsageTracker) updateUsageSummary() {
 
 	// 使用适配器构建INSERT OR REPLACE查询
 	columns := []string{
-		"date", "model_name", "endpoint_name", "group_name",
+		"date", "model_name", "request_family", "upstream_type", "upstream_name", "upstream_id",
 		"request_count", "success_count", "error_count",
 		"total_input_tokens", "total_output_tokens",
 		"total_cache_creation_tokens", "total_cache_read_tokens",
@@ -1263,8 +1257,10 @@ func (ut *UsageTracker) updateUsageSummary() {
 		SELECT
 			substr(start_time, 1, 10) AS date,
 			COALESCE(model_name, '') AS model_name,
-			COALESCE(endpoint_name, '') AS endpoint_name,
-			COALESCE(group_name, '') AS group_name,
+			request_family,
+			COALESCE(upstream_type, '') AS upstream_type,
+			COALESCE(upstream_name, '') AS upstream_name,
+			COALESCE(upstream_id, 0) AS upstream_id,
 			COUNT(*) AS request_count,
 			SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS success_count,
 			SUM(CASE WHEN status IN ('error', 'failed') THEN 1 ELSE 0 END) AS error_count,
@@ -1280,8 +1276,8 @@ func (ut *UsageTracker) updateUsageSummary() {
 		WHERE start_time IS NOT NULL
 			AND length(start_time) >= 10
 			AND start_time >= ? AND start_time < ?
-		GROUP BY substr(start_time, 1, 10), COALESCE(model_name, ''), COALESCE(endpoint_name, ''), COALESCE(group_name, '')
-		ON CONFLICT(date, model_name, endpoint_name, group_name) DO UPDATE SET
+		GROUP BY substr(start_time, 1, 10), COALESCE(model_name, ''), request_family, COALESCE(upstream_type, ''), COALESCE(upstream_name, ''), COALESCE(upstream_id, 0)
+		ON CONFLICT(date, model_name, request_family, upstream_type, upstream_name, upstream_id) DO UPDATE SET
 			request_count = EXCLUDED.request_count,
 			success_count = EXCLUDED.success_count,
 			error_count = EXCLUDED.error_count,
@@ -1306,8 +1302,10 @@ func (ut *UsageTracker) updateUsageSummary() {
 		SELECT
 			substr(start_time, 1, 10) as date,
 			COALESCE(model_name, '') as model_name,
-			COALESCE(endpoint_name, '') as endpoint_name,
-			COALESCE(group_name, '') as group_name,
+			request_family,
+			COALESCE(upstream_type, '') as upstream_type,
+			COALESCE(upstream_name, '') as upstream_name,
+			COALESCE(upstream_id, 0) as upstream_id,
 			COUNT(*) as request_count,
 			SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_count,
 			SUM(CASE WHEN status IN ('error', 'failed') THEN 1 ELSE 0 END) as error_count,
@@ -1323,7 +1321,7 @@ func (ut *UsageTracker) updateUsageSummary() {
 		WHERE start_time IS NOT NULL
 			AND length(start_time) >= 10
 			AND start_time >= ? AND start_time < ?
-		GROUP BY substr(start_time, 1, 10), model_name, endpoint_name, group_name
+		GROUP BY substr(start_time, 1, 10), model_name, request_family, upstream_type, upstream_name, upstream_id
 		`, ut.adapter.BuildDateTimeNow(), ut.adapter.BuildDateTimeNow())
 
 		query = strings.Replace(baseQuery, "VALUES ("+strings.Join(placeholders, ", ")+")", "("+selectQuery+")", 1)

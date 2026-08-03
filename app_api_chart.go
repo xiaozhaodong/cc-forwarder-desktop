@@ -166,9 +166,10 @@ func (a *App) GetEndpointHealthChart() EndpointHealthData {
 
 // EndpointCostItem 端点成本数据项（用于前端图表）
 type EndpointCostItem struct {
-	Name   string  `json:"name"`
-	Tokens int64   `json:"tokens"`
-	Cost   float64 `json:"cost"`
+	Name          string  `json:"name"`
+	RequestFamily string  `json:"request_family"`
+	Tokens        int64   `json:"tokens"`
+	Cost          float64 `json:"cost"`
 }
 
 // GetEndpointCosts 获取当日端点成本数据
@@ -198,19 +199,19 @@ func (a *App) GetEndpointCosts() []EndpointCostItem {
 	// 转换为前端期望的格式
 	result := make([]EndpointCostItem, len(costs))
 	for i, cost := range costs {
-		// 创建标签，格式：端点名称 (组名) 或 端点名称
-		name := cost.EndpointName
-		if cost.GroupName != "" {
-			name = cost.EndpointName + " (" + cost.GroupName + ")"
+		name := cost.UpstreamName
+		if name == "" {
+			name = "未知上游"
 		}
 
 		// 计算总 Token
 		totalTokens := cost.InputTokens + cost.OutputTokens + cost.CacheCreationTokens + cost.CacheReadTokens
 
 		result[i] = EndpointCostItem{
-			Name:   name,
-			Tokens: totalTokens,
-			Cost:   cost.TotalCostUSD,
+			Name:          name,
+			RequestFamily: cost.RequestFamily,
+			Tokens:        totalTokens,
+			Cost:          cost.TotalCostUSD,
 		}
 	}
 

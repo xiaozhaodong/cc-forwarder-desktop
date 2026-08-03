@@ -728,7 +728,6 @@ func getRealWorldBillingRecords(t *testing.T, tracker *tracking.UsageTracker, re
 				CacheReadTokens:     detail.CacheReadTokens,
 				TotalCost:           detail.TotalCostUSD,
 				Endpoint:            detail.EndpointName,
-				EndpointGroup:       detail.GroupName,
 				IsStreaming:         detail.IsStreaming,
 				CreatedAt:           detail.CreatedAt,
 				UpdatedAt:           detail.UpdatedAt,
@@ -766,7 +765,6 @@ type RealWorldBillingRecord struct {
 	CacheReadTokens     int64
 	TotalCost           float64
 	Endpoint            string
-	EndpointGroup       string
 	IsStreaming         bool
 	CreatedAt           time.Time
 	UpdatedAt           time.Time

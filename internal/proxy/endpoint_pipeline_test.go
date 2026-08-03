@@ -120,7 +120,6 @@ func TestEndpointPipeline_ConnectionFailure_FailsOverAndRetainsWithoutMigratingA
 		endpointPipelineConfig("primary", endpointPipelineClosedURL(t), 1),
 		endpointPipelineConfig("backup", backup.URL, 2),
 	)
-	manager.RestoreActiveEndpoint("primary")
 
 	recorder := performEndpointPipelineRequest(t, handler, false)
 	if recorder.Code != http.StatusOK {
@@ -128,9 +127,6 @@ func TestEndpointPipeline_ConnectionFailure_FailsOverAndRetainsWithoutMigratingA
 	}
 	if got := atomic.LoadInt32(&backupHits); got != 1 {
 		t.Fatalf("expected backup to be called once, got %d", got)
-	}
-	if active, _ := manager.GetActiveEndpointSelection(); active != "primary" {
-		t.Fatalf("v8: fallback success must not migrate active, got %q", active)
 	}
 	if got := manager.RetainedInTier(2); got != "backup" {
 		t.Fatalf("expected backup retained in tier 2, got %q", got)
@@ -162,7 +158,6 @@ func TestEndpointPipeline_Unauthorized_FailsOverWithoutMigratingActive(t *testin
 		endpointPipelineConfig("primary", primary.URL, 1),
 		endpointPipelineConfig("backup", backup.URL, 2),
 	)
-	manager.RestoreActiveEndpoint("primary")
 
 	recorder := performEndpointPipelineRequest(t, handler, false)
 	if recorder.Code != http.StatusOK {
@@ -173,9 +168,6 @@ func TestEndpointPipeline_Unauthorized_FailsOverWithoutMigratingActive(t *testin
 	}
 	if got := atomic.LoadInt32(&backupHits); got != 1 {
 		t.Fatalf("expected backup to be called once, got %d", got)
-	}
-	if active, _ := manager.GetActiveEndpointSelection(); active != "primary" {
-		t.Fatalf("v8: fallback success must not migrate active, got %q", active)
 	}
 	if primaryEndpoint := manager.GetEndpointByNameAny("primary"); primaryEndpoint == nil || !primaryEndpoint.IsInCooldown() {
 		t.Fatal("expected unauthorized primary endpoint to enter auth cooldown")
@@ -210,8 +202,7 @@ func TestEndpointPipeline_ModelRewriteUsesOriginalBodyForEachCandidate(t *testin
 	primaryConfig.ModelRewriteRules = `[{"paths":["/v1/messages"],"match":"exact","from":"claude-test","to":"primary-model"}]`
 	backupConfig := endpointPipelineConfig("backup", backup.URL, 2)
 	backupConfig.ModelRewriteRules = `[{"paths":["/v1/messages"],"match":"exact","from":"claude-test","to":"backup-model"}]`
-	handler, manager := newEndpointPipelineTestHandler(t, primaryConfig, backupConfig)
-	manager.RestoreActiveEndpoint("primary")
+	handler, _ := newEndpointPipelineTestHandler(t, primaryConfig, backupConfig)
 
 	recorder := performEndpointPipelineRequest(t, handler, false)
 	if recorder.Code != http.StatusOK {
@@ -239,7 +230,6 @@ func TestEndpointPipeline_Generic5xx_ReturnsRetryableErrorWithoutFailover(t *tes
 		endpointPipelineConfig("primary", primary.URL, 1),
 		endpointPipelineConfig("backup", backup.URL, 2),
 	)
-	manager.RestoreActiveEndpoint("primary")
 
 	recorder := performEndpointPipelineRequest(t, handler, false)
 	if recorder.Code != http.StatusInternalServerError {
@@ -253,9 +243,6 @@ func TestEndpointPipeline_Generic5xx_ReturnsRetryableErrorWithoutFailover(t *tes
 	}
 	if got := atomic.LoadInt32(&backupHits); got != 0 {
 		t.Fatalf("expected no failover after ambiguous 5xx, backup hits=%d", got)
-	}
-	if active, _ := manager.GetActiveEndpointSelection(); active != "primary" {
-		t.Fatalf("expected active endpoint to remain primary, got %q", active)
 	}
 	if got := manager.GetFailureStats()["primary"]; got != 1 {
 		t.Fatalf("expected primary failure count 1, got %d", got)
@@ -282,7 +269,6 @@ func TestEndpointPipeline_NotFound_PassesThroughWithoutFailover(t *testing.T) {
 		endpointPipelineConfig("primary", primary.URL, 1),
 		endpointPipelineConfig("backup", backup.URL, 2),
 	)
-	manager.RestoreActiveEndpoint("primary")
 
 	recorder := performEndpointPipelineRequest(t, handler, false)
 	if recorder.Code != http.StatusNotFound {
@@ -299,9 +285,6 @@ func TestEndpointPipeline_NotFound_PassesThroughWithoutFailover(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&backupHits); got != 0 {
 		t.Fatalf("expected no failover for 404, backup hits=%d", got)
-	}
-	if active, _ := manager.GetActiveEndpointSelection(); active != "primary" {
-		t.Fatalf("expected active endpoint to remain primary, got %q", active)
 	}
 	if got := manager.GetFailureStats()["primary"]; got != 0 {
 		t.Fatalf("expected 404 not to count as endpoint failure, got %d", got)
@@ -325,7 +308,6 @@ func TestEndpointPipeline_QualityIncomplete_DoesNotMigrateActive(t *testing.T) {
 		endpointPipelineConfig("primary", endpointPipelineClosedURL(t), 1),
 		endpointPipelineConfig("backup", backup.URL, 2),
 	)
-	manager.RestoreActiveEndpoint("primary")
 
 	recorder := performEndpointPipelineRequest(t, handler, true)
 	if recorder.Code != http.StatusOK {
@@ -336,9 +318,6 @@ func TestEndpointPipeline_QualityIncomplete_DoesNotMigrateActive(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "event: message_delta") {
 		t.Fatalf("expected incomplete upstream stream to be relayed, got %s", recorder.Body.String())
-	}
-	if active, _ := manager.GetActiveEndpointSelection(); active != "primary" {
-		t.Fatalf("expected QualityIncomplete not to migrate active endpoint, got %q", active)
 	}
 	snapshot := requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomeQualityIncomplete, "backup")
 	if snapshot.FinalError == "" {
@@ -371,7 +350,6 @@ func TestEndpointPipeline_PrivacyBlockRecordsSnapshotWithoutFailover(t *testing.
 		endpointPipelineConfig("primary", upstream.URL, 1),
 		endpointPipelineConfig("backup", upstream.URL, 2),
 	)
-	manager.RestoreActiveEndpoint("primary")
 	handler.SetPrivacyFilter(&stubPrivacyFilter{
 		err: &privacy.PolicyError{StatusCode: http.StatusRequestEntityTooLarge, Code: privacy.CodeScanBodyTooLarge, Message: "scannable text too large"},
 	})
@@ -406,7 +384,6 @@ func TestEndpointPipeline_Ordinary429RetriesSameEndpointThenReturns429(t *testin
 		endpointPipelineConfig("primary", primary.URL, 1),
 		endpointPipelineConfig("backup", backup.URL, 2),
 	)
-	manager.RestoreActiveEndpoint("primary")
 
 	recorder := performEndpointPipelineRequest(t, handler, false)
 	if recorder.Code != http.StatusTooManyRequests {
@@ -427,9 +404,6 @@ func TestEndpointPipeline_Ordinary429RetriesSameEndpointThenReturns429(t *testin
 	if got := manager.GetFailureStats()["primary"]; got != 1 {
 		t.Fatalf("two upstream 429 must settle as one soft failure, got %d", got)
 	}
-	if active, _ := manager.GetActiveEndpointSelection(); active != "primary" {
-		t.Fatalf("429 must not change active selection, got %q", active)
-	}
 	requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomeRateLimited, "primary")
 }
 
@@ -449,7 +423,6 @@ func TestEndpointPipeline_Ordinary429RetrySucceedsWithoutSoftFailure(t *testing.
 	handler, manager := newEndpointPipelineTestHandler(t,
 		endpointPipelineConfig("primary", primary.URL, 1),
 	)
-	manager.RestoreActiveEndpoint("primary")
 
 	recorder := performEndpointPipelineRequest(t, handler, false)
 	if recorder.Code != http.StatusOK {
@@ -481,7 +454,6 @@ func TestEndpointPipeline_Ordinary429ThirdLogicalFailureTripsCooldownAndFailsOve
 		endpointPipelineConfig("primary", primary.URL, 1),
 		endpointPipelineConfig("backup", backup.URL, 2),
 	)
-	manager.RestoreActiveEndpoint("primary")
 
 	// 前两个逻辑失败（每个客户端请求只记一次）
 	for i := 0; i < 2; i++ {
@@ -519,13 +491,12 @@ func TestEndpointPipeline_CandidateAttemptBudgetStopsAtThree(t *testing.T) {
 	}))
 	t.Cleanup(fourth.Close)
 
-	handler, manager := newEndpointPipelineTestHandler(t,
+	handler, _ := newEndpointPipelineTestHandler(t,
 		endpointPipelineConfig("e1", endpointPipelineClosedURL(t), 1),
 		endpointPipelineConfig("e2", endpointPipelineClosedURL(t), 2),
 		endpointPipelineConfig("e3", endpointPipelineClosedURL(t), 3),
 		endpointPipelineConfig("e4", fourth.URL, 4),
 	)
-	manager.RestoreActiveEndpoint("e1")
 
 	recorder := performEndpointPipelineRequest(t, handler, false)
 	if recorder.Code != http.StatusServiceUnavailable {
@@ -553,7 +524,6 @@ func TestEndpointPipeline_RejectModeRejectsWhenFirstLogicalCandidateTripped(t *t
 		endpointPipelineConfig("primary", endpointPipelineClosedURL(t), 1),
 		endpointPipelineConfig("backup", backup.URL, 2),
 	)
-	manager.RestoreActiveEndpoint("primary")
 	manager.SetEndpointCooldown("primary", time.Minute,
 		endpoint.SoftFailureCooldownReason(endpoint.SoftFailureCategoryRateLimit))
 

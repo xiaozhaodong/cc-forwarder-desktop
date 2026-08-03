@@ -8,7 +8,6 @@ import (
 type ErrorContext struct {
 	RequestID      string
 	EndpointName   string
-	GroupName      string
 	AttemptCount   int
 	ErrorType      ErrorType
 	OriginalError  error

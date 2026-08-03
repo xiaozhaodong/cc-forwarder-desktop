@@ -31,7 +31,7 @@ func TestRequestLifecycleManager_SettersAndGetters(t *testing.T) {
 	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
 
 	// 测试设置方法
-	rlm.SetEndpoint("test-endpoint", "test-group", "")
+	rlm.SetEndpoint("test-endpoint")
 	rlm.SetModel("claude-3-sonnet")
 	rlm.SetFinalStatusCode(404)
 
@@ -42,10 +42,6 @@ func TestRequestLifecycleManager_SettersAndGetters(t *testing.T) {
 
 	if rlm.GetEndpointName() != "test-endpoint" {
 		t.Errorf("Expected endpoint 'test-endpoint', got '%s'", rlm.GetEndpointName())
-	}
-
-	if rlm.GetGroupName() != "test-group" {
-		t.Errorf("Expected group 'test-group', got '%s'", rlm.GetGroupName())
 	}
 
 	if rlm.modelName != "claude-3-sonnet" {
@@ -253,7 +249,7 @@ func TestRequestLifecycleManager_GetStats(t *testing.T) {
 	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
 
 	// 设置一些状态
-	rlm.SetEndpoint("stats-endpoint", "stats-group", "")
+	rlm.SetEndpoint("stats-endpoint")
 	rlm.SetModel("claude-3-haiku")
 	rlm.UpdateStatus("processing", 2, 200)
 
@@ -261,7 +257,7 @@ func TestRequestLifecycleManager_GetStats(t *testing.T) {
 	stats := rlm.GetStats()
 
 	// 验证统计信息
-	expectedFields := []string{"request_id", "endpoint", "group", "model", "status", "retry_count", "duration_ms", "start_time"}
+	expectedFields := []string{"request_id", "endpoint", "model", "status", "retry_count", "duration_ms", "start_time"}
 	for _, field := range expectedFields {
 		if _, exists := stats[field]; !exists {
 			t.Errorf("Stats should contain field: %s", field)
@@ -273,9 +269,6 @@ func TestRequestLifecycleManager_GetStats(t *testing.T) {
 	}
 	if stats["endpoint"] != "stats-endpoint" {
 		t.Errorf("Expected endpoint 'stats-endpoint', got %v", stats["endpoint"])
-	}
-	if stats["group"] != "stats-group" {
-		t.Errorf("Expected group 'stats-group', got %v", stats["group"])
 	}
 	if stats["model"] != "claude-3-haiku" {
 		t.Errorf("Expected model 'claude-3-haiku', got %v", stats["model"])

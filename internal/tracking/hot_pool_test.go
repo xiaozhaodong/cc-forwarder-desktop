@@ -1,6 +1,7 @@
 package tracking
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -161,6 +162,40 @@ func TestHotPoolCompleteAndArchive(t *testing.T) {
 	// 确认后应该没有请求了
 	if pool.GetActiveCount() != 0 {
 		t.Errorf("Expected 0 active requests after confirm, got %d", pool.GetActiveCount())
+	}
+}
+
+func TestHotPoolCompleteAndArchiveKeepsStatsWithoutReadingUnlockedMap(t *testing.T) {
+	pool := NewHotPool(HotPoolConfig{
+		MaxAge: 10 * time.Minute, MaxSize: 100, CleanupInterval: time.Hour,
+	})
+	defer pool.Close()
+
+	for i := 0; i < 20; i++ {
+		requestID := fmt.Sprintf("req-concurrent-complete-%d", i)
+		if err := pool.Add(&ActiveRequest{RequestID: requestID, StartTime: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		requestID := fmt.Sprintf("req-concurrent-complete-%d", i)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = pool.CompleteAndArchive(requestID, nil)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = pool.Add(&ActiveRequest{RequestID: requestID + "-next", StartTime: time.Now()})
+		}()
+	}
+	wg.Wait()
+
+	stats := pool.GetStats()
+	if stats.CurrentSize < 0 || int64(stats.CurrentSize) > stats.TotalAdded {
+		t.Fatalf("invalid stats after concurrent add/complete: %+v", stats)
 	}
 }
 

@@ -63,7 +63,6 @@ func claudeRequest() Request {
 		Method:       "POST",
 		UpstreamType: UpstreamTypeEndpoint,
 		EndpointName: "ep-a",
-		Channel:      "channel-a",
 		ContentType:  "application/json",
 	}
 }

@@ -174,9 +174,8 @@ func shouldFallbackToRuntimeUsageStats(params UsageStatsQueryParams, normalizedS
 	}
 	if strings.TrimSpace(params.Status) != "" ||
 		strings.TrimSpace(params.Model) != "" ||
-		strings.TrimSpace(params.Channel) != "" ||
-		strings.TrimSpace(params.Endpoint) != "" ||
-		strings.TrimSpace(params.Group) != "" {
+		strings.TrimSpace(params.RequestFamily) != "" ||
+		strings.TrimSpace(params.UpstreamName) != "" {
 		return false
 	}
 	if startTime.IsZero() || endTime.IsZero() || endTime.Before(startTime) {
@@ -212,11 +211,7 @@ func (a *App) queryStatsFromSingleTable(ctx context.Context, db *sql.DB, tableNa
 // queryStatsFromDB 按 source_view 查询成本、tokens 和请求数：
 // endpoint/account/all 统一基于 request_logs + upstream_type 查询
 func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time, sourceView string) (cost float64, tokens int64, requests int64) {
-	if a.usageTracker == nil {
-		return 0, 0, 0
-	}
-
-	db := a.usageTracker.GetDB()
+	db := a.coreDB()
 	if db == nil {
 		return 0, 0, 0
 	}
@@ -258,9 +253,8 @@ type RequestRecord struct {
 	ID                    string  `json:"id"`
 	RequestID             string  `json:"request_id"`
 	Timestamp             string  `json:"timestamp"`
-	Channel               string  `json:"channel"` // v5.0: 渠道标签
-	Endpoint              string  `json:"endpoint"`
-	Group                 string  `json:"group"`
+	RequestFamily         string  `json:"request_family"`
+	Endpoint              string  `json:"endpoint"` // Claude 路由诊断兼容字段
 	Model                 string  `json:"model"`
 	Status                string  `json:"status"`
 	HTTPStatus            int     `json:"http_status"`
@@ -298,16 +292,15 @@ type RequestListResult struct {
 
 // RequestQueryParams 请求查询参数
 type RequestQueryParams struct {
-	Page       int    `json:"page"`
-	PageSize   int    `json:"page_size"`
-	StartDate  string `json:"start_date"`  // 格式：2025-12-05T00:00 或 2025-12-05T00:00:00+08:00
-	EndDate    string `json:"end_date"`    // 格式：2025-12-05T23:59 或 2025-12-05T23:59:59+08:00
-	Status     string `json:"status"`      // 可选：completed, failed, pending 等
-	Model      string `json:"model"`       // 可选：模型名称
-	Channel    string `json:"channel"`     // 可选：渠道名称（v5.0）
-	Endpoint   string `json:"endpoint"`    // 可选：端点名称
-	Group      string `json:"group"`       // 可选：组名称
-	SourceView string `json:"source_view"` // 可选：endpoint/account/all，默认 endpoint
+	Page          int    `json:"page"`
+	PageSize      int    `json:"page_size"`
+	StartDate     string `json:"start_date"` // 格式：2025-12-05T00:00 或 2025-12-05T00:00:00+08:00
+	EndDate       string `json:"end_date"`   // 格式：2025-12-05T23:59 或 2025-12-05T23:59:59+08:00
+	Status        string `json:"status"`     // 可选：completed, failed, pending 等
+	Model         string `json:"model"`      // 可选：模型名称
+	RequestFamily string `json:"request_family"`
+	UpstreamName  string `json:"upstream_name"`
+	SourceView    string `json:"source_view"` // 可选：endpoint/account/all，默认 endpoint
 }
 
 // GetRequests 获取请求记录列表（热池+数据库双源查询）
@@ -368,15 +361,14 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 
 	// 使用热池+数据库双源查询（与 HTTP API 一致）
 	opts := &tracking.QueryOptions{
-		StartDate:    &startTime,
-		EndDate:      &endTime,
-		ModelName:    params.Model,
-		Channel:      params.Channel, // v5.0: 渠道筛选
-		EndpointName: params.Endpoint,
-		GroupName:    params.Group,
-		Status:       params.Status,
-		Limit:        pageSize,
-		Offset:       offset,
+		StartDate:     &startTime,
+		EndDate:       &endTime,
+		ModelName:     params.Model,
+		RequestFamily: params.RequestFamily,
+		UpstreamName:  params.UpstreamName,
+		Status:        params.Status,
+		Limit:         pageSize,
+		Offset:        offset,
 	}
 	opts.UpstreamType = sourceViewToUpstreamType(params.SourceView)
 
@@ -398,9 +390,8 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 		record := RequestRecord{
 			RequestID:             r.RequestID,
 			Timestamp:             r.StartTime.Format("2006-01-02 15:04:05"),
-			Channel:               r.Channel, // v5.0: 渠道标签
+			RequestFamily:         r.RequestFamily,
 			Endpoint:              r.EndpointName,
-			Group:                 r.GroupName,
 			Model:                 r.ModelName,
 			Status:                r.Status,
 			RetryCount:            r.RetryCount,
@@ -459,15 +450,14 @@ type UsageStatsData struct {
 
 // UsageStatsQueryParams 使用统计查询参数
 type UsageStatsQueryParams struct {
-	Period     string `json:"period"`      // 时间周期: "1h", "1d", "7d", "30d", "90d"
-	StartDate  string `json:"start_date"`  // 开始时间（优先于 period）
-	EndDate    string `json:"end_date"`    // 结束时间（优先于 period）
-	Status     string `json:"status"`      // 可选：状态筛选
-	Model      string `json:"model"`       // 可选：模型筛选
-	Channel    string `json:"channel"`     // 可选：渠道筛选（v5.0）
-	Endpoint   string `json:"endpoint"`    // 可选：端点筛选
-	Group      string `json:"group"`       // 可选：组筛选
-	SourceView string `json:"source_view"` // 可选：endpoint/account/all，默认 endpoint
+	Period        string `json:"period"`     // 时间周期: "1h", "1d", "7d", "30d", "90d"
+	StartDate     string `json:"start_date"` // 开始时间（优先于 period）
+	EndDate       string `json:"end_date"`   // 结束时间（优先于 period）
+	Status        string `json:"status"`     // 可选：状态筛选
+	Model         string `json:"model"`      // 可选：模型筛选
+	RequestFamily string `json:"request_family"`
+	UpstreamName  string `json:"upstream_name"`
+	SourceView    string `json:"source_view"` // 可选：endpoint/account/all，默认 endpoint
 }
 
 // GetUsageStats 获取使用统计（与 HTTP API 格式一致）
@@ -537,14 +527,13 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 		defer cancel()
 
 		opts := &tracking.QueryOptions{
-			StartDate:    &startTime,
-			EndDate:      &endTime,
-			ModelName:    params.Model,
-			Channel:      params.Channel,
-			EndpointName: params.Endpoint,
-			GroupName:    params.Group,
-			UpstreamType: sourceViewToUpstreamType(normalizedSourceView),
-			Status:       params.Status,
+			StartDate:     &startTime,
+			EndDate:       &endTime,
+			ModelName:     params.Model,
+			RequestFamily: params.RequestFamily,
+			UpstreamName:  params.UpstreamName,
+			UpstreamType:  sourceViewToUpstreamType(normalizedSourceView),
+			Status:        params.Status,
 		}
 
 		stats, err := a.usageTracker.QueryAggregatedRequestStatsWithHotPool(ctx, opts)

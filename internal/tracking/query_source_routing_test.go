@@ -38,13 +38,13 @@ func insertEndpointRequestLog(t *testing.T, tracker *UsageTracker, requestID str
 
 	_, err := db.Exec(`
 		INSERT INTO request_logs (
-			request_id, start_time, status, upstream_type,
-			endpoint_name, group_name, model_name
-		) VALUES (?, ?, 'completed', 'endpoint', ?, ?, ?)`,
+			request_id, start_time, status, request_family, upstream_type,
+			endpoint_name, upstream_name, model_name
+		) VALUES (?, ?, 'completed', 'claude', 'endpoint', ?, ?, ?)`,
 		requestID,
 		startTime.Format("2006-01-02 15:04:05"),
 		"ep-"+requestID,
-		"grp-"+requestID,
+		"ep-"+requestID,
 		"gpt-4.1",
 	)
 	require.NoError(t, err)
@@ -57,15 +57,13 @@ func insertAccountRequestLog(t *testing.T, tracker *UsageTracker, requestID stri
 
 	_, err := db.Exec(`
 		INSERT INTO request_logs (
-			request_id, start_time, status, upstream_type,
-			channel, endpoint_name, group_name,
+			request_id, start_time, status, request_family, upstream_type,
+			endpoint_name,
 			upstream_source_name, upstream_name, upstream_id, model_name
-		) VALUES (?, ?, 'completed', 'account', ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, 'completed', 'codex', 'account', ?, ?, ?, ?, ?)`,
 		requestID,
 		startTime.Format("2006-01-02 15:04:05"),
-		"account-pool",
 		accountName,
-		"",
 		"",
 		accountName,
 		0,
@@ -102,7 +100,7 @@ func TestQueryRequestDetails_AccountSourceUsesRequestLogs(t *testing.T) {
 	assert.Equal(t, "account", accountDetails[0].UpstreamType)
 	assert.Equal(t, "", accountDetails[0].UpstreamSourceName)
 	assert.Equal(t, "acc-b", accountDetails[0].UpstreamName)
-	assert.Equal(t, "account-pool", accountDetails[0].Channel)
+	assert.Equal(t, RequestFamilyCodex, accountDetails[0].RequestFamily)
 
 	accountCount, err := tracker.CountRequestDetails(ctx, &QueryOptions{
 		UpstreamType: "account",

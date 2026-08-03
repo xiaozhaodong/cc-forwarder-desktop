@@ -11,19 +11,18 @@ import (
 // 请求在内存中保持活跃状态，只有完成时才归档到数据库
 type ActiveRequest struct {
 	// 基础信息（创建时设置，不变）
-	RequestID   string    `json:"request_id"`
-	StartTime   time.Time `json:"start_time"`
-	ClientIP    string    `json:"client_ip"`
-	UserAgent   string    `json:"user_agent"`
-	Method      string    `json:"method"`
-	Path        string    `json:"path"`
-	IsStreaming bool      `json:"is_streaming"`
+	RequestID     string    `json:"request_id"`
+	StartTime     time.Time `json:"start_time"`
+	ClientIP      string    `json:"client_ip"`
+	UserAgent     string    `json:"user_agent"`
+	Method        string    `json:"method"`
+	Path          string    `json:"path"`
+	RequestFamily string    `json:"request_family"`
+	IsStreaming   bool      `json:"is_streaming"`
 
 	// 可变状态（频繁更新）
 	Status             string `json:"status"`               // pending/forwarding/processing/completed/failed/cancelled
-	Channel            string `json:"channel"`              // 渠道标签（来自端点配置）
 	EndpointName       string `json:"endpoint_name"`        // 当前使用的端点
-	GroupName          string `json:"group_name"`           // 当前使用的组
 	UpstreamType       string `json:"upstream_type"`        // endpoint/account
 	UpstreamSourceName string `json:"upstream_source_name"` // 订阅源名（账号链路）或固定来源
 	UpstreamName       string `json:"upstream_name"`        // 账号名或端点名
@@ -274,6 +273,7 @@ func (hp *HotPool) CompleteAndArchive(requestID string, finalizer func(*ActiveRe
 	delete(hp.requests, requestID)
 	hp.archiving[requestID] = req
 	callback := hp.archiveCallback
+	currentSize := len(hp.requests)
 	hp.mu.Unlock()
 
 	// 应用最终更新
@@ -293,7 +293,7 @@ func (hp *HotPool) CompleteAndArchive(requestID string, finalizer func(*ActiveRe
 	hp.stats.mu.Lock()
 	hp.stats.TotalRemoved++
 	hp.stats.TotalArchived++
-	hp.stats.CurrentSize = len(hp.requests)
+	hp.stats.CurrentSize = currentSize
 	hp.stats.mu.Unlock()
 
 	// 调用归档回调
@@ -479,26 +479,34 @@ func (hp *HotPool) Close() error {
 			callback(req)
 		}
 	}
+	stats := hp.GetStats()
 
 	slog.Info("🔥 HotPool 已关闭",
 		"archived_remaining", remaining,
-		"total_added", hp.stats.TotalAdded,
-		"total_archived", hp.stats.TotalArchived)
+		"total_added", stats.TotalAdded,
+		"total_archived", stats.TotalArchived)
 
 	return nil
 }
 
-// NewActiveRequest 创建新的活跃请求
+// NewActiveRequest 创建默认 other 类型的活跃请求，供不关心入口类型的内部测试使用。
 func NewActiveRequest(requestID, clientIP, userAgent, method, path string, isStreaming bool) *ActiveRequest {
+	return NewActiveRequestWithFamily(requestID, clientIP, userAgent, method, path, RequestFamilyOther, isStreaming)
+}
+
+// NewActiveRequestWithFamily 创建带显式请求类型的活跃请求。
+func NewActiveRequestWithFamily(requestID, clientIP, userAgent, method, path, requestFamily string, isStreaming bool) *ActiveRequest {
+	requestFamily = normalizeRequestFamily(requestFamily)
 	return &ActiveRequest{
-		RequestID:    requestID,
-		StartTime:    time.Now(),
-		ClientIP:     clientIP,
-		UserAgent:    userAgent,
-		Method:       method,
-		Path:         path,
-		IsStreaming:  isStreaming,
-		Status:       "pending",
-		UpstreamType: "endpoint",
+		RequestID:     requestID,
+		StartTime:     time.Now(),
+		ClientIP:      clientIP,
+		UserAgent:     userAgent,
+		Method:        method,
+		Path:          path,
+		RequestFamily: requestFamily,
+		IsStreaming:   isStreaming,
+		Status:        "pending",
+		UpstreamType:  "endpoint",
 	}
 }
