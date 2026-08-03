@@ -53,21 +53,20 @@ const (
 
 // EndpointScheduleSnapshot 一次调度的完整决策快照（§4.5 观测）
 type EndpointScheduleSnapshot struct {
-	RequestID                 string                     `json:"request_id"`
-	CapturedAt                time.Time                  `json:"captured_at"`
-	UpdatedAt                 time.Time                  `json:"updated_at"`
-	RequestPath               string                     `json:"request_path"`
-	ActiveEndpointAtSelection string                     `json:"active_endpoint_at_selection"`
-	SelectedEndpoint          string                     `json:"selected_endpoint"`
-	RouteMode                 string                     `json:"route_mode"`
-	RouteEndpointName         string                     `json:"route_endpoint_name"`
-	RouteFallbackEnabled      bool                       `json:"route_fallback_enabled"`
-	FailoverEnabled           bool                       `json:"failover_enabled"`
-	CandidateAttemptBudget    int                        `json:"candidate_attempt_budget,omitempty"`
-	FinalOutcome              string                     `json:"final_outcome"`
-	FinalError                string                     `json:"final_error"`
-	Summary                   string                     `json:"summary"`
-	Decisions                 []EndpointScheduleDecision `json:"decisions"`
+	RequestID              string                     `json:"request_id"`
+	CapturedAt             time.Time                  `json:"captured_at"`
+	UpdatedAt              time.Time                  `json:"updated_at"`
+	RequestPath            string                     `json:"request_path"`
+	SelectedEndpoint       string                     `json:"selected_endpoint"`
+	RouteMode              string                     `json:"route_mode"`
+	RouteEndpointName      string                     `json:"route_endpoint_name"`
+	RouteFallbackEnabled   bool                       `json:"route_fallback_enabled"`
+	FailoverEnabled        bool                       `json:"failover_enabled"`
+	CandidateAttemptBudget int                        `json:"candidate_attempt_budget,omitempty"`
+	FinalOutcome           string                     `json:"final_outcome"`
+	FinalError             string                     `json:"final_error"`
+	Summary                string                     `json:"summary"`
+	Decisions              []EndpointScheduleDecision `json:"decisions"`
 }
 
 type endpointScheduleSnapshotEntry struct {
@@ -331,12 +330,10 @@ func (s *EndpointScheduleSnapshot) EarliestAvailableAt() time.Time {
 
 // EndpointScheduleResult 调度结果：不可变候选计划 + revision 快照（v8 §8.1/§14.1）
 type EndpointScheduleResult struct {
-	Candidates                []*Endpoint // 与 Plans 对齐；attempt 前必须经 AcquireEndpointAttempt 重校验
-	Plans                     []EndpointAttemptPlan
-	ActiveEndpointAtSelection string // v8：仅供快照展示（retained 或空），不再参与调度输入
-	ActiveRevision            int64  // v8：保留字段，恒为 0
-	RouteOverrideRevision     int64
-	Snapshot                  *EndpointScheduleSnapshot
+	Candidates            []*Endpoint // 与 Plans 对齐；attempt 前必须经 AcquireEndpointAttempt 重校验
+	Plans                 []EndpointAttemptPlan
+	RouteOverrideRevision int64
+	Snapshot              *EndpointScheduleSnapshot
 }
 
 // endpointScheduleCandidateSnapshot 是一次调度计算使用的端点值快照。
@@ -434,7 +431,6 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 			EndpointName:        candidate.config.Name,
 			Priority:            candidate.config.Priority,
 			URL:                 candidate.config.URL,
-			Channel:             candidate.config.Channel,
 			Timeout:             candidate.config.Timeout,
 			SupportsCountTokens: candidate.config.SupportsCountTokens,
 			ConfigRevision:      candidate.revision,
@@ -543,8 +539,6 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 		for _, candidate := range lowerTiers {
 			appendPlan(candidate, "fallback")
 		}
-		result.ActiveEndpointAtSelection = ""
-		result.Snapshot.ActiveEndpointAtSelection = ""
 	}
 
 	// §8.2：Failover.Enabled=false 时只保留第一个逻辑候选（不冻结后续请求）
@@ -601,9 +595,6 @@ func orderEndpointScheduleDecisions(decisions []EndpointScheduleDecision, plans 
 
 func (m *Manager) classifyEndpointSnapshotRoutable(candidate endpointScheduleCandidateSnapshot, profile RouteRequestProfile) (bool, string, time.Time) {
 	now := time.Now()
-	if !candidate.status.PausedUntil.IsZero() && now.Before(candidate.status.PausedUntil) {
-		return false, "paused", candidate.status.PausedUntil
-	}
 	blockingUntil := time.Time{}
 	if !candidate.status.GlobalCooldownUntil.IsZero() && now.Before(candidate.status.GlobalCooldownUntil) {
 		blockingUntil = candidate.status.GlobalCooldownUntil
@@ -636,15 +627,11 @@ func (m *Manager) classifyEndpointRoutable(ep *Endpoint, profile RouteRequestPro
 
 	ep.mutex.RLock()
 	name := ep.Config.Name
-	pausedUntil := ep.Status.PausedUntil
 	messagesCooldownUntil := ep.Status.CooldownUntil
 	globalCooldownUntil := ep.Status.GlobalCooldownUntil
 	ep.mutex.RUnlock()
 
 	now := time.Now()
-	if !pausedUntil.IsZero() && now.Before(pausedUntil) {
-		return false, "paused", pausedUntil
-	}
 	// global 槽阻断双 path；messages 槽不阻断 count_tokens（§14.4）
 	blockingUntil := time.Time{}
 	if !globalCooldownUntil.IsZero() && now.Before(globalCooldownUntil) {
@@ -680,9 +667,9 @@ func (m *Manager) sortEndpointCandidateSnapshots(ctx context.Context, rest []end
 		testEndpoints := make([]*Endpoint, 0, len(rest))
 		for _, candidate := range rest {
 			testConfig := cloneEndpointConfig(candidate.config)
-			// 强制命中快照凭据（即使为空），禁止 FastTester 再回查运行态组内继承。
-			testConfig.Token = ""
-			testConfig.Tokens = []config.TokenConfig{{Name: "schedule-snapshot", Value: candidate.token}}
+			// 强制命中快照凭据，禁止 FastTester 再回查运行态。
+			testConfig.Token = candidate.token
+			testConfig.ApiKey = candidate.apiKey
 			testEndpoints = append(testEndpoints, &Endpoint{Config: testConfig, Status: candidate.status})
 		}
 		results, _ := m.fastTester.TestEndpointsParallel(ctx, testEndpoints)

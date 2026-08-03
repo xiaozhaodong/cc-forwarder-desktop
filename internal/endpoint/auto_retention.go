@@ -38,7 +38,7 @@ func (m *Manager) UpdateAutoRetention(endpointName string, priority int, selecti
 		return false
 	}
 	ep := m.GetEndpointByNameAny(endpointName)
-	if ep == nil || !m.EndpointHardEnabled(ep) || !m.IsEndpointRoutable(ep) || ep.IsPaused() {
+	if ep == nil || !m.EndpointHardEnabled(ep) || !m.IsEndpointRoutable(ep) {
 		return false
 	}
 

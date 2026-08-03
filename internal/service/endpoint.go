@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -24,7 +25,6 @@ const endpointAdmissionDrainTimeout = 3 * time.Second
 type EndpointService struct {
 	store   store.EndpointStore
 	manager *endpoint.Manager
-	config  *config.Config
 }
 
 // NewEndpointService 创建端点服务实例
@@ -36,7 +36,6 @@ func NewEndpointService(
 	return &EndpointService{
 		store:   store,
 		manager: manager,
-		config:  cfg,
 	}
 }
 
@@ -86,15 +85,6 @@ func (s *EndpointService) ListEndpoints(ctx context.Context) ([]*store.EndpointR
 	records, err := s.store.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("列出端点失败: %w", err)
-	}
-	return records, nil
-}
-
-// ListEndpointsByChannel 按渠道列出端点
-func (s *EndpointService) ListEndpointsByChannel(ctx context.Context, channel string) ([]*store.EndpointRecord, error) {
-	records, err := s.store.ListByChannel(ctx, channel)
-	if err != nil {
-		return nil, fmt.Errorf("按渠道列出端点失败: %w", err)
 	}
 	return records, nil
 }
@@ -177,28 +167,18 @@ func (s *EndpointService) DeleteEndpoint(ctx context.Context, name string) error
 		slog.Warn("⚠️ 端点删除等待 in-flight attempt 排空超时，gate 继续生效", "endpoint", name)
 	}
 
-	if err := s.manager.DeleteEndpointCoordinated(name); err != nil {
+	if err := s.store.Delete(ctx, name); err != nil {
 		s.manager.SetPendingAvailabilityGate(name, false)
-		return err
+		return fmt.Errorf("删除端点数据库记录失败: %w", err)
+	}
+	if err := s.manager.RemoveEndpoint(name); err != nil {
+		s.manager.SetPendingAvailabilityGate(name, false)
+		return fmt.Errorf("删除端点运行态失败: %w", err)
 	}
 	s.manager.SetPendingAvailabilityGate(name, false)
 
 	slog.Info(fmt.Sprintf("✅ [EndpointService] 删除端点成功: %s", name))
 	return nil
-}
-
-// ToggleEndpoint 切换端点启用状态
-func (s *EndpointService) ToggleEndpoint(ctx context.Context, name string, enabled bool) error {
-	record, err := s.store.Get(ctx, name)
-	if err != nil {
-		return fmt.Errorf("获取端点失败: %w", err)
-	}
-	if record == nil {
-		return fmt.Errorf("端点 '%s' 不存在", name)
-	}
-
-	record.Enabled = enabled
-	return s.UpdateEndpoint(ctx, record)
 }
 
 // SetEndpointAvailability 更新硬启用状态（v8 §7.6：persist-then-publish）。
@@ -274,78 +254,8 @@ func (s *EndpointService) SetEndpointAutoSchedule(ctx context.Context, name stri
 	return nil
 }
 
-// DisableAllEndpoints 禁用所有端点
-// v5.0: 用于实现互斥激活（激活一个端点前先禁用所有）
-func (s *EndpointService) DisableAllEndpoints(ctx context.Context) error {
-	records, err := s.store.List(ctx)
-	if err != nil {
-		return fmt.Errorf("获取端点列表失败: %w", err)
-	}
-
-	// 批量更新所有端点为 enabled=false
-	for _, record := range records {
-		if record.Enabled {
-			record.Enabled = false
-			if err := s.store.Update(ctx, record); err != nil {
-				slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 禁用端点失败: %s - %v", record.Name, err))
-			}
-		}
-	}
-
-	slog.Info("🔄 [EndpointService] 已禁用所有端点（准备激活新端点）")
-	return nil
-}
-
-// ImportFromYAML 从 YAML 配置导入端点
-// clearExisting: 是否清除现有端点
-func (s *EndpointService) ImportFromYAML(ctx context.Context, endpoints []config.EndpointConfig, clearExisting bool) (int, error) {
-	// 先完成全部转换与校验，避免 clearExisting 后才发现新配置无效。
-	records := make([]*store.EndpointRecord, 0, len(endpoints))
-	for _, ep := range endpoints {
-		record := s.configToRecord(ep)
-		if err := s.validateRecord(record); err != nil {
-			return 0, fmt.Errorf("端点 %q 配置无效: %w", record.Name, err)
-		}
-		records = append(records, record)
-	}
-
-	if clearExisting {
-		// 清除现有端点
-		existing, err := s.store.List(ctx)
-		if err != nil {
-			return 0, fmt.Errorf("获取现有端点失败: %w", err)
-		}
-
-		names := make([]string, len(existing))
-		for i, ep := range existing {
-			names[i] = ep.Name
-		}
-
-		if len(names) > 0 {
-			if err := s.store.BatchDelete(ctx, names); err != nil {
-				return 0, fmt.Errorf("清除现有端点失败: %w", err)
-			}
-		}
-	}
-
-	if err := s.store.BatchCreate(ctx, records); err != nil {
-		return 0, fmt.Errorf("批量导入失败: %w", err)
-	}
-
-	// 重新加载到管理器
-	// 注意：这里简化处理，实际可能需要更精细的同步
-	for _, ep := range endpoints {
-		_ = s.manager.AddEndpoint(ep)
-	}
-
-	slog.Info(fmt.Sprintf("✅ [EndpointService] 从 YAML 导入 %d 个端点", len(records)))
-	return len(records), nil
-}
-
 // SyncFromDatabase 从数据库同步端点到管理器
-// v7 §4.6：启动恢复走仅内存 restore（0/1/N enabled 三态；多 enabled 脏数据同步修复）
 func (s *EndpointService) SyncFromDatabase(ctx context.Context) error {
-	// 获取所有端点（包括 enabled=false 的）
 	records, err := s.store.List(ctx)
 	if err != nil {
 		return fmt.Errorf("获取端点列表失败: %w", err)
@@ -355,33 +265,15 @@ func (s *EndpointService) SyncFromDatabase(ctx context.Context) error {
 
 	// 转换为配置数组
 	endpoints := make([]config.EndpointConfig, len(records))
-	var enabledRecords []endpoint.EnabledEndpointRecord
 	for i, record := range records {
 		if err := s.validateRecord(record); err != nil {
 			return fmt.Errorf("端点 %q 配置无效: %w", record.Name, err)
 		}
 		endpoints[i] = s.recordToConfig(record)
-		if record.Enabled {
-			enabledRecords = append(enabledRecords, endpoint.EnabledEndpointRecord{
-				Name:     record.Name,
-				Priority: record.Priority,
-				ID:       record.ID,
-			})
-		}
 	}
 
 	// 使用专门的同步方法（不走 UpdateConfig）
 	s.manager.SyncEndpoints(endpoints)
-
-	// 启动恢复：仅内存 restore，不写回刚读取的 DB；多 enabled 同步提交修复事务
-	active, degraded := s.manager.RestoreActiveFromEnabled(enabledRecords)
-	if degraded {
-		slog.Warn("⚠️ [EndpointService] 多 enabled 修复事务失败，进入 degraded 状态（修复任务后台重试中）")
-	}
-	if active != "" {
-		slog.Info(fmt.Sprintf("✅ [EndpointService] 启动恢复激活端点: %s", active))
-	}
-
 	return nil
 }
 
@@ -400,17 +292,16 @@ func (s *EndpointService) GetEndpointWithHealth(ctx context.Context, name string
 
 	result := map[string]interface{}{
 		"id":                                record.ID,
-		"channel":                           record.Channel,
 		"name":                              record.Name,
 		"url":                               record.URL,
 		"token_masked":                      maskToken(record.Token),
+		"api_key_masked":                    maskToken(record.ApiKey),
 		"priority":                          record.Priority,
 		"failover_enabled":                  record.FailoverEnabled,
 		"timeout_seconds":                   record.TimeoutSeconds,
 		"model_rewrite_rules":               record.ModelRewriteRules,
 		"cost_multiplier":                   record.CostMultiplier,
 		"cache_creation_cost_multiplier_1h": record.CacheCreationCostMultiplier1h,
-		"enabled":                           record.Enabled,
 		"availability_enabled":              record.IsAvailabilityEnabled(),
 		"created_at":                        record.CreatedAt,
 		"updated_at":                        record.UpdatedAt,
@@ -432,14 +323,32 @@ func (s *EndpointService) GetEndpointWithHealth(ctx context.Context, name string
 
 // validateRecord 验证端点记录
 func (s *EndpointService) validateRecord(record *store.EndpointRecord) error {
+	if record == nil {
+		return fmt.Errorf("端点配置不能为空")
+	}
+	record.Name = strings.TrimSpace(record.Name)
+	record.URL = strings.TrimSpace(record.URL)
 	if record.Name == "" {
 		return fmt.Errorf("端点名称不能为空")
 	}
 	if record.URL == "" {
 		return fmt.Errorf("端点 URL 不能为空")
 	}
-	if record.Channel == "" {
-		return fmt.Errorf("端点渠道不能为空")
+	parsedURL, err := url.Parse(record.URL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Hostname() == "" {
+		return fmt.Errorf("端点 URL 必须是有效的 HTTP 或 HTTPS 地址")
+	}
+	if record.Priority < 0 {
+		return fmt.Errorf("端点优先级不能小于 0")
+	}
+	if record.CostMultiplier <= 0 || record.InputCostMultiplier <= 0 || record.OutputCostMultiplier <= 0 ||
+		record.CacheCreationCostMultiplier <= 0 || record.CacheCreationCostMultiplier1h <= 0 || record.CacheReadCostMultiplier <= 0 {
+		return fmt.Errorf("端点成本倍率必须大于 0")
+	}
+	for key := range record.Headers {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("端点 Header 名称不能为空")
+		}
 	}
 	record.ModelRewriteRules = strings.TrimSpace(record.ModelRewriteRules)
 	if err := modelrewrite.ValidateExact(record.ModelRewriteRules, "/v1/messages", "/v1/messages/count_tokens"); err != nil {
@@ -453,7 +362,6 @@ func (s *EndpointService) recordToConfig(record *store.EndpointRecord) config.En
 	cfg := config.EndpointConfig{
 		Name:                record.Name,
 		URL:                 record.URL,
-		Channel:             record.Channel,
 		Priority:            record.Priority,
 		Token:               record.Token,
 		ApiKey:              record.ApiKey,
@@ -462,10 +370,6 @@ func (s *EndpointService) recordToConfig(record *store.EndpointRecord) config.En
 		SupportsCountTokens: record.SupportsCountTokens,
 		ModelRewriteRules:   record.ModelRewriteRules,
 	}
-
-	// v5.0: 设置 Enabled（是否作为代理端点）
-	enabled := record.Enabled
-	cfg.Enabled = &enabled
 
 	// 设置 FailoverEnabled（v8 语义：参与自动调度）
 	fe := record.FailoverEnabled
@@ -482,44 +386,6 @@ func (s *EndpointService) recordToConfig(record *store.EndpointRecord) config.En
 	}
 
 	return cfg
-}
-
-// configToRecord 将配置对象转换为数据库记录
-func (s *EndpointService) configToRecord(cfg config.EndpointConfig) *store.EndpointRecord {
-	record := &store.EndpointRecord{
-		Channel:             cfg.Name, // 默认使用名称作为渠道
-		Name:                cfg.Name,
-		URL:                 cfg.URL,
-		Token:               cfg.Token,
-		ApiKey:              cfg.ApiKey,
-		Headers:             cfg.Headers,
-		Priority:            cfg.Priority,
-		FailoverEnabled:     true, // 默认参与故障转移
-		TimeoutSeconds:      int(cfg.Timeout.Seconds()),
-		SupportsCountTokens: cfg.SupportsCountTokens,
-		ModelRewriteRules:   cfg.ModelRewriteRules,
-		CostMultiplier:      1.0,
-		Enabled:             true,
-	}
-
-	if cfg.FailoverEnabled != nil {
-		record.FailoverEnabled = *cfg.FailoverEnabled
-	}
-
-	// v8: 硬启用（nil 默认 true）
-	avail := cfg.IsAvailabilityEnabled()
-	record.AvailabilityEnabled = &avail
-
-	if cfg.Cooldown != nil {
-		cd := int(cfg.Cooldown.Seconds())
-		record.CooldownSeconds = &cd
-	}
-
-	if record.TimeoutSeconds == 0 {
-		record.TimeoutSeconds = 300 // 默认 5 分钟
-	}
-
-	return record
 }
 
 // maskToken 脱敏 Token

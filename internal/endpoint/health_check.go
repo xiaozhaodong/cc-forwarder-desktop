@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/utils"
 )
 
@@ -19,9 +20,34 @@ func (m *Manager) SetOnHealthCheckComplete(fn func()) {
 	m.onHealthCheckComplete = fn
 }
 
-// refreshGroupActivation 保留旧函数名，仅通知前端刷新。
-// v7 起激活状态由 activeEndpoint 单独管理，健康检查不得改写路由状态。
-func (m *Manager) refreshGroupActivation() {
+func (m *Manager) notifyWebInterface(endpoint *Endpoint) {
+	if m.eventBus == nil || endpoint == nil {
+		return
+	}
+	endpoint.mutex.RLock()
+	status := endpoint.Status
+	name := endpoint.Config.Name
+	endpoint.mutex.RUnlock()
+	eventType := events.EventEndpointHealthy
+	priority := events.PriorityHigh
+	if !status.Healthy {
+		eventType = events.EventEndpointUnhealthy
+		priority = events.PriorityCritical
+	}
+	m.eventBus.Publish(events.Event{
+		Type: eventType, Source: "endpoint_manager", Priority: priority,
+		Data: map[string]interface{}{
+			"endpoint": name, "healthy": status.Healthy,
+			"response_time":     utils.FormatResponseTime(status.ResponseTime),
+			"last_check":        status.LastCheck.Format("2006-01-02 15:04:05"),
+			"consecutive_fails": status.ConsecutiveFails,
+			"change_type":       "health_changed",
+		},
+	})
+}
+
+// notifyHealthCheckComplete 仅通知前端刷新，健康检查不改写用户路由模式。
+func (m *Manager) notifyHealthCheckComplete() {
 	if m.onHealthCheckComplete != nil {
 		go m.onHealthCheckComplete()
 	}
@@ -117,9 +143,9 @@ func (m *Manager) updateEndpointStatus(endpoint *Endpoint, healthy bool, respons
 	// 通知Web界面端点状态变化
 	go m.notifyWebInterface(endpoint)
 
-	// 最近检测结果从不可达转为可达时通知前端刷新，不改写 activeEndpoint。
+	// 最近检测结果从不可达转为可达时通知前端刷新，不改写用户路由模式。
 	if healthy && wasUnhealthy {
-		go m.refreshGroupActivation()
+		go m.notifyHealthCheckComplete()
 	}
 }
 

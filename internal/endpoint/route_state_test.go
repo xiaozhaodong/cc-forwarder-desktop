@@ -91,11 +91,10 @@ func TestNegativeHitCacheExpiredEntriesDoNotHit(t *testing.T) {
 }
 
 func TestGetManualFixedRouteBlockUsesHardAvailability(t *testing.T) {
-	legacyEnabled := true
 	hardEnabled := false
 	manager := newSchedulerTestManager(t, &config.Config{Endpoints: []config.EndpointConfig{{
 		Name: "fixed", URL: "https://example.com", Priority: 1,
-		Enabled: &legacyEnabled, AvailabilityEnabled: &hardEnabled,
+		AvailabilityEnabled: &hardEnabled,
 	}}})
 	manager.SetClaudeRoutingOverride(RouteOverrideState{Mode: RouteModeManualFixed, EndpointName: "fixed"})
 

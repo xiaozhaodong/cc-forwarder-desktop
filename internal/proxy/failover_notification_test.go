@@ -122,11 +122,10 @@ func TestEndpointPipeline_EmitsFailoverEventForActualCandidateSwitch(t *testing.
 	}))
 	t.Cleanup(backup.Close)
 
-	handler, manager := newEndpointPipelineTestHandler(t,
+	handler, _ := newEndpointPipelineTestHandler(t,
 		endpointPipelineConfig("primary", endpointPipelineClosedURL(t), 1),
 		endpointPipelineConfig("backup", backup.URL, 2),
 	)
-	manager.RestoreActiveEndpoint("primary")
 	events := make(chan FailoverEvent, 1)
 	handler.SetOnFailoverTriggered(func(event FailoverEvent) { events <- event })
 

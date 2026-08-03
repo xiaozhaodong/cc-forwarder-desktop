@@ -212,20 +212,3 @@ func (m *Manager) RestoreEndpointCooldown(name, scope string, until time.Time, r
 		ep.Status.CooldownReason = reason
 	}
 }
-
-// PauseEndpoint 手动暂停端点至指定时刻（兼容层 ManualPauseGroup 语义）
-func (m *Manager) PauseEndpoint(name string, until time.Time) bool {
-	ep := m.GetEndpointByNameAny(name)
-	if ep == nil {
-		return false
-	}
-	ep.mutex.Lock()
-	ep.Status.PausedUntil = until
-	ep.mutex.Unlock()
-	return true
-}
-
-// ResumeEndpoint 清除端点手动暂停状态
-func (m *Manager) ResumeEndpoint(name string) bool {
-	return m.PauseEndpoint(name, time.Time{})
-}

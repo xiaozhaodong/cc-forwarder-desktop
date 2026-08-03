@@ -15,7 +15,6 @@ type EndpointAttemptPlan struct {
 	EndpointName        string        `json:"endpoint_name"`
 	Priority            int           `json:"priority"`
 	URL                 string        `json:"url"`
-	Channel             string        `json:"channel"`
 	Timeout             time.Duration `json:"timeout"`
 	SupportsCountTokens bool          `json:"supports_count_tokens"`
 	ConfigRevision      int64         `json:"config_revision"`
@@ -29,8 +28,6 @@ type EndpointAttemptPlan struct {
 type EndpointAttemptTarget struct {
 	name                string
 	url                 string
-	channel             string
-	group               string
 	priority            int
 	timeout             time.Duration
 	headers             map[string]string
@@ -46,20 +43,6 @@ func (t *EndpointAttemptTarget) Name() string {
 		return ""
 	}
 	return t.name
-}
-
-func (t *EndpointAttemptTarget) Group() string {
-	if t == nil {
-		return ""
-	}
-	return t.group
-}
-
-func (t *EndpointAttemptTarget) Channel() string {
-	if t == nil {
-		return ""
-	}
-	return t.channel
 }
 
 func (t *EndpointAttemptTarget) Priority() int {
@@ -89,8 +72,6 @@ func (t *EndpointAttemptTarget) Config() config.EndpointConfig {
 	return config.EndpointConfig{
 		Name:                t.name,
 		URL:                 t.url,
-		Channel:             t.channel,
-		Group:               t.group,
 		Priority:            t.priority,
 		Timeout:             t.timeout,
 		Headers:             cloneStringMap(t.headers),
@@ -175,8 +156,6 @@ func (m *Manager) AcquireEndpointAttempt(plan EndpointAttemptPlan) (*AttemptAdmi
 	target := &EndpointAttemptTarget{
 		name:                configSnapshot.Name,
 		url:                 configSnapshot.URL,
-		channel:             configSnapshot.Channel,
-		group:               configSnapshot.Group,
 		priority:            configSnapshot.Priority,
 		timeout:             configSnapshot.Timeout,
 		headers:             cloneStringMap(configSnapshot.Headers),
@@ -226,8 +205,6 @@ func (m *Manager) ApplyEndpointAttemptSettlement(endpointName string, expectedRe
 func cloneEndpointConfig(src config.EndpointConfig) config.EndpointConfig {
 	clone := src
 	clone.Headers = cloneStringMap(src.Headers)
-	clone.Tokens = append([]config.TokenConfig(nil), src.Tokens...)
-	clone.ApiKeys = append([]config.ApiKeyConfig(nil), src.ApiKeys...)
 	if src.FailoverEnabled != nil {
 		value := *src.FailoverEnabled
 		clone.FailoverEnabled = &value
@@ -235,10 +212,6 @@ func cloneEndpointConfig(src config.EndpointConfig) config.EndpointConfig {
 	if src.Cooldown != nil {
 		value := *src.Cooldown
 		clone.Cooldown = &value
-	}
-	if src.Enabled != nil {
-		value := *src.Enabled
-		clone.Enabled = &value
 	}
 	if src.AvailabilityEnabled != nil {
 		value := *src.AvailabilityEnabled
@@ -258,61 +231,10 @@ func cloneStringMap(src map[string]string) map[string]string {
 	return clone
 }
 
-// resolveAttemptCredentials 把多凭据索引与兼容性的组内单凭据继承收敛为本次固定值。
-// 返回后转发链路不再访问 KeyManager 或其他端点配置。
+// resolveAttemptCredentials 从端点值快照读取本次固定凭据。
+// 返回后转发链路不再访问任何运行态凭据选择器或其他端点配置。
 func (m *Manager) resolveAttemptCredentials(cfg config.EndpointConfig) (string, string) {
-	token := cfg.Token
-	if len(cfg.Tokens) > 0 {
-		activeIndex := m.keyManager.GetActiveTokenIndex(cfg.Name)
-		if activeIndex < 0 || activeIndex >= len(cfg.Tokens) {
-			activeIndex = 0
-		}
-		token = cfg.Tokens[activeIndex].Value
-	}
-
-	apiKey := cfg.ApiKey
-	if len(cfg.ApiKeys) > 0 {
-		activeIndex := m.keyManager.GetActiveApiKeyIndex(cfg.Name)
-		if activeIndex < 0 || activeIndex >= len(cfg.ApiKeys) {
-			activeIndex = 0
-		}
-		apiKey = cfg.ApiKeys[activeIndex].Value
-	}
-
-	if token != "" && apiKey != "" {
-		return token, apiKey
-	}
-	groupName := cfg.Group
-	if groupName == "" {
-		groupName = "Default"
-	}
-
-	m.endpointsMu.RLock()
-	defer m.endpointsMu.RUnlock()
-	for _, candidate := range m.endpoints {
-		candidate.mutex.RLock()
-		candidateGroup := candidate.Config.Group
-		if candidateGroup == "" {
-			candidateGroup = "Default"
-		}
-		candidateToken := candidate.Config.Token
-		candidateAPIKey := candidate.Config.ApiKey
-		candidate.mutex.RUnlock()
-
-		if candidateGroup != groupName {
-			continue
-		}
-		if token == "" && candidateToken != "" {
-			token = candidateToken
-		}
-		if apiKey == "" && candidateAPIKey != "" {
-			apiKey = candidateAPIKey
-		}
-		if token != "" && apiKey != "" {
-			break
-		}
-	}
-	return token, apiKey
+	return cfg.Token, cfg.ApiKey
 }
 
 // WaitAdmissionsDrained 供 disable/delete 等待已取得的 admission 退出；

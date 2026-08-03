@@ -143,14 +143,10 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTestForRoute(ctx context.Contex
 	return m.PrepareRouteCandidates(ctx, profile).Candidates
 }
 
-// GetEndpointByName 返回当前 active 且可路由的同名端点。
+// GetEndpointByName 返回可路由的同名端点。
 func (m *Manager) GetEndpointByName(name string) *Endpoint {
-	activeName, _ := m.GetActiveEndpointSelection()
-	if activeName != name {
-		return nil
-	}
 	endpoint := m.GetEndpointByNameAny(name)
-	if endpoint == nil || !m.IsEndpointRoutable(endpoint) || endpoint.IsPaused() {
+	if endpoint == nil || !m.IsEndpointRoutable(endpoint) {
 		return nil
 	}
 	return endpoint

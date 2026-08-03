@@ -53,11 +53,9 @@ func skippedReason(t *testing.T, result EndpointScheduleResult, name string) (st
 	return "", time.Time{}
 }
 
-// [Phase3 §8.2/§8.3] priority 层级序：legacy active 不再压过更高优先级端点；
-// retained 只在同层内提供粘性
+// [Phase3 §8.2/§8.3] priority 层级序；retained 只在同层内提供粘性。
 func TestPrepareRouteCandidates_PriorityTierOrder(t *testing.T) {
 	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "a", "b", "c"))
-	manager.RestoreActiveEndpoint("c") // v8：不影响候选顺序
 
 	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
 	if got := candidateNames(result); len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
@@ -119,22 +117,15 @@ func TestUpdateAutoRetentionIgnoresManualTargetButKeepsPreferredFallback(t *test
 }
 
 func TestPrepareRouteCandidates_FiltersWithAvailableAtSources(t *testing.T) {
-	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "active-ep", "cooling", "paused", "tripped", "negcached", "ok"))
-	manager.RestoreActiveEndpoint("active-ep")
+	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "active-ep", "cooling", "tripped", "negcached", "ok"))
 
 	now := time.Now()
 	cooldownUntil := now.Add(10 * time.Minute)
-	pausedUntil := now.Add(30 * time.Minute)
 
 	cooling := manager.GetEndpointByNameAny("cooling")
 	cooling.mutex.Lock()
 	cooling.Status.CooldownUntil = cooldownUntil
 	cooling.mutex.Unlock()
-
-	paused := manager.GetEndpointByNameAny("paused")
-	paused.mutex.Lock()
-	paused.Status.PausedUntil = pausedUntil
-	paused.mutex.Unlock()
 
 	// v8：软失败阈值触发即写入 cooldown，tripped 状态以 cooldown 表达（§9.3）
 	trippedUntil := now.Add(3 * time.Minute)
@@ -155,9 +146,6 @@ func TestPrepareRouteCandidates_FiltersWithAvailableAtSources(t *testing.T) {
 	if reason, availableAt := skippedReason(t, result, "cooling"); reason != "cooldown" || !availableAt.Equal(cooldownUntil) {
 		t.Fatalf("cooling: got reason=%q availableAt=%v", reason, availableAt)
 	}
-	if reason, availableAt := skippedReason(t, result, "paused"); reason != "paused" || !availableAt.Equal(pausedUntil) {
-		t.Fatalf("paused: got reason=%q availableAt=%v", reason, availableAt)
-	}
 	if reason, availableAt := skippedReason(t, result, "tripped"); reason != "cooldown" || !availableAt.Equal(trippedUntil) {
 		t.Fatalf("tripped: got reason=%q availableAt=%v", reason, availableAt)
 	}
@@ -165,7 +153,7 @@ func TestPrepareRouteCandidates_FiltersWithAvailableAtSources(t *testing.T) {
 		t.Fatalf("negcached: got reason=%q availableAt=%v", reason, availableAt)
 	}
 
-	// 各来源中最早的是 tripped 的 3m 软失败冷却，早于 10m 冷却与 30m 暂停
+	// 各来源中最早的是 tripped 的 3m 软失败冷却，早于 10m 冷却。
 	if earliest := result.Snapshot.EarliestAvailableAt(); !earliest.Equal(trippedUntil) {
 		t.Fatalf("expected earliest availableAt from tripped cooldown (3m), got %v", earliest)
 	}
@@ -193,7 +181,6 @@ func TestPrepareRouteCandidates_FailoverDisabledSingleCandidate(t *testing.T) {
 
 func TestPrepareRouteCandidates_ManualFixedOnlyTarget(t *testing.T) {
 	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "a", "b", "c"))
-	manager.RestoreActiveEndpoint("a")
 	manager.SetClaudeRoutingOverride(RouteOverrideState{Mode: RouteModeManualFixed, EndpointName: "c"})
 
 	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
@@ -227,7 +214,6 @@ func TestPrepareRouteCandidates_ManualFixedOnlyTarget(t *testing.T) {
 
 func TestEndpointScheduleSnapshot_RecordsAttemptsAndFinalOutcome(t *testing.T) {
 	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "primary", "backup"))
-	manager.RestoreActiveEndpoint("primary")
 
 	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
 	manager.BeginEndpointScheduleSnapshot("req-snapshot", "/v1/messages", result.Snapshot)
@@ -270,7 +256,6 @@ func TestEndpointScheduleSnapshot_RecordsAttemptsAndFinalOutcome(t *testing.T) {
 
 func TestEndpointScheduleSnapshot_OlderCompletionDoesNotReplaceNewerRequest(t *testing.T) {
 	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "a", "b"))
-	manager.RestoreActiveEndpoint("a")
 
 	oldResult := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
 	manager.BeginEndpointScheduleSnapshot("req-old", "/v1/messages", oldResult.Snapshot)
@@ -291,23 +276,21 @@ func TestEndpointScheduleSnapshot_OlderCompletionDoesNotReplaceNewerRequest(t *t
 	}
 }
 
-func TestBeginEndpointScheduleSnapshotNilDoesNotExposeLegacyActive(t *testing.T) {
-	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "legacy"))
-	manager.RestoreActiveEndpoint("legacy")
+func TestBeginEndpointScheduleSnapshotNilCreatesSnapshot(t *testing.T) {
+	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "endpoint"))
 	manager.BeginEndpointScheduleSnapshot("req-rejected", "/v1/messages", nil)
 
 	snapshot := manager.GetLatestEndpointScheduleSnapshot()
 	if snapshot == nil {
 		t.Fatal("expected snapshot")
 	}
-	if snapshot.ActiveEndpointAtSelection != "" {
-		t.Fatalf("legacy active must not appear in v8 snapshot, got %q", snapshot.ActiveEndpointAtSelection)
+	if snapshot.RequestID != "req-rejected" || snapshot.RequestPath != "/v1/messages" {
+		t.Fatalf("snapshot identity = %q/%q", snapshot.RequestID, snapshot.RequestPath)
 	}
 }
 
 func TestPrepareRouteCandidates_ManualPreferredMovesTargetFirst(t *testing.T) {
 	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "a", "b", "c"))
-	manager.RestoreActiveEndpoint("a")
 	manager.SetClaudeRoutingOverride(RouteOverrideState{Mode: RouteModeManualPreferred, EndpointName: "c"})
 
 	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
@@ -325,7 +308,6 @@ func TestPrepareRouteCandidates_FailoverDisabledEndpointExcluded(t *testing.T) {
 	cfg.Endpoints[2].FailoverEnabled = &disabled
 
 	manager := newSchedulerTestManager(t, cfg)
-	manager.RestoreActiveEndpoint("a")
 
 	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{})
 	if got := candidateNames(result); len(got) != 2 || got[0] != "a" || got[1] != "b" {

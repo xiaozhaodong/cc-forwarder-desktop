@@ -15,7 +15,6 @@ import (
 const (
 	EventSystemStatus   = "system:status"
 	EventEndpointUpdate = "endpoint:update"
-	EventGroupUpdate    = "group:update"
 	EventUsageUpdate    = "usage:update"
 	EventRequestUpdate  = "request:update"
 	EventConfigReloaded = "config:reloaded"
@@ -68,16 +67,6 @@ func (a *App) emitEndpointUpdate() {
 	}
 
 	runtime.EventsEmit(a.ctx, EventEndpointUpdate, data)
-}
-
-// emitGroupUpdate 发送组状态更新到前端
-func (a *App) emitGroupUpdate() {
-	if a.ctx == nil {
-		return
-	}
-
-	groups := a.GetGroups()
-	runtime.EventsEmit(a.ctx, EventGroupUpdate, groups)
 }
 
 // emitUsageUpdate 发送使用统计更新到前端

@@ -29,17 +29,6 @@ func (m *Manager) SyncEndpoints(configs []config.EndpointConfig) {
 			},
 			configRevision: NextEndpointConfigRevision(),
 		}
-
-		// 初始化 Key 管理状态
-		tokenCount := len(cfg.Tokens)
-		if tokenCount == 0 && cfg.Token != "" {
-			tokenCount = 1
-		}
-		apiKeyCount := len(cfg.ApiKeys)
-		if apiKeyCount == 0 && cfg.ApiKey != "" {
-			apiKeyCount = 1
-		}
-		m.keyManager.InitEndpoint(cfg.Name, tokenCount, apiKeyCount)
 	}
 
 	// 使用写锁替换端点列表
@@ -75,17 +64,6 @@ func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
 		},
 		configRevision: NextEndpointConfigRevision(),
 	}
-
-	// 初始化 Key 管理状态
-	tokenCount := len(cfg.Tokens)
-	if tokenCount == 0 && cfg.Token != "" {
-		tokenCount = 1
-	}
-	apiKeyCount := len(cfg.ApiKeys)
-	if apiKeyCount == 0 && cfg.ApiKey != "" {
-		apiKeyCount = 1
-	}
-	m.keyManager.InitEndpoint(cfg.Name, tokenCount, apiKeyCount)
 
 	// 使用写锁添加端点
 	m.endpointsMu.Lock()
@@ -140,9 +118,6 @@ func (m *Manager) RemoveEndpoint(name string) error {
 	removedURL := removedEndpoint.Config.URL
 	removedEndpoint.mutex.RUnlock()
 	m.endpointsMu.Unlock()
-
-	// 清理 KeyManager 状态
-	m.keyManager.RemoveEndpoint(name)
 
 	// 清理软失败记录（避免内存泄漏）
 	if m.softFailures != nil {
@@ -205,16 +180,6 @@ func (m *Manager) UpdateEndpointConfig(name string, cfg config.EndpointConfig) e
 	targetEndpoint.configRevision = NextEndpointConfigRevision()
 	targetEndpoint.mutex.Unlock()
 
-	// 更新 Key 管理状态
-	tokenCount := len(cfg.Tokens)
-	if tokenCount == 0 && cfg.Token != "" {
-		tokenCount = 1
-	}
-	apiKeyCount := len(cfg.ApiKeys)
-	if apiKeyCount == 0 && cfg.ApiKey != "" {
-		apiKeyCount = 1
-	}
-	m.keyManager.UpdateEndpointKeyCount(name, tokenCount, apiKeyCount)
 	m.endpointConfigMu.Unlock()
 
 	// 发布事件通知

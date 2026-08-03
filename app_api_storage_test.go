@@ -24,7 +24,6 @@ func TestCreateEndpointRecord_PersistsModelRewriteRulesAndCacheCreationCostMulti
 	availabilityEnabled := false
 
 	input := CreateEndpointInput{
-		Channel:                       "openai",
 		Name:                          "ep-cache-1h",
 		URL:                           "https://api.example.com",
 		Token:                         "sk-test-token",
@@ -116,7 +115,6 @@ func TestCreateEndpointRecord_DefaultsAvailabilityEnabledToTrue(t *testing.T) {
 	defer cleanup()
 
 	if err := app.CreateEndpointRecord(CreateEndpointInput{
-		Channel:         "default-availability",
 		Name:            "default-availability",
 		URL:             "https://default.example.com",
 		Priority:        1,
@@ -137,7 +135,6 @@ func TestCreateEndpointRecord_DefaultsAvailabilityEnabledToTrue(t *testing.T) {
 
 	availabilityEnabled := false
 	if err := app.UpdateEndpointRecord("default-availability", CreateEndpointInput{
-		Channel:             "default-availability",
 		URL:                 "https://default.example.com",
 		Priority:            1,
 		TimeoutSeconds:      30,
@@ -160,15 +157,15 @@ func TestCreateEndpointRecord_DefaultsAvailabilityEnabledToTrue(t *testing.T) {
 	}
 }
 
-func TestImportFromYAML_InvalidModelRewriteRulesDoesNotClearExistingEndpoints(t *testing.T) {
+func TestUpdateEndpointRecord_SecretEditRequiresExplicitClear(t *testing.T) {
 	app, cleanup := newEndpointStorageAPITestApp(t)
 	defer cleanup()
 
 	if err := app.CreateEndpointRecord(CreateEndpointInput{
-		Channel:         "existing",
 		Name:            "existing-endpoint",
 		URL:             "https://existing.example.com",
 		Token:           "sk-existing",
+		ApiKey:          "api-existing",
 		Priority:        1,
 		TimeoutSeconds:  30,
 		CostMultiplier:  1,
@@ -177,23 +174,40 @@ func TestImportFromYAML_InvalidModelRewriteRulesDoesNotClearExistingEndpoints(t 
 		t.Fatalf("create existing endpoint failed: %v", err)
 	}
 
-	_, err := app.endpointService.ImportFromYAML(context.Background(), []config.EndpointConfig{{
-		Name:              "invalid-endpoint",
-		URL:               "https://invalid.example.com",
-		Priority:          1,
-		Timeout:           30 * time.Second,
-		ModelRewriteRules: `[{"paths":["/v1/messages"],"match":"exact","from":"source","to":"target"}]`,
-	}}, true)
-	if err == nil {
-		t.Fatal("expected invalid YAML model rewrite rules to fail")
+	baseUpdate := CreateEndpointInput{
+		URL:             "https://updated.example.com",
+		Priority:        2,
+		TimeoutSeconds:  30,
+		FailoverEnabled: true,
+	}
+	if err := app.UpdateEndpointRecord("existing-endpoint", baseUpdate); err != nil {
+		t.Fatalf("update while preserving secrets failed: %v", err)
+	}
+	preserved, err := app.endpointService.GetEndpoint(context.Background(), "existing-endpoint")
+	if err != nil {
+		t.Fatalf("get endpoint after preserving secrets failed: %v", err)
+	}
+	if preserved.Token != "sk-existing" || preserved.ApiKey != "api-existing" {
+		t.Fatalf("empty secret fields must preserve stored values: token=%q api_key=%q", preserved.Token, preserved.ApiKey)
 	}
 
-	records, listErr := app.endpointService.ListEndpoints(context.Background())
-	if listErr != nil {
-		t.Fatalf("list endpoints after failed import: %v", listErr)
+	baseUpdate.ClearToken = true
+	baseUpdate.ClearApiKey = true
+	if err := app.UpdateEndpointRecord("existing-endpoint", baseUpdate); err != nil {
+		t.Fatalf("explicit secret clear failed: %v", err)
 	}
-	if len(records) != 1 || records[0].Name != "existing-endpoint" {
-		t.Fatalf("existing endpoints must survive failed import, got %+v", records)
+	cleared, err := app.endpointService.GetEndpoint(context.Background(), "existing-endpoint")
+	if err != nil {
+		t.Fatalf("get endpoint after clear failed: %v", err)
+	}
+	if cleared.Token != "" || cleared.ApiKey != "" {
+		t.Fatalf("explicit clear must remove stored secrets: token=%q api_key=%q", cleared.Token, cleared.ApiKey)
+	}
+
+	conflicting := baseUpdate
+	conflicting.Token = "replacement"
+	if err := app.UpdateEndpointRecord("existing-endpoint", conflicting); err == nil {
+		t.Fatal("setting and clearing token in one update must fail")
 	}
 }
 
@@ -215,32 +229,30 @@ func newEndpointStorageAPITestApp(t *testing.T) (*App, func()) {
 	schema := `
 		CREATE TABLE IF NOT EXISTS endpoints (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			channel TEXT NOT NULL,
 			name TEXT UNIQUE NOT NULL,
 			url TEXT NOT NULL,
-			token TEXT,
-			api_key TEXT,
-			headers TEXT,
-			priority INTEGER DEFAULT 1,
-			failover_enabled INTEGER DEFAULT 1,
+			token TEXT NOT NULL DEFAULT '',
+			api_key TEXT NOT NULL DEFAULT '',
+			headers TEXT NOT NULL DEFAULT '{}',
+			priority INTEGER NOT NULL DEFAULT 1 CHECK(priority >= 0),
+			failover_enabled INTEGER NOT NULL DEFAULT 1,
 			cooldown_seconds INTEGER,
-			timeout_seconds INTEGER DEFAULT 300,
-			supports_count_tokens INTEGER DEFAULT 0,
-			model_rewrite_rules TEXT DEFAULT '',
-			cost_multiplier REAL DEFAULT 1.0,
-			input_cost_multiplier REAL DEFAULT 1.0,
-			output_cost_multiplier REAL DEFAULT 1.0,
-			cache_creation_cost_multiplier REAL DEFAULT 1.0,
-			cache_creation_cost_multiplier_1h REAL DEFAULT 1.0,
-			cache_read_cost_multiplier REAL DEFAULT 1.0,
-			enabled INTEGER DEFAULT 1,
+			timeout_seconds INTEGER NOT NULL DEFAULT 300,
+			supports_count_tokens INTEGER NOT NULL DEFAULT 0,
+			model_rewrite_rules TEXT NOT NULL DEFAULT '',
+			cost_multiplier REAL NOT NULL DEFAULT 1.0,
+			input_cost_multiplier REAL NOT NULL DEFAULT 1.0,
+			output_cost_multiplier REAL NOT NULL DEFAULT 1.0,
+			cache_creation_cost_multiplier REAL NOT NULL DEFAULT 1.0,
+			cache_creation_cost_multiplier_1h REAL NOT NULL DEFAULT 1.0,
+			cache_read_cost_multiplier REAL NOT NULL DEFAULT 1.0,
 			availability_enabled INTEGER NOT NULL DEFAULT 1,
-			created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-			updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+			created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+			updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
 		);
-		CREATE INDEX IF NOT EXISTS idx_endpoints_channel ON endpoints(channel);
 		CREATE INDEX IF NOT EXISTS idx_endpoints_priority ON endpoints(priority);
-		CREATE INDEX IF NOT EXISTS idx_endpoints_enabled ON endpoints(enabled);
+		CREATE INDEX IF NOT EXISTS idx_endpoints_failover ON endpoints(failover_enabled);
+		CREATE INDEX IF NOT EXISTS idx_endpoints_availability ON endpoints(availability_enabled);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()

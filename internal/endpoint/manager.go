@@ -4,8 +4,6 @@
 // - endpoint_selection.go: 端点选择/路由
 // - endpoint_crud.go: 动态端点管理
 // - failover.go: 故障转移
-// - key_switch.go: Key 切换
-// - notification.go: 通知相关
 
 package endpoint
 
@@ -39,7 +37,6 @@ type EndpointStatus struct {
 	CooldownReason       string    // messages scope 冷却原因
 	GlobalCooldownUntil  time.Time // global scope 冷却截止时间
 	GlobalCooldownReason string    // global scope 冷却原因
-	PausedUntil          time.Time // 手动暂停截止时间（零值=未暂停；到期读取时自愈）
 }
 
 // EffectiveCooldown 返回当前生效冷却中截止最晚的一条（展示与 messages path 判定口径）
@@ -81,18 +78,11 @@ func (e *Endpoint) IsInCooldown() bool {
 	return active
 }
 
-// IsPaused 检查端点是否处于手动暂停状态（PausedUntil 到期自动视为恢复）
-func (e *Endpoint) IsPaused() bool {
-	e.mutex.RLock()
-	defer e.mutex.RUnlock()
-	return !e.Status.PausedUntil.IsZero() && time.Now().Before(e.Status.PausedUntil)
-}
-
 // Manager manages endpoints and their health status
 type Manager struct {
 	endpoints           []*Endpoint
 	endpointsMu         sync.RWMutex // v5.0+: 保护 endpoints 切片的并发访问
-	endpointConfigMu    sync.RWMutex // v8：配置/revision/KeyManager 发布与 attempt 结算的 generation barrier
+	endpointConfigMu    sync.RWMutex // v8：配置/revision 发布与 attempt 结算的 generation barrier
 	configMu            sync.RWMutex
 	config              *config.Config
 	client              *http.Client
@@ -100,7 +90,6 @@ type Manager struct {
 	cancel              context.CancelFunc
 	wg                  sync.WaitGroup
 	fastTester          *FastTester
-	keyManager          *KeyManager         // 管理多 API Key 状态
 	softFailures        *SoftFailureTracker // 分类软失败追踪器（§9.3）
 	pendingGates        *pendingGateSet     // §7.6 停用中的安全阻断 gate
 	autoRetention       *autoRetentionState // §8.4 Auto retained 运行态
@@ -121,13 +110,11 @@ type Manager struct {
 	// 故障转移回调（用于同步数据库）
 	// 参数: failedEndpoint 失败的端点名, newEndpoint 新激活的端点名
 	onFailoverTriggered func(failedEndpoint, newEndpoint string)
+}
 
-	// v7 重构：activeEndpoint 单一权威状态（Phase 3 新增，Phase 4 接线）
-	// 所有变更统一走 active_state.go 的各档入口，持久化经 runtimeWriter。
-	activeMu       sync.Mutex
-	activeEndpoint string
-	activeRevision int64
-	runtimeWriter  *RuntimeWriter
+// SetEventBus 设置端点健康状态事件总线。
+func (m *Manager) SetEventBus(eventBus events.EventBus) {
+	m.eventBus = eventBus
 }
 
 // NewManager creates a new endpoint manager
@@ -151,7 +138,6 @@ func NewManager(cfg *config.Config) *Manager {
 		ctx:               ctx,
 		cancel:            cancel,
 		fastTester:        NewFastTester(cfg),
-		keyManager:        NewKeyManager(), // 初始化 Key 管理器
 		routeOverride:     NewRouteOverride(),
 		pendingGates:      newPendingGateSet(),
 		autoRetention:     newAutoRetentionState(),
@@ -176,17 +162,6 @@ func NewManager(cfg *config.Config) *Manager {
 			configRevision: NextEndpointConfigRevision(),
 		}
 		manager.endpoints = append(manager.endpoints, endpoint)
-
-		// 初始化端点的 Key 状态
-		tokenCount := len(endpointCfg.Tokens)
-		if tokenCount == 0 && endpointCfg.Token != "" {
-			tokenCount = 1 // 单 Token 算作 1 个
-		}
-		apiKeyCount := len(endpointCfg.ApiKeys)
-		if apiKeyCount == 0 && endpointCfg.ApiKey != "" {
-			apiKeyCount = 1 // 单 API Key 算作 1 个
-		}
-		manager.keyManager.InitEndpoint(endpointCfg.Name, tokenCount, apiKeyCount)
 	}
 
 	// Set manager reference in fast tester for dynamic token resolution
@@ -240,96 +215,24 @@ func (m *Manager) UpdateConfig(cfg *config.Config) {
 	}
 }
 
-// GetTokenForEndpoint dynamically resolves the token for an endpoint
-// If the endpoint has its own token, return it
-// If not, find the first endpoint in the same group that has a token
-// 支持多 Token 配置：优先使用 tokens 数组中当前激活的 Token
+// GetTokenForEndpoint 返回端点自身的单 Token。
 func (m *Manager) GetTokenForEndpoint(ep *Endpoint) string {
-	// 1. 优先使用多 Tokens 配置（端点独立管理）
-	if len(ep.Config.Tokens) > 0 {
-		activeIndex := m.keyManager.GetActiveTokenIndex(ep.Config.Name)
-		if activeIndex >= 0 && activeIndex < len(ep.Config.Tokens) {
-			return ep.Config.Tokens[activeIndex].Value
-		}
-		return ep.Config.Tokens[0].Value // 回退到第一个
+	if ep == nil {
+		return ""
 	}
-
-	// 2. 使用单 Token 配置
-	if ep.Config.Token != "" {
-		return ep.Config.Token
-	}
-
-	// 3. 组内继承（仅对单 Token 保持原有行为，多 Token 不继承）
-	groupName := ep.Config.Group
-	if groupName == "" {
-		groupName = "Default"
-	}
-
-	// v5.0+: 使用读锁遍历 endpoints
-	m.endpointsMu.RLock()
-	defer m.endpointsMu.RUnlock()
-
-	// Search through all endpoints for the same group
-	for _, endpoint := range m.endpoints {
-		endpointGroup := endpoint.Config.Group
-		if endpointGroup == "" {
-			endpointGroup = "Default"
-		}
-
-		// If same group and has token (only single token inheritance)
-		if endpointGroup == groupName && endpoint.Config.Token != "" {
-			return endpoint.Config.Token
-		}
-	}
-
-	// 4. No token found in the group
-	return ""
+	ep.mutex.RLock()
+	defer ep.mutex.RUnlock()
+	return ep.Config.Token
 }
 
-// GetApiKeyForEndpoint dynamically resolves the API key for an endpoint
-// If the endpoint has its own api-key, return it
-// If not, find the first endpoint in the same group that has an api-key
-// 支持多 API Key 配置：优先使用 api-keys 数组中当前激活的 API Key
+// GetApiKeyForEndpoint 返回端点自身的单 API Key。
 func (m *Manager) GetApiKeyForEndpoint(ep *Endpoint) string {
-	// 1. 优先使用多 ApiKeys 配置（端点独立管理）
-	if len(ep.Config.ApiKeys) > 0 {
-		activeIndex := m.keyManager.GetActiveApiKeyIndex(ep.Config.Name)
-		if activeIndex >= 0 && activeIndex < len(ep.Config.ApiKeys) {
-			return ep.Config.ApiKeys[activeIndex].Value
-		}
-		return ep.Config.ApiKeys[0].Value // 回退到第一个
+	if ep == nil {
+		return ""
 	}
-
-	// 2. 使用单 ApiKey 配置
-	if ep.Config.ApiKey != "" {
-		return ep.Config.ApiKey
-	}
-
-	// 3. 组内继承（仅对单 ApiKey 保持原有行为，多 ApiKey 不继承）
-	groupName := ep.Config.Group
-	if groupName == "" {
-		groupName = "Default"
-	}
-
-	// v5.0+: 使用读锁遍历 endpoints
-	m.endpointsMu.RLock()
-	defer m.endpointsMu.RUnlock()
-
-	// Search through all endpoints for the same group
-	for _, endpoint := range m.endpoints {
-		endpointGroup := endpoint.Config.Group
-		if endpointGroup == "" {
-			endpointGroup = "Default"
-		}
-
-		// If same group and has api-key (only single api-key inheritance)
-		if endpointGroup == groupName && endpoint.Config.ApiKey != "" {
-			return endpoint.Config.ApiKey
-		}
-	}
-
-	// 4. No api-key found in the group
-	return ""
+	ep.mutex.RLock()
+	defer ep.mutex.RUnlock()
+	return ep.Config.ApiKey
 }
 
 // GetConfig returns the manager's configuration

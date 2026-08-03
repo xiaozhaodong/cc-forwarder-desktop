@@ -61,7 +61,6 @@ func TestManualPreferredAllowsFallbackWithoutClearingPreference(t *testing.T) {
 	}
 	manager := NewManager(cfg)
 	defer manager.Stop()
-	manager.RestoreActiveEndpoint("primary")
 	manager.SetClaudeRoutingOverride(RouteOverrideState{
 		Mode:            RouteModeManualPreferred,
 		EndpointName:    "primary",
