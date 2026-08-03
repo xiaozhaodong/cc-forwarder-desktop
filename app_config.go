@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"strings"
 
 	"cc-forwarder/config"
+	"cc-forwarder/internal/migration"
+	"cc-forwarder/internal/tracking"
 	"cc-forwarder/internal/utils"
 )
 
@@ -70,5 +73,70 @@ func (a *App) applyDesktopRuntimePathOverrides(cfg *config.Config) {
 		return
 	}
 	cfg.Logging.FilePath = filepath.Join(utils.GetLogDir(), "app.log")
-	cfg.UsageTracking.DatabasePath = filepath.Join(utils.GetDataDir(), "usage.db")
+	if strings.TrimSpace(cfg.UsageTracking.DatabasePath) == "" {
+		cfg.UsageTracking.DatabasePath = filepath.Join(utils.GetDataDir(), "usage.db")
+	}
+}
+
+func (a *App) prepareCoreDatabaseAndMigration(ctx context.Context) error {
+	tempLogger := slog.Default()
+	if err := utils.EnsureAppDirs(); err != nil {
+		return fmt.Errorf("prepare application directories: %w", err)
+	}
+	resolvedConfigPath, err := a.resolveStartupConfigPath(tempLogger)
+	if err != nil {
+		return fmt.Errorf("prepare config file: %w", err)
+	}
+	a.configPath = resolvedConfigPath
+
+	legacy, err := migration.LoadLegacyConfig(resolvedConfigPath)
+	if err != nil {
+		return err
+	}
+	databasePath := legacy.ResolveDatabasePath(filepath.Join(utils.GetDataDir(), "usage.db"))
+	databaseExisted := false
+	if databasePath != ":memory:" {
+		if _, statErr := os.Stat(databasePath); statErr == nil {
+			databaseExisted = true
+		} else if !os.IsNotExist(statErr) {
+			return fmt.Errorf("inspect application database: %w", statErr)
+		}
+	}
+	core, err := tracking.OpenCoreDatabase(tracking.DatabaseConfig{
+		Type: "sqlite", DatabasePath: databasePath, Timezone: legacy.DatabaseTimezone,
+	})
+	if err != nil {
+		return err
+	}
+	a.coreDatabase = core
+	a.migrationCoordinator = &migration.Coordinator{
+		DB: core.DB(), DatabasePath: databasePath, ConfigPath: resolvedConfigPath,
+		DataDir: utils.GetDataDir(), DatabaseExisted: databaseExisted, Logger: tempLogger,
+	}
+	status, err := a.migrationCoordinator.Run(ctx)
+	a.migrationStatus = status
+	if err != nil {
+		return err
+	}
+	if err := a.loadRuntimeConfig(databasePath); err != nil {
+		return err
+	}
+	if err := core.InitSchema(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (a *App) loadRuntimeConfig(databasePath string) error {
+	cfg, err := config.LoadConfig(a.configPath)
+	if err != nil {
+		return fmt.Errorf("load migrated runtime config: %w", err)
+	}
+	a.applyDesktopRuntimePathOverrides(cfg)
+	cfg.UsageTracking.DatabasePath = databasePath
+	if cfg.UsageTracking.Database != nil {
+		cfg.UsageTracking.Database.Path = databasePath
+	}
+	a.config = cfg
+	return nil
 }

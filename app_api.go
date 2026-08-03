@@ -3,8 +3,7 @@
 //
 // API 文件按功能模块拆分:
 // - app_api.go         - 系统状态、配置、辅助函数 (本文件)
-// - app_api_endpoint.go - 端点管理 + Key 管理
-// - app_api_group.go    - 组管理
+// - app_api_endpoint.go - 端点管理
 // - app_api_usage.go    - 使用统计 + 请求记录
 // - app_api_chart.go    - 图表数据
 // - app_api_storage.go  - v5.0+ 端点存储管理 (SQLite)
@@ -44,7 +43,6 @@ type SystemStatus struct {
 	ProxyPort     int    `json:"proxy_port"`
 	ProxyHost     string `json:"proxy_host"`
 	ProxyRunning  bool   `json:"proxy_running"`
-	ActiveGroup   string `json:"active_group"`
 	ConfigPath    string `json:"config_path"`
 	AuthEnabled   bool   `json:"auth_enabled"`
 }
@@ -74,10 +72,6 @@ func (a *App) GetSystemStatus() SystemStatus {
 		if status.ProxyRunning {
 			status.ProxyRunning = a.checkPortListening(status.ProxyHost, status.ProxyPort)
 		}
-	}
-
-	if a.endpointManager != nil {
-		status.ActiveGroup = a.endpointManager.GetActiveGroupName()
 	}
 
 	return status
@@ -129,7 +123,6 @@ type ConfigInfo struct {
 	ProxyEnabled    bool   `json:"proxy_enabled"`
 	TrackingEnabled bool   `json:"tracking_enabled"`
 	FailoverEnabled bool   `json:"failover_enabled"`
-	EndpointCount   int    `json:"endpoint_count"`
 }
 
 // GetConfig 获取当前配置（脱敏）
@@ -148,7 +141,6 @@ func (a *App) GetConfig() ConfigInfo {
 		ProxyEnabled:    a.config.Proxy.Enabled,
 		TrackingEnabled: a.config.UsageTracking.Enabled,
 		FailoverEnabled: a.config.Failover.Enabled,
-		EndpointCount:   len(a.config.Endpoints),
 	}
 }
 

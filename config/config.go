@@ -23,7 +23,6 @@ type Config struct {
 	Health              HealthConfig               `yaml:"health"`
 	Logging             LoggingConfig              `yaml:"logging"`
 	Streaming           StreamingConfig            `yaml:"streaming"`
-	Group               GroupConfig                `yaml:"group"`                    // Group configuration (DEPRECATED: use Failover instead)
 	Failover            FailoverConfig             `yaml:"failover"`                 // Failover configuration (v4.0+)
 	FailureTracker      FailureTrackerConfig       `yaml:"failure_tracker"`          // Failure tracker configuration (v5.2.6+)
 	RequestSuspend      LegacyRequestSuspendConfig `yaml:"request_suspend" json:"-"` // 已废弃：仅 YAML 解析兼容（挂起体系已删除）
@@ -37,10 +36,7 @@ type Config struct {
 	GlobalTimeout       time.Duration              `yaml:"global_timeout"`         // Global timeout for non-streaming requests
 	RequestBodyMaxBytes int64                      `yaml:"request_body_max_bytes"` // Optional max request body size in bytes, 0 = unlimited
 	Timezone            string                     `yaml:"timezone"`               // Global timezone setting for all components
-	Endpoints           []EndpointConfig           `yaml:"endpoints"`
-
-	// Runtime priority override (not serialized to YAML)
-	PrimaryEndpoint string `yaml:"-"` // Primary endpoint name from command line
+	Endpoints           []EndpointConfig           `yaml:"-"`                      // Runtime 只从 SQLite 加载
 }
 
 type ServerConfig struct {
@@ -99,13 +95,6 @@ type StreamingConfig struct {
 	EOFRetryHintRaw *bool `yaml:"eof_retry_hint" json:"-"`
 	// EOFRetryHint 生效值：新键 ?? 旧键 ?? false（解析后由 resolveEOFRetryHint 计算）
 	EOFRetryHint bool `yaml:"-" json:"eof_retry_hint"`
-}
-
-// GroupConfig (DEPRECATED in v4.0: use FailoverConfig instead)
-// Kept for backward compatibility with v3.x configurations
-type GroupConfig struct {
-	Cooldown                time.Duration `yaml:"cooldown"`                   // Cooldown duration for groups when all endpoints fail
-	AutoSwitchBetweenGroups bool          `yaml:"auto_switch_between_groups"` // Whether to automatically switch between groups, default: true
 }
 
 // FailoverConfig v4.0 故障转移配置（v8 收敛方案 §12 扩展）
@@ -239,10 +228,9 @@ type TokenCountingConfig struct {
 	EstimationRatio float64 `yaml:"estimation_ratio"` // Token估算比例 (1 token ≈ N 字符)
 }
 
-// EndpointsStorageConfig 端点存储配置 (v5.0+)
-// 支持从 YAML 文件或 SQLite 数据库加载端点配置
+// EndpointsStorageConfig Claude 端点存储配置；Runtime 只支持 SQLite。
 type EndpointsStorageConfig struct {
-	Type string `yaml:"type"` // 存储类型: "yaml" | "sqlite"，默认 "yaml"
+	Type string `yaml:"type"`
 }
 
 // AccountPoolConfig 账号池路由配置
@@ -274,21 +262,15 @@ type AccountPoolFailureCooldownsConfig struct {
 type EndpointConfig struct {
 	Name                string            `yaml:"name"`
 	URL                 string            `yaml:"url"`
-	Channel             string            `yaml:"channel,omitempty"` // v5.0: 渠道标签（用于分组展示）
 	Priority            int               `yaml:"priority"`
-	Group               string            `yaml:"group,omitempty"`            // DEPRECATED in v4.0
-	GroupPriority       int               `yaml:"group-priority,omitempty"`   // DEPRECATED in v4.0: use Priority instead
 	FailoverEnabled     *bool             `yaml:"failover_enabled,omitempty"` // v4.0: 是否参与故障转移，默认: true
 	Cooldown            *time.Duration    `yaml:"cooldown,omitempty"`         // v4.0: 端点级冷却时间（可选），默认使用全局配置
-	Token               string            `yaml:"token,omitempty"`            // 单 Token 配置（向后兼容）
-	ApiKey              string            `yaml:"api-key,omitempty"`          // 单 API Key 配置（向后兼容）
-	Tokens              []TokenConfig     `yaml:"tokens,omitempty"`           // 多 Token 配置（新功能）
-	ApiKeys             []ApiKeyConfig    `yaml:"api-keys,omitempty"`         // 多 API Key 配置（新功能）
+	Token               string            `yaml:"-"`
+	ApiKey              string            `yaml:"-"`
 	Timeout             time.Duration     `yaml:"timeout"`
-	Headers             map[string]string `yaml:"headers,omitempty"`
+	Headers             map[string]string `yaml:"-"`
 	SupportsCountTokens bool              `yaml:"supports_count_tokens,omitempty"` // 是否支持count_tokens端点
 	ModelRewriteRules   string            `yaml:"model_rewrite_rules,omitempty"`   // CC 端点模型兼容改写规则 JSON
-	Enabled             *bool             `yaml:"enabled,omitempty"`               // v5.0: legacy active（v8 起 deprecated，不再作为调度资格）
 	AvailabilityEnabled *bool             `yaml:"availability_enabled,omitempty"`  // v8: 硬启用，false=任何模式都不可使用，默认: true
 }
 
@@ -308,27 +290,12 @@ func (c *EndpointConfig) IsAutoScheduleEnabled() bool {
 	return *c.FailoverEnabled
 }
 
-// TokenConfig Token 配置项，用于多 Token 切换功能
-type TokenConfig struct {
-	Name  string `yaml:"name"`  // Key 标识名称（用于 UI 显示）
-	Value string `yaml:"value"` // Token 值
-}
-
-// ApiKeyConfig API Key 配置项，用于多 API Key 切换功能
-type ApiKeyConfig struct {
-	Name  string `yaml:"name"`  // Key 标识名称（用于 UI 显示）
-	Value string `yaml:"value"` // API Key 值
-}
-
 // LoadConfig loads configuration from file
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
-
-	// Check if auto_switch_between_groups is explicitly set in YAML
-	hasAutoSwitchConfig := strings.Contains(string(data), "auto_switch_between_groups")
 
 	// Check if v4.0 failover config is present
 	hasFailoverConfig := strings.Contains(string(data), "failover:")
@@ -347,18 +314,8 @@ func LoadConfig(path string) (*Config, error) {
 	// Set defaults
 	config.setDefaults()
 
-	// Handle auto_switch_between_groups default for backward compatibility
-	if !hasAutoSwitchConfig {
-		config.Group.AutoSwitchBetweenGroups = true // Default to auto mode for backward compatibility
-	}
-
-	// v3.x → v4.0 配置映射（向后兼容）
 	if !hasFailoverConfig {
-		// 没有v4.0配置，尝试从v3.x group配置映射
-		if config.Group.Cooldown > 0 {
-			config.Failover.DefaultCooldown = config.Group.Cooldown
-		}
-		config.Failover.Enabled = config.Group.AutoSwitchBetweenGroups
+		config.Failover.Enabled = true
 	}
 
 	// v5.2.6+: 失败追踪器默认启用
@@ -498,11 +455,6 @@ func (c *Config) setDefaults() {
 		c.Timezone = "Asia/Shanghai" // Default timezone for all components
 	}
 
-	// Set group defaults (DEPRECATED: kept for v3.x compatibility)
-	if c.Group.Cooldown == 0 {
-		c.Group.Cooldown = 600 * time.Second // Default 10 minutes cooldown for groups
-	}
-
 	// Set failover defaults (v4.0+)
 	// Failover.Enabled defaults to true if not explicitly set
 	// Note: We check for zero value and set default here
@@ -569,9 +521,9 @@ func (c *Config) setDefaults() {
 		c.AccountPool.FailurePolicy.Cooldowns.ServerError = 120 * time.Second // Default server error cooldown
 	}
 
-	// Set endpoints storage defaults (v5.0+)
+	// Runtime 只有 SQLite 一个 Claude 端点事实来源。
 	if c.EndpointsStorage.Type == "" {
-		c.EndpointsStorage.Type = "yaml" // Default to YAML for backward compatibility
+		c.EndpointsStorage.Type = "sqlite"
 	}
 
 	// EOFRetryHint 生效值：新键 streaming.eof_retry_hint ?? 旧键 request_suspend.eof_retry_hint ?? false
@@ -617,148 +569,17 @@ func (c *Config) setDefaults() {
 	}
 	// TokenCounting.Enabled defaults to false (zero value) for backward compatibility
 
-	// Set default timeouts for endpoints and handle parameter inheritance (except tokens)
-	var defaultEndpoint *EndpointConfig
-	if len(c.Endpoints) > 0 {
-		defaultEndpoint = &c.Endpoints[0]
-	}
-
-	// Handle group inheritance - endpoints inherit group settings from previous endpoint
-	var currentGroup string = "Default" // Default group name
-	var currentGroupPriority int = 1    // Default group priority
-
 	for i := range c.Endpoints {
-		// v3.x → v4.0 兼容：group-priority 映射到 priority
-		if c.Endpoints[i].Priority == 0 && c.Endpoints[i].GroupPriority > 0 {
-			c.Endpoints[i].Priority = c.Endpoints[i].GroupPriority
-		}
-
-		// Handle group inheritance - check if this endpoint defines a new group
-		if c.Endpoints[i].Group != "" {
-			// Endpoint specifies a group, use it and update current group
-			currentGroup = c.Endpoints[i].Group
-			if c.Endpoints[i].GroupPriority != 0 {
-				currentGroupPriority = c.Endpoints[i].GroupPriority
-			}
-		} else {
-			// Endpoint doesn't specify group, inherit from previous
-			c.Endpoints[i].Group = currentGroup
-			c.Endpoints[i].GroupPriority = currentGroupPriority
-		}
-
-		// If GroupPriority is still 0 after inheritance, set default
-		if c.Endpoints[i].GroupPriority == 0 {
-			c.Endpoints[i].GroupPriority = currentGroupPriority
-		}
-
-		// Set default timeout if not specified
 		if c.Endpoints[i].Timeout == 0 {
-			if defaultEndpoint != nil && defaultEndpoint.Timeout != 0 {
-				// Inherit timeout from first endpoint
-				c.Endpoints[i].Timeout = defaultEndpoint.Timeout
-			} else {
-				// Use global timeout setting
-				c.Endpoints[i].Timeout = c.GlobalTimeout
-			}
-		}
-
-		// NOTE: We do NOT inherit tokens here - tokens will be resolved dynamically at runtime
-		// This allows for proper group-based token switching when groups fail
-
-		// Inherit api-key from first endpoint if not specified
-		if c.Endpoints[i].ApiKey == "" && defaultEndpoint != nil && defaultEndpoint.ApiKey != "" {
-			c.Endpoints[i].ApiKey = defaultEndpoint.ApiKey
-		}
-
-		// Inherit headers from first endpoint if not specified
-		if len(c.Endpoints[i].Headers) == 0 && defaultEndpoint != nil && len(defaultEndpoint.Headers) > 0 {
-			// Copy headers from first endpoint
-			c.Endpoints[i].Headers = make(map[string]string)
-			for key, value := range defaultEndpoint.Headers {
-				c.Endpoints[i].Headers[key] = value
-			}
-		} else if len(c.Endpoints[i].Headers) > 0 && defaultEndpoint != nil && len(defaultEndpoint.Headers) > 0 {
-			// Merge headers: inherit from first endpoint, but allow override
-			mergedHeaders := make(map[string]string)
-
-			// First, copy all headers from the first endpoint
-			for key, value := range defaultEndpoint.Headers {
-				mergedHeaders[key] = value
-			}
-
-			// Then, override with endpoint-specific headers
-			for key, value := range c.Endpoints[i].Headers {
-				mergedHeaders[key] = value
-			}
-
-			c.Endpoints[i].Headers = mergedHeaders
+			c.Endpoints[i].Timeout = c.GlobalTimeout
 		}
 	}
-}
-
-// ApplyPrimaryEndpoint applies primary endpoint override from command line
-// Returns error if the specified endpoint is not found
-func (c *Config) ApplyPrimaryEndpoint(logger *slog.Logger) error {
-	if c.PrimaryEndpoint == "" {
-		return nil
-	}
-
-	// Find the specified endpoint
-	primaryIndex := c.findEndpointIndex(c.PrimaryEndpoint)
-	if primaryIndex == -1 {
-		// Create list of available endpoints for better error message
-		var availableEndpoints []string
-		for _, endpoint := range c.Endpoints {
-			availableEndpoints = append(availableEndpoints, endpoint.Name)
-		}
-
-		err := fmt.Errorf("指定的主端点 '%s' 未找到，可用端点: %v", c.PrimaryEndpoint, availableEndpoints)
-		if logger != nil {
-			logger.Error(fmt.Sprintf("❌ 主端点设置失败 - 端点: %s, 可用端点: %v",
-				c.PrimaryEndpoint, availableEndpoints))
-		}
-		return err
-	}
-
-	// Store original priority for logging
-	originalPriority := c.Endpoints[primaryIndex].Priority
-
-	// Set the primary endpoint to priority 1
-	c.Endpoints[primaryIndex].Priority = 1
-
-	// Adjust other endpoints' priorities to ensure they are lower than primary
-	adjustedCount := 0
-	for i := range c.Endpoints {
-		if i != primaryIndex && c.Endpoints[i].Priority <= 1 {
-			c.Endpoints[i].Priority = c.Endpoints[i].Priority + 2 // Use consistent increment
-			adjustedCount++
-		}
-	}
-
-	if logger != nil {
-		logger.Info(fmt.Sprintf("✅ 主端点优先级设置成功 - 端点: %s, 原优先级: %d → 新优先级: %d, 调整了%d个其他端点",
-			c.PrimaryEndpoint, originalPriority, 1, adjustedCount))
-	}
-
-	return nil
-}
-
-// findEndpointIndex finds the index of an endpoint by name
-func (c *Config) findEndpointIndex(name string) int {
-	for i, endpoint := range c.Endpoints {
-		if endpoint.Name == name {
-			return i
-		}
-	}
-	return -1
 }
 
 // validate validates the configuration
 func (c *Config) validate() error {
-	// v5.0+: 当使用 SQLite 存储端点时，允许 YAML 中 endpoints 为空
-	// 端点会从数据库加载，不再要求 YAML 必须配置
-	if len(c.Endpoints) == 0 && c.EndpointsStorage.Type != "sqlite" {
-		return fmt.Errorf("at least one endpoint must be configured (or set endpoints_storage.type: sqlite)")
+	if c.EndpointsStorage.Type != "sqlite" {
+		return fmt.Errorf("endpoints_storage.type must be 'sqlite'")
 	}
 
 	if c.Strategy.Type != "priority" && c.Strategy.Type != "fastest" {
@@ -826,26 +647,6 @@ func (c *Config) validate() error {
 			"/v1/messages/count_tokens",
 		); err != nil {
 			return fmt.Errorf("endpoint %s: model_rewrite_rules 无效: %w", endpoint.Name, err)
-		}
-		// 验证 token 和 tokens 互斥
-		if endpoint.Token != "" && len(endpoint.Tokens) > 0 {
-			return fmt.Errorf("endpoint %s: 'token' 和 'tokens' 不能同时配置，请选择其一", endpoint.Name)
-		}
-		// 验证 api-key 和 api-keys 互斥
-		if endpoint.ApiKey != "" && len(endpoint.ApiKeys) > 0 {
-			return fmt.Errorf("endpoint %s: 'api-key' 和 'api-keys' 不能同时配置，请选择其一", endpoint.Name)
-		}
-		// 验证 tokens 配置中每个项必须有 value
-		for j, token := range endpoint.Tokens {
-			if token.Value == "" {
-				return fmt.Errorf("endpoint %s: tokens[%d] 必须设置 value", endpoint.Name, j)
-			}
-		}
-		// 验证 api-keys 配置中每个项必须有 value
-		for j, apiKey := range endpoint.ApiKeys {
-			if apiKey.Value == "" {
-				return fmt.Errorf("endpoint %s: api-keys[%d] 必须设置 value", endpoint.Name, j)
-			}
 		}
 	}
 
@@ -1013,12 +814,6 @@ func (cw *ConfigWatcher) reloadConfig() error {
 
 // logConfigChanges logs the key differences between old and new configurations
 func (cw *ConfigWatcher) logConfigChanges(oldConfig, newConfig *Config) {
-	if len(oldConfig.Endpoints) != len(newConfig.Endpoints) {
-		cw.logger.Info("📡 端点数量变更",
-			"old_count", len(oldConfig.Endpoints),
-			"new_count", len(newConfig.Endpoints))
-	}
-
 	if oldConfig.Server.Port != newConfig.Server.Port {
 		cw.logger.Info("🌐 服务器端口变更",
 			"old_port", oldConfig.Server.Port,
@@ -1082,93 +877,6 @@ func SaveConfig(config *Config, path string) error {
 	// Write to file
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
-	}
-
-	return nil
-}
-
-// SaveConfigWithComments saves configuration to file while preserving all comments
-func SavePriorityConfigWithComments(config *Config, path string) error {
-	// Read existing file to preserve comments
-	yamlFile, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read existing config file: %w", err)
-	}
-
-	var rootNode yaml.Node
-	if len(yamlFile) > 0 {
-		// Decode existing YAML to preserve structure and comments
-		if err := yaml.Unmarshal(yamlFile, &rootNode); err != nil {
-			return fmt.Errorf("failed to decode existing YAML: %w", err)
-		}
-	} else {
-		// Create new YAML structure if file doesn't exist
-		rootNode = yaml.Node{}
-		if err := rootNode.Encode(config); err != nil {
-			return fmt.Errorf("failed to create new YAML structure: %w", err)
-		}
-	}
-
-	// Update endpoint priorities in the YAML node tree
-	if len(rootNode.Content) > 0 {
-		mappingNode := rootNode.Content[0]
-
-		// Find endpoints section
-		for i := 0; i < len(mappingNode.Content); i += 2 {
-			keyNode := mappingNode.Content[i]
-			valueNode := mappingNode.Content[i+1]
-
-			if keyNode.Value == "endpoints" {
-				// Update each endpoint's priority
-				for _, endpointNode := range valueNode.Content {
-					var endpointName string
-					var priorityNode *yaml.Node
-
-					// Find name and priority nodes for this endpoint
-					for j := 0; j < len(endpointNode.Content); j += 2 {
-						fieldKey := endpointNode.Content[j]
-						fieldValue := endpointNode.Content[j+1]
-
-						if fieldKey.Value == "name" {
-							endpointName = fieldValue.Value
-						} else if fieldKey.Value == "priority" {
-							priorityNode = fieldValue
-						}
-					}
-
-					// Find the corresponding endpoint in config and update priority
-					if endpointName != "" && priorityNode != nil {
-						for _, endpoint := range config.Endpoints {
-							if endpoint.Name == endpointName {
-								priorityNode.Value = fmt.Sprintf("%d", endpoint.Priority)
-								break
-							}
-						}
-					}
-				}
-				break
-			}
-		}
-	}
-
-	// Ensure directory exists
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	// Directly write to the original file
-	file, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("failed to create config file: %w", err)
-	}
-	defer file.Close()
-
-	// Encode with comments
-	encoder := yaml.NewEncoder(file)
-	encoder.SetIndent(2)
-	if err := encoder.Encode(&rootNode); err != nil {
-		return fmt.Errorf("failed to encode YAML: %w", err)
 	}
 
 	return nil

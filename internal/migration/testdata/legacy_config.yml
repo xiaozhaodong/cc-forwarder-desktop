@@ -1,0 +1,86 @@
+# Claude 端点扁平化迁移夹具。
+# 所有凭据均为合成测试值，不得替换为真实运行时数据。
+
+endpoints_storage:
+  type: yaml
+
+group:
+  cooldown: 10m
+  auto_switch_between_groups: true
+
+endpoints:
+  # 多凭据端点：2 Token x 3 API Key = 6 个认证组合。
+  - name: multi-auth
+    url: https://multi.example.test
+    channel: coderelay
+    group: primary
+    group-priority: 1
+    priority: 2
+    availability_enabled: true
+    failover_enabled: true
+    timeout: 45s
+    cooldown: 3m
+    supports_count_tokens: true
+    tokens:
+      - name: token-a
+        value: synthetic-token-a
+      - name: token-b
+        value: synthetic-token-b
+    api-keys:
+      - name: api-a
+        value: synthetic-api-a
+      - name: api-b
+        value: synthetic-api-b
+      - name: api-c
+        value: synthetic-api-c
+    headers:
+      X-Legacy-Header: inherited-value
+      X-Override-Me: anchor-value
+
+  # 同组继承夹具：继承 group、priority、timeout、单凭据和 Header，
+  # 同时覆盖一个 Header。旧 Runtime 只继承单 token/api-key，不继承多凭据数组。
+  - name: inherited-auth-anchor
+    url: https://anchor.example.test
+    group: inherited
+    group-priority: 5
+    priority: 5
+    token: synthetic-inherited-token
+    api-key: synthetic-inherited-api
+    timeout: 30s
+    headers:
+      X-Inherited: inherited
+      X-Override-Me: anchor
+
+  - name: inherited-auth-child
+    url: https://child.example.test
+    headers:
+      X-Override-Me: child
+
+  # 只配置 API Key。
+  - name: api-key-only
+    url: https://api-key.example.test
+    group: backup
+    priority: 20
+    api-key: synthetic-api-only
+    availability_enabled: true
+    failover_enabled: false
+
+  # 无认证端点是合法目标状态。
+  - name: no-auth
+    url: https://no-auth.example.test
+    group: cold
+    priority: 30
+    availability_enabled: false
+    failover_enabled: false
+    headers:
+      X-No-Auth: allowed
+
+usage_tracking:
+  enabled: true
+  database_path: /tmp/ai-switchboard-migration-fixture/usage.db
+
+# 配置改写必须保留未知字段与注释。
+custom_plugin:
+  enabled: true
+  nested:
+    keep_me: preserved

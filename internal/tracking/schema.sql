@@ -2,7 +2,7 @@
 -- 使用跟踪系统数据库结构
 -- 创建时间: 2025-09-04
 
--- 请求记录主表
+-- 请求记录主表：统一使用 request_family + upstream 维度。
 CREATE TABLE IF NOT EXISTS request_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id TEXT UNIQUE NOT NULL,        -- req-xxxxxxxx
@@ -21,14 +21,14 @@ CREATE TABLE IF NOT EXISTS request_logs (
     completion_ms INTEGER,                  -- 首个有效流式响应到流式完成耗时(毫秒，仅流式请求)
     
     -- 转发信息
-    channel TEXT DEFAULT '',                -- 渠道标签（来自端点配置）
-    endpoint_name TEXT,                     -- 使用的端点名称
-    group_name TEXT,                        -- 所属组名
-    model_name TEXT,                        -- Claude模型名称
-    upstream_type TEXT DEFAULT 'endpoint',  -- 上游来源类型: endpoint/account
-    upstream_source_name TEXT DEFAULT '',   -- 上游来源名称（账号链路用订阅源）
-    upstream_name TEXT DEFAULT '',          -- 上游名称（账号名或端点名）
-    upstream_id INTEGER,                    -- 上游ID（账号ID，可空）
+    request_family TEXT NOT NULL DEFAULT 'other'
+        CHECK (request_family IN ('claude', 'codex', 'image', 'other')),
+    endpoint_name TEXT,                     -- Claude 生命周期兼容字段
+    model_name TEXT,
+    upstream_type TEXT NOT NULL DEFAULT '', -- 内部来源形态: endpoint/account
+    upstream_source_name TEXT NOT NULL DEFAULT '',
+    upstream_name TEXT NOT NULL DEFAULT '', -- 用户可见的实际上游
+    upstream_id INTEGER NOT NULL DEFAULT 0,
     is_streaming BOOLEAN DEFAULT FALSE,     -- 是否为流式请求
 
     -- Claude 端点路由诊断信息 (V1.1)
@@ -77,18 +77,22 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_request_id ON request_logs(request_i
 CREATE INDEX IF NOT EXISTS idx_request_logs_start_time ON request_logs(start_time);
 CREATE INDEX IF NOT EXISTS idx_request_logs_status ON request_logs(status);
 CREATE INDEX IF NOT EXISTS idx_request_logs_model ON request_logs(model_name);
-CREATE INDEX IF NOT EXISTS idx_request_logs_channel ON request_logs(channel);
 CREATE INDEX IF NOT EXISTS idx_request_logs_endpoint ON request_logs(endpoint_name);
-CREATE INDEX IF NOT EXISTS idx_request_logs_group ON request_logs(group_name);
 CREATE INDEX IF NOT EXISTS idx_request_logs_failure_reason ON request_logs(failure_reason);
+CREATE INDEX IF NOT EXISTS idx_request_logs_family_time ON request_logs(request_family, start_time);
+CREATE INDEX IF NOT EXISTS idx_request_logs_family_upstream_time ON request_logs(request_family, upstream_name, start_time);
+CREATE INDEX IF NOT EXISTS idx_request_logs_upstream_type_time ON request_logs(upstream_type, start_time);
 
 -- 使用统计汇总表 (可选，用于快速查询)
 CREATE TABLE IF NOT EXISTS usage_summary (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL,                    -- YYYY-MM-DD
     model_name TEXT NOT NULL,
-    endpoint_name TEXT NOT NULL,
-    group_name TEXT,
+    request_family TEXT NOT NULL
+        CHECK (request_family IN ('claude', 'codex', 'image', 'other')),
+    upstream_type TEXT NOT NULL DEFAULT '',
+    upstream_name TEXT NOT NULL DEFAULT '',
+    upstream_id INTEGER NOT NULL DEFAULT 0,
     
     request_count INTEGER DEFAULT 0,       -- 请求总数
     success_count INTEGER DEFAULT 0,       -- 成功请求数
@@ -105,14 +109,14 @@ CREATE TABLE IF NOT EXISTS usage_summary (
     created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
     updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
     
-    UNIQUE(date, model_name, endpoint_name, group_name)
+    UNIQUE(date, model_name, request_family, upstream_type, upstream_name, upstream_id)
 );
 
 -- 汇总表索引
 CREATE INDEX IF NOT EXISTS idx_usage_summary_date ON usage_summary(date);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_model ON usage_summary(model_name);
-CREATE INDEX IF NOT EXISTS idx_usage_summary_endpoint ON usage_summary(endpoint_name);
-CREATE INDEX IF NOT EXISTS idx_usage_summary_group ON usage_summary(group_name);
+CREATE INDEX IF NOT EXISTS idx_usage_summary_family ON usage_summary(request_family);
+CREATE INDEX IF NOT EXISTS idx_usage_summary_upstream ON usage_summary(upstream_type, upstream_name, upstream_id);
 
 -- 触发器：自动更新 updated_at 时间戳（统一使用带时区格式，微秒精度）
 CREATE TRIGGER IF NOT EXISTS update_request_logs_timestamp
@@ -132,14 +136,12 @@ BEGIN
 END;
 
 -- ============================================================================
--- 端点配置表 (v5.0.0 新增 - 2025-12-05)
--- 将端点配置从 config.yaml 迁移到 SQLite，支持动态增删改查
+-- Claude 端点配置表：一条记录对应一个 URL 与一个完整认证组合。
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS endpoints (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
     -- ========== 基本信息 ==========
-    channel TEXT NOT NULL,                          -- 渠道标签（用于分组展示）
     name TEXT UNIQUE NOT NULL,                      -- 端点唯一名称
     url TEXT NOT NULL,                              -- 端点 URL
 
@@ -167,8 +169,7 @@ CREATE TABLE IF NOT EXISTS endpoints (
     cache_read_cost_multiplier REAL DEFAULT 1.0,    -- 缓存读取成本倍率
 
     -- ========== 状态 ==========
-    enabled INTEGER DEFAULT 1,                      -- legacy active 标记（v8 起新版停止写入，仅供回滚读取）
-    availability_enabled INTEGER NOT NULL DEFAULT 1,-- v8 硬启用：0=任何模式都不可使用
+    availability_enabled INTEGER NOT NULL DEFAULT 1,-- 硬启用：0=任何模式都不可使用
 
     -- ========== 审计字段 ==========
     created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
@@ -194,10 +195,9 @@ CREATE INDEX IF NOT EXISTS idx_endpoint_runtime_states_cooldown
 ON endpoint_runtime_states(scope, cooldown_until);
 
 -- 端点表索引
-CREATE INDEX IF NOT EXISTS idx_endpoints_channel ON endpoints(channel);
 CREATE INDEX IF NOT EXISTS idx_endpoints_priority ON endpoints(priority);
-CREATE INDEX IF NOT EXISTS idx_endpoints_enabled ON endpoints(enabled);
 CREATE INDEX IF NOT EXISTS idx_endpoints_failover ON endpoints(failover_enabled);
+CREATE INDEX IF NOT EXISTS idx_endpoints_availability ON endpoints(availability_enabled);
 
 -- 端点表触发器：自动更新 updated_at
 CREATE TRIGGER IF NOT EXISTS update_endpoints_timestamp

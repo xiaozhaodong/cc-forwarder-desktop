@@ -85,7 +85,7 @@ func TestAsyncEventProcessing(t *testing.T) {
 		// Update event
 		opts := UpdateOptions{
 			EndpointName: stringPtr("test-endpoint"),
-			GroupName:    stringPtr("test-group"),
+			UpstreamName: stringPtr("test-endpoint"),
 			Status:       stringPtr("processing"),
 			RetryCount:   intPtr(0),
 			HttpStatus:   intPtr(0),
@@ -382,7 +382,7 @@ func TestPricingUpdate(t *testing.T) {
 			// Add request update to ensure complete records
 			opts := UpdateOptions{
 				EndpointName: stringPtr("test-endpoint"),
-				GroupName:    stringPtr("test-group"),
+				UpstreamName: stringPtr("test-endpoint"),
 				Status:       stringPtr("success"),
 				RetryCount:   intPtr(0),
 				HttpStatus:   intPtr(200),

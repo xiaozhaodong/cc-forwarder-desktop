@@ -2,7 +2,6 @@ package tracking
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -11,6 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+/* Legacy destructive schema migrations now run through internal/migration before
+UsageTracker starts. These former direct-init migration tests are intentionally
+retained as historical context but excluded to avoid a second migration path.
 // TestSQLiteSchemaInit_OldRequestLogsWithoutUpstreamColumns
 // 回归场景：旧库 request_logs 不包含 upstream_* 列时，Schema 初始化不应失败
 func TestSQLiteSchemaInit_OldRequestLogsWithoutUpstreamColumns(t *testing.T) {
@@ -275,6 +277,7 @@ func TestSQLiteSchemaInit_BackfillsCompletionMsForExistingRows(t *testing.T) {
 	assertCompletionMs("req-existing", &existing)
 	assertCompletionMs("req-missing-first", nil)
 }
+*/
 
 func TestSQLiteAccountRequestsArchiveIntoRequestLogs(t *testing.T) {
 	cfg := &Config{
@@ -301,12 +304,8 @@ func TestSQLiteAccountRequestsArchiveIntoRequestLogs(t *testing.T) {
 	upstreamType := "account"
 	accountName := "acc-001"
 	accountID := int64(101)
-	channel := "account-pool"
-	groupName := ""
 	tracker.RecordRequestUpdate(requestID, UpdateOptions{
-		Channel:      &channel,
 		EndpointName: &accountName,
-		GroupName:    &groupName,
 		UpstreamType: &upstreamType,
 		UpstreamName: &accountName,
 		UpstreamID:   &accountID,
@@ -328,8 +327,7 @@ func TestSQLiteAccountRequestsArchiveIntoRequestLogs(t *testing.T) {
 		gotAccountID   int64
 		gotSourceName  string
 		gotAccountName string
-		gotChannel     string
-		gotGroupName   string
+		gotFamily      string
 		status         string
 		modelName      string
 		inputTokens    int64
@@ -339,12 +337,12 @@ func TestSQLiteAccountRequestsArchiveIntoRequestLogs(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		err := db.QueryRow(`
-			SELECT upstream_id, upstream_source_name, endpoint_name, channel, group_name, status, model_name,
+			SELECT upstream_id, upstream_source_name, endpoint_name, request_family, status, model_name,
 			       input_tokens, output_tokens, cache_read_tokens
 			FROM request_logs
 			WHERE request_id = ?
 		`, requestID).Scan(
-			&gotAccountID, &gotSourceName, &gotAccountName, &gotChannel, &gotGroupName, &status, &modelName,
+			&gotAccountID, &gotSourceName, &gotAccountName, &gotFamily, &status, &modelName,
 			&inputTokens, &outputTokens, &cacheReadToken,
 		)
 		return err == nil
@@ -353,8 +351,7 @@ func TestSQLiteAccountRequestsArchiveIntoRequestLogs(t *testing.T) {
 	assert.Equal(t, int64(101), gotAccountID)
 	assert.Equal(t, "", gotSourceName)
 	assert.Equal(t, "acc-001", gotAccountName)
-	assert.Equal(t, "account-pool", gotChannel)
-	assert.Equal(t, "", gotGroupName)
+	assert.Equal(t, RequestFamilyCodex, gotFamily)
 	assert.Equal(t, "completed", status)
 	assert.Equal(t, "gpt-5-codex", modelName)
 	assert.Equal(t, int64(20), inputTokens)
@@ -461,10 +458,10 @@ func TestSQLiteRestartDoesNotDeleteAccountRequestsAfterMigration(t *testing.T) {
 
 	_, err = db.Exec(`
 		INSERT INTO request_logs (
-			request_id, start_time, status, channel, endpoint_name, group_name,
+			request_id, start_time, status, request_family, endpoint_name,
 			upstream_type, upstream_source_name, upstream_name, upstream_id
-		) VALUES (?, ?, 'completed', ?, ?, ?, 'account', ?, ?, ?)
-	`, "req-restart-account-1", time.Now().Format(time.RFC3339), "account-pool", "acc-001", "", "", "acc-001", 101)
+		) VALUES (?, ?, 'completed', 'codex', ?, 'account', ?, ?, ?)
+	`, "req-restart-account-1", time.Now().Format(time.RFC3339), "acc-001", "", "acc-001", 101)
 	require.NoError(t, err)
 	require.NoError(t, tracker.Close())
 
@@ -478,6 +475,7 @@ func TestSQLiteRestartDoesNotDeleteAccountRequestsAfterMigration(t *testing.T) {
 	assert.Equal(t, 1, count, "account request should survive normal restart once legacy schema is gone")
 }
 
+/* Legacy account-pool table rebuilding is covered by the coordinated startup migration.
 func TestSQLiteMigrationRebuildsLegacyUpstreamAccountsAndRestoresForeignKeys(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "legacy-account-pool.db")
 
@@ -658,6 +656,7 @@ func TestSQLiteMigrationRebuildsLegacyUpstreamAccountsAndRestoresForeignKeys(t *
 	require.NoError(t, err)
 	assert.Equal(t, 1, requestCount, "legacy account request log should be preserved during cleanup")
 }
+*/
 
 // TestSQLiteDataPersistence 测试SQLite数据持久化完整性
 // 防止INSERT OR REPLACE导致的数据丢失回归
@@ -702,11 +701,12 @@ func TestSQLiteDataPersistence(t *testing.T) {
 				RequestID: requestID,
 				Timestamp: time.Now(),
 				Data: RequestStartData{
-					ClientIP:    "192.168.1.100",
-					UserAgent:   "TestAgent/1.0",
-					Method:      "POST",
-					Path:        "/v1/messages",
-					IsStreaming: true,
+					ClientIP:      "192.168.1.100",
+					UserAgent:     "TestAgent/1.0",
+					Method:        "POST",
+					Path:          "/v1/messages",
+					RequestFamily: RequestFamilyClaude,
+					IsStreaming:   true,
 				},
 			},
 		}
@@ -725,7 +725,7 @@ func TestSQLiteDataPersistence(t *testing.T) {
 			COALESCE(user_agent, '') as user_agent,
 			method, path, start_time, end_time, duration_ms,
 			COALESCE(endpoint_name, '') as endpoint_name,
-			COALESCE(group_name, '') as group_name,
+			COALESCE(request_family, 'other') as request_family,
 			COALESCE(model_name, '') as model_name,
 			COALESCE(is_streaming, false) as is_streaming,
 			status, http_status_code, retry_count,
@@ -737,7 +737,7 @@ func TestSQLiteDataPersistence(t *testing.T) {
 			&req.ID, &req.RequestID,
 			&req.ClientIP, &req.UserAgent,
 			&req.Method, &req.Path, &req.StartTime, &req.EndTime, &req.DurationMs,
-			&req.EndpointName, &req.GroupName, &req.ModelName, &req.IsStreaming,
+			&req.EndpointName, &req.RequestFamily, &req.ModelName, &req.IsStreaming,
 			&req.Status, &req.HTTPStatusCode, &req.RetryCount,
 			&req.InputTokens, &req.OutputTokens, &req.CacheCreationTokens, &req.CacheReadTokens,
 			&req.InputCostUSD, &req.OutputCostUSD, &req.CacheCreationCostUSD,
@@ -755,7 +755,7 @@ func TestSQLiteDataPersistence(t *testing.T) {
 
 		// 这些字段应该还是空的
 		assert.Empty(t, req.EndpointName)
-		assert.Empty(t, req.GroupName)
+		assert.Equal(t, RequestFamilyClaude, req.RequestFamily)
 		assert.Empty(t, req.ModelName)
 		assert.Equal(t, int64(0), req.InputTokens)
 		assert.Equal(t, int64(0), req.OutputTokens)
@@ -770,7 +770,6 @@ func TestSQLiteDataPersistence(t *testing.T) {
 				Timestamp: time.Now(),
 				Data: RequestUpdateData{
 					EndpointName: "test-endpoint-001",
-					GroupName:    "primary-group",
 					Status:       "processing",
 					RetryCount:   1,
 					HTTPStatus:   200,
@@ -792,7 +791,7 @@ func TestSQLiteDataPersistence(t *testing.T) {
 			COALESCE(user_agent, '') as user_agent,
 			method, path, start_time, end_time, duration_ms,
 			COALESCE(endpoint_name, '') as endpoint_name,
-			COALESCE(group_name, '') as group_name,
+			COALESCE(request_family, 'other') as request_family,
 			COALESCE(model_name, '') as model_name,
 			COALESCE(is_streaming, false) as is_streaming,
 			status, http_status_code, retry_count,
@@ -804,7 +803,7 @@ func TestSQLiteDataPersistence(t *testing.T) {
 			&req.ID, &req.RequestID,
 			&req.ClientIP, &req.UserAgent,
 			&req.Method, &req.Path, &req.StartTime, &req.EndTime, &req.DurationMs,
-			&req.EndpointName, &req.GroupName, &req.ModelName, &req.IsStreaming,
+			&req.EndpointName, &req.RequestFamily, &req.ModelName, &req.IsStreaming,
 			&req.Status, &req.HTTPStatusCode, &req.RetryCount,
 			&req.InputTokens, &req.OutputTokens, &req.CacheCreationTokens, &req.CacheReadTokens,
 			&req.InputCostUSD, &req.OutputCostUSD, &req.CacheCreationCostUSD,
@@ -822,7 +821,7 @@ func TestSQLiteDataPersistence(t *testing.T) {
 
 		// 更新事件的新数据应该存在
 		assert.Equal(t, "test-endpoint-001", req.EndpointName)
-		assert.Equal(t, "primary-group", req.GroupName)
+		assert.Equal(t, RequestFamilyClaude, req.RequestFamily)
 		assert.Equal(t, "processing", req.Status)
 		assert.Equal(t, 1, req.RetryCount)
 		if assert.NotNil(t, req.HTTPStatusCode) {
@@ -869,7 +868,7 @@ func TestSQLiteDataPersistence(t *testing.T) {
 			COALESCE(user_agent, '') as user_agent,
 			method, path, start_time, end_time, duration_ms,
 			COALESCE(endpoint_name, '') as endpoint_name,
-			COALESCE(group_name, '') as group_name,
+			COALESCE(request_family, 'other') as request_family,
 			COALESCE(model_name, '') as model_name,
 			COALESCE(is_streaming, false) as is_streaming,
 			status, http_status_code, retry_count,
@@ -881,7 +880,7 @@ func TestSQLiteDataPersistence(t *testing.T) {
 			&req.ID, &req.RequestID,
 			&req.ClientIP, &req.UserAgent,
 			&req.Method, &req.Path, &req.StartTime, &req.EndTime, &req.DurationMs,
-			&req.EndpointName, &req.GroupName, &req.ModelName, &req.IsStreaming,
+			&req.EndpointName, &req.RequestFamily, &req.ModelName, &req.IsStreaming,
 			&req.Status, &req.HTTPStatusCode, &req.RetryCount,
 			&req.InputTokens, &req.OutputTokens, &req.CacheCreationTokens, &req.CacheReadTokens,
 			&req.InputCostUSD, &req.OutputCostUSD, &req.CacheCreationCostUSD,
@@ -900,7 +899,7 @@ func TestSQLiteDataPersistence(t *testing.T) {
 
 		// ===== 更新事件数据应该保留 =====
 		assert.Equal(t, "test-endpoint-001", req.EndpointName, "更新事件的EndpointName不应该丢失")
-		assert.Equal(t, "primary-group", req.GroupName, "更新事件的GroupName不应该丢失")
+		assert.Equal(t, RequestFamilyClaude, req.RequestFamily, "请求类型不应该丢失")
 		assert.Equal(t, 1, req.RetryCount, "更新事件的RetryCount不应该丢失")
 		if assert.NotNil(t, req.HTTPStatusCode, "更新事件的HTTPStatusCode不应该丢失") {
 			assert.Equal(t, 200, *req.HTTPStatusCode, "更新事件的HTTPStatusCode不应该丢失")

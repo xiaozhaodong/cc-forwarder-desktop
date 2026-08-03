@@ -855,8 +855,9 @@ func (s *SQLiteAdapter) BuildInsertOrReplaceQuery(table string, columns []string
 		}
 	case "usage_summary":
 		if containsColumn("date") && containsColumn("model_name") &&
-			containsColumn("endpoint_name") && containsColumn("group_name") {
-			conflictColumns = append(conflictColumns, "date", "model_name", "endpoint_name", "group_name")
+			containsColumn("request_family") && containsColumn("upstream_type") &&
+			containsColumn("upstream_name") && containsColumn("upstream_id") {
+			conflictColumns = append(conflictColumns, "date", "model_name", "request_family", "upstream_type", "upstream_name", "upstream_id")
 		}
 	default:
 		if containsColumn("request_id") {

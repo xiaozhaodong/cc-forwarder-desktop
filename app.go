@@ -20,6 +20,7 @@ import (
 	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/logging"
 	"cc-forwarder/internal/middleware"
+	"cc-forwarder/internal/migration"
 	"cc-forwarder/internal/proxy"
 	"cc-forwarder/internal/service"
 	"cc-forwarder/internal/store"
@@ -43,16 +44,18 @@ type App struct {
 	endpointManager      *endpoint.Manager
 	eventBus             events.EventBus // 接口类型，不是指针
 	usageTracker         *tracking.UsageTracker
+	coreDatabase         *tracking.CoreDatabase
+	migrationCoordinator *migration.Coordinator
+	migrationStatus      migration.Status
 	proxyHandler         *proxy.Handler
 	loggingMiddleware    *middleware.LoggingMiddleware
 	monitoringMiddleware *middleware.MonitoringMiddleware
 	authMiddleware       *middleware.AuthMiddleware
 
 	// v5.0+ 端点存储 (SQLite)
-	endpointStore         store.EndpointStore      // 端点数据持久化
-	endpointService       *service.EndpointService // 端点业务服务
-	endpointRuntimeWriter *endpoint.RuntimeWriter  // v7: activeEndpoint 持久化协调器（兼容期保留）
-	routingMu             sync.Mutex               // v8 §6.4: Claude 路由串行协调器
+	endpointStore   store.EndpointStore      // 端点数据持久化
+	endpointService *service.EndpointService // 端点业务服务
+	routingMu       sync.Mutex               // v8 §6.4: Claude 路由串行协调器
 
 	// v5.0+ 模型定价存储 (SQLite)
 	modelPricingStore   store.ModelPricingStore      // 模型定价数据持久化
@@ -100,6 +103,7 @@ type App struct {
 func NewApp() *App {
 	return &App{
 		startTime:     time.Now(),
+		logger:        slog.Default(),
 		oauthSessions: make(map[string]openAIOAuthSession),
 	}
 }
@@ -111,11 +115,21 @@ func (a *App) startup(ctx context.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// 1. 加载配置
-	a.loadConfig()
+	// 1. 准备核心数据库，并在任何运行时写入组件启动前完成一次性迁移。
+	if err := a.prepareCoreDatabaseAndMigration(ctx); err != nil {
+		a.logger.Error("❌ 启动迁移失败，应用进入只读恢复模式", "error", err,
+			"backup_dir", a.migrationStatus.BackupDir, "phase", a.migrationStatus.Phase)
+		return
+	}
 
 	// 2. 初始化日志
 	a.setupLogger()
+	a.startOperationalComponentsLocked(ctx)
+}
+
+// startOperationalComponentsLocked 启动正常运行态组件；调用方必须持有 a.mu。
+// 迁移失败时不会调用本方法，因此代理、后台检查、历史收集和配置热重载均不会启动。
+func (a *App) startOperationalComponentsLocked(ctx context.Context) {
 
 	// 3. 显示启动信息
 	a.logger.Info("🚀 AI Switchboard 桌面版启动中...",
@@ -224,13 +238,7 @@ func (a *App) shutdown(ctx context.Context) {
 		}
 	}
 
-	// 3. 关闭端点运行时 writer（flush 待写任务）与端点管理器
-	//    v7 §4.6：必须先于 usageTracker 关闭数据库
-	if a.endpointRuntimeWriter != nil {
-		if err := a.endpointRuntimeWriter.Close(); err != nil {
-			a.logger.Error("端点运行时写入器关闭失败", "error", err)
-		}
-	}
+	// 3. 关闭端点管理器
 	if a.endpointManager != nil {
 		a.endpointManager.Stop()
 	}
@@ -239,6 +247,13 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.usageTracker != nil {
 		if err := a.usageTracker.Close(); err != nil {
 			a.logger.Error("使用追踪器关闭失败", "error", err)
+		}
+	}
+
+	// 4.5 关闭核心数据库；它独立于 UsageTracker 生命周期并最后释放。
+	if a.coreDatabase != nil {
+		if err := a.coreDatabase.Close(); err != nil {
+			a.logger.Error("核心数据库关闭失败", "error", err)
 		}
 	}
 
@@ -276,46 +291,6 @@ func (a *App) beforeClose(ctx context.Context) bool {
 	return false
 }
 
-// loadConfig 加载配置
-func (a *App) loadConfig() {
-	// 创建临时 logger 用于初始化
-	tempLogger := slog.Default()
-
-	// 确保应用目录存在
-	if err := utils.EnsureAppDirs(); err != nil {
-		tempLogger.Warn("⚠️ 无法创建应用目录", "error", err)
-	} else {
-		tempLogger.Info("📁 应用目录已就绪",
-			"appdir", utils.GetAppDataDir(),
-			"data", utils.GetDataDir(),
-			"logs", utils.GetLogDir(),
-			"config", utils.GetConfigDir())
-	}
-
-	resolvedConfigPath, err := a.resolveStartupConfigPath(tempLogger)
-	if err != nil {
-		panic(fmt.Sprintf("无法准备配置文件: %v", err))
-	}
-
-	// 创建配置监听器（此时会调用 SetDefaults 设置默认路径）
-	configWatcher, err := config.NewConfigWatcher(resolvedConfigPath, tempLogger)
-	if err != nil {
-		panic(fmt.Sprintf("无法加载配置: %v", err))
-	}
-
-	a.configWatcher = configWatcher
-	cfg := configWatcher.GetConfig()
-	a.applyDesktopRuntimePathOverrides(cfg)
-	a.config = cfg
-	a.configPath = resolvedConfigPath
-
-	tempLogger.Info("✅ 配置加载完成",
-		"config_file", a.configPath,
-		"log_path", a.config.Logging.FilePath,
-		"db_path", a.config.UsageTracking.DatabasePath,
-		"appdir", utils.GetAppDataDir())
-}
-
 // setupLogger 设置日志
 func (a *App) setupLogger() {
 	logger, broadcastHandler := setupLogger(a.config.Logging)
@@ -346,14 +321,7 @@ func (a *App) setupEventBus() {
 
 // setupEndpointStore 设置端点存储 (v5.0+ SQLite)
 func (a *App) setupEndpointStore() {
-	// 使用 usageTracker 的数据库连接（如果已启用）
-	if a.usageTracker == nil {
-		a.logger.Warn("⚠️ 端点存储需要使用追踪功能 (usage_tracking.enabled: true)")
-		return
-	}
-
-	// 获取数据库连接
-	db := a.usageTracker.GetDB()
+	db := a.coreDB()
 	if db == nil {
 		a.logger.Error("❌ 无法获取数据库连接")
 		return
@@ -361,11 +329,6 @@ func (a *App) setupEndpointStore() {
 
 	// 创建 EndpointStore
 	a.endpointStore = store.NewSQLiteEndpointStore(db)
-
-	// v7 §4.6：先创建 endpoint runtime writer 并注入 Manager，再做启动恢复
-	//（恢复走仅内存 restore 档，不写回刚读取的 DB）
-	a.endpointRuntimeWriter = endpoint.NewRuntimeWriter(a.endpointStore, a.endpointManager.IsCurrentActiveRevision)
-	a.endpointManager.SetRuntimeWriter(a.endpointRuntimeWriter)
 
 	// 创建 EndpointService
 	a.endpointService = service.NewEndpointService(a.endpointStore, a.endpointManager, a.config)
@@ -375,7 +338,7 @@ func (a *App) setupEndpointStore() {
 	defer cancel()
 
 	if err := a.endpointService.SyncFromDatabase(ctx); err != nil {
-		a.logger.Warn("⚠️ 从数据库同步端点失败，使用 YAML 配置", "error", err)
+		a.logger.Error("❌ 从数据库同步 Claude 端点失败", "error", err)
 	} else {
 		a.logger.Info("✅ 端点存储已启用 (SQLite)")
 	}
@@ -483,11 +446,7 @@ func (a *App) setupEndpointRuntimeStates(ctx context.Context, db *sql.DB) {
 // setupPrivacyService 设置隐私保护服务 (v6.1+ SQLite)
 // 启动时加载规则并编译快照；编译降级不阻塞启动，通过日志与前端状态可见。
 func (a *App) setupPrivacyService() {
-	if a.usageTracker == nil {
-		a.logger.Warn("⚠️ 隐私保护需要使用追踪功能 (usage_tracking.enabled: true)")
-		return
-	}
-	db := a.usageTracker.GetDB()
+	db := a.coreDB()
 	if db == nil {
 		a.logger.Error("❌ 无法获取数据库连接 (隐私保护)")
 		return
@@ -512,14 +471,7 @@ func (a *App) setupPrivacyService() {
 
 // setupModelPricingStore 设置模型定价存储 (v5.0+ SQLite)
 func (a *App) setupModelPricingStore() {
-	// 使用 usageTracker 的数据库连接
-	if a.usageTracker == nil {
-		a.logger.Debug("模型定价存储跳过初始化 (usage_tracking 未启用)")
-		return
-	}
-
-	// 获取数据库连接
-	db := a.usageTracker.GetDB()
+	db := a.coreDB()
 	if db == nil {
 		a.logger.Error("❌ 无法获取数据库连接 (模型定价)")
 		return
@@ -984,6 +936,12 @@ func (a *App) startProxyServer() {
 
 // setupConfigReload 设置配置热重载
 func (a *App) setupConfigReload() {
+	configWatcher, err := config.NewConfigWatcher(a.configPath, a.logger)
+	if err != nil {
+		a.logger.Error("❌ 配置热重载初始化失败", "error", err)
+		return
+	}
+	a.configWatcher = configWatcher
 	a.configWatcher.AddReloadCallback(func(newCfg *config.Config) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
@@ -1107,14 +1065,7 @@ func (a *App) emitConfigReloaded() {
 
 // setupSettingsStore 设置系统设置存储 (v5.1+ SQLite)
 func (a *App) setupSettingsStore() {
-	// 使用 usageTracker 的数据库连接
-	if a.usageTracker == nil {
-		a.logger.Debug("设置存储跳过初始化 (usage_tracking 未启用)")
-		return
-	}
-
-	// 获取数据库连接
-	db := a.usageTracker.GetDB()
+	db := a.coreDB()
 	if db == nil {
 		a.logger.Error("❌ 无法获取数据库连接 (设置存储)")
 		return
@@ -1201,17 +1152,7 @@ func (a *App) migrateLegacyConnectivitySettings(ctx context.Context) error {
 
 // setupAccountPoolStore 设置账号池存储 (v6.0+ SQLite)
 func (a *App) setupAccountPoolStore() {
-	// 使用 usageTracker 的数据库连接
-	if a.usageTracker == nil {
-		if a.config != nil && a.config.AccountPool.Enabled {
-			a.logger.Warn("⚠️ 账号池路由已启用，但 usage_tracking 未启用；Codex /v1/responses 与 /v1/responses/compact 将返回账号池未就绪错误")
-		} else {
-			a.logger.Debug("账号池存储跳过初始化 (usage_tracking 未启用)")
-		}
-		return
-	}
-
-	db := a.usageTracker.GetDB()
+	db := a.coreDB()
 	if db == nil {
 		a.logger.Error("❌ 无法获取数据库连接 (账号池存储)")
 		if a.config != nil && a.config.AccountPool.Enabled {
@@ -1226,6 +1167,13 @@ func (a *App) setupAccountPoolStore() {
 		a.accountPoolService.SetSettingsService(a.settingsService)
 	}
 	a.logger.Info("✅ 账号池存储已启用 (SQLite)")
+}
+
+func (a *App) coreDB() *sql.DB {
+	if a == nil || a.coreDatabase == nil {
+		return nil
+	}
+	return a.coreDatabase.DB()
 }
 
 // applySettingsToConfig 从数据库加载设置并应用到运行时配置
@@ -1281,7 +1229,6 @@ func (a *App) applySettingsToConfig() {
 	// count_tokens 与重放安全硬失败 fallback 不受 failure_action 影响
 	a.config.Failover.Enabled = true
 	// 🔧 同步更新旧字段
-	a.config.Group.AutoSwitchBetweenGroups = a.config.Failover.Enabled
 
 	// 流式传输配置
 	a.config.Streaming.HeartbeatInterval = a.settingsService.GetDuration(ctx, service.CategoryStreaming, "heartbeat_interval", a.config.Streaming.HeartbeatInterval)

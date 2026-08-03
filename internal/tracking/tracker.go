@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,11 +12,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"cc-forwarder/config"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -31,7 +34,6 @@ type UsageStatsDetailed struct {
 	TotalCost       float64                 `json:"total_cost"`
 	ModelStats      map[string]ModelStat    `json:"model_stats"`
 	EndpointStats   map[string]EndpointStat `json:"endpoint_stats"`
-	GroupStats      map[string]GroupStat    `json:"group_stats"`
 }
 
 // ModelStat 模型统计
@@ -46,10 +48,37 @@ type EndpointStat struct {
 	TotalCost    float64 `json:"total_cost"`
 }
 
-// GroupStat 组统计
-type GroupStat struct {
-	RequestCount int64   `json:"request_count"`
-	TotalCost    float64 `json:"total_cost"`
+const (
+	RequestFamilyClaude = "claude"
+	RequestFamilyCodex  = "codex"
+	RequestFamilyImage  = "image"
+	RequestFamilyOther  = "other"
+)
+
+func normalizeRequestFamily(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case RequestFamilyClaude:
+		return RequestFamilyClaude
+	case RequestFamilyCodex:
+		return RequestFamilyCodex
+	case RequestFamilyImage:
+		return RequestFamilyImage
+	default:
+		return RequestFamilyOther
+	}
+}
+
+func requestFamilyFromPath(path string) string {
+	switch {
+	case path == "/v1/messages" || path == "/v1/messages/count_tokens":
+		return RequestFamilyClaude
+	case path == "/v1/responses" || path == "/v1/responses/compact" || path == "/v1/alpha/search":
+		return RequestFamilyCodex
+	case strings.HasPrefix(path, "/v1/images/"):
+		return RequestFamilyImage
+	default:
+		return RequestFamilyOther
+	}
 }
 
 // RequestEvent 表示请求事件
@@ -66,6 +95,7 @@ type RequestStartData struct {
 	UserAgent          string `json:"user_agent"`
 	Method             string `json:"method"`
 	Path               string `json:"path"`
+	RequestFamily      string `json:"request_family"`
 	IsStreaming        bool   `json:"is_streaming"`                   // 是否为流式请求
 	UpstreamType       string `json:"upstream_type,omitempty"`        // endpoint/account
 	UpstreamSourceName string `json:"upstream_source_name,omitempty"` // 订阅源名或固定来源
@@ -75,9 +105,7 @@ type RequestStartData struct {
 
 // RequestUpdateData 请求更新事件数据
 type RequestUpdateData struct {
-	Channel      string `json:"channel"`
 	EndpointName string `json:"endpoint_name"`
-	GroupName    string `json:"group_name"`
 	Status       string `json:"status"`
 	RetryCount   int    `json:"retry_count"`
 	HTTPStatus   int    `json:"http_status"`
@@ -333,8 +361,7 @@ type WriteRequest struct {
 // 支持可选字段更新，只更新非nil的字段
 type UpdateOptions struct {
 	EndpointName       *string        // 端点名称
-	Channel            *string        // 渠道标签（v5.0）
-	GroupName          *string        // 组名称
+	RequestFamily      *string        // 请求类型 claude/codex/image/other
 	UpstreamType       *string        // 上游类型 endpoint/account
 	UpstreamSourceName *string        // 上游来源（订阅源）
 	UpstreamName       *string        // 上游名称（账号名/端点名）
@@ -806,39 +833,46 @@ func (ut *UsageTracker) Close() error {
 
 // RecordRequestStart 记录请求开始
 func (ut *UsageTracker) RecordRequestStart(requestID, clientIP, userAgent, method, path string, isStreaming bool) {
+	ut.RecordRequestStartWithFamily(requestID, clientIP, userAgent, method, path, requestFamilyFromPath(path), isStreaming)
+}
+
+// RecordRequestStartWithFamily 记录请求开始；请求类型必须由入口显式传入。
+func (ut *UsageTracker) RecordRequestStartWithFamily(requestID, clientIP, userAgent, method, path, requestFamily string, isStreaming bool) {
 	if ut.config == nil || !ut.config.Enabled {
 		return
 	}
+	requestFamily = normalizeRequestFamily(requestFamily)
 
 	// 🔥 v4.1 热池模式：直接添加到内存热池
 	if ut.hotPoolEnabled && ut.hotPool != nil {
-		req := NewActiveRequest(requestID, clientIP, userAgent, method, path, isStreaming)
+		req := NewActiveRequestWithFamily(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming)
 		if err := ut.hotPool.Add(req); err != nil {
 			slog.Warn("🔥 热池添加请求失败，降级到事件队列模式",
 				"request_id", requestID,
 				"error", err)
 			// 降级到传统模式
-			ut.recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, isStreaming)
+			ut.recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming)
 		}
 		return
 	}
 
 	// 传统模式：发送事件到队列
-	ut.recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, isStreaming)
+	ut.recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming)
 }
 
 // recordRequestStartLegacy 传统模式记录请求开始
-func (ut *UsageTracker) recordRequestStartLegacy(requestID, clientIP, userAgent, method, path string, isStreaming bool) {
+func (ut *UsageTracker) recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, requestFamily string, isStreaming bool) {
 	event := RequestEvent{
 		Type:      "start",
 		RequestID: requestID,
 		Timestamp: ut.now(),
 		Data: RequestStartData{
-			ClientIP:    clientIP,
-			UserAgent:   userAgent,
-			Method:      method,
-			Path:        path,
-			IsStreaming: isStreaming,
+			ClientIP:      clientIP,
+			UserAgent:     userAgent,
+			Method:        method,
+			Path:          path,
+			RequestFamily: requestFamily,
+			IsStreaming:   isStreaming,
 		},
 	}
 
@@ -866,11 +900,8 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 			if opts.EndpointName != nil {
 				req.EndpointName = *opts.EndpointName
 			}
-			if opts.Channel != nil {
-				req.Channel = *opts.Channel
-			}
-			if opts.GroupName != nil {
-				req.GroupName = *opts.GroupName
+			if opts.RequestFamily != nil {
+				req.RequestFamily = normalizeRequestFamily(*opts.RequestFamily)
 			}
 			if opts.UpstreamType != nil {
 				req.UpstreamType = *opts.UpstreamType
@@ -1541,15 +1572,15 @@ func (ut *UsageTracker) GetUsageSummary(ctx context.Context, startTime, endTime 
 }
 
 // GetRequestLogs 获取请求日志（便利方法）
-func (ut *UsageTracker) GetRequestLogs(ctx context.Context, startTime, endTime time.Time, modelName, endpointName, groupName string, limit, offset int) ([]RequestDetail, error) {
+func (ut *UsageTracker) GetRequestLogs(ctx context.Context, startTime, endTime time.Time, modelName, requestFamily, upstreamName string, limit, offset int) ([]RequestDetail, error) {
 	opts := &QueryOptions{
-		StartDate:    &startTime,
-		EndDate:      &endTime,
-		ModelName:    modelName,
-		EndpointName: endpointName,
-		GroupName:    groupName,
-		Limit:        limit,
-		Offset:       offset,
+		StartDate:     &startTime,
+		EndDate:       &endTime,
+		ModelName:     modelName,
+		RequestFamily: requestFamily,
+		UpstreamName:  upstreamName,
+		Limit:         limit,
+		Offset:        offset,
 	}
 	return ut.QueryRequestDetails(ctx, opts)
 }
@@ -1633,44 +1664,21 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 		}
 	}
 
-	// 获取组统计（使用读连接）
-	groupQuery := `SELECT group_name, COUNT(*), SUM(total_cost_usd)
-		FROM request_logs 
-		WHERE start_time >= ? AND start_time <= ? AND group_name IS NOT NULL AND group_name != ''
-		GROUP BY group_name`
-
-	rows3, err := ut.readDB.QueryContext(ctx, groupQuery, startTime, endTime)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query group stats: %w", err)
-	}
-	defer rows3.Close()
-
-	stats.GroupStats = make(map[string]GroupStat)
-	for rows3.Next() {
-		var groupName string
-		var requests int64
-		var cost float64
-		if err := rows3.Scan(&groupName, &requests, &cost); err != nil {
-			continue
-		}
-		stats.GroupStats[groupName] = GroupStat{
-			RequestCount: requests,
-			TotalCost:    cost,
-		}
-	}
-
 	return &stats, nil
 }
 
 // ExportToCSV 导出为CSV格式
-func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time.Time, modelName, endpointName, groupName string) ([]byte, error) {
-	logs, err := ut.GetRequestLogs(ctx, startTime, endTime, modelName, endpointName, groupName, 10000, 0) // Export up to 10k records
+func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time.Time, modelName, requestFamily, upstreamName string) ([]byte, error) {
+	logs, err := ut.GetRequestLogs(ctx, startTime, endTime, modelName, requestFamily, upstreamName, 10000, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get request logs for CSV export: %w", err)
 	}
 
-	// CSV header
-	csv := "request_id,client_ip,user_agent,method,path,start_time,end_time,duration_ms,endpoint_name,group_name,model_name,status,http_status_code,retry_count,input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens,input_cost_usd,output_cost_usd,cache_creation_cost_usd,cache_read_cost_usd,total_cost_usd,created_at,updated_at\n"
+	var output strings.Builder
+	writer := csv.NewWriter(&output)
+	if err := writer.Write([]string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "start_time", "end_time", "duration_ms", "endpoint_name", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "route_mode", "requested_endpoint", "effective_endpoint", "fallback_reason", "model_name", "status", "http_status_code", "retry_count", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "input_cost_usd", "output_cost_usd", "cache_creation_cost_usd", "cache_read_cost_usd", "total_cost_usd", "created_at", "updated_at"}); err != nil {
+		return nil, err
+	}
 
 	// CSV rows
 	for _, log := range logs {
@@ -1689,23 +1697,29 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 			httpStatus = fmt.Sprintf("%d", *log.HTTPStatusCode)
 		}
 
-		csv += fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%s,%s\n",
-			log.RequestID, log.ClientIP, log.UserAgent, log.Method, log.Path,
-			log.StartTime.Format(time.RFC3339), endTime, durationMs,
-			log.EndpointName, log.GroupName, log.ModelName, log.Status,
-			httpStatus, log.RetryCount,
-			log.InputTokens, log.OutputTokens, log.CacheCreationTokens, log.CacheReadTokens,
-			log.InputCostUSD, log.OutputCostUSD, log.CacheCreationCostUSD, log.CacheReadCostUSD, log.TotalCostUSD,
+		if err := writer.Write([]string{
+			log.RequestID, log.ClientIP, log.UserAgent, log.Method, log.Path, log.RequestFamily,
+			log.StartTime.Format(time.RFC3339), endTime, durationMs, log.EndpointName,
+			log.UpstreamType, log.UpstreamSourceName, log.UpstreamName, strconv.FormatInt(log.UpstreamID, 10),
+			log.RouteMode, log.RequestedEndpoint, log.EffectiveEndpoint, log.FallbackReason,
+			log.ModelName, log.Status, httpStatus, strconv.Itoa(log.RetryCount),
+			strconv.FormatInt(log.InputTokens, 10), strconv.FormatInt(log.OutputTokens, 10), strconv.FormatInt(log.CacheCreationTokens, 10), strconv.FormatInt(log.CacheReadTokens, 10),
+			strconv.FormatFloat(log.InputCostUSD, 'f', 6, 64), strconv.FormatFloat(log.OutputCostUSD, 'f', 6, 64), strconv.FormatFloat(log.CacheCreationCostUSD, 'f', 6, 64), strconv.FormatFloat(log.CacheReadCostUSD, 'f', 6, 64), strconv.FormatFloat(log.TotalCostUSD, 'f', 6, 64),
 			log.CreatedAt.Format(time.RFC3339), log.UpdatedAt.Format(time.RFC3339),
-		)
+		}); err != nil {
+			return nil, err
+		}
 	}
-
-	return []byte(csv), nil
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return nil, err
+	}
+	return []byte(output.String()), nil
 }
 
 // ExportToJSON 导出为JSON格式
-func (ut *UsageTracker) ExportToJSON(ctx context.Context, startTime, endTime time.Time, modelName, endpointName, groupName string) ([]byte, error) {
-	logs, err := ut.GetRequestLogs(ctx, startTime, endTime, modelName, endpointName, groupName, 10000, 0) // Export up to 10k records
+func (ut *UsageTracker) ExportToJSON(ctx context.Context, startTime, endTime time.Time, modelName, requestFamily, upstreamName string) ([]byte, error) {
+	logs, err := ut.GetRequestLogs(ctx, startTime, endTime, modelName, requestFamily, upstreamName, 10000, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get request logs for JSON export: %w", err)
 	}
@@ -2040,8 +2054,7 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 		FirstTokenMs:          firstTokenMs,
 		CompletionMs:          completionMs,
 		EndpointName:          req.EndpointName,
-		Channel:               req.Channel, // v5.0: 渠道标签
-		GroupName:             req.GroupName,
+		RequestFamily:         req.RequestFamily,
 		UpstreamType:          req.UpstreamType,
 		UpstreamSourceName:    req.UpstreamSourceName,
 		UpstreamName:          req.UpstreamName,
@@ -2263,8 +2276,7 @@ func (ut *UsageTracker) getFilteredHotPoolRequests(opts *QueryOptions) []Request
 			if opts.ModelName != "" && req.ModelName != opts.ModelName {
 				continue
 			}
-			// 渠道过滤（v5.0）
-			if opts.Channel != "" && req.Channel != opts.Channel {
+			if opts.RequestFamily != "" && req.RequestFamily != normalizeRequestFamily(opts.RequestFamily) {
 				continue
 			}
 			// 端点过滤
@@ -2286,8 +2298,7 @@ func (ut *UsageTracker) getFilteredHotPoolRequests(opts *QueryOptions) []Request
 					continue
 				}
 			}
-			// 组过滤
-			if opts.GroupName != "" && req.GroupName != opts.GroupName {
+			if opts.UpstreamName != "" && req.UpstreamName != opts.UpstreamName {
 				continue
 			}
 			// 时间范围过滤

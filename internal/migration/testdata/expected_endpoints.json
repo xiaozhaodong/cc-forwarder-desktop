@@ -1,0 +1,64 @@
+{
+  "source_mode": "yaml",
+  "source_endpoint_count": 5,
+  "target_endpoint_count": 10,
+  "split_endpoint_count": 1,
+  "derived_record_count": 5,
+  "endpoints": [
+    {
+      "name": "multi-auth",
+      "token_label": "token-a",
+      "api_key_label": "api-a",
+      "availability_enabled": true,
+      "failover_enabled": true
+    },
+    {
+      "name": "multi-auth · token-a · api-b",
+      "availability_enabled": false,
+      "failover_enabled": false
+    },
+    {
+      "name": "multi-auth · token-a · api-c",
+      "availability_enabled": false,
+      "failover_enabled": false
+    },
+    {
+      "name": "multi-auth · token-b · api-a",
+      "availability_enabled": false,
+      "failover_enabled": false
+    },
+    {
+      "name": "multi-auth · token-b · api-b",
+      "availability_enabled": false,
+      "failover_enabled": false
+    },
+    {
+      "name": "multi-auth · token-b · api-c",
+      "availability_enabled": false,
+      "failover_enabled": false
+    },
+    {
+      "name": "inherited-auth-anchor",
+      "availability_enabled": true,
+      "failover_enabled": true
+    },
+    {
+      "name": "inherited-auth-child",
+      "availability_enabled": true,
+      "failover_enabled": true,
+      "inherits_single_token": true,
+      "inherits_single_api_key": true,
+      "inherits_headers": true
+    },
+    {
+      "name": "api-key-only",
+      "availability_enabled": true,
+      "failover_enabled": false
+    },
+    {
+      "name": "no-auth",
+      "availability_enabled": false,
+      "failover_enabled": false
+    }
+  ]
+}
