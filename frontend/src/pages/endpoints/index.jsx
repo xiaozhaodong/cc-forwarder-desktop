@@ -1,623 +1,171 @@
-// ============================================
-// Endpoints 页面 - 端点管理
-// 2025-11-28 (Updated 2025-12-24 for card layout)
-// ============================================
-
-import { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  Activity,
-  AlertTriangle,
-  RefreshCw,
-  Database,
-  Route,
-  Server,
-  Info,
-  RotateCcw
-} from 'lucide-react';
-import {
-  Button,
-  LoadingSpinner,
-  ErrorMessage
-} from '@components/ui';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Activity, AlertTriangle, Database, Info, Plus, RefreshCw, Route } from 'lucide-react';
+import { Button, ErrorMessage, LoadingSpinner } from '@components/ui';
 import useEndpointsData from '@hooks/useEndpointsData.js';
-import {
-  EndpointForm,
-  ChannelCard,
-  DeleteConfirmDialog,
-  groupEndpointsByChannel,
-  resolveSnapshotOutcome
-} from './components';
-import EndpointScheduleDrawer from './components/EndpointScheduleDrawer.jsx';
+import { DeleteConfirmDialog, EndpointForm, EndpointRow, EndpointScheduleDrawer, resolveSnapshotOutcome } from './components';
 import { fetchLatestEndpointScheduleSnapshot } from '@utils/endpointScheduleApi.js';
 import { formatTimestamp } from '@utils/api.js';
 import {
-  getEndpointStorageStatus,
-  getEndpointRecords,
-  createEndpointRecord,
-  updateEndpointRecord,
-  deleteEndpointRecord,
-  setEndpointAvailability,
-  setClaudeRoutingOverride,
-  getClaudeRoutingState,
   clearClaudeRoutingOverride,
+  createEndpointRecord,
+  deleteEndpointRecord,
+  getClaudeRoutingState,
   isWailsEnvironment,
-  subscribeToEvent
+  setClaudeRoutingOverride,
+  subscribeToEvent,
+  updateEndpointRecord
 } from '@utils/wailsApi.js';
 
-// ============================================
-// Endpoints 页面
-// ============================================
+const initialRoutingState = { mode: 'auto', endpointName: '', fallbackEnabled: true };
 
 const EndpointsPage = () => {
-  // 使用端点数据 Hook
-  const {
-    endpoints,
-    loading,
-    error,
-    stats,
-    refresh,
-    performBatchHealthCheckAll,
-    activateEndpointGroup,
-    sseConnectionStatus,
-    lastUpdate
-  } = useEndpointsData();
-
-  // 存储模式状态
-  const [storageStatus, setStorageStatus] = useState(null);
-  const [storageEndpoints, setStorageEndpoints] = useState([]);
-
-  // 批量连通性测试状态
-  const [batchCheckLoading, setBatchCheckLoading] = useState(false);
-  const [routingState, setRoutingState] = useState({
-    mode: 'auto',
-    endpointName: '',
-    fallbackEnabled: true
-  });
-  const [routingActionLoading, setRoutingActionLoading] = useState(false);
-  const [scheduleSnapshot, setScheduleSnapshot] = useState({ hasSnapshot: false, decisions: [] });
-  const [scheduleSnapshotUnsupported, setScheduleSnapshotUnsupported] = useState(false);
-  const [scheduleSnapshotLoading, setScheduleSnapshotLoading] = useState(false);
-  const [scheduleDrawerOpen, setScheduleDrawerOpen] = useState(false);
-
-  // 表单状态
-  const [showForm, setShowForm] = useState(false);
-  const [editingEndpoint, setEditingEndpoint] = useState(null);
-  const [formLoading, setFormLoading] = useState(false);
-
-  // 删除确认状态
+  const { endpoints, loading, error, stats, lastUpdate, refresh, testEndpoint, testAllEndpoints, setAvailability, setAutoSchedule } = useEndpointsData();
+  const [routingState, setRoutingState] = useState(initialRoutingState);
+  const [snapshot, setSnapshot] = useState({ hasSnapshot: false, decisions: [] });
+  const [snapshotUnsupported, setSnapshotUnsupported] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editingEndpoint, setEditingEndpoint] = useState(undefined);
+  const [formOpen, setFormOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [busyKey, setBusyKey] = useState('');
+  const [actionError, setActionError] = useState('');
 
-  // 加载存储状态
-  const loadStorageStatus = useCallback(async () => {
-    try {
-      const status = await getEndpointStorageStatus();
-      setStorageStatus(status);
-
-      // 如果是 SQLite 模式，加载存储的端点
-      if (status.storageType === 'sqlite' && status.enabled) {
-        const records = await getEndpointRecords();
-        setStorageEndpoints(records);
-      }
-    } catch (err) {
-      console.error('获取存储状态失败:', err);
-      // 默认使用 YAML 模式
-      setStorageStatus({ enabled: false, storageType: 'yaml' });
-    }
-  }, []);
-
-  // 初始化加载存储状态
-  useEffect(() => {
-    loadStorageStatus();
-  }, [loadStorageStatus]);
-
-  const loadClaudeRoutingState = useCallback(async () => {
+  const loadRouting = useCallback(async () => {
     if (!isWailsEnvironment()) return;
-    try {
-      const state = await getClaudeRoutingState();
-      setRoutingState(state);
-    } catch (err) {
-      console.error('获取 Claude 路由状态失败:', err);
-    }
+    setRoutingState(await getClaudeRoutingState());
+  }, []);
+
+  const loadSnapshot = useCallback(async () => {
+    const result = await fetchLatestEndpointScheduleSnapshot();
+    setSnapshot(result || { hasSnapshot: false, decisions: [] });
+    setSnapshotUnsupported(result?.unsupported === true);
   }, []);
 
   useEffect(() => {
-    loadClaudeRoutingState();
-  }, [loadClaudeRoutingState]);
+    loadRouting().catch((loadError) => setActionError(loadError.message));
+    loadSnapshot().catch(() => {});
+  }, [loadRouting, loadSnapshot]);
 
-  const loadEndpointScheduleSnapshot = useCallback(async ({ silent = false } = {}) => {
-    try {
-      const snapshot = await fetchLatestEndpointScheduleSnapshot();
-      setScheduleSnapshotUnsupported(snapshot?.unsupported === true);
-      setScheduleSnapshot(snapshot && typeof snapshot === 'object'
-        ? snapshot
-        : { hasSnapshot: false, decisions: [] });
-    } catch (err) {
-      if (!silent) {
-        console.error('获取端点调度快照失败:', err);
-      }
-    }
+  useEffect(() => {
+    if (!isWailsEnvironment()) return undefined;
+    const unsubscribe = subscribeToEvent('claude-routing:update', (state) => {
+      if (state && typeof state === 'object') setRoutingState(state);
+    });
+    return () => unsubscribe?.();
   }, []);
 
   useEffect(() => {
-    loadEndpointScheduleSnapshot({ silent: true });
-  }, [loadEndpointScheduleSnapshot]);
+    if (snapshotUnsupported) return undefined;
+    const timer = window.setInterval(() => loadSnapshot().catch(() => {}), 5000);
+    return () => window.clearInterval(timer);
+  }, [loadSnapshot, snapshotUnsupported]);
 
-  useEffect(() => {
-    if (scheduleSnapshotUnsupported || typeof document === 'undefined') return undefined;
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        loadEndpointScheduleSnapshot({ silent: true });
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [loadEndpointScheduleSnapshot, scheduleSnapshotUnsupported]);
-
-  useEffect(() => {
-    if (scheduleSnapshotUnsupported) return undefined;
-    const timer = setInterval(() => {
-      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
-        loadEndpointScheduleSnapshot({ silent: true });
-      }
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [loadEndpointScheduleSnapshot, scheduleSnapshotUnsupported]);
-
-  // SQLite 模式下监听 Wails 事件，实时刷新端点数据
-  const isSqliteModeRef = useRef(false);
-  useEffect(() => {
-    isSqliteModeRef.current = storageStatus?.storageType === 'sqlite' && storageStatus?.enabled;
-  }, [storageStatus]);
-
-  useEffect(() => {
-    if (!isWailsEnvironment()) return;
-
-    // 订阅端点更新事件
-    const unsubscribe = subscribeToEvent('endpoint:update', () => {
-      // 只在 SQLite 模式下刷新数据
-      if (isSqliteModeRef.current) {
-        console.log('📡 [Endpoints] 收到端点更新事件，刷新 SQLite 数据');
-        loadStorageStatus();
-      }
-    });
-    const unsubscribeRouting = subscribeToEvent('claude-routing:update', () => {
-      console.log('📡 [Endpoints] 收到 Claude 路由更新事件，刷新路由状态');
-      loadClaudeRoutingState();
-    });
-
-    return () => {
-      if (typeof unsubscribe === 'function') {
-        unsubscribe();
-      }
-      if (typeof unsubscribeRouting === 'function') {
-        unsubscribeRouting();
-      }
-    };
-  }, [loadClaudeRoutingState, loadStorageStatus]);
-
-  // 批量连通性测试处理
-  const handleBatchHealthCheck = async () => {
-    setBatchCheckLoading(true);
+  const run = useCallback(async (key, operation) => {
+    setBusyKey(key);
+    setActionError('');
     try {
-      await performBatchHealthCheckAll();
-      // 刷新数据以获取最新的连通性状态、响应时间等
-      if (isSqliteMode) {
-        await loadStorageStatus();
-      }
-    } catch (err) {
-      console.error('批量连通性测试失败:', err);
-      alert(`批量连通性测试失败: ${err.message}`);
+      const result = await operation();
+      await Promise.all([refresh(), loadRouting(), loadSnapshot()]);
+      return result;
+    } catch (runError) {
+      setActionError(runError?.message || '操作失败');
+      throw runError;
     } finally {
-      setBatchCheckLoading(false);
+      setBusyKey('');
     }
+  }, [loadRouting, loadSnapshot, refresh]);
+
+  const setRouting = (mode, endpointName) => run(`route:${endpointName || 'auto'}`, async () => {
+    if (mode === 'auto') return clearClaudeRoutingOverride();
+    return setClaudeRoutingOverride({ mode, endpointName, fallbackEnabled: mode !== 'manual_fixed' });
+  });
+
+  const saveEndpoint = async (payload) => {
+    const name = editingEndpoint?.name || payload.name;
+    await run(`save:${name}`, () => editingEndpoint
+      ? updateEndpointRecord(editingEndpoint.name, payload)
+      : createEndpointRecord(payload));
+    setFormOpen(false);
+    setEditingEndpoint(undefined);
   };
 
-  // 判断存储模式
-  const isSqliteMode = storageStatus?.storageType === 'sqlite' && storageStatus?.enabled;
+  const routeMode = routingState.mode || 'auto';
+  const routeTarget = routingState.endpointName || routingState.endpoint_name || '';
+  const effectiveEndpoint = routingState.lastEffectiveEndpoint || routingState.last_effective_endpoint || '';
+  const snapshotOutcome = resolveSnapshotOutcome(snapshot);
+  const statsCards = useMemo(() => [
+    ['端点总数', stats.total, 'text-slate-900'],
+    ['最近可达', stats.healthy, 'text-emerald-600'],
+    ['最近不可达', stats.unhealthy, 'text-rose-600'],
+    ['未检测', stats.unchecked, 'text-slate-400'],
+    ['冷却中', stats.cooldown, 'text-amber-600']
+  ], [stats]);
 
-  // 获取要显示的端点列表
-  const displayEndpoints = isSqliteMode ? storageEndpoints : endpoints;
-  const routeMode = routingState?.mode || 'auto';
-  const routeEndpointName = routingState?.endpointName || routingState?.endpoint_name || '';
-  const routeEffectiveEndpoint = routingState?.last_effective_endpoint || routingState?.lastEffectiveEndpoint || '';
-  const routeModeLabel = routeMode === 'manual_fixed' ? '手动固定' : '手动优选';
-  const snapshotOutcome = resolveSnapshotOutcome(scheduleSnapshot);
-  const showScheduleAlert = !scheduleSnapshotUnsupported
-    && scheduleSnapshot.hasSnapshot
-    && snapshotOutcome.isAbnormal;
-  const scheduleAlertTime = scheduleSnapshot.updatedAt || scheduleSnapshot.capturedAt;
-
-  const handleActivateEndpointGroup = useCallback(async (endpointName, groupName) => {
-    const result = await activateEndpointGroup(endpointName, groupName);
-    await loadClaudeRoutingState();
-    return result;
-  }, [activateEndpointGroup, loadClaudeRoutingState]);
-
-  const handleRestoreAutoRouting = useCallback(async () => {
-    setRoutingActionLoading(true);
-    try {
-      await clearClaudeRoutingOverride();
-      await loadClaudeRoutingState();
-      if (isSqliteMode) {
-        await loadStorageStatus();
-      } else {
-        await refresh();
-      }
-    } catch (err) {
-      console.error('恢复自动路由失败:', err);
-      alert(`恢复自动路由失败: ${err.message}`);
-    } finally {
-      setRoutingActionLoading(false);
-    }
-  }, [isSqliteMode, loadClaudeRoutingState, loadStorageStatus, refresh]);
-
-  const handleRefreshAll = useCallback(async () => {
-    setScheduleSnapshotLoading(true);
-    try {
-      await Promise.all([
-        isSqliteMode ? loadStorageStatus() : refresh(),
-        loadClaudeRoutingState(),
-        loadEndpointScheduleSnapshot()
-      ]);
-    } finally {
-      setScheduleSnapshotLoading(false);
-    }
-  }, [isSqliteMode, loadClaudeRoutingState, loadEndpointScheduleSnapshot, loadStorageStatus, refresh]);
-
-  // 计算统计数据
-  const displayStats = isSqliteMode
-    ? {
-        total: storageEndpoints.length,
-        healthy: storageEndpoints.filter(e => e.healthy).length,
-        unhealthy: storageEndpoints.filter(e => !e.healthy && e.never_checked !== true && e.neverChecked !== true && (e.lastCheck || e.last_check)).length,
-        unchecked: storageEndpoints.filter(e => e.never_checked === true || e.neverChecked === true || !(e.lastCheck || e.last_check)).length,
-        cooldown: storageEndpoints.filter(e => e.in_cooldown || e.inCooldown).length,
-        healthPercentage: storageEndpoints.filter(e => e.never_checked !== true && e.neverChecked !== true && (e.lastCheck || e.last_check)).length > 0
-          ? ((storageEndpoints.filter(e => e.healthy).length / storageEndpoints.filter(e => e.never_checked !== true && e.neverChecked !== true && (e.lastCheck || e.last_check)).length) * 100).toFixed(1)
-          : 0
-      }
-    : { ...stats, cooldown: 0 };
-
-  // 按渠道分组
-  const groupedEndpoints = groupEndpointsByChannel(displayEndpoints);
-
-  // ============================================
-  // CRUD 操作处理
-  // ============================================
-
-  // 新建端点
-  const handleCreate = () => {
-    setEditingEndpoint(null);
-    setShowForm(true);
-  };
-
-  // 编辑端点
-  const handleEdit = (endpoint) => {
-    setEditingEndpoint(endpoint);
-    setShowForm(true);
-  };
-
-  // 删除端点
-  const handleDelete = (endpoint) => {
-    setDeleteTarget(endpoint);
-  };
-
-  // v8：切换端点硬启用状态（关闭后任何模式都不会使用）
-  const handleToggle = async (name, enabled) => {
-    try {
-      await setEndpointAvailability(name, enabled);
-      await loadStorageStatus();
-    } catch (err) {
-      console.error('切换端点启用状态失败:', err);
-      alert(`操作失败: ${err.message}`);
-    }
-  };
-
-  // v8：行内路由动作（设为优选 / 固定使用 / 恢复自动）
-  const handleSetRouting = async (mode, endpointName) => {
-    try {
-      if (mode === 'auto') {
-        await clearClaudeRoutingOverride();
-      } else {
-        await setClaudeRoutingOverride({ mode, endpointName });
-      }
-      await loadClaudeRoutingState();
-      await loadStorageStatus();
-    } catch (err) {
-      console.error('设置路由模式失败:', err);
-      alert(`操作失败: ${err.message}`);
-    }
-  };
-
-  // 保存端点
-  const handleSave = async (formData) => {
-    setFormLoading(true);
-    try {
-      if (editingEndpoint) {
-        // 编辑模式
-        await updateEndpointRecord(editingEndpoint.name, formData);
-      } else {
-        // 新建模式
-        await createEndpointRecord(formData);
-      }
-      setShowForm(false);
-      setEditingEndpoint(null);
-      // 刷新列表
-      await loadStorageStatus();
-    } catch (err) {
-      console.error('保存失败:', err);
-      throw err;
-    } finally {
-      setFormLoading(false);
-    }
-  };
-
-  // 确认删除
-  const handleConfirmDelete = async () => {
-    if (!deleteTarget) return;
-
-    setDeleteLoading(true);
-    try {
-      await deleteEndpointRecord(deleteTarget.name);
-      setDeleteTarget(null);
-      // 刷新列表
-      await loadStorageStatus();
-    } catch (err) {
-      console.error('删除失败:', err);
-      alert(`删除失败: ${err.message}`);
-    } finally {
-      setDeleteLoading(false);
-    }
-  };
-
-  // 错误状态
-  if (error && !isSqliteMode) {
-    return (
-      <ErrorMessage
-        title="端点数据加载失败"
-        message={error}
-        onRetry={refresh}
-      />
-    );
-  }
-
-  // 加载状态
-  if (loading && displayEndpoints.length === 0 && !storageStatus) {
-    return <LoadingSpinner text="加载端点数据..." />;
-  }
+  if (loading && endpoints.length === 0) return <LoadingSpinner text="加载 Claude 端点..." />;
+  if (error && endpoints.length === 0) return <ErrorMessage title="Claude 端点加载失败" message={error} onRetry={refresh} />;
 
   return (
-    <div className="animate-fade-in">
-      {/* 页面标题 */}
-      <div className="flex justify-between items-end mb-8">
+    <div className="animate-fade-in space-y-6">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Endpoints Management</h1>
-          <p className="text-slate-500 text-sm mt-1">
-            管理上游 API 端点配置、认证与路由策略
-            {lastUpdate && (
-              <span className="ml-2 text-slate-400">· 更新于 {lastUpdate}</span>
-            )}
-          </p>
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-indigo-500"><Database size={14} />SQLite 权威源</div>
+          <h1 className="mt-1 text-2xl font-bold text-slate-900">Claude 端点</h1>
+          <p className="mt-1 text-sm text-slate-500">扁平管理固定认证、调度资格、健康状态与模型兼容规则。{lastUpdate && <span className="text-slate-400"> · 更新于 {lastUpdate}</span>}</p>
         </div>
-        <div className="flex items-center gap-3">
-          {/* SSE 状态指示器 */}
-          <div className="flex items-center gap-1.5 text-xs text-slate-500">
-            <span className={`w-2 h-2 rounded-full ${
-              sseConnectionStatus === 'connected' ? 'bg-emerald-400' :
-              sseConnectionStatus === 'connecting' ? 'bg-amber-400 animate-pulse' :
-              'bg-slate-300'
-            }`} />
-            {sseConnectionStatus === 'connected' ? '实时' : '离线'}
-          </div>
-
-          {/* 刷新按钮 */}
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={RefreshCw}
-            onClick={handleRefreshAll}
-            loading={loading || scheduleSnapshotLoading}
-          >
-            刷新
-          </Button>
-
-          {/* 批量检测按钮 */}
-          <Button
-            icon={Activity}
-            loading={batchCheckLoading}
-            onClick={handleBatchHealthCheck}
-          >
-            测试连通性
-          </Button>
-
-          {/* 调度快照抽屉入口 */}
-          <Button
-            icon={Route}
-            variant="secondary"
-            onClick={() => setScheduleDrawerOpen(true)}
-            className="border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300"
-          >
-            调度快照
-          </Button>
-
-          {/* 新建端点按钮 (SQLite 模式) */}
-          {isSqliteMode && (
-            <Button
-              icon={Server}
-              onClick={handleCreate}
-            >
-              添加端点
-            </Button>
-          )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="ghost" size="sm" icon={RefreshCw} onClick={() => run('refresh', refresh)} loading={busyKey === 'refresh'}>刷新</Button>
+          <Button variant="secondary" icon={Activity} onClick={() => run('test:all', testAllEndpoints)} loading={busyKey === 'test:all'}>批量测试</Button>
+          <Button variant="secondary" icon={Route} onClick={() => setDrawerOpen(true)}>调度快照</Button>
+          <Button icon={Plus} onClick={() => { setEditingEndpoint(undefined); setFormOpen(true); }}>新建端点</Button>
         </div>
       </div>
 
-      <div className="flex items-center gap-2 mb-6 px-3 py-2 bg-slate-50/80 rounded-lg border border-slate-100 text-xs text-slate-500">
-        <Info className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
-        <span>
-          提示：列表中的“可达/不可达”仅代表最近一次连通性测试结果。实际路由调度主要依据真实请求失败追踪与冷却状态，而不是后台轮询探测。
-        </span>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 sm:col-span-2 xl:col-span-1">
+          <div className="text-xs text-indigo-500">Claude 路由</div>
+          <div className="mt-1 truncate font-semibold text-indigo-900">{routeMode === 'auto' ? '自动调度' : routeMode === 'manual_fixed' ? '手动固定' : '手动优选'}</div>
+          <div className="mt-1 truncate text-xs text-indigo-600" title={routeTarget || effectiveEndpoint}>{routeTarget || effectiveEndpoint || '等待请求命中'}</div>
+        </div>
+        {statsCards.map(([label, value, color]) => (
+          <div key={label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className={`text-2xl font-bold ${color}`}>{value}</div><div className="mt-1 text-xs text-slate-500">{label}</div></div>
+        ))}
       </div>
 
-      {routeMode !== 'auto' && (
-        <div className="flex items-center justify-between gap-3 mb-6 px-3 py-2 bg-indigo-50/80 rounded-lg border border-indigo-100 text-xs text-indigo-700">
-          <div className="flex min-w-0 items-center gap-2">
-            <Info className="w-3.5 h-3.5 flex-shrink-0 text-indigo-500" />
-            <span className="truncate">
-              Claude 路由：{routeModeLabel}{routeEndpointName ? ` · ${routeEndpointName}` : ''}
-            </span>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={RotateCcw}
-            onClick={handleRestoreAutoRouting}
-            loading={routingActionLoading}
-            className="shrink-0 text-indigo-700 hover:bg-indigo-100"
-          >
-            恢复自动
-          </Button>
-        </div>
-      )}
+      <div className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2.5 text-xs leading-5 text-slate-500"><Info size={15} className="mt-0.5 shrink-0" /><span>“可达 / 不可达”只表示最近一次主动检测；真实请求仍根据硬启用、自动调度资格、请求级失败与冷却状态选择候选。</span></div>
+      {actionError && <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"><AlertTriangle size={16} />{actionError}</div>}
+      {snapshot.hasSnapshot && snapshotOutcome.isAbnormal && <button type="button" onClick={() => setDrawerOpen(true)} className="flex w-full items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs text-amber-800"><span>最近调度异常：{snapshotOutcome.label}{(snapshot.updatedAt || snapshot.capturedAt) ? ` · ${formatTimestamp(snapshot.updatedAt || snapshot.capturedAt)}` : ''}</span><span className="font-medium">查看明细</span></button>}
 
-      {showScheduleAlert && (
-        <div className="flex items-center justify-between gap-3 mb-6 px-3 py-2 bg-amber-50/80 rounded-lg border border-amber-200 text-xs text-amber-800">
-          <div className="flex min-w-0 items-center gap-2">
-            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 text-amber-500" />
-            <span className="truncate">
-              最近调度异常：{snapshotOutcome.label}
-              {scheduleAlertTime ? ` · ${formatTimestamp(scheduleAlertTime)}` : ''}
-            </span>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setScheduleDrawerOpen(true)}
-            className="shrink-0 text-amber-800 hover:bg-amber-100"
-          >
-            查看明细
-          </Button>
-        </div>
-      )}
-
-      {/* 统计卡片 */}
-      <div className="grid grid-cols-5 gap-4 mb-6">
-        <div className="bg-white rounded-xl border border-slate-200/60 p-4 shadow-sm">
-          <div className="text-2xl font-bold text-slate-900">{displayStats.total}</div>
-          <div className="text-sm text-slate-500">总端点数</div>
-        </div>
-        {isSqliteMode && (
-          <div className="bg-white rounded-xl border border-indigo-200/60 p-4 shadow-sm">
-            <div className="text-2xl font-bold text-indigo-600 truncate">
-              {routeEffectiveEndpoint || '—'}
-            </div>
-            <div className="text-sm text-slate-500">
-              当前生效端点
-              {routeMode !== 'auto' && routeEndpointName && (
-                <div className="text-xs text-indigo-500 mt-1 truncate">
-                  手动目标：{routeEndpointName}
-                </div>
-              )}
-            </div>
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        {endpoints.length === 0 ? (
+          <div className="px-6 py-16 text-center"><Database size={38} className="mx-auto text-slate-300" /><div className="mt-3 font-medium text-slate-700">尚未配置 Claude 端点</div><div className="mt-1 text-sm text-slate-400">创建端点后即可参与自动调度或手动路由。</div></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1280px] text-left">
+              <thead className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-400"><tr>{['名称 / URL', '认证', '优先级', '硬启用', '自动调度', '连通性', '冷却', '模型改写', '操作'].map((label) => <th key={label} className="px-4 py-3">{label}</th>)}</tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {endpoints.map((endpoint) => (
+                  <EndpointRow
+                    key={endpoint.id || endpoint.name}
+                    endpoint={endpoint}
+                    routingState={routingState}
+                    busy={Boolean(busyKey)}
+                    onEdit={(value) => { setEditingEndpoint(value); setFormOpen(true); }}
+                    onDelete={setDeleteTarget}
+                    onTest={(name) => run(`test:${name}`, () => testEndpoint(name))}
+                    onAvailabilityChange={(name, enabled) => run(`availability:${name}`, () => setAvailability(name, enabled))}
+                    onAutoScheduleChange={(name, enabled) => run(`auto:${name}`, () => setAutoSchedule(name, enabled))}
+                    onSetRouting={setRouting}
+                  />
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
-        <div className="bg-white rounded-xl border border-emerald-200/60 p-4 shadow-sm">
-          <div className="text-2xl font-bold text-emerald-600">{displayStats.healthy}</div>
-          <div className="text-sm text-slate-500">最近可达</div>
-        </div>
-        <div className="bg-white rounded-xl border border-rose-200/60 p-4 shadow-sm">
-          <div className="text-2xl font-bold text-rose-600">{displayStats.unhealthy}</div>
-          <div className="text-sm text-slate-500">最近不可达</div>
-        </div>
-        {/* 冷却中端点卡片 - 仅在有冷却端点时显示 */}
-        {displayStats.cooldown > 0 && (
-          <div className="bg-white rounded-xl border border-amber-200/60 p-4 shadow-sm">
-            <div className="text-2xl font-bold text-amber-600">{displayStats.cooldown}</div>
-            <div className="text-sm text-slate-500">冷却中</div>
-          </div>
-        )}
-        <div className="bg-white rounded-xl border border-slate-200/60 p-4 shadow-sm">
-          <div className="text-2xl font-bold text-slate-400">{displayStats.unchecked}</div>
-          <div className="text-sm text-slate-500">未检测</div>
-        </div>
       </div>
 
-      {/* 渠道卡片网格 - 2 列布局 */}
-      {displayEndpoints.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-12 text-center">
-          <div className="flex flex-col items-center gap-3">
-            <Database size={40} className="text-slate-300" />
-            <p className="text-slate-500">暂无端点配置</p>
-            {isSqliteMode && (
-              <Button icon={Server} onClick={handleCreate}>
-                添加第一个端点
-              </Button>
-            )}
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-            {groupedEndpoints.map(({ channel, endpoints: channelEndpoints }) => (
-              <ChannelCard
-                key={channel}
-                channel={channel}
-                endpoints={channelEndpoints}
-                storageMode={isSqliteMode ? 'sqlite' : 'yaml'}
-                onActivateGroup={handleActivateEndpointGroup}
-                onEdit={handleEdit}
-                onDelete={handleDelete}
-                onToggle={handleToggle}
-                routingState={routingState}
-                onSetRouting={handleSetRouting}
-              />
-            ))}
-          </div>
-
-          {/* 底部统计 */}
-          <div className="text-xs text-slate-500 text-center py-2">
-            共 {groupedEndpoints.length} 个渠道，{displayEndpoints.length} 个端点
-            {displayStats.healthy + displayStats.unhealthy > 0 && (
-              <span className="ml-2 text-indigo-600">
-                · {displayStats.healthPercentage}% 最近可达率
-              </span>
-            )}
-          </div>
-        </>
-      )}
-
-      {/* 调度快照抽屉 */}
-      <EndpointScheduleDrawer
-        open={scheduleDrawerOpen}
-        onClose={() => setScheduleDrawerOpen(false)}
-        snapshot={scheduleSnapshot}
-        unsupported={scheduleSnapshotUnsupported}
-      />
-
-      {/* 端点表单弹窗 */}
-      {showForm && (
-        <EndpointForm
-          endpoint={editingEndpoint}
-          onSave={handleSave}
-          onCancel={() => {
-            setShowForm(false);
-            setEditingEndpoint(null);
-          }}
-          loading={formLoading}
-        />
-      )}
-
-      {/* 删除确认弹窗 */}
-      {deleteTarget && (
-        <DeleteConfirmDialog
-          endpoint={deleteTarget}
-          onConfirm={handleConfirmDelete}
-          onCancel={() => setDeleteTarget(null)}
-          loading={deleteLoading}
-        />
-      )}
+      <EndpointScheduleDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} snapshot={snapshot} unsupported={snapshotUnsupported} />
+      {formOpen && <EndpointForm endpoint={editingEndpoint} onSave={saveEndpoint} onCancel={() => { setFormOpen(false); setEditingEndpoint(undefined); }} loading={busyKey.startsWith('save:')} />}
+      {deleteTarget && <DeleteConfirmDialog endpoint={deleteTarget} loading={busyKey === `delete:${deleteTarget.name}`} onCancel={() => setDeleteTarget(null)} onConfirm={async () => { await run(`delete:${deleteTarget.name}`, () => deleteEndpointRecord(deleteTarget.name)); setDeleteTarget(null); }} />}
     </div>
   );
 };

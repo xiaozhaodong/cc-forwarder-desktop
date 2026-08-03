@@ -15,7 +15,6 @@ const normalizeSnapshot = (snapshot = {}) => ({
   capturedAt: snapshot.capturedAt || snapshot.captured_at || '',
   updatedAt: snapshot.updatedAt || snapshot.updated_at || '',
   requestPath: snapshot.requestPath || snapshot.request_path || '',
-  activeEndpointAtSelection: snapshot.activeEndpointAtSelection || snapshot.active_endpoint_at_selection || '',
   selectedEndpoint: snapshot.selectedEndpoint || snapshot.selected_endpoint || '',
   routeMode: snapshot.routeMode || snapshot.route_mode || 'auto',
   routeEndpointName: snapshot.routeEndpointName || snapshot.route_endpoint_name || '',

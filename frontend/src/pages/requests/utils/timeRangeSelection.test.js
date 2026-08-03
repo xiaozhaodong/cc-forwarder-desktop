@@ -9,9 +9,8 @@ test('buildTimeRangeSelectionState updates filters and applied query params toge
     endDate: '2026-03-14T23:59',
     status: 'success',
     model: 'gpt-4.1',
-    channel: 'account-pool',
-    endpoint: 'all',
-    group: 'all'
+    requestFamily: 'codex',
+    upstreamName: 'all'
   };
   const nextTimeRange = {
     startDate: '2026-03-08T00:00',
@@ -29,6 +28,6 @@ test('buildTimeRangeSelectionState updates filters and applied query params toge
     end_date: '2026-03-14T23:59:00+08:00',
     status: 'success',
     model: 'gpt-4.1',
-    channel: 'account-pool'
+    request_family: 'codex'
   });
 });

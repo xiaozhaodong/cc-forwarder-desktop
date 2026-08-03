@@ -7,7 +7,7 @@ import { Filter, Settings2, ChevronDown } from 'lucide-react';
 import { TIME_RANGE_OPTIONS } from '../utils/constants.js';
 import ViewConfigPanel from './ViewConfigPanel.jsx';
 import AutoRefreshControl from './AutoRefreshControl.jsx';
-import ActiveGroupSwitcher from './ActiveGroupSwitcher.jsx';
+import ClaudeEndpointSwitcher from './ClaudeEndpointSwitcher.jsx';
 import AccountPoolSwitcher from './AccountPoolSwitcher.jsx';
 
 /**
@@ -25,9 +25,8 @@ import AccountPoolSwitcher from './AccountPoolSwitcher.jsx';
  * @param {Function} props.onToggleColumn - 切换列显示回调
  * @param {Function} props.onResetColumns - 重置列配置回调
  * @param {Object} props.autoRefresh - 实时刷新状态
- * @param {Array} props.groups - 所有端点列表（v4.0: 一个端点=一个组）
- * @param {string} props.activeGroup - 当前活跃端点名称
- * @param {Function} props.onGroupSwitch - 端点切换回调 (endpointName) => void
+ * @param {Array} props.endpoints - Claude 端点列表
+ * @param {Function} props.onClaudeEndpointSwitch - Claude 端点路由切换回调
  * @param {Array} props.accounts - 账号池账号列表
  * @param {Object|null} props.activeAccount - 当前手动固定账号
  * @param {string|number|null} props.recentSelectedAccountId - 最近一次调度命中的账号 ID
@@ -48,10 +47,9 @@ const Toolbar = ({
   onToggleColumn,
   onResetColumns,
   autoRefresh = null,
-  groups = [],
-  activeGroup = '',
+  endpoints = [],
   claudeRoutingState = null,
-  onGroupSwitch,
+  onClaudeEndpointSwitch,
   onRestoreClaudeAuto,
   onClearRouteCache,
   routeSwitching = false,
@@ -65,11 +63,10 @@ const Toolbar = ({
   return (
     <div className="flex flex-nowrap items-center justify-end gap-2 xl:gap-3 min-w-0">
       {/* 端点快捷切换器 */}
-      <ActiveGroupSwitcher
-        groups={groups}
-        activeGroup={activeGroup}
+      <ClaudeEndpointSwitcher
+        endpoints={endpoints}
         routingState={claudeRoutingState}
-        onSwitch={onGroupSwitch}
+        onSwitch={onClaudeEndpointSwitch}
         onRestoreAuto={onRestoreClaudeAuto}
         onClearRouteCache={onClearRouteCache}
         loading={routeSwitching}

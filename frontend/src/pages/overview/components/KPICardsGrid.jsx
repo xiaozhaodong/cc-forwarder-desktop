@@ -30,22 +30,8 @@ const formatTokens = (tokens) => {
 };
 
 const KPICardsGrid = ({ data }) => {
-  const { status, endpoints, connections, groups } = data;
-
-  // v4.0: 一个端点 = 一个组，显示当前活动端点
-  // 优先从 groups 获取活跃状态，因为 group.is_active 才表示"正在使用"
-  const activeGroup = groups.groups?.find(g => g.is_active);
-
-  // 构建显示文本
-  let activeEndpointText = '无活动端点';
-  if (activeGroup) {
-    // v4.0: 组名 = 端点名，显示健康状态
-    const healthStatus = activeGroup.healthy_endpoints > 0 ? '✓ 健康' : '✗ 异常';
-    activeEndpointText = `${activeGroup.name} (${healthStatus})`;
-  } else if (endpoints.healthy > 0) {
-    // 回退：如果没有活跃组信息，但有健康端点
-    activeEndpointText = `${endpoints.healthy} 个可用`;
-  }
+  const { endpoints, connections } = data;
+  const endpointHealthText = endpoints.total > 0 ? `${endpoints.healthy || 0} / ${endpoints.total}` : '无端点';
 
   // v5.1+: 成本和 tokens 数据
   const todayCost = formatCost(connections.today_cost);
@@ -98,11 +84,11 @@ const KPICardsGrid = ({ data }) => {
         statusColor="bg-violet-50 text-violet-600"
       />
       <KPICard
-        title="活动端点"
-        value={activeEndpointText}
-        tooltip={activeGroup ? `${activeGroup.name} (${activeGroup.healthy_endpoints > 0 ? '健康' : '异常'})` : '无活动端点'}
+        title="最近可达"
+        value={endpointHealthText}
+        tooltip="最近主动检测可达数 / Claude 端点总数"
         icon={Activity}
-        statusColor={activeGroup ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-50 text-slate-600'}
+        statusColor={(endpoints.healthy || 0) > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-50 text-slate-600'}
       />
     </div>
   );

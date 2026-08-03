@@ -18,8 +18,6 @@ import {
   fetchModels,
   fetchUsageStats,
   fetchEndpoints,
-  fetchGroups,
-  activateGroup,
   fetchClaudeRoutingState,
   setClaudeRoutingOverride,
   clearClaudeRoutingOverride,
@@ -38,6 +36,7 @@ import { FiltersPanel, StatsOverview, RequestsTable, Toolbar, RequestDetailModal
 import { PAGINATION_CONFIG } from './utils/constants.js';
 import { isRuntimeActiveSelection, isSamePinnedAccount } from './utils/accountSwitcherState.js';
 import { buildTimeRangeSelectionState } from './utils/timeRangeSelection.js';
+import { filterUpstreamOptionsByFamily } from './utils/requestSource.js';
 
 // ============================================
 // Requests 页面
@@ -52,8 +51,6 @@ const RequestsPage = () => {
   const [stats, setStats] = useState(null);
   const [models, setModels] = useState([]);
   const [endpoints, setEndpoints] = useState([]);
-  const [groups, setGroups] = useState([]); // v4.0: 端点列表（一个端点=一个组）
-  const [activeGroup, setActiveGroup] = useState('');
   const [claudeRoutingState, setClaudeRoutingState] = useState({ mode: 'auto', endpointName: '', fallbackEnabled: true });
   const [accounts, setAccounts] = useState([]);
   const [latestScheduleSnapshot, setLatestScheduleSnapshot] = useState({ hasSnapshot: false, has_snapshot: false, candidates: [] });
@@ -106,62 +103,11 @@ const RequestsPage = () => {
     totalPages: 1
   });
 
-  // 从端点列表提取唯一渠道
-  const channels = useMemo(() => {
-    const channelSet = new Set();
-    channelSet.add('account-pool');
-    endpoints.forEach(ep => {
-      const channel = ep.channel || ep.Channel;
-      if (channel) channelSet.add(channel);
-    });
-    return Array.from(channelSet).sort();
-  }, [endpoints]);
-
   const sortedAccounts = useMemo(() => {
     return [...accounts].sort(compareAccountsByManualPriority);
   }, [accounts]);
 
-  // v8:手动模式下 activeGroup 跟随手动目标端点(下请求生效),
-  // 自动模式跟随最近一次实际生效端点,再兜底 legacy active
-  const applyRoutingActiveGroup = useCallback((routeState, groupsList = []) => {
-    const mode = routeState?.mode || 'auto';
-    const manualTarget = routeState?.endpointName || routeState?.endpoint_name || '';
-    if (mode !== 'auto' && manualTarget) {
-      setActiveGroup(manualTarget);
-      return;
-    }
-    const lastEffective = routeState?.lastEffectiveEndpoint || routeState?.last_effective_endpoint || '';
-    if (lastEffective) {
-      setActiveGroup(lastEffective);
-      return;
-    }
-    const activeInGroups = (Array.isArray(groupsList) ? groupsList : []).find(g => g.is_active);
-    if (activeInGroups) {
-      setActiveGroup(activeInGroups.name);
-      return;
-    }
-    const currentActive = routeState?.currentActiveEndpoint || routeState?.current_active_endpoint || '';
-    if (currentActive) {
-      setActiveGroup(currentActive);
-    }
-  }, []);
-
-  const requestFilterEndpoints = useMemo(() => {
-    const options = new Set();
-    endpoints.forEach((endpoint) => {
-      const endpointName = endpoint?.name || endpoint?.endpoint_name || endpoint?.Name || '';
-      if (endpointName) {
-        options.add(endpointName);
-      }
-    });
-    accounts.forEach((account) => {
-      const accountName = account?.account_name || account?.accountName || '';
-      if (accountName) {
-        options.add(accountName);
-      }
-    });
-    return Array.from(options).sort((left, right) => left.localeCompare(right));
-  }, [accounts, endpoints]);
+  const upstreamOptions = useMemo(() => filterUpstreamOptionsByFamily(requests, filters.requestFamily), [filters.requestFamily, requests]);
 
   const recentSelectedAccountId = useMemo(() => {
     const hasSnapshot = latestScheduleSnapshot?.hasSnapshot === true || latestScheduleSnapshot?.has_snapshot === true;
@@ -232,11 +178,10 @@ const RequestsPage = () => {
       setError(null);
 
       // 请求明细与统计单独封装，实时事件只刷新这两组动态数据。
-      const [, modelsData, endpointsData, groupsData, routeStateData, accountsData, latestSnapshotData] = await Promise.all([
+      const [, modelsData, endpointsData, routeStateData, accountsData, latestSnapshotData] = await Promise.all([
         refreshRequestData(),
         fetchModels(),
         fetchEndpoints(),
-        fetchGroups(),
         fetchClaudeRoutingState().catch((err) => {
           console.error('❌ 加载 Claude 路由状态失败:', err);
           return { mode: 'auto', endpointName: '', fallbackEnabled: true };
@@ -266,9 +211,6 @@ const RequestsPage = () => {
       const endpointsList = endpointsData.endpoints || endpointsData || [];
       setEndpoints(Array.isArray(endpointsList) ? endpointsList : []);
 
-      // v4.0: 端点列表（一个端点=一个组）
-      const groupsList = groupsData?.groups || [];
-      setGroups(Array.isArray(groupsList) ? groupsList : []);
       setClaudeRoutingState(routeStateData && typeof routeStateData === 'object'
         ? routeStateData
         : { mode: 'auto', endpointName: '', fallbackEnabled: true });
@@ -278,8 +220,6 @@ const RequestsPage = () => {
         ? latestSnapshotData
         : { hasSnapshot: false, has_snapshot: false, candidates: [] });
 
-      // v8:手动模式跟随手动目标,自动模式跟随最近实际生效;legacy is_active 仅作兜底
-      applyRoutingActiveGroup(routeStateData, groupsList);
     } catch (err) {
       if (loadDataIdRef.current !== loadId) {
         return;
@@ -290,7 +230,7 @@ const RequestsPage = () => {
         setLoading(false);
       }
     }
-  }, [refreshRequestData, showNotice, applyRoutingActiveGroup]);
+  }, [refreshRequestData, showNotice]);
 
   // 请求变化由 Wails 事件触发，只刷新明细与统计；事件不可用时低频降级。
   const autoRefresh = useAutoRefresh(refreshRequestData);
@@ -337,17 +277,6 @@ const RequestsPage = () => {
     }));
   };
 
-  // 快捷时间选择（筛选面板内）
-  const handleQuickTimeSelect = (_range) => {
-    // 这里可以实现快捷时间选择的逻辑
-    // 简化实现：直接更新到"今天"
-    const todayRange = {
-      startDate: filters.startDate,
-      endDate: filters.endDate
-    };
-    updateFilters(todayRange);
-  };
-
   // 双击行打开详情
   const handleRowDoubleClick = (request) => {
     setSelectedRequest(request);
@@ -360,8 +289,8 @@ const RequestsPage = () => {
     setSelectedRequest(null);
   };
 
-  // 端点切换回调
-  const handleGroupSwitch = async (endpointName, mode = 'manual_preferred') => {
+  // Claude 端点路由切换回调
+  const handleClaudeEndpointSwitch = async (endpointName, mode = 'manual_preferred') => {
     try {
       setRouteSwitching(true);
       console.log('🔄 切换 Claude 路由:', endpointName, mode);
@@ -371,26 +300,21 @@ const RequestsPage = () => {
         fallbackEnabled: mode !== 'manual_fixed'
       });
 
-      if (nextState?.unsupported) {
-        await activateGroup(endpointName);
-        setActiveGroup(endpointName);
-        showNotice('info', nextState.message || '已切换端点，当前后端暂不支持保存 Claude 路由模式');
-      } else {
+      if (!nextState?.unsupported) {
         setClaudeRoutingState(nextState);
-        applyRoutingActiveGroup(nextState);
         showNotice(
           'success',
           mode === 'manual_fixed'
             ? `已严格固定 Claude 端点「${endpointName}」`
             : `已优先使用 Claude 端点「${endpointName}」`
         );
-      }
+      } else showNotice('info', nextState.message || '当前后端暂不支持保存 Claude 路由模式');
 
       // 切换后刷新数据
       await loadData(true);
     } catch (err) {
       console.error('❌ 切换失败:', err);
-      throw err; // 让 ActiveGroupSwitcher 组件知道切换失败
+      throw err;
     } finally {
       setRouteSwitching(false);
     }
@@ -405,7 +329,6 @@ const RequestsPage = () => {
         return;
       }
       setClaudeRoutingState(nextState);
-      applyRoutingActiveGroup(nextState);
       showNotice('success', 'Claude 路由已恢复自动调度');
       await loadData(true);
     } catch (err) {
@@ -413,7 +336,7 @@ const RequestsPage = () => {
     } finally {
       setRouteSwitching(false);
     }
-  }, [loadData, showNotice, applyRoutingActiveGroup]);
+  }, [loadData, showNotice]);
 
   const handleClearRouteCache = useCallback(async (endpointName = '') => {
     setRouteSwitching(true);
@@ -512,14 +435,13 @@ const RequestsPage = () => {
     const unsubscribe = subscribeToEvent('claude-routing:update', (state) => {
       if (!state || typeof state !== 'object') return;
       setClaudeRoutingState(state);
-      applyRoutingActiveGroup(state);
     });
     return () => {
       if (typeof unsubscribe === 'function') {
         unsubscribe();
       }
     };
-  }, [applyRoutingActiveGroup]);
+  }, []);
 
   // ==================== 渲染 ====================
 
@@ -562,10 +484,9 @@ const RequestsPage = () => {
             onToggleColumn={toggleColumn}
             onResetColumns={resetColumns}
             autoRefresh={autoRefresh}
-            groups={groups}
-            activeGroup={activeGroup}
+            endpoints={endpoints}
             claudeRoutingState={claudeRoutingState}
-            onGroupSwitch={handleGroupSwitch}
+            onClaudeEndpointSwitch={handleClaudeEndpointSwitch}
             onRestoreClaudeAuto={handleRestoreClaudeAuto}
             onClearRouteCache={handleClearRouteCache}
             routeSwitching={routeSwitching}
@@ -588,9 +509,7 @@ const RequestsPage = () => {
             onApply={handleApplyFilters}
             onReset={handleResetFilters}
             models={models}
-            channels={channels}
-            endpoints={requestFilterEndpoints}
-            onQuickTimeSelect={handleQuickTimeSelect}
+            upstreams={upstreamOptions}
           />
         </div>
       </div>

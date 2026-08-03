@@ -12,12 +12,6 @@ export const API_ENDPOINTS = {
   // 端点管理
   ENDPOINTS: '/api/v1/endpoints',
   ENDPOINT_HEALTH: '/api/v1/endpoints/health',
-  KEYS_OVERVIEW: '/api/v1/keys/overview',
-
-  // 组管理
-  GROUPS: '/api/v1/groups',
-  GROUP_ACTIVATE: '/api/v1/groups/{name}/activate',
-  GROUP_PAUSE: '/api/v1/groups/{name}/pause',
 
   // 使用统计
   USAGE_REQUESTS: '/api/v1/usage/requests',

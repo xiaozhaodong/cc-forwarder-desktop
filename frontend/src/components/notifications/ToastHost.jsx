@@ -35,7 +35,7 @@ const VARIANT_STYLES = {
   }
 };
 
-const laneLabel = (lane) => (lane === 'codex' ? 'Codex 账号' : 'CC 端点');
+const laneLabel = (lane) => (lane === 'codex' ? 'Codex 账号' : 'Claude 端点');
 
 const ToastHost = ({ toasts = [], pendingCount = 0, onDismiss }) => {
   if (typeof document === 'undefined' || (toasts.length === 0 && pendingCount === 0)) return null;

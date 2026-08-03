@@ -3,18 +3,17 @@
 // 2025-11-28 (Updated 2025-12-12)
 // ============================================
 
-import { useState, Suspense, lazy, useCallback } from 'react';
+import { useState, Suspense, lazy, useCallback, useEffect } from 'react';
 import Header from '@components/layout/Header.jsx';
 import ToastHost from '@components/notifications/ToastHost.jsx';
 import { LoadingSpinner } from '@components/ui';
 import useSSE from '@hooks/useSSE.js';
 import useGlobalToasts from '@hooks/useGlobalToasts.js';
+import { getMigrationStatus } from '@utils/wailsApi.js';
 
 // 懒加载页面组件
 const OverviewPage = lazy(() => import('@pages/overview/index.jsx'));
 const EndpointsPage = lazy(() => import('@pages/endpoints/index.jsx'));
-// v4.0: 组管理页面已移除，配置简化后不再需要独立的组管理功能
-// const GroupsPage = lazy(() => import('@pages/groups/index.jsx'));
 const RequestsPage = lazy(() => import('@pages/requests/index.jsx'));
 const PricingPage = lazy(() => import('@pages/pricing/index.jsx'));
 // v5.1: 配置页面改为设置页面（可编辑）
@@ -27,6 +26,7 @@ const LogsPage = lazy(() => import('@pages/log-viewer/index.jsx'));
 const AccountPoolPage = lazy(() => import('@pages/account-pool/index.jsx'));
 // v6.1: 隐私保护页面
 const PrivacyProtectionPage = lazy(() => import('@pages/privacy-protection/index.jsx'));
+const MigrationRecoveryPage = lazy(() => import('@pages/migration-recovery/index.jsx'));
 
 // ============================================
 // App 组件
@@ -34,6 +34,7 @@ const PrivacyProtectionPage = lazy(() => import('@pages/privacy-protection/index
 
 function App() {
   const [activeTab, setActiveTab] = useState('overview');
+  const [migrationStatus, setMigrationStatus] = useState({ state: 'initializing' });
   const { toasts, pendingCount, showToast, dismissToast } = useGlobalToasts();
   // v5.1+: 代理网关真实状态（来自后端 system:status 事件）
   const [proxyStatus, setProxyStatus] = useState({
@@ -66,13 +67,21 @@ function App() {
   // SSE 连接状态（用于全局状态指示）
   const { connectionStatus } = useSSE(handleRealtimeEvent, { events: 'status,notification' });
 
+  useEffect(() => {
+    let cancelled = false;
+    getMigrationStatus().then((status) => {
+      if (!cancelled) setMigrationStatus(status);
+    }).catch((error) => {
+      if (!cancelled) setMigrationStatus({ state: 'migration_failed', error: error?.message || '迁移状态读取失败', retryAllowed: true });
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   // 渲染当前页面
   const renderPage = () => {
     const pages = {
       overview: <OverviewPage />,
       endpoints: <EndpointsPage />,
-      // v4.0: 组管理页面已移除
-      // groups: <GroupsPage />,
       requests: <RequestsPage />,
       // v6.1: 隐私保护页面
       'privacy-protection': <PrivacyProtectionPage />,
@@ -88,6 +97,10 @@ function App() {
 
     return pages[activeTab] || <OverviewPage />;
   };
+
+  if (migrationStatus.state === 'migration_failed') {
+    return <MigrationRecoveryPage status={migrationStatus} onStatusChange={setMigrationStatus} />;
+  }
 
   return (
     <div className="h-screen overflow-hidden bg-[#FAFAFA] font-sans text-slate-900 flex flex-col">

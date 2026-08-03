@@ -49,6 +49,21 @@ test('endpoint availability defaults to true and preserves an explicit false', (
   assert.equal(buildEndpointRecordPayload({ availabilityEnabled: false }).availability_enabled, false);
 });
 
+test('endpoint payload excludes legacy channel fields and serializes explicit secret clears', () => {
+  const payload = buildEndpointRecordPayload({
+    name: 'claude-primary',
+    priority: 0,
+    clearToken: true,
+    clearApiKey: true
+  });
+
+  assert.equal(payload.priority, 0);
+  assert.equal(payload.clear_token, true);
+  assert.equal(payload.clear_api_key, true);
+  assert.equal('channel' in payload, false);
+  assert.equal('enabled' in payload, false);
+});
+
 test('normalizeUpstreamAccount keeps mirrored aliases in sync for mixed-case upstream payloads', () => {
   const result = normalizeUpstreamAccount({
     ID: '12',

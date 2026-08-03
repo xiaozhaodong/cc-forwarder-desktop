@@ -16,7 +16,20 @@ import {
 } from 'lucide-react';
 import { formatTimestamp } from '@utils/api.js';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
-import { resolveSnapshotOutcome } from './utils.js';
+
+export const resolveSnapshotOutcome = (snapshot = {}) => {
+  const outcome = String(snapshot.finalOutcome || snapshot.final_outcome || '').trim().toLowerCase();
+  const config = {
+    success: { label: '成功', className: 'border-emerald-200 bg-emerald-50 text-emerald-700', isAbnormal: false },
+    passthrough_error: { label: '上游失败', className: 'border-amber-200 bg-amber-50 text-amber-700', isAbnormal: true },
+    cancelled: { label: '已取消', className: 'border-slate-200 bg-slate-100 text-slate-600', isAbnormal: true }
+  };
+  return config[outcome] || {
+    label: outcome || '未完成',
+    className: outcome ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-slate-50 text-slate-500',
+    isAbnormal: Boolean(outcome)
+  };
+};
 
 const runtimeLabels = {
   attempting: '尝试中',
@@ -31,12 +44,13 @@ const runtimeLabels = {
 };
 
 const reasonLabels = {
-  active: '当前激活端点',
-  active_failover_disabled: '当前激活端点（故障转移关闭）',
-  failover_candidate: '故障转移候选',
+  auto_priority: '自动调度优先级',
+  auto_retained: '同优先级上次成功端点',
+  fallback: '故障转移候选',
+  manual_preferred: '手动优选目标',
   manual_fixed: '手动固定目标',
-  failover_disabled_endpoint: '端点未参与故障转移',
-  active_endpoint_missing: '当前激活端点不存在',
+  availability_disabled: '端点已硬关闭',
+  auto_schedule_disabled: '未参与自动调度',
   endpoint_missing: '端点不存在',
   paused: '手动暂停中',
   cooldown: '冷却中',
@@ -169,7 +183,6 @@ const EndpointScheduleDrawer = ({ open = false, onClose, snapshot = {}, unsuppor
 
                 <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 border-t border-slate-200/70 pt-3 text-xs">
                   <div><div className="text-slate-400">实际命中</div><div className="mt-0.5 truncate font-semibold text-slate-800" title={snapshot.selectedEndpoint}>{snapshot.selectedEndpoint || '-'}</div></div>
-                  <div><div className="text-slate-400">调度时激活</div><div className="mt-0.5 truncate font-medium text-slate-700" title={snapshot.activeEndpointAtSelection}>{snapshot.activeEndpointAtSelection || '-'}</div></div>
                   <div><div className="text-slate-400">路由模式</div><div className="mt-0.5 font-medium text-slate-700">{routeModeLabels[snapshot.routeMode] || snapshot.routeMode || '自动调度'}</div></div>
                   <div><div className="text-slate-400">请求内故障转移</div><div className={`mt-0.5 font-medium ${effectiveFailoverEnabled ? 'text-emerald-700' : 'text-slate-500'}`}>{effectiveFailoverEnabled ? '已启用' : snapshot.routeMode === 'manual_fixed' ? '固定模式关闭' : '已关闭'}</div></div>
                 </div>

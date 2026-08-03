@@ -149,20 +149,6 @@ export namespace main {
 	        this.order = source["order"];
 	    }
 	}
-	export class ChannelInfo {
-	    name: string;
-	    endpoint_count: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new ChannelInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.endpoint_count = source["endpoint_count"];
-	    }
-	}
 	export class ChartDataPoint {
 	    time: string;
 	    total: number;
@@ -201,7 +187,6 @@ export namespace main {
 	    fallback_reason: string;
 	    last_effective_endpoint: string;
 	    last_decision_at: string;
-	    current_active_endpoint: string;
 	    available_endpoints: string[];
 	
 	    static createFrom(source: any = {}) {
@@ -219,7 +204,6 @@ export namespace main {
 	        this.fallback_reason = source["fallback_reason"];
 	        this.last_effective_endpoint = source["last_effective_endpoint"];
 	        this.last_decision_at = source["last_decision_at"];
-	        this.current_active_endpoint = source["current_active_endpoint"];
 	        this.available_endpoints = source["available_endpoints"];
 	    }
 	}
@@ -293,7 +277,6 @@ export namespace main {
 	    proxy_enabled: boolean;
 	    tracking_enabled: boolean;
 	    failover_enabled: boolean;
-	    endpoint_count: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ConfigInfo(source);
@@ -307,15 +290,15 @@ export namespace main {
 	        this.proxy_enabled = source["proxy_enabled"];
 	        this.tracking_enabled = source["tracking_enabled"];
 	        this.failover_enabled = source["failover_enabled"];
-	        this.endpoint_count = source["endpoint_count"];
 	    }
 	}
 	export class CreateEndpointInput {
-	    channel: string;
 	    name: string;
 	    url: string;
 	    token: string;
 	    api_key: string;
+	    clear_token: boolean;
+	    clear_api_key: boolean;
 	    headers: Record<string, string>;
 	    priority: number;
 	    failover_enabled: boolean;
@@ -337,11 +320,12 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.channel = source["channel"];
 	        this.name = source["name"];
 	        this.url = source["url"];
 	        this.token = source["token"];
 	        this.api_key = source["api_key"];
+	        this.clear_token = source["clear_token"];
+	        this.clear_api_key = source["clear_api_key"];
 	        this.headers = source["headers"];
 	        this.priority = source["priority"];
 	        this.failover_enabled = source["failover_enabled"];
@@ -444,6 +428,7 @@ export namespace main {
 	}
 	export class EndpointCostItem {
 	    name: string;
+	    request_family: string;
 	    tokens: number;
 	    cost: number;
 	
@@ -454,6 +439,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
+	        this.request_family = source["request_family"];
 	        this.tokens = source["tokens"];
 	        this.cost = source["cost"];
 	    }
@@ -477,11 +463,7 @@ export namespace main {
 	export class EndpointInfo {
 	    name: string;
 	    url: string;
-	    channel: string;
-	    group: string;
 	    priority: number;
-	    group_priority: number;
-	    group_is_active: boolean;
 	    healthy: boolean;
 	    last_check: string;
 	    response_time_ms: number;
@@ -495,80 +477,17 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.url = source["url"];
-	        this.channel = source["channel"];
-	        this.group = source["group"];
 	        this.priority = source["priority"];
-	        this.group_priority = source["group_priority"];
-	        this.group_is_active = source["group_is_active"];
 	        this.healthy = source["healthy"];
 	        this.last_check = source["last_check"];
 	        this.response_time_ms = source["response_time_ms"];
 	        this.consecutive_fail = source["consecutive_fail"];
 	    }
 	}
-	export class KeyInfo {
-	    index: number;
-	    name: string;
-	    value: string;
-	    is_active: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new KeyInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.index = source["index"];
-	        this.name = source["name"];
-	        this.value = source["value"];
-	        this.is_active = source["is_active"];
-	    }
-	}
-	export class EndpointKeysInfo {
-	    endpoint: string;
-	    tokens: KeyInfo[];
-	    api_keys: KeyInfo[];
-	    current_token_index: number;
-	    current_api_key_index: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new EndpointKeysInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.endpoint = source["endpoint"];
-	        this.tokens = this.convertValues(source["tokens"], KeyInfo);
-	        this.api_keys = this.convertValues(source["api_keys"], KeyInfo);
-	        this.current_token_index = source["current_token_index"];
-	        this.current_api_key_index = source["current_api_key_index"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
 	export class EndpointRecordInfo {
 	    id: number;
-	    channel: string;
 	    name: string;
 	    url: string;
-	    token: string;
-	    api_key: string;
 	    token_masked: string;
 	    api_key_masked: string;
 	    headers: Record<string, string>;
@@ -584,7 +503,6 @@ export namespace main {
 	    cache_creation_cost_multiplier: number;
 	    cache_creation_cost_multiplier_1h: number;
 	    cache_read_cost_multiplier: number;
-	    enabled: boolean;
 	    availability_enabled: boolean;
 	    created_at: string;
 	    updated_at: string;
@@ -603,11 +521,8 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
-	        this.channel = source["channel"];
 	        this.name = source["name"];
 	        this.url = source["url"];
-	        this.token = source["token"];
-	        this.api_key = source["api_key"];
 	        this.token_masked = source["token_masked"];
 	        this.api_key_masked = source["api_key_masked"];
 	        this.headers = source["headers"];
@@ -623,7 +538,6 @@ export namespace main {
 	        this.cache_creation_cost_multiplier = source["cache_creation_cost_multiplier"];
 	        this.cache_creation_cost_multiplier_1h = source["cache_creation_cost_multiplier_1h"];
 	        this.cache_read_cost_multiplier = source["cache_read_cost_multiplier"];
-	        this.enabled = source["enabled"];
 	        this.availability_enabled = source["availability_enabled"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
@@ -662,7 +576,7 @@ export namespace main {
 	    enabled: boolean;
 	    storage_type: string;
 	    total_count: number;
-	    enabled_count: number;
+	    available_count: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new EndpointStorageStatus(source);
@@ -673,7 +587,7 @@ export namespace main {
 	        this.enabled = source["enabled"];
 	        this.storage_type = source["storage_type"];
 	        this.total_count = source["total_count"];
-	        this.enabled_count = source["enabled_count"];
+	        this.available_count = source["available_count"];
 	    }
 	}
 	export class ExchangeChatGPTOAuthCallbackInput {
@@ -740,32 +654,6 @@ export namespace main {
 	        this.expires_at = source["expires_at"];
 	    }
 	}
-	export class GroupInfo {
-	    name: string;
-	    channel: string;
-	    active: boolean;
-	    paused: boolean;
-	    priority: number;
-	    endpoint_count: number;
-	    in_cooldown: boolean;
-	    cooldown_remain_ms: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new GroupInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.channel = source["channel"];
-	        this.active = source["active"];
-	        this.paused = source["paused"];
-	        this.priority = source["priority"];
-	        this.endpoint_count = source["endpoint_count"];
-	        this.in_cooldown = source["in_cooldown"];
-	        this.cooldown_remain_ms = source["cooldown_remain_ms"];
-	    }
-	}
 	export class ImportPrivacySecretCandidateInput {
 	    source_type: string;
 	    source_ref: string;
@@ -789,41 +677,6 @@ export namespace main {
 	        this.description = source["description"];
 	        this.secret_value = source["secret_value"];
 	    }
-	}
-	
-	export class KeysOverviewResult {
-	    endpoints: EndpointKeysInfo[];
-	    total: number;
-	    timestamp: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new KeysOverviewResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.endpoints = this.convertValues(source["endpoints"], EndpointKeysInfo);
-	        this.total = source["total"];
-	        this.timestamp = source["timestamp"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class LatestAccountScheduleSnapshotInfo {
 	    has_snapshot: boolean;
@@ -889,7 +742,6 @@ export namespace main {
 	    captured_at: string;
 	    updated_at: string;
 	    request_path: string;
-	    active_endpoint_at_selection: string;
 	    selected_endpoint: string;
 	    route_mode: string;
 	    route_endpoint_name: string;
@@ -911,7 +763,6 @@ export namespace main {
 	        this.captured_at = source["captured_at"];
 	        this.updated_at = source["updated_at"];
 	        this.request_path = source["request_path"];
-	        this.active_endpoint_at_selection = source["active_endpoint_at_selection"];
 	        this.selected_endpoint = source["selected_endpoint"];
 	        this.route_mode = source["route_mode"];
 	        this.route_endpoint_name = source["route_endpoint_name"];
@@ -1449,9 +1300,8 @@ export namespace main {
 	    id: string;
 	    request_id: string;
 	    timestamp: string;
-	    channel: string;
+	    request_family: string;
 	    endpoint: string;
-	    group: string;
 	    model: string;
 	    status: string;
 	    http_status: number;
@@ -1487,9 +1337,8 @@ export namespace main {
 	        this.id = source["id"];
 	        this.request_id = source["request_id"];
 	        this.timestamp = source["timestamp"];
-	        this.channel = source["channel"];
+	        this.request_family = source["request_family"];
 	        this.endpoint = source["endpoint"];
-	        this.group = source["group"];
 	        this.model = source["model"];
 	        this.status = source["status"];
 	        this.http_status = source["http_status"];
@@ -1560,9 +1409,8 @@ export namespace main {
 	    end_date: string;
 	    status: string;
 	    model: string;
-	    channel: string;
-	    endpoint: string;
-	    group: string;
+	    request_family: string;
+	    upstream_name: string;
 	    source_view: string;
 	
 	    static createFrom(source: any = {}) {
@@ -1577,9 +1425,8 @@ export namespace main {
 	        this.end_date = source["end_date"];
 	        this.status = source["status"];
 	        this.model = source["model"];
-	        this.channel = source["channel"];
-	        this.endpoint = source["endpoint"];
-	        this.group = source["group"];
+	        this.request_family = source["request_family"];
+	        this.upstream_name = source["upstream_name"];
 	        this.source_view = source["source_view"];
 	    }
 	}
@@ -1718,28 +1565,6 @@ export namespace main {
 	        this.message = source["message"];
 	    }
 	}
-	export class SwitchKeyResult {
-	    success: boolean;
-	    message: string;
-	    endpoint: string;
-	    key_type: string;
-	    new_index: number;
-	    timestamp: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SwitchKeyResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.success = source["success"];
-	        this.message = source["message"];
-	        this.endpoint = source["endpoint"];
-	        this.key_type = source["key_type"];
-	        this.new_index = source["new_index"];
-	        this.timestamp = source["timestamp"];
-	    }
-	}
 	export class SystemStatus {
 	    version: string;
 	    uptime: string;
@@ -1748,7 +1573,6 @@ export namespace main {
 	    proxy_port: number;
 	    proxy_host: string;
 	    proxy_running: boolean;
-	    active_group: string;
 	    config_path: string;
 	    auth_enabled: boolean;
 	
@@ -1765,7 +1589,6 @@ export namespace main {
 	        this.proxy_port = source["proxy_port"];
 	        this.proxy_host = source["proxy_host"];
 	        this.proxy_running = source["proxy_running"];
-	        this.active_group = source["active_group"];
 	        this.config_path = source["config_path"];
 	        this.auth_enabled = source["auth_enabled"];
 	    }
@@ -1939,9 +1762,8 @@ export namespace main {
 	    end_date: string;
 	    status: string;
 	    model: string;
-	    channel: string;
-	    endpoint: string;
-	    group: string;
+	    request_family: string;
+	    upstream_name: string;
 	    source_view: string;
 	
 	    static createFrom(source: any = {}) {
@@ -1955,9 +1777,8 @@ export namespace main {
 	        this.end_date = source["end_date"];
 	        this.status = source["status"];
 	        this.model = source["model"];
-	        this.channel = source["channel"];
-	        this.endpoint = source["endpoint"];
-	        this.group = source["group"];
+	        this.request_family = source["request_family"];
+	        this.upstream_name = source["upstream_name"];
 	        this.source_view = source["source_view"];
 	    }
 	}
@@ -1998,3 +1819,53 @@ export namespace main {
 
 }
 
+export namespace migration {
+
+	export class Status {
+	    state: string;
+	    migration_id: string;
+	    phase: string;
+	    error: string;
+	    database_path: string;
+	    config_path: string;
+	    backup_dir: string;
+	    database_integrity: string;
+	    backup_integrity: string;
+	    retry_allowed: boolean;
+	    database_existed: boolean;
+	    source_mode: string;
+	    endpoint_count_before: number;
+	    endpoint_count_after: number;
+	    split_endpoint_count: number;
+	    derived_record_count: number;
+	    request_log_count: number;
+	    backup_manifest_sha256: string;
+
+	    static createFrom(source: any = {}) {
+	        return new Status(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.state = source["state"];
+	        this.migration_id = source["migration_id"];
+	        this.phase = source["phase"];
+	        this.error = source["error"];
+	        this.database_path = source["database_path"];
+	        this.config_path = source["config_path"];
+	        this.backup_dir = source["backup_dir"];
+	        this.database_integrity = source["database_integrity"];
+	        this.backup_integrity = source["backup_integrity"];
+	        this.retry_allowed = source["retry_allowed"];
+	        this.database_existed = source["database_existed"];
+	        this.source_mode = source["source_mode"];
+	        this.endpoint_count_before = source["endpoint_count_before"];
+	        this.endpoint_count_after = source["endpoint_count_after"];
+	        this.split_endpoint_count = source["split_endpoint_count"];
+	        this.derived_record_count = source["derived_record_count"];
+	        this.request_log_count = source["request_log_count"];
+	        this.backup_manifest_sha256 = source["backup_manifest_sha256"];
+	    }
+	}
+
+}

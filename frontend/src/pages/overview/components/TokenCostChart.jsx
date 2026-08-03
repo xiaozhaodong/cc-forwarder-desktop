@@ -123,7 +123,7 @@ const TokenCostChart = () => {
           <div className="p-1.5 bg-rose-50 text-rose-500 rounded-md">
             <DollarSign size={16} />
           </div>
-          <h3 className="font-semibold text-slate-900">当日端点 Token 成本</h3>
+          <h3 className="font-semibold text-slate-900">当日上游 Token 成本</h3>
         </div>
         <button
           onClick={handleRefresh}
@@ -134,7 +134,7 @@ const TokenCostChart = () => {
           <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
         </button>
       </div>
-      <p className="text-xs text-slate-500 mb-4">Token 使用量与预估成本对照</p>
+      <p className="text-xs text-slate-500 mb-4">按请求类型与真实上游汇总 Token 使用量和预估成本</p>
 
       <div className="h-[280px] w-full">
         {loading ? (

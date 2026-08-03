@@ -13,7 +13,6 @@ import {
   Activity,
   DollarSign,
   Server,
-  Layers,
   FileText,
   Waves,
   RefreshCw,
@@ -37,6 +36,7 @@ import {
   getTimingPillClassName,
   resolveCompletionMs
 } from '../utils/timing.js';
+import { getRequestFamilyMeta } from '../utils/requestSource.js';
 
 /**
  * 信息行组件
@@ -170,6 +170,7 @@ const RequestDetailModal = ({ isOpen, onClose, request }) => {
   const StreamIcon = request.isStreaming ? Waves : RefreshCw;
   const streamLabel = request.isStreaming ? '流式请求' : '常规请求';
   const streamColor = request.isStreaming ? 'text-blue-600 bg-blue-50' : 'text-slate-600 bg-slate-50';
+  const family = getRequestFamilyMeta(request.requestFamily);
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-start justify-center pt-[15vh] px-4">
@@ -270,13 +271,13 @@ const RequestDetailModal = ({ isOpen, onClose, request }) => {
                   <InfoRow icon={FileText} label="请求 ID" value={request.requestId} copyable />
                   <InfoRow icon={Calendar} label="时间戳" value={formatTimestamp(request.timestamp)} />
                   <InfoRow icon={Clock} label="耗时指标" value={<RequestTimingValue request={request} />} />
-                  <InfoRow icon={Server} label="端点" value={request.endpoint} />
-                  <InfoRow icon={Layers} label="渠道" value={request.channel || request.group} />
+                  <InfoRow icon={Activity} label="类型" value={family.label} />
+                  <InfoRow icon={Server} label="上游" value={request.upstreamName || '未知上游'} />
                   <InfoRow icon={Activity} label="路由模式" value={formatRouteMode(request.routeMode)} />
                   {request.requestedEndpoint && (
                     <InfoRow icon={Server} label="手动目标" value={request.requestedEndpoint} />
                   )}
-                  {request.effectiveEndpoint && request.effectiveEndpoint !== request.endpoint && (
+                  {request.effectiveEndpoint && request.effectiveEndpoint !== request.upstreamName && (
                     <InfoRow icon={Server} label="实际端点" value={request.effectiveEndpoint} />
                   )}
                   {request.fallbackReason && (

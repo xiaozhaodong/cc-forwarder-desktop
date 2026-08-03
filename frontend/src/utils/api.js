@@ -5,6 +5,7 @@
 
 import { API_ENDPOINTS, ERROR_MESSAGES } from './constants.js';
 import * as WailsApi from './wailsApi.js';
+import { normalizeRequestSource } from '@pages/requests/utils/requestSource.js';
 
 // 检测是否在 Wails 环境中运行
 export const isWailsEnvironment = WailsApi.isWailsEnvironment;
@@ -160,83 +161,6 @@ export const updateEndpointPriority = async (endpointName, priority) => {
   return data;
 };
 
-/**
- * 获取 Keys 概览数据
- * 返回每个端点的 tokens 列表，用于级联选择器
- */
-export const fetchKeysOverview = async () => {
-  // Wails 环境使用绑定
-  if (isWailsEnvironment()) {
-    return await WailsApi.getKeysOverview();
-  }
-  const data = await fetchWithTimeout(API_ENDPOINTS.KEYS_OVERVIEW);
-  // API 返回格式: { endpoints: [{ endpoint: "name", tokens: [...] }, ...] }
-  return data;
-};
-
-/**
- * 切换端点的 Token
- * @param {string} endpointName - 端点名称
- * @param {string} keyType - 'token' 或 'api_key'
- * @param {number} index - Token 索引
- */
-export const switchKey = async (endpointName, keyType, index) => {
-  if (!endpointName) throw new Error('端点名称不能为空');
-  if (keyType !== 'token' && keyType !== 'api_key') throw new Error('无效的 Key 类型');
-  if (typeof index !== 'number' || index < 0) throw new Error('无效的 Key 索引');
-
-  // Wails 环境使用绑定
-  if (isWailsEnvironment()) {
-    return await WailsApi.switchKey(endpointName, keyType, index);
-  }
-
-  const apiPath = keyType === 'token'
-    ? `/api/v1/endpoints/${encodeURIComponent(endpointName)}/keys/token`
-    : `/api/v1/endpoints/${encodeURIComponent(endpointName)}/keys/api-key`;
-
-  const data = await fetchWithTimeout(apiPath, {
-    method: 'POST',
-    body: JSON.stringify({ index })
-  });
-
-  if (!data.success) {
-    throw new Error(data.error || 'Key 切换失败');
-  }
-
-  return data;
-};
-
-// ============================================
-// 组管理 API
-// ============================================
-
-export const fetchGroups = async () => {
-  // Wails 环境使用绑定
-  if (isWailsEnvironment()) {
-    return await WailsApi.getGroups();
-  }
-
-  const data = await fetchWithTimeout(API_ENDPOINTS.GROUPS);
-  // 返回完整结构，包含 groups 数组和 active_group 信息
-  // API 返回格式: { groups: [...], active_group: "xxx" } 或直接数组
-  const groups = data.groups || (Array.isArray(data) ? data : []);
-  const activeGroup = groups.find(g => g.is_active);
-  return {
-    groups,
-    active_group: activeGroup?.name || data.active_group || null,
-    total_suspended_requests: data.total_suspended_requests || 0
-  };
-};
-
-export const activateGroup = async (groupName) => {
-  // Wails 环境使用绑定
-  if (isWailsEnvironment()) {
-    return await WailsApi.activateGroup(groupName);
-  }
-  const url = API_ENDPOINTS.GROUP_ACTIVATE.replace('{name}', groupName);
-  return await fetchWithTimeout(url, { method: 'POST' });
-};
-
 export const fetchClaudeRoutingState = async () => {
   if (isWailsEnvironment()) {
     return await WailsApi.getClaudeRoutingState();
@@ -281,15 +205,6 @@ export const clearNegativeHitCache = async (endpointName = '') => {
   };
 };
 
-export const pauseGroup = async (groupName) => {
-  // Wails 环境使用绑定
-  if (isWailsEnvironment()) {
-    return await WailsApi.pauseGroup(groupName);
-  }
-  const url = API_ENDPOINTS.GROUP_PAUSE.replace('{name}', groupName);
-  return await fetchWithTimeout(url, { method: 'POST' });
-};
-
 // ============================================
 // 使用统计 API
 // ============================================
@@ -327,8 +242,9 @@ export const fetchRequests = async (params = {}) => {
   };
 
   // 标准化请求数据（提取到外部，Wails和HTTP环境共用）
-  const normalizeRequest = (request) => ({
+  const normalizeRequest = (request) => normalizeRequestSource({
     ...request,
+    requestFamily: request.request_family || request.requestFamily || 'other',
     upstreamType: request.upstream_type || request.upstreamType || 'endpoint',
     upstreamName: request.upstream_name || request.upstreamName || '',
     upstreamSourceName: request.upstream_source_name || request.upstreamSourceName || '',
@@ -337,9 +253,7 @@ export const fetchRequests = async (params = {}) => {
     id: request.request_id || request.requestId || request.id,
     timestamp: request.start_time || request.timestamp,
     model: request.model_name || request.model || 'unknown',
-    channel: request.channel || '',
-    endpoint: request.endpoint_name || request.endpoint || request.upstream_name || request.upstreamName || 'unknown',
-    group: request.group_name || request.group || request.upstream_source_name || request.upstreamSourceName || 'default',
+    endpoint: request.upstream_name || request.upstreamName || request.endpoint_name || request.endpoint || 'unknown',
     duration: request.duration_ms || request.duration || 0,
     firstTokenMs: request.first_token_ms ?? request.firstTokenMs ?? null,
     completionMs: request.completion_ms ?? request.completionMs ?? null,
@@ -755,20 +669,6 @@ export const deleteEndpoint = async (name) => {
 };
 
 /**
- * 切换端点启用状态
- * @param {string} name - 端点名称
- * @param {boolean} enabled - 是否启用
- * @returns {Promise<Object>}
- */
-export const toggleEndpoint = async (name, enabled) => {
-  // Wails 环境使用绑定
-  if (isWailsEnvironment()) {
-    return await WailsApi.toggleEndpointRecord(name, enabled);
-  }
-  throw new Error('HTTP 环境暂不支持端点存储功能');
-};
-
-/**
  * v8：设置端点硬启用状态（关闭后任何模式都不会使用）
  */
 export const setEndpointAvailability = async (name, enabled) => {
@@ -786,18 +686,6 @@ export const setEndpointAutoSchedule = async (name, enabled) => {
     return await WailsApi.setEndpointAutoSchedule(name, enabled);
   }
   throw new Error('HTTP 环境暂不支持端点存储功能');
-};
-
-/**
- * 获取所有渠道
- * @returns {Promise<Array>} - 渠道列表
- */
-export const fetchChannels = async () => {
-  // Wails 环境使用绑定
-  if (isWailsEnvironment()) {
-    return await WailsApi.getChannels();
-  }
-  return [];
 };
 
 // ============================================

@@ -70,14 +70,11 @@ export const buildQueryParamsFromFilters = (filters = {}) => {
   if (filters.model && filters.model !== '') {
     queryParams.model = filters.model;
   }
-  if (filters.channel && filters.channel !== 'all') {
-    queryParams.channel = filters.channel;
+  if (filters.requestFamily && filters.requestFamily !== 'all') {
+    queryParams.request_family = filters.requestFamily;
   }
-  if (filters.endpoint && filters.endpoint !== 'all') {
-    queryParams.endpoint = filters.endpoint;
-  }
-  if (filters.group && filters.group !== 'all') {
-    queryParams.group = filters.group;
+  if (filters.upstreamName && filters.upstreamName !== 'all') {
+    queryParams.upstream_name = filters.upstreamName;
   }
 
   return queryParams;

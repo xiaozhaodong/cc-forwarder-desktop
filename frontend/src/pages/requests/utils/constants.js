@@ -32,8 +32,8 @@ export const PAGINATION_CONFIG = {
 export const DEFAULT_FILTERS = {
   status: 'all',
   model: '',
-  channel: 'all',
-  endpoint: 'all',
+  requestFamily: 'all',
+  upstreamName: 'all',
   startDate: '',
   endDate: ''
 };
@@ -44,8 +44,8 @@ export const TABLE_COLUMNS = [
   { id: 'timestamp', label: '时间', alwaysVisible: true, width: 'auto' },
   { id: 'status', label: '状态', alwaysVisible: false, width: 'auto' },
   { id: 'model', label: '模型', alwaysVisible: false, width: 'auto' },
-  { id: 'channel', label: '渠道', alwaysVisible: false, width: 'auto' },
-  { id: 'endpoint', label: '端点', alwaysVisible: false, width: 'auto' },
+  { id: 'requestFamily', label: '类型', alwaysVisible: false, width: 'auto' },
+  { id: 'upstreamName', label: '上游', alwaysVisible: false, width: 'auto' },
   { id: 'duration', label: '首响 / 生成', alwaysVisible: false, width: 'auto' },
   { id: 'inputTokens', label: '输入', alwaysVisible: false, width: 'auto', align: 'right' },
   { id: 'outputTokens', label: '输出', alwaysVisible: false, width: 'auto', align: 'right' },
@@ -56,7 +56,7 @@ export const TABLE_COLUMNS = [
 
 // 默认可见的列（v4.0: 添加缓存创建/读取列）
 export const DEFAULT_VISIBLE_COLUMNS = [
-  'requestId', 'timestamp', 'status', 'model', 'channel', 'endpoint',
+  'requestId', 'timestamp', 'status', 'model', 'requestFamily', 'upstreamName',
   'duration', 'inputTokens', 'outputTokens', 'cacheCreationTokens', 'cacheReadTokens', 'cost'
 ];
 

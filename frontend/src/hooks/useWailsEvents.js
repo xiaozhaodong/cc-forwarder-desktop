@@ -11,7 +11,6 @@ import { isWailsEnvironment, initWails } from '@utils/wailsApi.js';
 const WAILS_EVENTS = {
   SYSTEM_STATUS: 'system:status',
   ENDPOINT_UPDATE: 'endpoint:update',
-  GROUP_UPDATE: 'group:update',
   USAGE_UPDATE: 'usage:update',
   CONFIG_RELOADED: 'config:reloaded',
   ERROR: 'error',
@@ -35,7 +34,7 @@ export const WAILS_STATUS = {
  */
 const useWailsEvents = (onDataUpdate, options = {}) => {
   const {
-    events = 'status,endpoint,group'
+    events = 'status,endpoint'
   } = options;
 
   const [connectionStatus, setConnectionStatus] = useState(WAILS_STATUS.CONNECTING);
@@ -52,7 +51,6 @@ const useWailsEvents = (onDataUpdate, options = {}) => {
   const eventMapping = {
     'status': WAILS_EVENTS.SYSTEM_STATUS,
     'endpoint': WAILS_EVENTS.ENDPOINT_UPDATE,
-    'group': WAILS_EVENTS.GROUP_UPDATE,
     'usage': WAILS_EVENTS.USAGE_UPDATE,
     'config': WAILS_EVENTS.CONFIG_RELOADED,
     'error': WAILS_EVENTS.ERROR,

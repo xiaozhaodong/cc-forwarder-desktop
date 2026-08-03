@@ -13,6 +13,7 @@ import RequestStatusBadge from './RequestStatusBadge.jsx';
 import ModelTag from './ModelTag.jsx';
 import Pagination from './Pagination.jsx';
 import { copyTextToClipboard } from './clipboard.js';
+import { getRequestFamilyMeta } from '../utils/requestSource.js';
 import {
   calculateTokensPerSecond,
   formatOptionalTimingBadge,
@@ -122,10 +123,12 @@ const renderCell = (columnId, request) => {
       return <RequestStatusBadge status={request.status} />;
     case 'model':
       return <ModelTag model={request.model} />;
-    case 'channel':
-      return <span className="text-purple-600 text-xs font-medium">{request.channel || '-'}</span>;
-    case 'endpoint':
-      return <span className="text-gray-600 text-xs">{request.endpoint}</span>;
+    case 'requestFamily': {
+      const family = getRequestFamilyMeta(request.requestFamily);
+      return <span className={`inline-flex rounded-md border px-2 py-1 text-[11px] font-semibold ${family.className}`}>{family.label}</span>;
+    }
+    case 'upstreamName':
+      return <span className="block max-w-[190px] truncate text-xs text-gray-600" title={request.upstreamName}>{request.upstreamName || '未知上游'}</span>;
     case 'duration':
       return <RequestTimingCell request={request} />;
     case 'inputTokens':

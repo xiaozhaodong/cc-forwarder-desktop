@@ -9,8 +9,6 @@ import {
   Settings,
   RefreshCw,
   Server,
-  Network,
-  Clock,
   Shield,
   Database,
   Globe
@@ -20,8 +18,7 @@ import { fetchConfig } from '@utils/api.js';
 import {
   ConfigSection,
   ConfigItem,
-  DynamicConfigSection,
-  EndpointsSection
+  DynamicConfigSection
 } from './components';
 
 // ============================================
@@ -68,12 +65,10 @@ const ConfigPage = () => {
   const presetSections = new Set([
     'server',
     'web',
-    'group',
     'health',
     'request_suspend',
     'usage_tracking',
     'token_counting',
-    'endpoints',
     'timezone',
     'global_timeout'
   ]);
@@ -83,7 +78,6 @@ const ConfigPage = () => {
     ? Object.keys(config).filter(
         key =>
           !presetSections.has(key) &&
-          key !== 'endpoints' &&
           typeof config[key] === 'object' &&
           config[key] !== null &&
           !Array.isArray(config[key])
@@ -95,7 +89,6 @@ const ConfigPage = () => {
     ? Object.keys(config).filter(
         key =>
           !presetSections.has(key) &&
-          key !== 'endpoints' &&
           typeof config[key] !== 'object'
       )
     : [];
@@ -138,18 +131,6 @@ const ConfigPage = () => {
             <ConfigItem label="启用状态" value={config.web.Enabled} type="boolean" />
             <ConfigItem label="监听地址" value={config.web.Host} />
             <ConfigItem label="监听端口" value={config.web.Port} type="number" />
-          </ConfigSection>
-        )}
-
-        {/* 组配置 */}
-        {config?.group && (
-          <ConfigSection title="组配置" icon={Network}>
-            <ConfigItem label="冷却时间" value={config.group.Cooldown} type="duration" />
-            <ConfigItem
-              label="自动组切换"
-              value={config.group.AutoSwitchBetweenGroups}
-              type="boolean"
-            />
           </ConfigSection>
         )}
 
@@ -229,9 +210,6 @@ const ConfigPage = () => {
           ))}
         </ConfigSection>
       )}
-
-      {/* ========== 端点配置（特殊处理）========== */}
-      {config?.endpoints && <EndpointsSection endpoints={config.endpoints} />}
 
       {/* ========== 动态配置区块（单列布局）========== */}
       {dynamicSections.length > 0 && (

@@ -74,8 +74,8 @@ const PrivacyScopeEditor = ({ scope, onChange, endpointOptions = [], accountOpti
         onChange={(values) => update('upstream_types', values)}
       />
       <CheckboxGroup
-        label="端点"
-        hint="仅对 CC 端点链路生效"
+        label="Claude 端点"
+        hint="仅对 Claude Messages 链路生效"
         options={endpointOptions}
         values={scope.endpoint_names || []}
         onChange={(values) => update('endpoint_names', values)}

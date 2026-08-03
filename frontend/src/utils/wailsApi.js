@@ -179,6 +179,36 @@ export const getConfig = async () => {
   return await WailsApp.GetConfig();
 };
 
+const normalizeMigrationStatus = (status = {}) => ({
+  state: status.state || status.State || 'initializing',
+  migrationId: status.migration_id || status.migrationId || status.MigrationID || '',
+  phase: status.phase || status.Phase || '',
+  error: status.error || status.Error || '',
+  databasePath: status.database_path || status.databasePath || status.DatabasePath || '',
+  configPath: status.config_path || status.configPath || status.ConfigPath || '',
+  backupDir: status.backup_dir || status.backupDir || status.BackupDir || '',
+  databaseIntegrity: status.database_integrity || status.databaseIntegrity || status.DatabaseIntegrity || '',
+  backupIntegrity: status.backup_integrity || status.backupIntegrity || status.BackupIntegrity || '',
+  retryAllowed: status.retry_allowed ?? status.retryAllowed ?? status.RetryAllowed ?? false,
+  endpointCountBefore: status.endpoint_count_before ?? status.endpointCountBefore ?? status.EndpointCountBefore ?? 0,
+  endpointCountAfter: status.endpoint_count_after ?? status.endpointCountAfter ?? status.EndpointCountAfter ?? 0,
+  derivedRecordCount: status.derived_record_count ?? status.derivedRecordCount ?? status.DerivedRecordCount ?? 0
+});
+
+export const getMigrationStatus = async () => {
+  await initWails();
+  if (!WailsApp) return normalizeMigrationStatus({ state: 'ready' });
+  const method = getWailsMethod('GetMigrationStatus');
+  return normalizeMigrationStatus(await method());
+};
+
+export const retryStartupMigration = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+  const method = getWailsMethod('RetryStartupMigration');
+  return normalizeMigrationStatus(await method());
+};
+
 // ============================================
 // 端点管理 API
 // ============================================
@@ -188,16 +218,10 @@ export const getEndpoints = async () => {
   if (!WailsApp) throw new Error('Wails not available');
 
   const endpoints = await WailsApp.GetEndpoints();
-
-  // 转换为前端期望的格式
   const formattedEndpoints = endpoints.map(ep => ({
     name: ep.name,
     url: ep.url,
-    channel: ep.channel || '', // v5.0: 渠道标签
-    group: ep.group,
     priority: ep.priority,
-    group_priority: ep.group_priority,
-    group_is_active: ep.group_is_active,
     healthy: ep.healthy,
     status: ep.healthy ? 'healthy' : 'unhealthy',
     last_check: ep.last_check,
@@ -245,157 +269,6 @@ export const batchHealthCheckAll = async () => {
   };
 };
 
-// ============================================
-// Key 管理 API
-// ============================================
-
-export const getKeysOverview = async () => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  console.log('🔑 [Wails] 调用 GetKeysOverview...');
-  const result = await WailsApp.GetKeysOverview();
-  console.log('🔑 [Wails] GetKeysOverview 原始返回:', result);
-
-  // 转换为前端期望的格式
-  const endpoints = (result.endpoints || []).map(ep => ({
-    endpoint: ep.endpoint,
-    tokens: (ep.tokens || []).map(t => ({
-      index: t.index,
-      name: t.name || `Token ${t.index + 1}`,
-      masked: t.value,  // 后端返回的是 value 字段（已脱敏）
-      is_active: t.is_active
-    })),
-    api_keys: (ep.api_keys || []).map(k => ({
-      index: k.index,
-      name: k.name || `API Key ${k.index + 1}`,
-      masked: k.value,  // 后端返回的是 value 字段（已脱敏）
-      is_active: k.is_active
-    })),
-    current_token_index: ep.current_token_index,
-    current_api_key_index: ep.current_api_key_index
-  }));
-
-  const formatted = {
-    endpoints,
-    total: endpoints.length,
-    timestamp: result.timestamp
-  };
-  console.log('🔑 [Wails] GetKeysOverview 格式化后:', formatted);
-  return formatted;
-};
-
-export const switchKey = async (endpointName, keyType, index) => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  const result = await WailsApp.SwitchKey(endpointName, keyType, index);
-  return {
-    success: result.success,
-    message: result.message,
-    endpoint: result.endpoint,
-    key_type: result.key_type,
-    new_index: result.new_index
-  };
-};
-
-// ============================================
-// 组管理 API
-// ============================================
-
-export const getGroups = async () => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  // 获取组、端点和 Keys 信息
-  const [groups, endpointsData, keysData] = await Promise.all([
-    WailsApp.GetGroups(),
-    WailsApp.GetEndpoints(),
-    WailsApp.GetKeysOverview().catch(() => ({ endpoints: [] })) // 容错：获取 keys 失败不影响主流程
-  ]);
-
-  // v4.0: 一个端点 = 一个组，组名 = 端点名
-  // 计算每个组的最近连通性统计
-  const groupHealthMap = new Map();
-  endpointsData.forEach(ep => {
-    // v4.0: 使用端点名作为组名（因为一个端点就是一个组）
-    const groupName = ep.name;
-    if (!groupHealthMap.has(groupName)) {
-      groupHealthMap.set(groupName, { total: 0, healthy: 0, unchecked: 0 });
-    }
-    const stats = groupHealthMap.get(groupName);
-    stats.total++;
-    if (ep.never_checked === true || !ep.last_check) {
-      stats.unchecked++;
-    } else if (ep.healthy) {
-      stats.healthy++;
-    }
-  });
-
-  // 构建端点名到 tokens 的映射
-  const endpointTokensMap = new Map();
-  (keysData.endpoints || []).forEach(ep => {
-    const tokens = (ep.tokens || []).map(t => ({
-      index: t.index,
-      name: t.name || `Token ${t.index + 1}`,
-      key: t.value, // 脱敏的 key 值
-      is_active: t.is_active,
-      endpoint: ep.endpoint, // 关联的端点名
-      type: inferTokenType(t.name) // 推断 Token 类型
-    }));
-    endpointTokensMap.set(ep.endpoint, tokens);
-  });
-
-  // 推断 Token 类型的辅助函数
-  function inferTokenType(name) {
-    if (!name) return 'Std';
-    const lowerName = name.toLowerCase();
-    if (lowerName.includes('pro') || lowerName.includes('特价')) return 'Pro';
-    if (lowerName.includes('ent') || lowerName.includes('主号')) return 'Ent';
-    if (lowerName.includes('free') || lowerName.includes('测试')) return 'Free';
-    return 'Std';
-  }
-
-  // 转换为前端期望的格式
-  const formattedGroups = groups.map(g => {
-    const healthStats = groupHealthMap.get(g.name) || { total: 0, healthy: 0, unchecked: 0 };
-    // v4.0: 组名 = 端点名，从 endpointTokensMap 获取 tokens
-    const tokens = endpointTokensMap.get(g.name) || [];
-
-    return {
-      name: g.name,
-      channel: g.channel,  // v5.0: 渠道名称
-      is_active: g.active,
-      paused: g.paused,
-      priority: g.priority,
-      endpoint_count: g.endpoint_count,
-      total_endpoints: healthStats.total,
-      healthy_endpoints: healthStats.healthy,
-      unhealthy_endpoints: healthStats.total - healthStats.healthy - healthStats.unchecked,
-      unchecked_endpoints: healthStats.unchecked,
-      in_cooldown: g.in_cooldown,
-      cooldown_remain_ms: g.cooldown_remain_ms,
-      tokens: tokens // 添加 tokens 数组
-    };
-  });
-
-  const activeGroup = formattedGroups.find(g => g.is_active);
-
-  return {
-    groups: formattedGroups,
-    active_group: activeGroup?.name || null,
-    total_suspended_requests: 0
-  };
-};
-
-export const activateGroup = async (groupName) => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  await WailsApp.ActivateGroup(groupName);
-  return { success: true };
-};
-
 const normalizeClaudeRoutingState = (state = {}) => ({
   mode: state.mode || state.Mode || 'auto',
   endpoint_name: state.endpoint_name || state.endpointName || state.EndpointName || '',
@@ -412,8 +285,6 @@ const normalizeClaudeRoutingState = (state = {}) => ({
   lastEffectiveEndpoint: state.last_effective_endpoint || state.lastEffectiveEndpoint || state.LastEffectiveEndpoint || '',
   last_decision_at: state.last_decision_at || state.lastDecisionAt || state.LastDecisionAt || '',
   lastDecisionAt: state.last_decision_at || state.lastDecisionAt || state.LastDecisionAt || '',
-  current_active_endpoint: state.current_active_endpoint || state.currentActiveEndpoint || state.CurrentActiveEndpoint || '',
-  currentActiveEndpoint: state.current_active_endpoint || state.currentActiveEndpoint || state.CurrentActiveEndpoint || '',
   available_endpoints: state.available_endpoints || state.availableEndpoints || state.AvailableEndpoints || [],
   availableEndpoints: state.available_endpoints || state.availableEndpoints || state.AvailableEndpoints || []
 });
@@ -455,22 +326,6 @@ export const clearNegativeHitCache = async (endpointName = '') => {
 
   const method = getWailsMethod('ClearNegativeHitCache');
   await method(endpointName || '');
-  return { success: true };
-};
-
-export const pauseGroup = async (groupName) => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  await WailsApp.PauseGroup(groupName);
-  return { success: true };
-};
-
-export const resumeGroup = async (groupName) => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  await WailsApp.ResumeGroup(groupName);
   return { success: true };
 };
 
@@ -1007,8 +862,8 @@ export const exchangeChatGPTOAuthCallback = async (sessionId, callbackUrl) => {
  * @param {string} params.end_date - 结束时间（优先于 period）
  * @param {string} params.status - 状态筛选
  * @param {string} params.model - 模型筛选
- * @param {string} params.endpoint - 端点筛选
- * @param {string} params.group - 组筛选
+ * @param {string} params.request_family - 请求类型筛选
+ * @param {string} params.upstream_name - 上游筛选
  * @returns {Promise<Object>} - 统计数据
  */
 export const getUsageStats = async (params = {}) => {
@@ -1023,9 +878,8 @@ export const getUsageStats = async (params = {}) => {
     end_date: params.end_date || '',
     status: params.status || '',
     model: params.model || '',
-    channel: params.channel || '',
-    endpoint: params.endpoint || '',
-    group: params.group || '',
+    request_family: params.request_family || params.requestFamily || '',
+    upstream_name: params.upstream_name || params.upstreamName || '',
     source_view: params.source_view || params.sourceView || 'all'
   };
 
@@ -1080,9 +934,8 @@ export const getRequests = async (params = {}) => {
     end_date: params.end_date || params.end_time || params.endDate || '',
     status: params.status || '',
     model: params.model || '',
-    channel: params.channel || '',
-    endpoint: params.endpoint || '',
-    group: params.group || '',
+    request_family: params.request_family || params.requestFamily || '',
+    upstream_name: params.upstream_name || params.upstreamName || '',
     source_view: params.source_view || params.sourceView || 'all'
   };
 
@@ -1096,15 +949,13 @@ export const getRequests = async (params = {}) => {
     id: r.request_id,
     timestamp: r.timestamp,
     start_time: r.timestamp,
-    channel: r.channel || '',
+    request_family: r.request_family || 'other',
     upstream_type: r.upstream_type || 'endpoint',
     upstream_name: r.upstream_name || '',
     upstream_source_name: r.upstream_source_name || '',
     upstream_id: r.upstream_id || null,
     endpoint_name: r.endpoint || r.upstream_name || '',
     endpoint: r.endpoint || r.upstream_name || '',
-    group_name: r.group || r.upstream_source_name || '',
-    group: r.group || r.upstream_source_name || '',
     model_name: r.model,
     model: r.model,
     status: r.status,
@@ -1297,11 +1148,8 @@ export const getEndpointStorageStatus = async () => {
 
 export const mapEndpointRecord = (record = {}) => ({
   id: record.id,
-  channel: record.channel,
   name: record.name,
   url: record.url,
-  token: record.token,
-  apiKey: record.api_key,
   tokenMasked: record.token_masked,
   apiKeyMasked: record.api_key_masked,
   headers: record.headers || {},
@@ -1317,7 +1165,6 @@ export const mapEndpointRecord = (record = {}) => ({
   cacheCreationCostMultiplier: record.cache_creation_cost_multiplier,
   cacheCreationCostMultiplier1h: record.cache_creation_cost_multiplier_1h,
   cacheReadCostMultiplier: record.cache_read_cost_multiplier,
-  enabled: record.enabled,
   availability_enabled: record.availability_enabled !== false,
   availabilityEnabled: record.availability_enabled !== false,
   createdAt: record.created_at,
@@ -1336,13 +1183,14 @@ export const mapEndpointRecord = (record = {}) => ({
 });
 
 export const buildEndpointRecordPayload = (input = {}, fallbackName = '') => ({
-  channel: input.channel || '',
   name: input.name || fallbackName,
   url: input.url || '',
   token: input.token || '',
   api_key: input.apiKey || '',
+  clear_token: input.clearToken === true,
+  clear_api_key: input.clearApiKey === true,
   headers: input.headers || {},
-  priority: parseInt(input.priority) || 1,
+  priority: Number.isFinite(Number(input.priority)) ? Math.max(0, parseInt(input.priority, 10)) : 1,
   failover_enabled: input.failoverEnabled !== false,
   availability_enabled: input.availabilityEnabled !== false,
   cooldown_seconds: input.cooldownSeconds ? parseInt(input.cooldownSeconds) : null,
@@ -1427,20 +1275,6 @@ export const deleteEndpointRecord = async (name) => {
 };
 
 /**
- * 切换端点启用状态
- * @param {string} name - 端点名称
- * @param {boolean} enabled - 是否启用
- * @returns {Promise<void>}
- */
-export const toggleEndpointRecord = async (name, enabled) => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  await WailsApp.ToggleEndpointRecord(name, enabled);
-  return { success: true };
-};
-
-/**
  * 设置端点硬启用状态（v8：关闭后任何模式都不会使用）
  */
 export const setEndpointAvailability = async (name, enabled) => {
@@ -1458,45 +1292,6 @@ export const setEndpointAutoSchedule = async (name, enabled) => {
   if (!WailsApp) throw new Error('Wails not available');
   await WailsApp.SetEndpointAutoSchedule(name, enabled);
   return { success: true };
-};
-
-/**
- * 获取所有渠道
- * @returns {Promise<Array>} - 渠道列表 [{name, endpointCount}]
- */
-export const getChannels = async () => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  const channels = await WailsApp.GetChannels();
-  return (channels || []).map(c => ({
-    name: c.name,
-    endpointCount: c.endpoint_count
-  }));
-};
-
-/**
- * 按渠道获取端点
- * @param {string} channel - 渠道名称
- * @returns {Promise<Array>} - 端点记录数组
- */
-export const getEndpointsByChannel = async (channel) => {
-  await initWails();
-  if (!WailsApp) throw new Error('Wails not available');
-
-  const records = await WailsApp.GetEndpointsByChannel(channel);
-  return (records || []).map(r => ({
-    id: r.id,
-    channel: r.channel,
-    name: r.name,
-    url: r.url,
-    tokenMasked: r.token_masked,
-    priority: r.priority,
-    failoverEnabled: r.failover_enabled,
-    enabled: r.enabled,
-    healthy: r.healthy,
-    responseTimeMs: r.response_time_ms
-  }));
 };
 
 // ============================================

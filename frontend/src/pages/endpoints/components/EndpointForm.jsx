@@ -1,640 +1,274 @@
-// ============================================
-// 端点编辑表单组件 (v5.0+ SQLite 存储模式)
-// 2025-12-05
-// ============================================
-
 import { useRef, useState } from 'react';
-import { X, Save, AlertCircle, ChevronDown, ChevronUp, Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
+import { AlertCircle, ChevronDown, ChevronUp, Eye, EyeOff, Plus, Save, Trash2, X } from 'lucide-react';
 import { Button } from '@components/ui';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
+import { createEmptyEndpointModelRewriteRule } from '../utils/modelRewrite.js';
 import {
-  createEmptyEndpointModelRewriteRule,
-  parseEndpointModelRewriteSettings,
-  serializeEndpointModelRewriteRules
-} from '../utils/modelRewrite.js';
+  buildEndpointFormPayload,
+  createEndpointFormState,
+  validateEndpointFormState
+} from '../utils/endpointFormState.js';
 
-// ============================================
-// 表单输入组件
-// ============================================
-
-const FormInput = ({ label, name, value, onChange, type = 'text', placeholder, required, disabled, help }) => (
-  <div className="space-y-1">
-    <label className="block text-sm font-medium text-slate-700">
-      {label}
-      {required && <span className="text-rose-500 ml-1">*</span>}
-    </label>
+const FormInput = ({ label, name, value, onChange, type = 'text', placeholder, disabled, help, min, step }) => (
+  <label className="block space-y-1">
+    <span className="block text-sm font-medium text-slate-700">{label}</span>
     <input
       type={type}
       name={name}
-      value={value || ''}
+      value={value ?? ''}
       onChange={onChange}
       placeholder={placeholder}
       disabled={disabled}
-      className={`
-        w-full px-3 py-2 border border-slate-200 rounded-lg text-sm
-        focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500
-        disabled:bg-slate-50 disabled:text-slate-400
-        ${disabled ? 'cursor-not-allowed' : ''}
-      `}
+      min={min}
+      step={step}
+      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
     />
-    {help && <p className="text-xs text-slate-400">{help}</p>}
-  </div>
+    {help && <span className="block text-xs leading-5 text-slate-400">{help}</span>}
+  </label>
 );
 
-// 密码输入组件（带显示/隐藏切换）
-const PasswordInput = ({ label, name, value, onChange, placeholder, required, help }) => {
-  const [showPassword, setShowPassword] = useState(false);
-
+const PasswordInput = ({ label, name, value, onChange, placeholder, help, disabled }) => {
+  const [visible, setVisible] = useState(false);
   return (
-    <div className="space-y-1">
-      <label className="block text-sm font-medium text-slate-700">
-        {label}
-        {required && <span className="text-rose-500 ml-1">*</span>}
-      </label>
-      <div className="relative">
+    <label className="block space-y-1">
+      <span className="block text-sm font-medium text-slate-700">{label}</span>
+      <span className="relative block">
         <input
-          type={showPassword ? 'text' : 'password'}
+          type={visible ? 'text' : 'password'}
           name={name}
           value={value || ''}
           onChange={onChange}
           placeholder={placeholder}
-          className="w-full px-3 py-2 pr-10 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+          disabled={disabled}
+          className="w-full rounded-lg border border-slate-200 px-3 py-2 pr-10 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:bg-slate-50"
         />
         <button
           type="button"
-          onClick={() => setShowPassword(!showPassword)}
-          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 transition-colors"
-          title={showPassword ? '隐藏' : '显示'}
+          onClick={() => setVisible((current) => !current)}
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          aria-label={visible ? `隐藏${label}` : `显示${label}`}
         >
-          {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+          {visible ? <EyeOff size={17} /> : <Eye size={17} />}
         </button>
+      </span>
+      {help && <span className="block text-xs leading-5 text-slate-400">{help}</span>}
+    </label>
+  );
+};
+
+const Checkbox = ({ label, help, checked, onChange }) => (
+  <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2.5">
+    <input type="checkbox" checked={checked} onChange={onChange} className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+    <span>
+      <span className="block text-sm font-medium text-slate-700">{label}</span>
+      <span className="block text-xs leading-5 text-slate-400">{help}</span>
+    </span>
+  </label>
+);
+
+const SecretField = ({ label, field, clearField, maskedValue, state, setState }) => {
+  const hasStoredValue = Boolean(maskedValue);
+  const cleared = state[clearField] === true;
+  return (
+    <div className="rounded-xl border border-slate-200 p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-slate-700">{label}</div>
+          <div className="text-xs text-slate-400">
+            {hasStoredValue ? `当前已保存：${maskedValue}` : '当前未配置'}
+          </div>
+        </div>
+        {hasStoredValue && (
+          <button
+            type="button"
+            onClick={() => setState((current) => ({
+              ...current,
+              [clearField]: !current[clearField],
+              [field]: !current[clearField] ? '' : current[field]
+            }))}
+            className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${cleared ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-rose-200 text-rose-600 hover:bg-rose-50'}`}
+          >
+            {cleared ? '撤销移除' : `移除 ${label}`}
+          </button>
+        )}
       </div>
-      {help && <p className="text-xs text-slate-400">{help}</p>}
+      <PasswordInput
+        label={hasStoredValue ? `替换 ${label}` : label}
+        name={field}
+        value={state[field]}
+        onChange={(event) => setState((current) => ({ ...current, [field]: event.target.value, [clearField]: false }))}
+        disabled={cleared}
+        placeholder={hasStoredValue ? '留空表示保留当前值' : '可选'}
+        help={cleared ? `保存后会明确删除已存 ${label}` : '前端不会读取或回填已保存的明文凭据'}
+      />
     </div>
   );
 };
 
-const FormCheckbox = ({ label, name, checked, onChange, help }) => (
-  <div className="flex items-start gap-3">
-    <input
-      type="checkbox"
-      name={name}
-      checked={checked || false}
-      onChange={onChange}
-      className="mt-1 w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
-    />
-    <div>
-      <label className="text-sm font-medium text-slate-700">{label}</label>
-      {help && <p className="text-xs text-slate-400">{help}</p>}
-    </div>
-  </div>
-);
-
-// ============================================
-// 端点表单组件
-// ============================================
-
-const EndpointForm = ({
-  endpoint = null,  // null = 新建模式, object = 编辑模式
-  onSave,
-  onCancel,
-  loading = false
-}) => {
-  const isEditMode = !!endpoint;
-
-  // 计算初始表单数据
-  const getInitialFormData = () => {
-    if (endpoint) {
-      const modelRewriteSettings = parseEndpointModelRewriteSettings(endpoint.modelRewriteRules || '');
-      return {
-        channel: endpoint.channel || '',
-        name: endpoint.name || '',
-        url: endpoint.url || '',
-        token: endpoint.token || '', // v5.0: 本地桌面应用，直接显示已保存的 Token
-        apiKey: endpoint.apiKey || '', // v5.0: 本地桌面应用，直接显示已保存的 ApiKey
-        priority: endpoint.priority || 1,
-        failoverEnabled: endpoint.failoverEnabled !== false,
-        availabilityEnabled: endpoint.availabilityEnabled !== false,
-        cooldownSeconds: endpoint.cooldownSeconds || '',
-        timeoutSeconds: endpoint.timeoutSeconds || 300,
-        supportsCountTokens: endpoint.supportsCountTokens || false,
-        modelRewriteEnabled: modelRewriteSettings.enabled,
-        modelRewriteRules: modelRewriteSettings.rules,
-        costMultiplier: endpoint.costMultiplier || 1.0,
-        inputCostMultiplier: endpoint.inputCostMultiplier || 1.0,
-        outputCostMultiplier: endpoint.outputCostMultiplier || 1.0,
-        cacheCreationCostMultiplier: endpoint.cacheCreationCostMultiplier || 1.0,
-        cacheCreationCostMultiplier1h: endpoint.cacheCreationCostMultiplier1h || 1.0,
-        cacheReadCostMultiplier: endpoint.cacheReadCostMultiplier || 1.0
-      };
-    }
-    return {
-      channel: '',
-      name: '',
-      url: '',
-      token: '',
-      apiKey: '',
-      priority: 1,
-      failoverEnabled: true,
-      availabilityEnabled: true,
-      cooldownSeconds: '',
-      timeoutSeconds: 300,
-      supportsCountTokens: false,
-      modelRewriteEnabled: false,
-      modelRewriteRules: [createEmptyEndpointModelRewriteRule()],
-      costMultiplier: 1.0,
-      inputCostMultiplier: 1.0,
-      outputCostMultiplier: 1.0,
-      cacheCreationCostMultiplier: 1.0,
-      cacheCreationCostMultiplier1h: 1.0,
-      cacheReadCostMultiplier: 1.0
-    };
-  };
-
-  // 表单状态
-  const [formData, setFormData] = useState(getInitialFormData);
-
-  // 高级选项展开状态
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
-  // 表单错误
+const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) => {
+  const isEditMode = Boolean(endpoint);
+  const [state, setState] = useState(() => createEndpointFormState(endpoint));
   const [errors, setErrors] = useState({});
-
-  // 挂载即打开（父组件条件渲染），卸载时由 hook 清理
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const closeButtonRef = useRef(null);
-  const handleRequestClose = () => {
-    if (!loading) onCancel();
-  };
-  useModalLifecycle({
-    open: true,
-    onClose: handleRequestClose,
-    initialFocusRef: closeButtonRef
-  });
 
-  // 处理输入变化
-  const handleChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value
+  const requestClose = () => {
+    if (!loading) onCancel?.();
+  };
+  useModalLifecycle({ open: true, onClose: requestClose, initialFocusRef: closeButtonRef });
+
+  const change = (event) => {
+    const { name, value, type, checked } = event.target;
+    setState((current) => ({ ...current, [name]: type === 'checkbox' ? checked : value }));
+    if (errors[name]) setErrors((current) => ({ ...current, [name]: undefined }));
+  };
+
+  const updateRule = (index, key, value) => {
+    setState((current) => ({
+      ...current,
+      modelRewriteRules: current.modelRewriteRules.map((rule, ruleIndex) => (
+        ruleIndex === index ? { ...rule, [key]: value } : rule
+      ))
     }));
-    // 清除对应字段的错误
-    if (errors[name]) {
-      setErrors(prev => ({ ...prev, [name]: null }));
-    }
   };
 
-  const updateModelRewriteRules = (updater) => {
-    setFormData(prev => {
-      const current = Array.isArray(prev.modelRewriteRules) && prev.modelRewriteRules.length > 0
-        ? prev.modelRewriteRules
-        : [createEmptyEndpointModelRewriteRule()];
-      return {
-        ...prev,
-        modelRewriteRules: updater(current)
-      };
-    });
-    if (errors.modelRewriteRules) {
-      setErrors(prev => ({ ...prev, modelRewriteRules: null }));
+  const submit = async (event) => {
+    event.preventDefault();
+    const nextErrors = validateEndpointFormState(state);
+    const rules = Array.isArray(state.modelRewriteRules) ? state.modelRewriteRules : [];
+    if (state.modelRewriteEnabled && (
+      rules.length === 0
+      || rules.some((rule) => !String(rule.source || '').trim() || !String(rule.target || '').trim())
+    )) {
+      nextErrors.modelRewriteRules = '请完整填写至少一条模型改写规则';
     }
-  };
-
-  // 表单验证
-  const validateForm = () => {
-    const newErrors = {};
-
-    if (!formData.channel.trim()) {
-      newErrors.channel = '请输入渠道名称';
-    }
-    if (!formData.name.trim()) {
-      newErrors.name = '请输入端点名称';
-    }
-    if (!formData.url.trim()) {
-      newErrors.url = '请输入端点 URL';
-    } else if (!/^https?:\/\/.+/.test(formData.url)) {
-      newErrors.url = '请输入有效的 URL (以 http:// 或 https:// 开头)';
-    }
-    if (!isEditMode && !formData.token.trim()) {
-      newErrors.token = '请输入 Token';
-    }
-    if (formData.modelRewriteEnabled) {
-      const rules = Array.isArray(formData.modelRewriteRules) ? formData.modelRewriteRules : [];
-      if (!rules.length) {
-        newErrors.modelRewriteRules = '请至少添加一条模型改写规则';
-      } else if (rules.some((rule) => !String(rule.source || '').trim() || !String(rule.target || '').trim())) {
-        newErrors.modelRewriteRules = '请完整填写每条规则的来源模型和目标模型';
-      } else if (rules.some((rule) => String(rule.source || '').trim().toLowerCase() === String(rule.target || '').trim().toLowerCase())) {
-        newErrors.modelRewriteRules = '来源模型和目标模型不能相同';
-      }
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  // 提交表单
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-
-    if (!validateForm()) {
-      return;
-    }
-
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
     try {
-      await onSave({
-        ...formData,
-        modelRewriteRules: formData.modelRewriteEnabled
-          ? serializeEndpointModelRewriteRules(formData.modelRewriteRules)
-          : ''
-      });
+      await onSave?.(buildEndpointFormPayload(state));
     } catch (error) {
-      console.error('保存失败:', error);
-      setErrors({ submit: error.message || '保存失败' });
+      setErrors({ submit: error?.message || '保存失败' });
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 animate-fade-in pt-[15vh]">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={isEditMode ? '编辑端点' : '新建端点'}
-        className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[75vh] flex flex-col overflow-hidden"
-      >
-        {/* 标题栏 */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
-          <h2 className="text-lg font-semibold text-slate-900">
-            {isEditMode ? '编辑端点' : '新建端点'}
-          </h2>
-          <button
-            ref={closeButtonRef}
-            aria-label="关闭表单"
-            onClick={handleRequestClose}
-            className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-          >
-            <X size={20} />
-          </button>
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/45 px-4 pt-[8vh] backdrop-blur-[2px]">
+      <div role="dialog" aria-modal="true" aria-label={isEditMode ? '编辑 Claude 端点' : '新建 Claude 端点'} className="flex max-h-[84vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">{isEditMode ? '编辑 Claude 端点' : '新建 Claude 端点'}</h2>
+            <p className="mt-0.5 text-xs text-slate-400">一个端点对应一组固定认证信息；凭据始终以掩码展示。</p>
+          </div>
+          <button ref={closeButtonRef} type="button" onClick={requestClose} aria-label="关闭表单" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={19} /></button>
         </div>
 
-        {/* 表单内容 - 可滚动区域 */}
-        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
-          <div className="p-6 overflow-y-auto flex-1">
-          {/* 提交错误提示 */}
-          {errors.submit && (
-            <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-rose-700 text-sm">
-              <AlertCircle size={16} />
-              {errors.submit}
-            </div>
-          )}
+        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+          <div className="flex-1 space-y-7 overflow-y-auto px-6 py-5">
+            {errors.submit && <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"><AlertCircle size={16} />{errors.submit}</div>}
 
-          {/* 基本信息 */}
-          <div className="space-y-4 mb-6">
-            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">
-              基本信息
-            </h3>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <FormInput
-                  label="渠道"
-                  name="channel"
-                  value={formData.channel}
-                  onChange={handleChange}
-                  placeholder="e.g. official, backup"
-                  required
-                  help="用于分组展示端点"
-                />
-                {errors.channel && (
-                  <p className="text-xs text-rose-500 mt-1">{errors.channel}</p>
-                )}
-              </div>
-
-              <div>
-                <FormInput
-                  label="端点名称"
-                  name="name"
-                  value={formData.name}
-                  onChange={handleChange}
-                  placeholder="e.g. api-primary"
-                  required
-                  disabled={isEditMode}
-                  help={isEditMode ? '名称不可修改' : '唯一标识符'}
-                />
-                {errors.name && (
-                  <p className="text-xs text-rose-500 mt-1">{errors.name}</p>
-                )}
-              </div>
-            </div>
-
-            <div>
-              <FormInput
-                label="URL"
-                name="url"
-                value={formData.url}
-                onChange={handleChange}
-                placeholder="https://api.example.com"
-                required
-              />
-              {errors.url && (
-                <p className="text-xs text-rose-500 mt-1">{errors.url}</p>
-              )}
-            </div>
-          </div>
-
-          {/* 认证信息 */}
-          <div className="space-y-4 mb-6">
-            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">
-              认证信息
-            </h3>
-
-            <div>
-              <PasswordInput
-                label="Token"
-                name="token"
-                value={formData.token}
-                onChange={handleChange}
-                placeholder="sk-..."
-                required={!isEditMode}
-                help="Bearer Token 认证。清空后保存将保留原值"
-              />
-              {errors.token && (
-                <p className="text-xs text-rose-500 mt-1">{errors.token}</p>
-              )}
-            </div>
-
-            <div>
-              <PasswordInput
-                label="API Key (可选)"
-                name="apiKey"
-                value={formData.apiKey}
-                onChange={handleChange}
-                placeholder="可选的 API Key"
-                help="备用认证方式。清空后保存将保留原值"
-              />
-            </div>
-          </div>
-
-          {/* 路由配置 */}
-          <div className="space-y-4 mb-6">
-            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">
-              路由配置
-            </h3>
-
-            <div className="grid grid-cols-3 gap-4">
-              <FormInput
-                label="优先级"
-                name="priority"
-                value={formData.priority}
-                onChange={handleChange}
-                type="number"
-                placeholder="1"
-                help="数字越小优先级越高"
-              />
-
-              <FormInput
-                label="超时时间 (秒)"
-                name="timeoutSeconds"
-                value={formData.timeoutSeconds}
-                onChange={handleChange}
-                type="number"
-                placeholder="300"
-              />
-
-              <FormInput
-                label="冷却时间 (秒)"
-                name="cooldownSeconds"
-                value={formData.cooldownSeconds}
-                onChange={handleChange}
-                type="number"
-                placeholder="使用全局配置"
-                help="留空使用全局配置"
-              />
-            </div>
-
-            <div className="flex gap-6">
-              <FormCheckbox
-                label="端点启用"
-                name="availabilityEnabled"
-                checked={formData.availabilityEnabled}
-                onChange={handleChange}
-                help="关闭后任何模式都不会使用此端点"
-              />
-
-              <FormCheckbox
-                label="参与自动调度"
-                name="failoverEnabled"
-                checked={formData.failoverEnabled}
-                onChange={handleChange}
-                help="自动模式和临时 fallback 可以选择此端点；关闭后仍可手动优选或固定使用"
-              />
-
-              <FormCheckbox
-                label="支持 count_tokens"
-                name="supportsCountTokens"
-                checked={formData.supportsCountTokens}
-                onChange={handleChange}
-                help="端点是否支持 Token 计数 API"
-              />
-            </div>
-          </div>
-
-          {/* 模型兼容改写 */}
-          <div className="space-y-4 mb-6">
-            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">
-              模型兼容
-            </h3>
-
-            <label className="flex items-start gap-3 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={Boolean(formData.modelRewriteEnabled)}
-                onChange={(event) => {
-                  const enabled = event.target.checked;
-                  setFormData(prev => ({
-                    ...prev,
-                    modelRewriteEnabled: enabled,
-                    modelRewriteRules: Array.isArray(prev.modelRewriteRules) && prev.modelRewriteRules.length > 0
-                      ? prev.modelRewriteRules
-                      : [createEmptyEndpointModelRewriteRule()]
-                  }));
-                  if (errors.modelRewriteRules) {
-                    setErrors(prev => ({ ...prev, modelRewriteRules: null }));
-                  }
-                }}
-                className="mt-1 w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
-              />
-              <span>
-                <span className="block font-medium">启用模型兼容改写</span>
-                <span className="block text-xs text-slate-400 mt-0.5">
-                  将 Claude Code 请求中的模型名精确替换为当前端点支持的模型
-                </span>
-              </span>
-            </label>
-
-            {formData.modelRewriteEnabled && (
-              <div className="p-4 bg-slate-50 rounded-lg space-y-3">
-                {(Array.isArray(formData.modelRewriteRules) && formData.modelRewriteRules.length > 0
-                  ? formData.modelRewriteRules
-                  : [createEmptyEndpointModelRewriteRule()]
-                ).map((rule, index, rules) => (
-                  <div key={index} className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto]">
-                    <FormInput
-                      label={`来源模型${rules.length > 1 ? ` ${index + 1}` : ''}`}
-                      value={rule.source || ''}
-                      onChange={(event) => updateModelRewriteRules(current => current.map((item, itemIndex) => (
-                        itemIndex === index ? { ...item, source: event.target.value } : item
-                      )))}
-                      placeholder="claude-sonnet-4-5"
-                    />
-                    <FormInput
-                      label={`目标模型${rules.length > 1 ? ` ${index + 1}` : ''}`}
-                      value={rule.target || ''}
-                      onChange={(event) => updateModelRewriteRules(current => current.map((item, itemIndex) => (
-                        itemIndex === index ? { ...item, target: event.target.value } : item
-                      )))}
-                      placeholder="provider-sonnet"
-                    />
-                    <div>
-                      <div className="mb-1 text-sm font-medium text-transparent select-none" aria-hidden="true">删除</div>
-                      <button
-                        type="button"
-                        aria-label={`删除模型改写规则 ${index + 1}`}
-                        title="删除规则"
-                        disabled={rules.length <= 1}
-                        onClick={() => updateModelRewriteRules(current => current.filter((_, itemIndex) => itemIndex !== index))}
-                        className={`inline-flex h-[38px] w-10 items-center justify-center rounded-lg border transition-colors ${
-                          rules.length <= 1
-                            ? 'cursor-not-allowed border-slate-100 text-slate-300'
-                            : 'border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-500'
-                        }`}
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-
-                <button
-                  type="button"
-                  onClick={() => updateModelRewriteRules(rules => [...rules, createEmptyEndpointModelRewriteRule()])}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
-                >
-                  <Plus size={15} />
-                  添加规则
-                </button>
-
-                {errors.modelRewriteRules && (
-                  <p className="text-xs text-rose-500">{errors.modelRewriteRules}</p>
-                )}
-                <p className="text-xs leading-5 text-slate-500">
-                  仅在 <code>/v1/messages</code> 与 <code>/v1/messages/count_tokens</code> 转发前生效；所有规则均为精确匹配，且按顺序使用第一条命中规则。
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* 高级选项（可折叠） */}
-          <div className="mb-6">
-            <button
-              type="button"
-              onClick={() => setShowAdvanced(!showAdvanced)}
-              className="flex items-center gap-2 text-sm font-semibold text-slate-500 uppercase tracking-wide hover:text-slate-700 transition-colors"
-            >
-              成本倍率配置
-              {showAdvanced ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
-
-            {showAdvanced && (
-              <div className="mt-4 p-4 bg-slate-50 rounded-lg space-y-4">
-                <p className="text-xs text-slate-500 mb-3">
-                  成本倍率用于调整不同端点的计费比例，默认为 1.0
-                </p>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <FormInput
-                    label="总成本倍率"
-                    name="costMultiplier"
-                    value={formData.costMultiplier}
-                    onChange={handleChange}
-                    type="number"
-                    step="0.1"
-                    placeholder="1.0"
-                  />
-
-                  <FormInput
-                    label="输入成本倍率"
-                    name="inputCostMultiplier"
-                    value={formData.inputCostMultiplier}
-                    onChange={handleChange}
-                    type="number"
-                    step="0.1"
-                    placeholder="1.0"
-                  />
-
-                  <FormInput
-                    label="输出成本倍率"
-                    name="outputCostMultiplier"
-                    value={formData.outputCostMultiplier}
-                    onChange={handleChange}
-                    type="number"
-                    step="0.1"
-                    placeholder="1.0"
-                  />
-
-                  <FormInput
-                    label="缓存读取成本倍率"
-                    name="cacheReadCostMultiplier"
-                    value={formData.cacheReadCostMultiplier}
-                    onChange={handleChange}
-                    type="number"
-                    step="0.1"
-                    placeholder="1.0"
-                  />
-
-                  <FormInput
-                    label="5分钟缓存创建倍率"
-                    name="cacheCreationCostMultiplier"
-                    value={formData.cacheCreationCostMultiplier}
-                    onChange={handleChange}
-                    type="number"
-                    step="0.1"
-                    placeholder="1.0"
-                    help="Claude 默认缓存类型"
-                  />
-
-                  <FormInput
-                    label="1小时缓存创建倍率"
-                    name="cacheCreationCostMultiplier1h"
-                    value={formData.cacheCreationCostMultiplier1h}
-                    onChange={handleChange}
-                    type="number"
-                    step="0.1"
-                    placeholder="1.0"
-                    help="长效缓存类型"
-                  />
+            <section>
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">连接</h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <FormInput label="名称" name="name" value={state.name} onChange={change} disabled={isEditMode} placeholder="claude-primary" help={isEditMode ? '稳定唯一标识，编辑时不可修改' : '保存后作为请求上游名称'} />
+                  {errors.name && <p className="mt-1 text-xs text-rose-500">{errors.name}</p>}
+                </div>
+                <div>
+                  <FormInput label="URL" name="url" value={state.url} onChange={change} placeholder="https://api.example.com" help="仅接受不含账号密码的 HTTP(S) URL" />
+                  {errors.url && <p className="mt-1 text-xs text-rose-500">{errors.url}</p>}
                 </div>
               </div>
-            )}
-          </div>
+            </section>
+
+            <section>
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">认证</h3>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <SecretField label="Token" field="token" clearField="clearToken" maskedValue={endpoint?.tokenMasked} state={state} setState={setState} />
+                <SecretField label="API Key" field="apiKey" clearField="clearApiKey" maskedValue={endpoint?.apiKeyMasked} state={state} setState={setState} />
+              </div>
+
+              <div className="mt-3 rounded-xl border border-slate-200 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-slate-700">自定义 Header</div>
+                    <div className="text-xs text-slate-400">用于端点要求的附加请求头。</div>
+                  </div>
+                  <button type="button" onClick={() => setState((current) => ({ ...current, headerRows: [...current.headerRows, { name: '', value: '' }] }))} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"><Plus size={13} />添加</button>
+                </div>
+                {state.headerRows.length === 0 ? (
+                  <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400">未配置自定义 Header</div>
+                ) : (
+                  <div className="space-y-2">
+                    {state.headerRows.map((row, index) => (
+                      <div key={index} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                        <input aria-label={`Header 名称 ${index + 1}`} value={row.name} onChange={(event) => setState((current) => ({ ...current, headerRows: current.headerRows.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) }))} placeholder="X-Tenant" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-500" />
+                        <input aria-label={`Header 值 ${index + 1}`} value={row.value} onChange={(event) => setState((current) => ({ ...current, headerRows: current.headerRows.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item) }))} placeholder="value" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-500" />
+                        <button type="button" aria-label={`删除 Header ${index + 1}`} onClick={() => setState((current) => ({ ...current, headerRows: current.headerRows.filter((_, itemIndex) => itemIndex !== index) }))} className="rounded-lg border border-slate-200 p-2 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {errors.headers && <p className="mt-2 text-xs text-rose-500">{errors.headers}</p>}
+              </div>
+            </section>
+
+            <section>
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">调度</h3>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <FormInput label="优先级" name="priority" value={state.priority} onChange={change} type="number" min="0" help="允许重复，数字越小越优先" />
+                <FormInput label="请求超时（秒）" name="timeoutSeconds" value={state.timeoutSeconds} onChange={change} type="number" min="1" />
+                <FormInput label="冷却时间（秒）" name="cooldownSeconds" value={state.cooldownSeconds} onChange={change} type="number" min="0" placeholder="使用全局配置" />
+              </div>
+              <div className="mt-3 grid gap-3 lg:grid-cols-3">
+                <Checkbox label="硬启用" help="关闭后任何路由模式都不会使用" checked={state.availabilityEnabled} onChange={(event) => setState((current) => ({ ...current, availabilityEnabled: event.target.checked }))} />
+                <Checkbox label="参与自动调度" help="进入 Auto 与 fallback 候选" checked={state.failoverEnabled} onChange={(event) => setState((current) => ({ ...current, failoverEnabled: event.target.checked }))} />
+                <Checkbox label="支持 count_tokens" help="允许转发 Token 计数请求" checked={state.supportsCountTokens} onChange={(event) => setState((current) => ({ ...current, supportsCountTokens: event.target.checked }))} />
+              </div>
+            </section>
+
+            <section>
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">模型改写</h3>
+                  <p className="mt-1 text-xs text-slate-400">仅作用于 Claude Messages 与 count_tokens，按精确匹配执行。</p>
+                </div>
+                <input type="checkbox" checked={state.modelRewriteEnabled} onChange={(event) => setState((current) => ({ ...current, modelRewriteEnabled: event.target.checked }))} className="h-4 w-4 rounded border-slate-300 text-indigo-600" aria-label="启用模型改写" />
+              </div>
+              {state.modelRewriteEnabled && (
+                <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                  {state.modelRewriteRules.map((rule, index) => (
+                    <div key={index} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                      <input aria-label={`来源模型 ${index + 1}`} value={rule.source || ''} onChange={(event) => updateRule(index, 'source', event.target.value)} placeholder="claude-sonnet-4-5" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-500" />
+                      <input aria-label={`目标模型 ${index + 1}`} value={rule.target || ''} onChange={(event) => updateRule(index, 'target', event.target.value)} placeholder="provider-sonnet" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-500" />
+                      <button type="button" onClick={() => setState((current) => ({ ...current, modelRewriteRules: current.modelRewriteRules.filter((_, ruleIndex) => ruleIndex !== index) }))} className="rounded-lg border border-slate-200 p-2 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600" aria-label={`删除模型规则 ${index + 1}`}><Trash2 size={15} /></button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setState((current) => ({ ...current, modelRewriteRules: [...current.modelRewriteRules, createEmptyEndpointModelRewriteRule()] }))} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 hover:border-indigo-200 hover:text-indigo-700"><Plus size={13} />添加规则</button>
+                  {errors.modelRewriteRules && <p className="text-xs text-rose-500">{errors.modelRewriteRules}</p>}
+                </div>
+              )}
+            </section>
+
+            <section>
+              <button type="button" onClick={() => setShowAdvanced((current) => !current)} className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400 hover:text-slate-600">成本倍率 {showAdvanced ? <ChevronUp size={15} /> : <ChevronDown size={15} />}</button>
+              {showAdvanced && (
+                <div className="mt-3 grid gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {[
+                    ['costMultiplier', '总成本倍率'],
+                    ['inputCostMultiplier', '输入倍率'],
+                    ['outputCostMultiplier', '输出倍率'],
+                    ['cacheCreationCostMultiplier', '5 分钟缓存创建'],
+                    ['cacheCreationCostMultiplier1h', '1 小时缓存创建'],
+                    ['cacheReadCostMultiplier', '缓存读取倍率']
+                  ].map(([name, label]) => <FormInput key={name} label={label} name={name} value={state[name]} onChange={change} type="number" min="0" step="0.1" />)}
+                </div>
+              )}
+            </section>
           </div>
 
-          {/* 按钮 - 固定在底部 */}
-          <div className="flex justify-end gap-3 px-6 py-4 border-t border-slate-100 bg-white flex-shrink-0">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={handleRequestClose}
-              disabled={loading}
-            >
-              取消
-            </Button>
-            <Button
-              type="submit"
-              icon={Save}
-              loading={loading}
-            >
-              {isEditMode ? '保存修改' : '创建端点'}
-            </Button>
+          <div className="flex justify-end gap-3 border-t border-slate-100 bg-white px-6 py-4">
+            <Button type="button" variant="ghost" onClick={requestClose} disabled={loading}>取消</Button>
+            <Button type="submit" icon={Save} loading={loading}>{isEditMode ? '保存修改' : '创建端点'}</Button>
           </div>
         </form>
       </div>
