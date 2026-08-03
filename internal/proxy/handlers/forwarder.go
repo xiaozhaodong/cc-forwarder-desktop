@@ -21,14 +21,8 @@ import (
 )
 
 const (
-	anyrouteChannel         = "anyroute"
-	coderelayChannel        = "coderelay"
 	anthropicBetaHeader     = "anthropic-beta"
 	anyrouteContextBetaFlag = "context-1m-2025-08-07"
-	mywechatEndpointName    = "mywechat"
-	cacheControlKey         = "cache_control"
-	cacheControlScopeKey    = "scope"
-	contextManagementKey    = "context_management"
 )
 
 // Forwarder 负责HTTP请求转发和头部处理
@@ -178,9 +172,6 @@ func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes
 
 func prepareBodyForEndpoint(path string, bodyBytes []byte, ep *endpoint.Endpoint) []byte {
 	bodyBytes = rewriteEndpointModel(path, bodyBytes, ep)
-	if isCoderelayChannel(ep) {
-		bodyBytes = stripCoderelayUnsupportedFields(bodyBytes, ep)
-	}
 	return bodyBytes
 }
 
@@ -219,39 +210,6 @@ func isClaudeMessagesPath(path string) bool {
 	return path == "/v1/messages" || path == "/v1/messages/count_tokens"
 }
 
-func isCoderelayChannel(ep *endpoint.Endpoint) bool {
-	if ep == nil {
-		return false
-	}
-
-	return strings.EqualFold(strings.TrimSpace(ep.Config.Channel), coderelayChannel)
-}
-
-func stripCoderelayUnsupportedFields(bodyBytes []byte, ep *endpoint.Endpoint) []byte {
-	if len(bytes.TrimSpace(bodyBytes)) == 0 {
-		return bodyBytes
-	}
-
-	var payload any
-	if !decodeSingleJSON(bodyBytes, &payload) {
-		return bodyBytes
-	}
-
-	changed := deleteCacheControlScope(payload)
-	if isMywechatEndpoint(ep) && deleteTopLevelKey(payload, contextManagementKey) {
-		changed = true
-	}
-	if !changed {
-		return bodyBytes
-	}
-
-	sanitizedBodyBytes, err := json.Marshal(payload)
-	if err != nil {
-		return bodyBytes
-	}
-	return sanitizedBodyBytes
-}
-
 func decodeSingleJSON(bodyBytes []byte, target any) bool {
 	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
 	decoder.UseNumber()
@@ -260,58 +218,6 @@ func decodeSingleJSON(bodyBytes []byte, target any) bool {
 	}
 	var trailing any
 	return decoder.Decode(&trailing) == io.EOF
-}
-
-func isMywechatEndpoint(ep *endpoint.Endpoint) bool {
-	if ep == nil {
-		return false
-	}
-
-	return strings.EqualFold(strings.TrimSpace(ep.Config.Name), mywechatEndpointName)
-}
-
-func deleteTopLevelKey(value any, key string) bool {
-	node, ok := value.(map[string]any)
-	if !ok {
-		return false
-	}
-
-	if _, exists := node[key]; !exists {
-		return false
-	}
-	delete(node, key)
-	return true
-}
-
-func deleteCacheControlScope(value any) bool {
-	return deleteCacheControlScopeValue(value, false)
-}
-
-func deleteCacheControlScopeValue(value any, insideCacheControl bool) bool {
-	changed := false
-
-	switch node := value.(type) {
-	case map[string]any:
-		if insideCacheControl {
-			if _, exists := node[cacheControlScopeKey]; exists {
-				delete(node, cacheControlScopeKey)
-				changed = true
-			}
-		}
-		for key, child := range node {
-			if deleteCacheControlScopeValue(child, insideCacheControl || key == cacheControlKey) {
-				changed = true
-			}
-		}
-	case []any:
-		for _, child := range node {
-			if deleteCacheControlScopeValue(child, insideCacheControl) {
-				changed = true
-			}
-		}
-	}
-
-	return changed
 }
 
 func (f *Forwarder) buildStreamingTransport() (*http.Transport, error) {
@@ -353,7 +259,7 @@ func (f *Forwarder) buildStreamingTransport() (*http.Transport, error) {
 
 // CopyHeaders 复制头部逻辑
 func (f *Forwarder) CopyHeaders(src *http.Request, dst *http.Request, ep *endpoint.Endpoint) {
-	f.copyHeaders(src, dst, ep.Config.URL, ep.Config.Channel, ep.Config.Headers,
+	f.copyHeaders(src, dst, ep.Config.URL, ep.Config.Headers,
 		f.endpointManager.GetTokenForEndpoint(ep), f.endpointManager.GetApiKeyForEndpoint(ep))
 }
 
@@ -361,10 +267,10 @@ func (f *Forwarder) CopyHeaders(src *http.Request, dst *http.Request, ep *endpoi
 // 即使快照凭据为空，也不得回退到运行态组内继承。
 func (f *Forwarder) CopyAttemptHeaders(src *http.Request, dst *http.Request, target *endpoint.EndpointAttemptTarget) {
 	cfg := target.Config()
-	f.copyHeaders(src, dst, cfg.URL, cfg.Channel, cfg.Headers, cfg.Token, cfg.ApiKey)
+	f.copyHeaders(src, dst, cfg.URL, cfg.Headers, cfg.Token, cfg.ApiKey)
 }
 
-func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL, channel string, headers map[string]string, token, apiKey string) {
+func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL string, headers map[string]string, token, apiKey string) {
 	// List of headers to skip/remove
 	skipHeaders := map[string]bool{
 		"host":          true, // We'll set this based on target endpoint
@@ -404,7 +310,7 @@ func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL,
 	for key, value := range headers {
 		dst.Header.Set(key, value)
 	}
-	if strings.EqualFold(strings.TrimSpace(channel), anyrouteChannel) {
+	if isAnyRouteURL(targetURL) {
 		ensureBetaFlag(dst.Header, anyrouteContextBetaFlag)
 	}
 
@@ -423,6 +329,20 @@ func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL,
 	for _, header := range hopByHopHeaders {
 		dst.Header.Del(header)
 	}
+}
+
+var anyRouteHosts = map[string]struct{}{
+	"anyrouter.top":                      {},
+	"a-ocnfniawgw.cn-shanghai.fcapp.run": {},
+}
+
+func isAnyRouteURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") {
+		return false
+	}
+	_, ok := anyRouteHosts[strings.ToLower(parsed.Hostname())]
+	return ok
 }
 
 // ensureBetaFlag 确保 anthropic-beta 头包含指定标志：

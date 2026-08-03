@@ -39,7 +39,6 @@ func TestHandler_LocalCodexModelsInterceptsModelsRequest(t *testing.T) {
 
 	handler := newCodexModelsPassthroughTestHandler(t, config.EndpointConfig{
 		Name:     "codex-upstream",
-		Channel:  "codex",
 		URL:      fallbackServer.URL,
 		Priority: 1,
 		Timeout:  30 * time.Second,
@@ -78,7 +77,7 @@ func TestHandler_LocalCodexModelsInterceptsModelsRequest(t *testing.T) {
 	assertNoTrackedRequest(t, tracker, "req-local-models")
 }
 
-func TestHandler_CodexModelsPassthroughDoesNotRecordRequest(t *testing.T) {
+func TestHandler_CodexModelsDoesNotFallbackToClaudeEndpoint(t *testing.T) {
 	tracker := newCodexModelsTestTracker(t)
 	defer tracker.Close()
 
@@ -92,7 +91,6 @@ func TestHandler_CodexModelsPassthroughDoesNotRecordRequest(t *testing.T) {
 
 	handler := newCodexModelsPassthroughTestHandler(t, config.EndpointConfig{
 		Name:     "codex-upstream",
-		Channel:  "codex",
 		URL:      fallbackServer.URL,
 		Priority: 1,
 		Timeout:  30 * time.Second,
@@ -106,11 +104,12 @@ func TestHandler_CodexModelsPassthroughDoesNotRecordRequest(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if fallbackHits != 1 {
-		t.Fatalf("expected /v1/models passthrough to hit fallback once, got %d", fallbackHits)
+	assertJSONErrorType(t, rec, "codex_models_upstream_unavailable")
+	if fallbackHits != 0 {
+		t.Fatalf("expected /v1/models not to hit Claude endpoint, got %d", fallbackHits)
 	}
 	assertNoTrackedRequest(t, tracker, "req-models-passthrough")
 }
@@ -159,7 +158,6 @@ func TestHandler_CodexModelsPassthroughUsesAccountPoolSelection(t *testing.T) {
 	}
 	handler := newCodexModelsAccountPoolTestHandler(t, accountService, config.EndpointConfig{
 		Name:     "codex-endpoint-fallback",
-		Channel:  "codex",
 		URL:      endpointServer.URL,
 		Priority: 1,
 		Timeout:  30 * time.Second,
@@ -327,141 +325,6 @@ func TestHandler_CodexModelsAccountPoolFailsOverAfterUsageLimit(t *testing.T) {
 		t.Fatalf("expected /v1/models not to create or complete schedule drafts, prepare=%+v complete=%+v", accountService.prepareCalls, accountService.completeCalls)
 	}
 	assertNoTrackedRequest(t, tracker, "req-models-account-usage-failover")
-}
-
-func TestHandler_CodexModelsPassthroughSkipsClaudeCodeEndpoint(t *testing.T) {
-	tracker := newCodexModelsTestTracker(t)
-	defer tracker.Close()
-
-	claudeHits := 0
-	claudeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		claudeHits++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"claude-code-provider"}]}`))
-	}))
-	defer claudeServer.Close()
-
-	codexHits := 0
-	codexServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		codexHits++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"codex-provider"}]}`))
-	}))
-	defer codexServer.Close()
-
-	handler := newCodexModelsPassthroughTestHandler(t,
-		config.EndpointConfig{
-			Name:     "cc-provider",
-			Channel:  "cc",
-			URL:      claudeServer.URL,
-			Priority: 1,
-			Timeout:  30 * time.Second,
-			Token:    "cc-token",
-		},
-		config.EndpointConfig{
-			Name:     "codex-provider",
-			Channel:  "codex",
-			URL:      codexServer.URL,
-			Priority: 2,
-			Timeout:  30 * time.Second,
-			Token:    "codex-token",
-		},
-	)
-	handler.SetUsageTracker(tracker)
-	handler.SetCodexModelListProvider(mockCodexModelListProvider{handled: false})
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-	req = req.WithContext(context.WithValue(req.Context(), "conn_id", "req-models-skip-cc"))
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
-	}
-	if claudeHits != 0 {
-		t.Fatalf("expected /v1/models passthrough to skip cc endpoint, got %d hits", claudeHits)
-	}
-	if codexHits != 1 {
-		t.Fatalf("expected /v1/models passthrough to hit codex endpoint once, got %d", codexHits)
-	}
-	var payload struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode response failed: %v", err)
-	}
-	if len(payload.Data) != 1 || payload.Data[0].ID != "codex-provider" {
-		t.Fatalf("unexpected passthrough response: %s", rec.Body.String())
-	}
-	assertNoTrackedRequest(t, tracker, "req-models-skip-cc")
-}
-
-func TestHandler_CodexModelsPassthroughFailsWithoutCodexEndpoint(t *testing.T) {
-	claudeHits := 0
-	claudeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		claudeHits++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"cc-provider"}]}`))
-	}))
-	defer claudeServer.Close()
-
-	handler := newCodexModelsPassthroughTestHandler(t, config.EndpointConfig{
-		Name:     "cc-provider",
-		Channel:  "cc",
-		URL:      claudeServer.URL,
-		Priority: 1,
-		Timeout:  30 * time.Second,
-		Token:    "cc-token",
-	})
-	handler.SetCodexModelListProvider(mockCodexModelListProvider{handled: false})
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d body=%s", rec.Code, rec.Body.String())
-	}
-	assertJSONErrorType(t, rec, "codex_upstream_unavailable")
-	if claudeHits != 0 {
-		t.Fatalf("expected /v1/models passthrough not to call cc endpoint, got %d hits", claudeHits)
-	}
-}
-
-func TestHandler_CodexModelsPassthroughSkipsDisabledCodexEndpoint(t *testing.T) {
-	enabled := false
-	codexHits := 0
-	codexServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		codexHits++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"disabled-codex"}]}`))
-	}))
-	defer codexServer.Close()
-
-	handler := newCodexModelsPassthroughTestHandler(t, config.EndpointConfig{
-		Name:     "disabled-codex-provider",
-		Channel:  "codex",
-		URL:      codexServer.URL,
-		Priority: 1,
-		Timeout:  30 * time.Second,
-		Token:    "codex-token",
-		Enabled:  &enabled,
-	})
-	handler.SetCodexModelListProvider(mockCodexModelListProvider{handled: false})
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d body=%s", rec.Code, rec.Body.String())
-	}
-	assertJSONErrorType(t, rec, "codex_upstream_unavailable")
-	if codexHits != 0 {
-		t.Fatalf("expected disabled Codex endpoint not to be called, got %d hits", codexHits)
-	}
 }
 
 func newCodexModelsPassthroughTestHandler(t *testing.T, endpoints ...config.EndpointConfig) *Handler {

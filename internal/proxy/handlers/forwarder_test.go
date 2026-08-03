@@ -187,7 +187,7 @@ func TestForwarder_ForwardRequestToEndpoint_IncludesUpstreamErrorDetail(t *testi
 	}
 }
 
-func TestForwarder_PrepareBodyForEndpoint_StripsCoderelayCacheControlScope(t *testing.T) {
+func TestForwarder_PrepareBodyForEndpointPreservesBodyWithoutRewriteRule(t *testing.T) {
 	bodyBytes := []byte(`{
 		"system": [
 			{
@@ -239,45 +239,10 @@ func TestForwarder_PrepareBodyForEndpoint_StripsCoderelayCacheControlScope(t *te
 		}
 	}`)
 
-	tests := []struct {
-		name string
-		ep   *endpoint.Endpoint
-	}{
-		{
-			name: "channel",
-			ep:   &endpoint.Endpoint{Config: config.EndpointConfig{Name: "relay-proxy", Channel: "coderelay"}},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := prepareBodyForEndpoint("/v1/messages", bodyBytes, tt.ep)
-
-			var payload any
-			if err := json.Unmarshal(got, &payload); err != nil {
-				t.Fatalf("sanitized body should still be JSON: %v", err)
-			}
-
-			cacheControlCount, scopeCount := countCacheControlScopes(payload)
-			if cacheControlCount != 3 {
-				t.Fatalf("expected 3 cache_control objects, got %d", cacheControlCount)
-			}
-			if scopeCount != 0 {
-				t.Fatalf("expected cache_control.scope to be stripped, got %d remaining", scopeCount)
-			}
-
-			root, ok := payload.(map[string]any)
-			if !ok {
-				t.Fatal("expected root object")
-			}
-			metadata, ok := root["metadata"].(map[string]any)
-			if !ok {
-				t.Fatal("expected metadata object")
-			}
-			if metadata["scope"] != "keep" {
-				t.Fatalf("expected non-cache_control scope to be preserved, got %v", metadata["scope"])
-			}
-		})
+	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "relay-proxy"}}
+	got := prepareBodyForEndpoint("/v1/messages", bodyBytes, ep)
+	if !bytes.Equal(got, bodyBytes) {
+		t.Fatalf("body compatibility transforms must be removed, got %s", string(got))
 	}
 }
 
@@ -312,143 +277,6 @@ func TestForwarder_PrepareBodyForEndpoint_RewritesConfiguredClaudeModel(t *testi
 	trailingJSONBody := []byte(`{"model":"claude-sonnet-4-5"}{"messages":[]}`)
 	if got := prepareBodyForEndpoint("/v1/messages", trailingJSONBody, ep); !bytes.Equal(got, trailingJSONBody) {
 		t.Fatalf("body with trailing JSON must stay unchanged, got %s", string(got))
-	}
-}
-
-func TestForwarder_PrepareBodyForEndpoint_StripsMywechatContextManagement(t *testing.T) {
-	bodyBytes := []byte(`{
-		"model": "claude-opus-4-7",
-		"stream": true,
-		"context_management": {
-			"edits": [
-				{
-					"type": "clear_tool_uses_20250919"
-				}
-			]
-		},
-		"system": [
-			{
-				"type": "text",
-				"text": "system prompt",
-				"cache_control": {
-					"type": "ephemeral",
-					"scope": "conversation"
-				}
-			}
-		],
-		"metadata": {
-			"context_management": "keep"
-		}
-	}`)
-	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "mywechat", Channel: "coderelay"}}
-
-	got := prepareBodyForEndpoint("/v1/messages", bodyBytes, ep)
-
-	var payload any
-	if err := json.Unmarshal(got, &payload); err != nil {
-		t.Fatalf("sanitized body should still be JSON: %v", err)
-	}
-	root, ok := payload.(map[string]any)
-	if !ok {
-		t.Fatal("expected root object")
-	}
-	if _, exists := root[contextManagementKey]; exists {
-		t.Fatalf("expected top-level %s to be stripped, got %s", contextManagementKey, string(got))
-	}
-	metadata, ok := root["metadata"].(map[string]any)
-	if !ok {
-		t.Fatal("expected metadata object")
-	}
-	if metadata[contextManagementKey] != "keep" {
-		t.Fatalf("expected nested metadata context_management to be preserved, got %v", metadata[contextManagementKey])
-	}
-	_, scopeCount := countCacheControlScopes(payload)
-	if scopeCount != 0 {
-		t.Fatalf("expected cache_control.scope to still be stripped, got %d remaining", scopeCount)
-	}
-}
-
-func TestForwarder_PrepareBodyForEndpoint_KeepsContextManagementForOtherCoderelayEndpoints(t *testing.T) {
-	bodyBytes := []byte(`{"context_management":{"edits":[]},"system":[{"cache_control":{"type":"ephemeral","scope":"conversation"}}]}`)
-	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "relay-proxy", Channel: "coderelay"}}
-
-	got := prepareBodyForEndpoint("/v1/messages", bodyBytes, ep)
-
-	var payload map[string]any
-	if err := json.Unmarshal(got, &payload); err != nil {
-		t.Fatalf("sanitized body should still be JSON: %v", err)
-	}
-	if _, exists := payload[contextManagementKey]; !exists {
-		t.Fatalf("expected %s to be preserved for non-mywechat coderelay endpoint, got %s", contextManagementKey, string(got))
-	}
-	_, scopeCount := countCacheControlScopes(payload)
-	if scopeCount != 0 {
-		t.Fatalf("expected cache_control.scope to be stripped, got %d remaining", scopeCount)
-	}
-}
-
-func TestForwarder_PrepareBodyForEndpoint_KeepsOtherChannelsUntouched(t *testing.T) {
-	bodyBytes := []byte(`{"system":[{"cache_control":{"type":"ephemeral","scope":"conversation"}}]}`)
-	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "coderelay", Channel: "custom"}}
-
-	got := prepareBodyForEndpoint("/v1/messages", bodyBytes, ep)
-
-	if !bytes.Equal(got, bodyBytes) {
-		t.Fatalf("expected non-coderelay channel body to stay untouched, got %s", string(got))
-	}
-}
-
-func TestForwarder_Pipeline_StripsCoderelayCacheControlScope(t *testing.T) {
-	var receivedBody []byte
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		receivedBody, err = io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("failed to read request body: %v", err)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer server.Close()
-
-	cfg := &config.Config{}
-	endpointManager := endpoint.NewManager(cfg)
-	t.Cleanup(endpointManager.Stop)
-	forwarder := NewForwarder(cfg, endpointManager)
-	target := acquireForwarderTestTarget(t, endpointManager, config.EndpointConfig{
-		Name:    "mywechat",
-		URL:     server.URL,
-		Channel: "coderelay",
-		Timeout: 30 * time.Second,
-	})
-	bodyBytes := []byte(`{"system":[{"cache_control":{"type":"ephemeral","nested":{"scope":"global"}}}],"metadata":{"scope":"keep"}}`)
-	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(bodyBytes))
-
-	resp, _, _, err := forwarder.ForwardForPipeline(context.Background(), req, bodyBytes, target, false, false, nil)
-	if err != nil {
-		t.Fatalf("ForwardForPipeline failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var payload any
-	if err := json.Unmarshal(receivedBody, &payload); err != nil {
-		t.Fatalf("sanitized body should still be JSON: %v", err)
-	}
-
-	_, scopeCount := countCacheControlScopes(payload)
-	if scopeCount != 0 {
-		t.Fatalf("expected regular handler to strip cache_control scope, got %d remaining", scopeCount)
-	}
-	root, ok := payload.(map[string]any)
-	if !ok {
-		t.Fatal("expected root object")
-	}
-	metadata, ok := root["metadata"].(map[string]any)
-	if !ok {
-		t.Fatal("expected metadata object")
-	}
-	if metadata["scope"] != "keep" {
-		t.Fatalf("expected non-cache_control scope to be preserved, got %v", metadata["scope"])
 	}
 }
 
@@ -524,12 +352,10 @@ func TestForwarder_CopyAttemptHeadersDoesNotResolveCredentialsAgain(t *testing.T
 	target := acquireForwarderTestTarget(t, manager, config.EndpointConfig{
 		Name:    "snapshot-empty-credential",
 		URL:     "https://upstream.example.com",
-		Group:   "shared",
 		Timeout: time.Second,
 	})
 	if err := manager.AddEndpoint(config.EndpointConfig{
 		Name:   "late-credential-source",
-		Group:  "shared",
 		Token:  "late-token",
 		ApiKey: "late-key",
 	}); err != nil {
@@ -647,51 +473,6 @@ func acquireForwarderTestTarget(t *testing.T, manager *endpoint.Manager, cfg con
 	return admission.Target
 }
 
-func countCacheControlScopes(value any) (int, int) {
-	return countCacheControlScopesValue(value, false)
-}
-
-func countCacheControlScopesValue(value any, insideCacheControl bool) (int, int) {
-	cacheControlCount := 0
-	scopeCount := 0
-
-	switch node := value.(type) {
-	case map[string]any:
-		if insideCacheControl {
-			if _, exists := node[cacheControlScopeKey]; exists {
-				scopeCount++
-			}
-		}
-		for key, child := range node {
-			childInsideCacheControl := insideCacheControl || key == cacheControlKey
-			if key == cacheControlKey {
-				switch cacheControl := child.(type) {
-				case map[string]any:
-					cacheControlCount++
-				case []any:
-					for _, item := range cacheControl {
-						if _, ok := item.(map[string]any); ok {
-							cacheControlCount++
-						}
-					}
-				}
-			}
-
-			childCacheControlCount, childScopeCount := countCacheControlScopesValue(child, childInsideCacheControl)
-			cacheControlCount += childCacheControlCount
-			scopeCount += childScopeCount
-		}
-	case []any:
-		for _, child := range node {
-			childCacheControlCount, childScopeCount := countCacheControlScopesValue(child, insideCacheControl)
-			cacheControlCount += childCacheControlCount
-			scopeCount += childScopeCount
-		}
-	}
-
-	return cacheControlCount, scopeCount
-}
-
 func TestForwarder_BuildStreamingTransport_ReusesTransport(t *testing.T) {
 	cfg := &config.Config{}
 	endpointManager := endpoint.NewManager(cfg)
@@ -792,9 +573,8 @@ func TestForwarder_CopyHeaders_AddsAnyrouteBetaHeader(t *testing.T) {
 	forwarder := NewForwarder(cfg, endpointManager)
 
 	ep := &endpoint.Endpoint{Config: config.EndpointConfig{
-		Name:    "anyroute-endpoint",
-		URL:     "https://anyrouter.top",
-		Channel: "anyroute",
+		Name: "anyroute-endpoint",
+		URL:  "https://anyrouter.top",
 	}}
 	srcReq := httptest.NewRequest("POST", "/v1/messages", nil)
 	dstReq := httptest.NewRequest("POST", "https://anyrouter.top/v1/messages", nil)
@@ -806,23 +586,22 @@ func TestForwarder_CopyHeaders_AddsAnyrouteBetaHeader(t *testing.T) {
 	}
 }
 
-func TestForwarder_CopyHeaders_AddsAnyrouteBetaHeaderWithCaseInsensitiveChannel(t *testing.T) {
+func TestForwarder_CopyHeaders_DoesNotMatchAnyrouteByEndpointName(t *testing.T) {
 	cfg := &config.Config{}
 	endpointManager := endpoint.NewManager(cfg)
 	forwarder := NewForwarder(cfg, endpointManager)
 
 	ep := &endpoint.Endpoint{Config: config.EndpointConfig{
-		Name:    "anyroute-endpoint",
-		URL:     "https://anyrouter.top",
-		Channel: " AnyRoute ",
+		Name: "anyroute-endpoint",
+		URL:  "https://example.com",
 	}}
 	srcReq := httptest.NewRequest("POST", "/v1/messages", nil)
-	dstReq := httptest.NewRequest("POST", "https://anyrouter.top/v1/messages", nil)
+	dstReq := httptest.NewRequest("POST", "https://example.com/v1/messages", nil)
 
 	forwarder.CopyHeaders(srcReq, dstReq, ep)
 
-	if got := dstReq.Header.Get("anthropic-beta"); got != "context-1m-2025-08-07" {
-		t.Fatalf("Expected anyroute anthropic-beta header, got %q", got)
+	if got := dstReq.Header.Get("anthropic-beta"); got != "" {
+		t.Fatalf("endpoint name must not trigger AnyRoute behavior, got %q", got)
 	}
 }
 
@@ -832,9 +611,8 @@ func TestForwarder_CopyHeaders_AppendsAnyrouteBetaFlagToConfiguredHeader(t *test
 	forwarder := NewForwarder(cfg, endpointManager)
 
 	ep := &endpoint.Endpoint{Config: config.EndpointConfig{
-		Name:    "anyroute-endpoint",
-		URL:     "https://anyrouter.top",
-		Channel: "anyroute",
+		Name: "anyroute-endpoint",
+		URL:  "https://anyrouter.top",
 		Headers: map[string]string{
 			"anthropic-beta": "custom-beta",
 		},
@@ -855,9 +633,8 @@ func TestForwarder_CopyHeaders_AppendsAnyrouteBetaFlagToClientHeader(t *testing.
 	forwarder := NewForwarder(cfg, endpointManager)
 
 	ep := &endpoint.Endpoint{Config: config.EndpointConfig{
-		Name:    "anyroute-endpoint",
-		URL:     "https://anyrouter.top",
-		Channel: "anyroute",
+		Name: "anyroute-endpoint",
+		URL:  "https://anyrouter.top",
 	}}
 	srcReq := httptest.NewRequest("POST", "/v1/messages", nil)
 	srcReq.Header.Set("anthropic-beta", "claude-code-20250219,interleaved-thinking-2025-05-14")
@@ -877,9 +654,8 @@ func TestForwarder_CopyHeaders_DoesNotDuplicateAnyrouteBetaFlag(t *testing.T) {
 	forwarder := NewForwarder(cfg, endpointManager)
 
 	ep := &endpoint.Endpoint{Config: config.EndpointConfig{
-		Name:    "anyroute-endpoint",
-		URL:     "https://anyrouter.top",
-		Channel: "anyroute",
+		Name: "anyroute-endpoint",
+		URL:  "https://anyrouter.top",
 	}}
 	srcReq := httptest.NewRequest("POST", "/v1/messages", nil)
 	srcReq.Header.Set("anthropic-beta", "claude-code-20250219, Context-1M-2025-08-07")

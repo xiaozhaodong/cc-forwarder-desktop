@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -201,6 +200,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !countTokensIntercept {
 		// 创建统一的请求生命周期管理器
 		lifecycleManager = NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus)
+		switch {
+		case h.isAccountPipelinePath(r.URL.Path):
+			lifecycleManager.SetRequestFamily(tracking.RequestFamilyCodex)
+		case isImageAPIPath(r.URL.Path):
+			lifecycleManager.SetRequestFamily(tracking.RequestFamilyImage)
+		case r.URL.Path == "/v1/messages" || r.URL.Path == "/v1/messages/count_tokens":
+			lifecycleManager.SetRequestFamily(tracking.RequestFamilyClaude)
+		default:
+			lifecycleManager.SetRequestFamily(tracking.RequestFamilyOther)
+		}
 		// Codex 账号池链路分离，不挂载 endpoint 失败追踪语义
 		if !h.isAccountPipelinePath(r.URL.Path) && !isImageAPIPath(r.URL.Path) {
 			// 📊 [失败追踪] 设置端点管理器，用于记录成功/失败
@@ -315,7 +324,7 @@ func (h *Handler) handleCodexModelsRequest(ctx context.Context, w http.ResponseW
 	if h.handleCodexModelsAccountPassthrough(ctx, w, r) {
 		return
 	}
-	h.handleCodexModelsPassthrough(ctx, w, r)
+	writeCodexModelsError(w, http.StatusServiceUnavailable, "codex_models_upstream_unavailable", "no account-pool upstream is available for Codex /v1/models")
 }
 
 func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w http.ResponseWriter, r *http.Request) bool {
@@ -454,147 +463,6 @@ func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w htt
 	}
 	writeCodexModelsError(w, http.StatusBadGateway, "account_pool_upstream_error", reason)
 	return true
-}
-
-func (h *Handler) handleCodexModelsPassthrough(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	endpoints := h.getCodexModelEndpoints()
-	if len(endpoints) == 0 {
-		writeCodexModelsError(w, http.StatusServiceUnavailable, "codex_upstream_unavailable", "no Codex upstream endpoint available for /v1/models")
-		return
-	}
-
-	ep := endpoints[0]
-	resp, err := h.forwarder.ForwardRequestToEndpoint(ctx, r, nil, ep)
-	if err != nil {
-		// 附录 A #9：非 /v1/messages 消费者经显式 scope adapter 落同一 tracker
-		h.recordUnfencedEndpointSoftFailure(ep.Config.Name, endpoint.SoftFailureCategoryConnection, 0, "codex_models_forward_failed")
-		writeCodexModelsError(w, http.StatusBadGateway, "codex_upstream_error", fmt.Sprintf("failed to fetch upstream model list: %v", err))
-		return
-	}
-	defer resp.Body.Close()
-
-	responseBytes, err := h.responseProcessor.ProcessResponseBody(resp)
-	if err != nil {
-		h.recordUnfencedEndpointSoftFailure(ep.Config.Name, endpoint.SoftFailureCategoryTransport, 0, "codex_models_response_read_failed")
-		writeCodexModelsError(w, http.StatusBadGateway, "codex_upstream_response_error", "failed to read upstream model list")
-		return
-	}
-
-	h.responseProcessor.CopyResponseHeaders(resp, w)
-	w.WriteHeader(resp.StatusCode)
-	if _, err := w.Write(responseBytes); err != nil {
-		h.recordUnfencedEndpointSoftFailure(ep.Config.Name, endpoint.SoftFailureCategoryTransport, 0, "codex_models_write_failed")
-		return
-	}
-	h.endpointManager.RecordSuccess(ep.Config.Name)
-}
-
-func (h *Handler) getCodexModelEndpoints() []*endpoint.Endpoint {
-	if h == nil || h.endpointManager == nil {
-		return nil
-	}
-
-	all := h.endpointManager.GetAllEndpoints()
-	codexEndpoints := make([]*endpoint.Endpoint, 0, len(all))
-	for _, ep := range all {
-		if isEndpointEnabled(ep) && h.endpointManager.IsEndpointRoutable(ep) && isCodexModelEndpoint(ep) {
-			codexEndpoints = append(codexEndpoints, ep)
-		}
-	}
-	sort.SliceStable(codexEndpoints, func(i, j int) bool {
-		leftScore := codexModelEndpointScore(codexEndpoints[i])
-		rightScore := codexModelEndpointScore(codexEndpoints[j])
-		if leftScore != rightScore {
-			return leftScore > rightScore
-		}
-		return codexEndpoints[i].Config.Priority < codexEndpoints[j].Config.Priority
-	})
-	return codexEndpoints
-}
-
-func isEndpointEnabled(ep *endpoint.Endpoint) bool {
-	if ep == nil || ep.Config.Enabled == nil {
-		return true
-	}
-	return *ep.Config.Enabled
-}
-
-func isCodexModelEndpoint(ep *endpoint.Endpoint) bool {
-	return codexModelEndpointScore(ep) > 0
-}
-
-func codexModelEndpointScore(ep *endpoint.Endpoint) int {
-	if ep == nil {
-		return 0
-	}
-
-	channel := strings.ToLower(strings.TrimSpace(ep.Config.Channel))
-	name := strings.ToLower(strings.TrimSpace(ep.Config.Name))
-	rawURL := strings.ToLower(strings.TrimSpace(ep.Config.URL))
-	haystack := strings.Join([]string{channel, name, rawURL}, " ")
-
-	strongCodexHints := []string{
-		"codex",
-		"coderelay",
-		"code-relay",
-		"responses",
-	}
-	for _, hint := range strongCodexHints {
-		if strings.Contains(haystack, hint) {
-			return 100
-		}
-	}
-
-	if isClaudeCodeEndpointHint(channel, name, rawURL) {
-		return 0
-	}
-
-	openAIHints := []string{
-		"api.openai.com",
-		"openai",
-		"chatgpt",
-	}
-	for _, hint := range openAIHints {
-		if strings.Contains(haystack, hint) {
-			return 50
-		}
-	}
-
-	return 0
-}
-
-func isClaudeCodeEndpointHint(channel, name, rawURL string) bool {
-	if isCCLabel(channel) || isCCLabel(name) {
-		return true
-	}
-
-	haystack := strings.Join([]string{channel, name, rawURL}, " ")
-	claudeHints := []string{
-		"claude",
-		"anthropic",
-		"sonnet",
-		"opus",
-		"haiku",
-		"/v1/messages",
-	}
-	for _, hint := range claudeHints {
-		if strings.Contains(haystack, hint) {
-			return true
-		}
-	}
-	return false
-}
-
-func isCCLabel(value string) bool {
-	value = strings.TrimSpace(strings.ToLower(value))
-	if value == "" {
-		return false
-	}
-	return value == "cc" ||
-		strings.HasPrefix(value, "cc-") ||
-		strings.HasSuffix(value, "-cc") ||
-		strings.Contains(value, "-cc-") ||
-		strings.Contains(value, "_cc_")
 }
 
 func writeCodexModelsError(w http.ResponseWriter, statusCode int, errType, message string) {
