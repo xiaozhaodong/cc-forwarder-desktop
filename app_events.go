@@ -17,10 +17,29 @@ const (
 	EventEndpointUpdate = "endpoint:update"
 	EventGroupUpdate    = "group:update"
 	EventUsageUpdate    = "usage:update"
+	EventRequestUpdate  = "request:update"
 	EventConfigReloaded = "config:reloaded"
 	EventError          = "error"
 	EventNotification   = "notification"
 )
+
+// wailsRequestBroadcaster 将内部请求生命周期事件桥接到 Wails WebView。
+// 现有 EventBus 接口沿用 SSEBroadcaster 命名，但这里只处理 request 类型，
+// 避免与端点、分组等已经存在的 Wails 推送路径重复广播。
+type wailsRequestBroadcaster struct {
+	app *App
+}
+
+func (b *wailsRequestBroadcaster) BroadcastEvent(eventType string, data map[string]interface{}) {
+	if eventType != "request" || b == nil || b.app == nil || b.app.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(b.app.ctx, EventRequestUpdate, data)
+}
+
+func (b *wailsRequestBroadcaster) IsEventManagerActive() bool {
+	return b != nil && b.app != nil && b.app.ctx != nil
+}
 
 // emitSystemStatus 发送系统状态更新到前端
 func (a *App) emitSystemStatus() {

@@ -120,23 +120,36 @@ func NewEventBus(logger *slog.Logger) EventBus {
 
 // 设置默认过滤器
 func (eb *eventBus) setupDefaultFilters() {
-	// 请求事件过滤器 - 高频率但重要
+	// 请求事件只作为前端重新查询权威数据的变更通知，不传递客户端信息等明细。
+	// 不在后端丢弃并发请求事件；前端负责短窗口合并刷新。
+	requestChangeTransformer := func(event Event) map[string]interface{} {
+		data := map[string]interface{}{
+			"occurred_at": event.Timestamp.UTC().Format(time.RFC3339Nano),
+		}
+		for _, key := range []string{"request_id", "change_type", "status"} {
+			if value, exists := event.Data[key]; exists {
+				data[key] = value
+			}
+		}
+		return data
+	}
+
 	eb.filters[EventRequestStarted] = EventFilter{
 		ShouldBroadcast: func(event Event) bool { return true },
-		DataTransformer: func(event Event) map[string]interface{} { return event.Data },
-		RateLimit:       100 * time.Millisecond, // 高频率允许
+		DataTransformer: requestChangeTransformer,
+		RateLimit:       0,
 	}
 
 	eb.filters[EventRequestUpdated] = EventFilter{
 		ShouldBroadcast: func(event Event) bool { return true },
-		DataTransformer: func(event Event) map[string]interface{} { return event.Data },
-		RateLimit:       100 * time.Millisecond,
+		DataTransformer: requestChangeTransformer,
+		RateLimit:       0,
 	}
 
 	eb.filters[EventRequestCompleted] = EventFilter{
 		ShouldBroadcast: func(event Event) bool { return true },
-		DataTransformer: func(event Event) map[string]interface{} { return event.Data },
-		RateLimit:       100 * time.Millisecond,
+		DataTransformer: requestChangeTransformer,
+		RateLimit:       0,
 	}
 
 	// 端点健康事件过滤器 - 关键事件，立即推送

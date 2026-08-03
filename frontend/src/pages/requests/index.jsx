@@ -62,6 +62,7 @@ const RequestsPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const loadRequestIdRef = useRef(0);
+  const loadDataIdRef = useRef(0);
 
   // 面板状态
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -188,8 +189,41 @@ const RequestsPage = () => {
 
   // ==================== 数据加载 ====================
 
-  const loadData = useCallback(async (silent = false) => {
+  const refreshRequestData = useCallback(async () => {
     const requestId = ++loadRequestIdRef.current;
+    const requestsQueryParams = {
+      ...appliedQueryParams,
+      source_view: 'all'
+    };
+    const statsParams = {
+      ...requestsQueryParams,
+      period: '30d'
+    };
+
+    const [requestsData, statsData] = await Promise.all([
+      fetchRequests({
+        ...requestsQueryParams,
+        page: pagination.page,
+        pageSize: pagination.pageSize
+      }),
+      fetchUsageStats(statsParams)
+    ]);
+
+    if (loadRequestIdRef.current !== requestId) {
+      return;
+    }
+
+    setRequests(requestsData.requests);
+    setPagination(prev => ({
+      ...prev,
+      total: requestsData.total,
+      totalPages: requestsData.totalPages
+    }));
+    setStats(statsData?.data || statsData);
+  }, [appliedQueryParams, pagination.page, pagination.pageSize]);
+
+  const loadData = useCallback(async (silent = false) => {
+    const loadId = ++loadDataIdRef.current;
     try {
       // 静默刷新时不改变 loading 状态，避免闪屏
       if (!silent) {
@@ -197,25 +231,9 @@ const RequestsPage = () => {
       }
       setError(null);
 
-      const requestsQueryParams = {
-        ...appliedQueryParams,
-        source_view: 'all'
-      };
-
-      // 为stats API添加默认时间范围（30天），避免无数据问题
-      const statsParams = {
-        ...requestsQueryParams,
-        period: '30d'
-      };
-
-      // v4.0: 简化数据获取，移除 keysData
-      const [requestsData, statsData, modelsData, endpointsData, groupsData, routeStateData, accountsData, latestSnapshotData] = await Promise.all([
-        fetchRequests({
-          ...requestsQueryParams,
-          page: pagination.page,
-          pageSize: pagination.pageSize
-        }),
-        fetchUsageStats(statsParams),
+      // 请求明细与统计单独封装，实时事件只刷新这两组动态数据。
+      const [, modelsData, endpointsData, groupsData, routeStateData, accountsData, latestSnapshotData] = await Promise.all([
+        refreshRequestData(),
         fetchModels(),
         fetchEndpoints(),
         fetchGroups(),
@@ -239,20 +257,9 @@ const RequestsPage = () => {
         })
       ]);
 
-      if (loadRequestIdRef.current !== requestId) {
+      if (loadDataIdRef.current !== loadId) {
         return;
       }
-
-      setRequests(requestsData.requests);
-      setPagination(prev => ({
-        ...prev,
-        total: requestsData.total,
-        totalPages: requestsData.totalPages
-      }));
-
-      // 解包stats数据：后端返回 {success: true, data: {...}}
-      const statsDataUnpacked = statsData?.data || statsData;
-      setStats(statsDataUnpacked);
 
       setModels(Array.isArray(modelsData) ? modelsData : []);
 
@@ -274,20 +281,19 @@ const RequestsPage = () => {
       // v8:手动模式跟随手动目标,自动模式跟随最近实际生效;legacy is_active 仅作兜底
       applyRoutingActiveGroup(routeStateData, groupsList);
     } catch (err) {
-      if (loadRequestIdRef.current !== requestId) {
+      if (loadDataIdRef.current !== loadId) {
         return;
       }
       setError(err.message);
     } finally {
-      // 只有手动刷新才会改变 loading 状态
-      if (!silent && loadRequestIdRef.current === requestId) {
+      if (loadDataIdRef.current === loadId) {
         setLoading(false);
       }
     }
-  }, [appliedQueryParams, pagination.page, pagination.pageSize, showNotice, applyRoutingActiveGroup]);
+  }, [refreshRequestData, showNotice, applyRoutingActiveGroup]);
 
-  // 自动刷新 Hook (必须在 loadData 定义之后)
-  const autoRefresh = useAutoRefresh(loadData);
+  // 请求变化由 Wails 事件触发，只刷新明细与统计；事件不可用时低频降级。
+  const autoRefresh = useAutoRefresh(refreshRequestData);
 
   // ==================== 事件处理 ====================
 

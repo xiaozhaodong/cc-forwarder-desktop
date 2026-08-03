@@ -24,7 +24,7 @@ import AccountPoolSwitcher from './AccountPoolSwitcher.jsx';
  * @param {Array} props.visibleColumns - 当前可见的列ID数组
  * @param {Function} props.onToggleColumn - 切换列显示回调
  * @param {Function} props.onResetColumns - 重置列配置回调
- * @param {Object} props.autoRefresh - 自动刷新状态和控制
+ * @param {Object} props.autoRefresh - 实时刷新状态
  * @param {Array} props.groups - 所有端点列表（v4.0: 一个端点=一个组）
  * @param {string} props.activeGroup - 当前活跃端点名称
  * @param {Function} props.onGroupSwitch - 端点切换回调 (endpointName) => void
@@ -148,12 +148,11 @@ const Toolbar = ({
         />
       </div>
 
-      {/* 自动刷新控制（包含手动刷新） */}
+      {/* 实时刷新状态（包含手动刷新） */}
       {autoRefresh && (
         <AutoRefreshControl
-          isEnabled={autoRefresh.isEnabled}
-          interval={autoRefresh.interval}
-          onIntervalChange={autoRefresh.changeInterval}
+          mode={autoRefresh.mode}
+          fallbackInterval={autoRefresh.fallbackInterval}
           onManualRefresh={onRefresh}
         />
       )}

@@ -337,6 +337,8 @@ func (a *App) setupLogger() {
 // setupEventBus 设置事件总线
 func (a *App) setupEventBus() {
 	a.eventBus = events.NewEventBus(a.logger)
+	// 请求追踪页使用 Wails 事件驱动刷新；其他前端状态仍沿用各自现有推送路径。
+	a.eventBus.SetSSEBroadcaster(&wailsRequestBroadcaster{app: a})
 	if err := a.eventBus.Start(); err != nil {
 		a.logger.Error("事件总线启动失败", "error", err)
 	}

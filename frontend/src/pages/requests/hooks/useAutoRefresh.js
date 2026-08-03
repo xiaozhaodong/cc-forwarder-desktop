@@ -1,64 +1,131 @@
 // ============================================
-// useAutoRefresh Hook - 自动刷新状态管理
-// 2025-12-06 20:26:59 v5.0: 添加页面可见性检测
+// useAutoRefresh Hook - 请求页实时刷新状态管理
+// 正常使用 Wails Events；事件不可用或连续查询失败时启用低频降级轮询。
 // ============================================
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { initWails, isWailsEnvironment, subscribeToEvent } from '@utils/wailsApi.js';
+import { createRealtimeRefreshScheduler } from '../utils/realtimeRefreshScheduler.js';
+
+export const REALTIME_REFRESH_MODE = {
+  CONNECTING: 'connecting',
+  LIVE: 'live',
+  FALLBACK: 'fallback'
+};
+
+const EVENT_DEBOUNCE_MS = 250;
+const EVENT_MAX_WAIT_MS = 1000;
+const FALLBACK_INTERVAL_SECONDS = 30;
+const FAILURE_THRESHOLD = 3;
 
 /**
- * useAutoRefresh Hook - 管理自动刷新逻辑（优化版）
- *
- * 设计理念 (by Dan Abramov):
- * 1. 正确的副作用清理 - 避免内存泄漏
- * 2. 使用 useRef 存储定时器引用,避免闭包陷阱
- * 3. 使用 useRef 存储回调函数,避免依赖项变化导致定时器重建
- * 4. 通过设置 interval=0 来停止自动刷新
- * 5. v5.0: 页面隐藏时自动暂停刷新，可见时恢复，节省后端资源
+ * 正常模式下由 request:update 主动通知触发刷新；并发事件会合并为一次查询。
+ * 页面重新可见时主动校准一次。事件不可用或连续失败时每 30 秒降级刷新。
  *
  * @param {Function} onRefresh - 刷新回调函数
  * @returns {Object}
  */
 export const useAutoRefresh = (onRefresh) => {
-  // 自动刷新间隔状态 (0 = 关闭)
-  // v5.0: 默认开启5秒自动刷新
-  const [refreshInterval, setRefreshInterval] = useState(5);
-
-  // 页面可见性状态
-  const [isPageVisible, setIsPageVisible] = useState(!document.hidden);
-
-  // 使用 useRef 存储定时器,避免闭包问题
-  const timerRef = useRef(null);
-
-  // 使用 useRef 存储最新的 onRefresh 回调,避免依赖项变化
+  const [mode, setMode] = useState(
+    isWailsEnvironment() ? REALTIME_REFRESH_MODE.CONNECTING : REALTIME_REFRESH_MODE.FALLBACK
+  );
   const onRefreshRef = useRef(onRefresh);
+  const schedulerRef = useRef(null);
+  const subscriptionActiveRef = useRef(false);
+  const consecutiveFailuresRef = useRef(0);
 
   // 每次渲染时更新 ref 中的回调
   useEffect(() => {
     onRefreshRef.current = onRefresh;
   }, [onRefresh]);
 
-  // 清理定时器的辅助函数
-  const clearTimer = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
+  const executeRefresh = useCallback(async () => {
+    if (document.hidden) {
+      return;
+    }
+    try {
+      await onRefreshRef.current?.();
+      consecutiveFailuresRef.current = 0;
+      if (subscriptionActiveRef.current) {
+        setMode(REALTIME_REFRESH_MODE.LIVE);
+      }
+    } catch (error) {
+      consecutiveFailuresRef.current += 1;
+      console.error('❌ [请求实时刷新] 查询失败:', error);
+      if (consecutiveFailuresRef.current >= FAILURE_THRESHOLD) {
+        setMode(REALTIME_REFRESH_MODE.FALLBACK);
+      }
     }
   }, []);
 
-  // 更改刷新间隔
-  const changeInterval = useCallback((newInterval) => {
-    setRefreshInterval(newInterval);
+  const scheduleEventRefresh = useCallback(() => {
+    schedulerRef.current?.schedule();
   }, []);
 
-  // 监听页面可见性变化
+  useEffect(() => {
+    schedulerRef.current = createRealtimeRefreshScheduler({
+      refresh: executeRefresh,
+      debounceMs: EVENT_DEBOUNCE_MS,
+      maxWaitMs: EVENT_MAX_WAIT_MS
+    });
+
+    return () => {
+      schedulerRef.current?.cancel();
+      schedulerRef.current = null;
+    };
+  }, [executeRefresh]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unsubscribe = null;
+
+    const subscribe = async () => {
+      if (!isWailsEnvironment()) {
+        subscriptionActiveRef.current = false;
+        setMode(REALTIME_REFRESH_MODE.FALLBACK);
+        return;
+      }
+
+      try {
+        const initialized = await initWails();
+        if (cancelled) return;
+        if (!initialized) {
+          subscriptionActiveRef.current = false;
+          setMode(REALTIME_REFRESH_MODE.FALLBACK);
+          return;
+        }
+
+        unsubscribe = subscribeToEvent('request:update', () => {
+          scheduleEventRefresh();
+        });
+        subscriptionActiveRef.current = true;
+        setMode(REALTIME_REFRESH_MODE.LIVE);
+        // 订阅建立后校准一次，覆盖初始查询与订阅之间可能发生的变化。
+        scheduleEventRefresh();
+      } catch (error) {
+        console.error('❌ [请求实时刷新] Wails 事件订阅失败:', error);
+        subscriptionActiveRef.current = false;
+        if (!cancelled) {
+          setMode(REALTIME_REFRESH_MODE.FALLBACK);
+        }
+      }
+    };
+
+    subscribe();
+
+    return () => {
+      cancelled = true;
+      subscriptionActiveRef.current = false;
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, [scheduleEventRefresh]);
+
   useEffect(() => {
     const handleVisibilityChange = () => {
-      const visible = !document.hidden;
-      setIsPageVisible(visible);
-
-      // 页面重新可见时立即刷新一次（获取最新数据）
-      if (visible && refreshInterval > 0) {
-        onRefreshRef.current?.(true);
+      if (!document.hidden) {
+        void schedulerRef.current?.triggerNow();
       }
     };
 
@@ -67,31 +134,26 @@ export const useAutoRefresh = (onRefresh) => {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [refreshInterval]);
+  }, []);
 
-  // 当间隔变化或页面可见性变化时,重新设置定时器
   useEffect(() => {
-    clearTimer();
-
-    // 只有在页面可见且间隔大于0时才启动定时器
-    if (refreshInterval > 0 && isPageVisible) {
-      timerRef.current = window.setInterval(() => {
-        // 调用 ref 中存储的最新回调，传入 silent=true 参数实现静默刷新
-        onRefreshRef.current?.(true);
-      }, refreshInterval * 1000);
+    if (mode !== REALTIME_REFRESH_MODE.FALLBACK) {
+      return undefined;
     }
 
-    // 清理函数
+    const timer = window.setInterval(() => {
+      void schedulerRef.current?.triggerNow();
+    }, FALLBACK_INTERVAL_SECONDS * 1000);
     return () => {
-      clearTimer();
+      clearInterval(timer);
     };
-  }, [refreshInterval, isPageVisible, clearTimer]);
+  }, [mode]);
 
   return {
-    isEnabled: refreshInterval > 0,
-    interval: refreshInterval,
-    isPageVisible, // 暴露给外部用于调试
-    changeInterval
+    mode,
+    isLive: mode === REALTIME_REFRESH_MODE.LIVE,
+    isFallback: mode === REALTIME_REFRESH_MODE.FALLBACK,
+    fallbackInterval: FALLBACK_INTERVAL_SECONDS
   };
 };
 
