@@ -26,7 +26,6 @@ type ClaudeRoutingState struct {
 	FallbackReason        string   `json:"fallback_reason"`
 	LastEffectiveEndpoint string   `json:"last_effective_endpoint"`
 	LastDecisionAt        string   `json:"last_decision_at"`
-	CurrentActiveEndpoint string   `json:"current_active_endpoint"`
 	AvailableEndpoints    []string `json:"available_endpoints"`
 }
 
@@ -207,7 +206,6 @@ func (a *App) loadClaudeRoutingOverride(ctx context.Context) {
 			FallbackEnabled: true, Revision: revision,
 		})
 		manager.SetClaudeRoutingReady(true)
-		a.migrateLegacyActiveState(ctx, manager)
 		return
 	}
 
@@ -224,7 +222,6 @@ func (a *App) loadClaudeRoutingOverride(ctx context.Context) {
 		}
 		manager.ApplyPersistedClaudeRoutingState(next)
 		manager.SetClaudeRoutingReady(true)
-		a.migrateLegacyActiveState(ctx, manager)
 		return
 	}
 
@@ -250,65 +247,7 @@ func (a *App) loadClaudeRoutingOverride(ctx context.Context) {
 		Revision:        revision,
 	})
 	manager.SetClaudeRoutingReady(true)
-	a.migrateLegacyActiveState(ctx, manager)
 	slog.Info("✅ [Claude路由] 已恢复持久化路由状态", "mode", state.Mode, "endpoint", state.EndpointName)
-}
-
-// migrateLegacyActiveState v8 §7.3：legacy active 一次性启动迁移。
-// 同一数据库只执行一次（state_model_version >= 2 跳过）。
-func (a *App) migrateLegacyActiveState(ctx context.Context, manager *endpoint.Manager) {
-	if a.settingsService == nil {
-		return
-	}
-	versionValue, _ := a.settingsService.GetValue(ctx, service.CategoryClaudeRouting, "state_model_version")
-	if version, _ := strconv.Atoi(versionValue); version >= 2 {
-		return
-	}
-
-	override := manager.GetClaudeRoutingOverride()
-	legacyActive, _ := manager.GetActiveEndpointSelection()
-
-	switch {
-	case override.Mode != endpoint.RouteModeAuto:
-		// 规则 1：manual override 是唯一用户意图，忽略 legacy active
-		slog.Info("🔀 [状态迁移] 存在 manual override，忽略 legacy active", "mode", override.Mode)
-	case legacyActive == "":
-		// 规则 4：无 legacy active，直接按 priority 自动选择
-	default:
-		ep := manager.GetEndpointByNameAny(legacyActive)
-		switch {
-		case ep == nil || !manager.EndpointHardEnabled(ep):
-			// 规则 4：指向硬停用/已删除端点，按 priority 自动选择
-		case ep.Config.IsAutoScheduleEnabled():
-			// 规则 2：仅初始化本进程 retained，不写回数据库
-			manager.UpdateAutoRetention(legacyActive, ep.Config.Priority, "auto_retained", override.Revision)
-			slog.Info("🔀 [状态迁移] legacy active 初始化为 retained", "endpoint", legacyActive)
-		default:
-			// 规则 3（D11）：failover_enabled=false 的专用 active 迁为 manual_preferred
-			next := endpoint.RouteOverrideState{
-				Mode:            endpoint.RouteModeManualPreferred,
-				EndpointName:    legacyActive,
-				SetBy:           endpoint.RouteCallerStartupRecovery,
-				SetAt:           time.Now(),
-				FallbackEnabled: true,
-				Revision:        override.Revision + 1,
-			}
-			if err := a.persistClaudeRoutingState(ctx, next); err != nil {
-				slog.Warn("⚠️ [状态迁移] 专用 active 迁移持久化失败，跳过（下次启动重试）", "error", err)
-				return
-			}
-			manager.ApplyPersistedClaudeRoutingState(next)
-			slog.Info("🔀 [状态迁移] 专用 legacy active 已迁移为 manual_preferred（D11）", "endpoint", legacyActive)
-		}
-	}
-
-	if err := a.settingsStore.BatchUpdateValues(ctx, []*store.SettingRecord{
-		{Category: service.CategoryClaudeRouting, Key: "state_model_version", Value: "2"},
-	}); err != nil {
-		slog.Warn("⚠️ [状态迁移] state_model_version 写入失败（下次启动重试）", "error", err)
-		return
-	}
-	slog.Info("✅ [状态迁移] Claude 调度状态模型已迁移至 v2")
 }
 
 func (a *App) persistClaudeRoutingState(ctx context.Context, state endpoint.RouteOverrideState) error {
@@ -357,19 +296,8 @@ func (a *App) buildClaudeRoutingState(state endpoint.RouteOverrideState) ClaudeR
 		FallbackReason:        state.FallbackReason,
 		LastEffectiveEndpoint: state.LastEffectiveEndpoint,
 		LastDecisionAt:        formatRouteTime(state.LastDecisionAt),
-		CurrentActiveEndpoint: a.currentActiveClaudeEndpoint(),
 		AvailableEndpoints:    a.availableClaudeEndpoints(),
 	}
-}
-
-func (a *App) currentActiveClaudeEndpoint() string {
-	a.mu.RLock()
-	manager := a.endpointManager
-	a.mu.RUnlock()
-	if manager == nil {
-		return ""
-	}
-	return manager.GetActiveGroupName()
 }
 
 func (a *App) availableClaudeEndpoints() []string {

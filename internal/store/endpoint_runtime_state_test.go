@@ -12,7 +12,8 @@ import (
 
 func createRuntimeStateTestStore(t *testing.T) (*SQLiteEndpointRuntimeStateStore, *sql.DB, func()) {
 	t.Helper()
-	db, cleanup := createTestDB(t)
+	db := createTestDB(t)
+	cleanup := func() {}
 	schema := `
 		CREATE TABLE IF NOT EXISTS endpoint_runtime_states (
 			endpoint_id INTEGER NOT NULL,

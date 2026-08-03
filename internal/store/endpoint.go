@@ -17,9 +17,8 @@ type EndpointRecord struct {
 	ID int64 `json:"id"`
 
 	// 基本信息
-	Channel string `json:"channel"` // 渠道标签（用于分组展示）
-	Name    string `json:"name"`    // 端点唯一名称
-	URL     string `json:"url"`     // 端点 URL
+	Name string `json:"name"` // 端点唯一名称
+	URL  string `json:"url"`  // 端点 URL
 
 	// 认证配置
 	Token   string            `json:"token,omitempty"`   // Bearer Token
@@ -44,9 +43,7 @@ type EndpointRecord struct {
 	CacheCreationCostMultiplier1h float64 `json:"cache_creation_cost_multiplier_1h"` // 1小时缓存创建倍率
 	CacheReadCostMultiplier       float64 `json:"cache_read_cost_multiplier"`
 
-	// 状态
-	Enabled bool `json:"enabled"` // legacy active 标记（v8 起新版停止写入）
-	// v8 硬启用（nil 视为 true；false=任何模式都不可使用）
+	// 硬启用（nil 视为 true；false=任何模式都不可使用）
 	AvailabilityEnabled *bool `json:"availability_enabled,omitempty"`
 
 	// 审计字段
@@ -76,19 +73,8 @@ type EndpointStore interface {
 	BatchCreate(ctx context.Context, records []*EndpointRecord) error
 	BatchDelete(ctx context.Context, names []string) error
 
-	// 查询
-	ListByChannel(ctx context.Context, channel string) ([]*EndpointRecord, error)
-	ListEnabled(ctx context.Context) ([]*EndpointRecord, error)
-
 	// 统计
 	Count(ctx context.Context) (int, error)
-
-	// ActivateExclusive 单事务完成「禁用其余端点 + 启用目标端点」。
-	// 目标端点不存在时整笔回滚，不留下"全部禁用"的中间态。
-	ActivateExclusive(ctx context.Context, name string) error
-
-	// SetEnabled 更新单个端点的启用状态（legacy active 写路径，v8 起仅兼容期使用）
-	SetEnabled(ctx context.Context, name string, enabled bool) error
 
 	// SetAvailabilityEnabled 更新硬启用状态（v8）
 	SetAvailabilityEnabled(ctx context.Context, name string, enabled bool) error
@@ -160,22 +146,22 @@ func (s *SQLiteEndpointStore) Create(ctx context.Context, record *EndpointRecord
 
 	query := `
 		INSERT INTO endpoints (
-			channel, name, url, token, api_key, headers,
+			name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
 			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			enabled, availability_enabled
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			availability_enabled
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := s.getQuerier().ExecContext(ctx, query,
-		record.Channel, record.Name, record.URL, record.Token, record.ApiKey, string(headersJSON),
+		record.Name, record.URL, record.Token, record.ApiKey, string(headersJSON),
 		record.Priority, boolToInt(record.FailoverEnabled), record.CooldownSeconds, record.TimeoutSeconds,
 		boolToInt(record.SupportsCountTokens), record.ModelRewriteRules,
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
-		boolToInt(record.Enabled), boolToInt(record.IsAvailabilityEnabled()),
+		boolToInt(record.IsAvailabilityEnabled()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("创建端点失败: %w", err)
@@ -199,12 +185,12 @@ func (s *SQLiteEndpointStore) Get(ctx context.Context, name string) (*EndpointRe
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, channel, name, url, token, api_key, headers,
+		SELECT id, name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
 			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			enabled, availability_enabled, created_at, updated_at
+			availability_enabled, created_at, updated_at
 		FROM endpoints WHERE name = ?
 	`
 
@@ -217,12 +203,12 @@ func (s *SQLiteEndpointStore) GetByID(ctx context.Context, id int64) (*EndpointR
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, channel, name, url, token, api_key, headers,
+		SELECT id, name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
 			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			enabled, availability_enabled, created_at, updated_at
+			availability_enabled, created_at, updated_at
 		FROM endpoints WHERE id = ?
 	`
 
@@ -235,14 +221,14 @@ func (s *SQLiteEndpointStore) List(ctx context.Context) ([]*EndpointRecord, erro
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, channel, name, url, token, api_key, headers,
+		SELECT id, name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
 			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			enabled, availability_enabled, created_at, updated_at
+			availability_enabled, created_at, updated_at
 		FROM endpoints
-		ORDER BY priority ASC, channel ASC, name ASC
+		ORDER BY priority ASC, name ASC
 	`
 
 	return s.scanEndpoints(ctx, query)
@@ -261,22 +247,22 @@ func (s *SQLiteEndpointStore) Update(ctx context.Context, record *EndpointRecord
 
 	query := `
 		UPDATE endpoints SET
-			channel = ?, url = ?, token = ?, api_key = ?, headers = ?,
+			url = ?, token = ?, api_key = ?, headers = ?,
 			priority = ?, failover_enabled = ?, cooldown_seconds = ?, timeout_seconds = ?,
 			supports_count_tokens = ?, model_rewrite_rules = ?,
 			cost_multiplier = ?, input_cost_multiplier = ?, output_cost_multiplier = ?,
 			cache_creation_cost_multiplier = ?, cache_creation_cost_multiplier_1h = ?, cache_read_cost_multiplier = ?,
-			enabled = ?, availability_enabled = ?
+			availability_enabled = ?
 		WHERE name = ?
 	`
 
 	result, err := s.getQuerier().ExecContext(ctx, query,
-		record.Channel, record.URL, record.Token, record.ApiKey, string(headersJSON),
+		record.URL, record.Token, record.ApiKey, string(headersJSON),
 		record.Priority, boolToInt(record.FailoverEnabled), record.CooldownSeconds, record.TimeoutSeconds,
 		boolToInt(record.SupportsCountTokens), record.ModelRewriteRules,
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
-		boolToInt(record.Enabled), boolToInt(record.IsAvailabilityEnabled()),
+		boolToInt(record.IsAvailabilityEnabled()),
 		record.Name,
 	)
 	if err != nil {
@@ -316,71 +302,6 @@ func (s *SQLiteEndpointStore) Delete(ctx context.Context, name string) error {
 		return fmt.Errorf("端点不存在: %s", name)
 	}
 
-	return nil
-}
-
-// ActivateExclusive 单事务完成「禁用其余端点 + 启用目标端点」。
-// 任一步失败（含目标端点不存在）整笔回滚。
-func (s *SQLiteEndpointStore) ActivateExclusive(ctx context.Context, name string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.tx != nil {
-		return activateExclusiveIn(ctx, s.tx, name)
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("开启激活事务失败: %w", err)
-	}
-	if err := activateExclusiveIn(ctx, tx, name); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("提交激活事务失败: %w", err)
-	}
-	return nil
-}
-
-type execerContext interface {
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
-}
-
-func activateExclusiveIn(ctx context.Context, execer execerContext, name string) error {
-	if _, err := execer.ExecContext(ctx, `UPDATE endpoints SET enabled = 0 WHERE name != ?`, name); err != nil {
-		return fmt.Errorf("禁用其余端点失败: %w", err)
-	}
-	result, err := execer.ExecContext(ctx, `UPDATE endpoints SET enabled = 1 WHERE name = ?`, name)
-	if err != nil {
-		return fmt.Errorf("启用目标端点失败: %w", err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("获取启用影响行数失败: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("端点不存在: %s", name)
-	}
-	return nil
-}
-
-// SetEnabled 更新单个端点的启用状态
-func (s *SQLiteEndpointStore) SetEnabled(ctx context.Context, name string, enabled bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	result, err := s.getQuerier().ExecContext(ctx, `UPDATE endpoints SET enabled = ? WHERE name = ?`, boolToInt(enabled), name)
-	if err != nil {
-		return fmt.Errorf("更新端点启用状态失败: %w", err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("获取影响行数失败: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("端点不存在: %s", name)
-	}
 	return nil
 }
 
@@ -442,13 +363,13 @@ func (s *SQLiteEndpointStore) BatchCreate(ctx context.Context, records []*Endpoi
 
 	query := `
 		INSERT INTO endpoints (
-			channel, name, url, token, api_key, headers,
+			name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
 			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			enabled, availability_enabled
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			availability_enabled
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	stmt, err := tx.PrepareContext(ctx, query)
@@ -487,12 +408,12 @@ func (s *SQLiteEndpointStore) BatchCreate(ctx context.Context, records []*Endpoi
 		}
 
 		_, err = stmt.ExecContext(ctx,
-			record.Channel, record.Name, record.URL, record.Token, record.ApiKey, string(headersJSON),
+			record.Name, record.URL, record.Token, record.ApiKey, string(headersJSON),
 			record.Priority, boolToInt(record.FailoverEnabled), record.CooldownSeconds, record.TimeoutSeconds,
 			boolToInt(record.SupportsCountTokens), record.ModelRewriteRules,
 			record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 			record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
-			boolToInt(record.Enabled), boolToInt(record.IsAvailabilityEnabled()),
+			boolToInt(record.IsAvailabilityEnabled()),
 		)
 		if err != nil {
 			return fmt.Errorf("插入端点 %s 失败: %w", record.Name, err)
@@ -532,46 +453,6 @@ func (s *SQLiteEndpointStore) BatchDelete(ctx context.Context, names []string) e
 	return nil
 }
 
-// ListByChannel 根据渠道获取端点
-func (s *SQLiteEndpointStore) ListByChannel(ctx context.Context, channel string) ([]*EndpointRecord, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	query := `
-		SELECT id, channel, name, url, token, api_key, headers,
-			priority, failover_enabled, cooldown_seconds, timeout_seconds,
-			supports_count_tokens, model_rewrite_rules,
-			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
-			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			enabled, availability_enabled, created_at, updated_at
-		FROM endpoints
-		WHERE channel = ?
-		ORDER BY priority ASC, name ASC
-	`
-
-	return s.scanEndpointsWithArgs(ctx, query, channel)
-}
-
-// ListEnabled 获取所有启用的端点
-func (s *SQLiteEndpointStore) ListEnabled(ctx context.Context) ([]*EndpointRecord, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	query := `
-		SELECT id, channel, name, url, token, api_key, headers,
-			priority, failover_enabled, cooldown_seconds, timeout_seconds,
-			supports_count_tokens, model_rewrite_rules,
-			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
-			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			enabled, availability_enabled, created_at, updated_at
-		FROM endpoints
-		WHERE enabled = 1
-		ORDER BY priority ASC, channel ASC, name ASC
-	`
-
-	return s.scanEndpoints(ctx, query)
-}
-
 // Count 获取端点总数
 func (s *SQLiteEndpointStore) Count(ctx context.Context) (int, error) {
 	s.mu.RLock()
@@ -599,17 +480,17 @@ func (s *SQLiteEndpointStore) scanEndpoint(row *sql.Row) (*EndpointRecord, error
 	var record EndpointRecord
 	var headersJSON string
 	var cooldownSeconds sql.NullInt64
-	var failoverEnabled, supportsCountTokens, enabled, availabilityEnabled int
+	var failoverEnabled, supportsCountTokens, availabilityEnabled int
 	var createdAt, updatedAt string
 
 	err := row.Scan(
-		&record.ID, &record.Channel, &record.Name, &record.URL,
+		&record.ID, &record.Name, &record.URL,
 		&record.Token, &record.ApiKey, &headersJSON,
 		&record.Priority, &failoverEnabled, &cooldownSeconds, &record.TimeoutSeconds,
 		&supportsCountTokens, &record.ModelRewriteRules,
 		&record.CostMultiplier, &record.InputCostMultiplier, &record.OutputCostMultiplier,
 		&record.CacheCreationCostMultiplier, &record.CacheCreationCostMultiplier1h, &record.CacheReadCostMultiplier,
-		&enabled, &availabilityEnabled, &createdAt, &updatedAt,
+		&availabilityEnabled, &createdAt, &updatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -634,7 +515,6 @@ func (s *SQLiteEndpointStore) scanEndpoint(row *sql.Row) (*EndpointRecord, error
 	// 转换布尔值
 	record.FailoverEnabled = failoverEnabled == 1
 	record.SupportsCountTokens = supportsCountTokens == 1
-	record.Enabled = enabled == 1
 	availValue := availabilityEnabled == 1
 	record.AvailabilityEnabled = &availValue
 
@@ -663,17 +543,17 @@ func (s *SQLiteEndpointStore) scanEndpointsWithArgs(ctx context.Context, query s
 		var record EndpointRecord
 		var headersJSON string
 		var cooldownSeconds sql.NullInt64
-		var failoverEnabled, supportsCountTokens, enabled, availabilityEnabled int
+		var failoverEnabled, supportsCountTokens, availabilityEnabled int
 		var createdAt, updatedAt string
 
 		err := rows.Scan(
-			&record.ID, &record.Channel, &record.Name, &record.URL,
+			&record.ID, &record.Name, &record.URL,
 			&record.Token, &record.ApiKey, &headersJSON,
 			&record.Priority, &failoverEnabled, &cooldownSeconds, &record.TimeoutSeconds,
 			&supportsCountTokens, &record.ModelRewriteRules,
 			&record.CostMultiplier, &record.InputCostMultiplier, &record.OutputCostMultiplier,
 			&record.CacheCreationCostMultiplier, &record.CacheCreationCostMultiplier1h, &record.CacheReadCostMultiplier,
-			&enabled, &availabilityEnabled, &createdAt, &updatedAt,
+			&availabilityEnabled, &createdAt, &updatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("扫描端点记录失败: %w", err)
@@ -695,7 +575,6 @@ func (s *SQLiteEndpointStore) scanEndpointsWithArgs(ctx context.Context, query s
 		// 转换布尔值
 		record.FailoverEnabled = failoverEnabled == 1
 		record.SupportsCountTokens = supportsCountTokens == 1
-		record.Enabled = enabled == 1
 		availValue := availabilityEnabled == 1
 		record.AvailabilityEnabled = &availValue
 

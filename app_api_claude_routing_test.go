@@ -63,7 +63,7 @@ func TestLoadClaudeRoutingOverrideDoesNotDeadlockDuringStartupLock(t *testing.T)
 	app.settingsStore = settingsStore
 	app.endpointManager = endpoint.NewManager(&config.Config{
 		Endpoints: []config.EndpointConfig{
-			{Name: "mywechat", URL: "https://example.com", Group: "mywechat"},
+			{Name: "mywechat", URL: "https://example.com"},
 		},
 	})
 
@@ -127,7 +127,7 @@ func TestSetClaudeRoutingOverridePersistFailureKeepsMemoryUnchanged(t *testing.T
 	app.settingsStore = settingsStore
 	manager := endpoint.NewManager(&config.Config{
 		Endpoints: []config.EndpointConfig{
-			{Name: "ep-a", URL: "https://example.com", Group: "ep-a"},
+			{Name: "ep-a", URL: "https://example.com"},
 		},
 	})
 	t.Cleanup(manager.Stop)
