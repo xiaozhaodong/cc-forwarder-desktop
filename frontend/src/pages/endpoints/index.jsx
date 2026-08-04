@@ -140,8 +140,8 @@ const EndpointsPage = () => {
           <div className="px-6 py-16 text-center"><Database size={38} className="mx-auto text-slate-300" /><div className="mt-3 font-medium text-slate-700">尚未配置 Claude 端点</div><div className="mt-1 text-sm text-slate-400">创建端点后即可参与自动调度或手动路由。</div></div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1280px] text-left">
-              <thead className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-400"><tr>{['名称 / URL', '认证', '优先级', '硬启用', '自动调度', '连通性', '冷却', '模型改写', '操作'].map((label) => <th key={label} className="px-4 py-3">{label}</th>)}</tr></thead>
+            <table className="w-full min-w-[1120px] text-left">
+              <thead className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-400"><tr>{['名称 / URL', '认证', '优先级', '硬启用', '自动调度', '连通性', '冷却', '模型改写', '操作'].map((label) => <th key={label} className="px-3 py-3">{label}</th>)}</tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {endpoints.map((endpoint) => (
                   <EndpointRow

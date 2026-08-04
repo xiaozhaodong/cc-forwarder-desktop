@@ -4,6 +4,7 @@
 // ============================================
 
 import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
 import { Button, CustomSelect } from '@components/ui';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
@@ -123,9 +124,9 @@ const AccountFormDialog = ({
     </FormField>
   );
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[15vh]">
-      <div className="absolute inset-0 bg-slate-900/40" onClick={handleRequestClose} />
+      <div className="absolute inset-0 bg-slate-900/40" />
       <form
         onSubmit={onSubmit}
         role="dialog"
@@ -453,7 +454,8 @@ const AccountFormDialog = ({
           </Button>
         </div>
       </form>
-    </div>
+    </div>,
+    document.body
   );
 };
 

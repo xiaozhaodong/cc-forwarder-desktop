@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, ChevronUp, Eye, EyeOff, Plus, Save, Trash2, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { AlertCircle, ChevronDown, ChevronUp, Eye, EyeOff, Plus, Save, Trash2 } from 'lucide-react';
 import { Button } from '@components/ui';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import { createEmptyEndpointModelRewriteRule } from '../utils/modelRewrite.js';
@@ -151,15 +152,16 @@ const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) =>
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/45 px-4 pt-[8vh] backdrop-blur-[2px]">
-      <div role="dialog" aria-modal="true" aria-label={isEditMode ? '编辑 Claude 端点' : '新建 Claude 端点'} className="flex max-h-[84vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[15vh]">
+      <div className="absolute inset-0 bg-slate-900/40" />
+      <div role="dialog" aria-modal="true" aria-label={isEditMode ? '编辑 Claude 端点' : '新建 Claude 端点'} className="relative flex max-h-[75vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">{isEditMode ? '编辑 Claude 端点' : '新建 Claude 端点'}</h2>
             <p className="mt-0.5 text-xs text-slate-400">一个端点对应一组固定认证信息；凭据始终以掩码展示。</p>
           </div>
-          <button ref={closeButtonRef} type="button" onClick={requestClose} aria-label="关闭表单" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={19} /></button>
+          <button ref={closeButtonRef} type="button" onClick={requestClose} disabled={loading} className="text-sm text-slate-400 hover:text-slate-600">关闭</button>
         </div>
 
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
@@ -272,7 +274,8 @@ const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) =>
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

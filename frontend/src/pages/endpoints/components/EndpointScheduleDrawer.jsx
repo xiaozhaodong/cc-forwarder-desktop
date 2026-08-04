@@ -20,9 +20,19 @@ import useModalLifecycle from '@hooks/useModalLifecycle.js';
 export const resolveSnapshotOutcome = (snapshot = {}) => {
   const outcome = String(snapshot.finalOutcome || snapshot.final_outcome || '').trim().toLowerCase();
   const config = {
+    pending: { label: '进行中', className: 'border-blue-200 bg-blue-50 text-blue-700', isAbnormal: false },
     success: { label: '成功', className: 'border-emerald-200 bg-emerald-50 text-emerald-700', isAbnormal: false },
+    passthrough_raw: { label: '原样透传', className: 'border-slate-200 bg-slate-100 text-slate-600', isAbnormal: false },
     passthrough_error: { label: '上游失败', className: 'border-amber-200 bg-amber-50 text-amber-700', isAbnormal: true },
-    cancelled: { label: '已取消', className: 'border-slate-200 bg-slate-100 text-slate-600', isAbnormal: true }
+    cancelled: { label: '已取消', className: 'border-slate-200 bg-slate-100 text-slate-600', isAbnormal: true },
+    quality_incomplete: { label: '响应不完整', className: 'border-amber-200 bg-amber-50 text-amber-700', isAbnormal: true },
+    failed_after_commit: { label: '响应阶段失败', className: 'border-amber-200 bg-amber-50 text-amber-700', isAbnormal: true },
+    privacy_blocked: { label: '隐私策略拦截', className: 'border-amber-200 bg-amber-50 text-amber-700', isAbnormal: true },
+    no_candidates: { label: '无可用候选', className: 'border-amber-200 bg-amber-50 text-amber-700', isAbnormal: true },
+    manual_fixed_blocked: { label: '固定目标不可用', className: 'border-amber-200 bg-amber-50 text-amber-700', isAbnormal: true },
+    all_candidates_failed: { label: '全部候选失败', className: 'border-amber-200 bg-amber-50 text-amber-700', isAbnormal: true },
+    rejected_by_failure_tracker: { label: '失败阈值拦截', className: 'border-amber-200 bg-amber-50 text-amber-700', isAbnormal: true },
+    rate_limited: { label: '限流', className: 'border-amber-200 bg-amber-50 text-amber-700', isAbnormal: true }
   };
   return config[outcome] || {
     label: outcome || '未完成',

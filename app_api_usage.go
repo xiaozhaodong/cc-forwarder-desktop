@@ -168,24 +168,6 @@ func sourceViewToUpstreamType(sourceView string) string {
 	}
 }
 
-func shouldFallbackToRuntimeUsageStats(params UsageStatsQueryParams, normalizedSourceView string, startTime, endTime time.Time) bool {
-	if normalizeSourceView(normalizedSourceView) != "all" {
-		return false
-	}
-	if strings.TrimSpace(params.Status) != "" ||
-		strings.TrimSpace(params.Model) != "" ||
-		strings.TrimSpace(params.RequestFamily) != "" ||
-		strings.TrimSpace(params.UpstreamName) != "" {
-		return false
-	}
-	if startTime.IsZero() || endTime.IsZero() || endTime.Before(startTime) {
-		return false
-	}
-
-	now := time.Now()
-	return (startTime.Before(now) || startTime.Equal(now)) && (endTime.After(now) || endTime.Equal(now))
-}
-
 func (a *App) queryStatsFromSingleTable(ctx context.Context, db *sql.DB, tableName string, startTime, endTime time.Time, upstreamType string) (cost float64, tokens int64, requests int64, err error) {
 	query := "SELECT COALESCE(SUM(total_cost_usd), 0), COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0), COUNT(*) FROM " + tableName
 
@@ -546,13 +528,6 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 				result.SuccessRate = float64(stats.SuccessRequests) / float64(stats.TotalRequests) * 100
 				if stats.DurationCount > 0 {
 					result.AvgDurationMs = float64(stats.TotalDurationMs) / float64(stats.DurationCount)
-				}
-				return result, nil
-			}
-			if shouldFallbackToRuntimeUsageStats(params, normalizedSourceView, startTime, endTime) {
-				runtimeResult := a.getUsageStatsFromRuntime(period)
-				if runtimeResult.TotalRequests > 0 {
-					return runtimeResult, nil
 				}
 			}
 			return result, nil

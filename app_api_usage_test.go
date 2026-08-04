@@ -47,7 +47,7 @@ func recordRuntimeStats(app *App, tokens *monitor.TokenUsage) {
 	}
 }
 
-func TestGetUsageStats_FallsBackToRuntimeForCurrentWindowWhenAggregateIsZero(t *testing.T) {
+func TestGetUsageStats_ReturnsZeroForCurrentWindowWhenAggregateIsZero(t *testing.T) {
 	app := newUsageStatsTestApp(t)
 	recordRuntimeStats(app, &monitor.TokenUsage{
 		InputTokens:  10,
@@ -65,14 +65,11 @@ func TestGetUsageStats_FallsBackToRuntimeForCurrentWindowWhenAggregateIsZero(t *
 		t.Fatalf("GetUsageStats failed: %v", err)
 	}
 
-	if result.TotalRequests != 1 {
-		t.Fatalf("expected runtime fallback to provide 1 request, got %d", result.TotalRequests)
+	if result.TotalRequests != 0 {
+		t.Fatalf("expected zero aggregate to stay zero without runtime fallback, got %d requests", result.TotalRequests)
 	}
-	if result.TotalTokens != 15 {
-		t.Fatalf("expected runtime fallback to provide 15 tokens, got %d", result.TotalTokens)
-	}
-	if result.SuccessRate != 100 {
-		t.Fatalf("expected runtime fallback success rate 100, got %f", result.SuccessRate)
+	if result.TotalTokens != 0 {
+		t.Fatalf("expected zero aggregate to stay zero without runtime fallback, got %d tokens", result.TotalTokens)
 	}
 }
 

@@ -101,7 +101,9 @@ func (s *SQLiteEndpointRuntimeStateStore) ListActiveCooldowns(ctx context.Contex
 		}
 		if cooldownUntil.Valid {
 			if parsed, err := time.Parse(time.RFC3339Nano, cooldownUntil.String); err == nil {
-				record.CooldownUntil = &parsed
+				// 库内按 UTC 存储；转回本地时区，与运行中 time.Now() 设置的冷却口径一致
+				local := parsed.Local()
+				record.CooldownUntil = &local
 			}
 		}
 		records = append(records, &record)

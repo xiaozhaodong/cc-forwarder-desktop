@@ -3,6 +3,7 @@
 // ============================================
 
 import { useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle, Trash2 } from 'lucide-react';
 import { Button } from '@components/ui';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
@@ -18,15 +19,16 @@ const DeleteConfirmDialog = ({ endpoint, onConfirm, onCancel, loading }) => {
     initialFocusRef: dialogRef
   });
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 animate-fade-in pt-[20vh]">
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[20vh] animate-fade-in">
+      <div className="absolute inset-0 bg-slate-900/40" />
       <div
         ref={dialogRef}
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label="确认删除端点"
-        className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 focus:outline-none"
+        className="relative bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md p-6 focus:outline-none"
       >
         <div className="flex items-center gap-3 mb-4">
           <div className="p-3 bg-rose-100 rounded-full">
@@ -57,7 +59,8 @@ const DeleteConfirmDialog = ({ endpoint, onConfirm, onCancel, loading }) => {
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

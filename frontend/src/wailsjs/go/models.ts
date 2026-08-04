@@ -1820,7 +1820,7 @@ export namespace main {
 }
 
 export namespace migration {
-
+	
 	export class Status {
 	    state: string;
 	    migration_id: string;
@@ -1840,11 +1840,11 @@ export namespace migration {
 	    derived_record_count: number;
 	    request_log_count: number;
 	    backup_manifest_sha256: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Status(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.state = source["state"];
@@ -1869,3 +1869,4 @@ export namespace migration {
 	}
 
 }
+

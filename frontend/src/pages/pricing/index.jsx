@@ -4,8 +4,8 @@
 // ============================================
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
-  DollarSign,
   Plus,
   Pencil,
   Trash2,
@@ -112,34 +112,40 @@ const PricingForm = ({ pricing, onSave, onCancel, loading }) => {
     }));
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 animate-fade-in pt-[10vh] overflow-y-auto">
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[15vh]">
+      <div className="absolute inset-0 bg-slate-900/40" />
       <div
         ref={dialogRef}
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={isEdit ? '编辑模型定价' : '添加模型定价'}
-        className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 my-8 focus:outline-none"
+        className="relative flex max-h-[75vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl focus:outline-none"
       >
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
           {/* 头部 */}
-          <div className="px-6 py-4 border-b border-slate-100">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-indigo-100 rounded-lg">
-                <DollarSign className="text-indigo-600" size={20} />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900">
-                  {isEdit ? '编辑模型定价' : '添加模型定价'}
-                </h3>
-                <p className="text-sm text-slate-500">USD per 1M tokens</p>
-              </div>
+          <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900">
+                {isEdit ? '编辑模型定价' : '添加模型定价'}
+              </h3>
+              <p className="mt-0.5 text-xs text-slate-400">USD per 1M tokens</p>
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (!loading) onCancel();
+              }}
+              disabled={loading}
+              className="text-sm text-slate-400 hover:text-slate-600"
+            >
+              关闭
+            </button>
           </div>
 
           {/* 表单内容 */}
-          <div className="px-6 py-4 space-y-4">
+          <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
             {/* 模型名称 */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1.5">
@@ -326,7 +332,7 @@ const PricingForm = ({ pricing, onSave, onCancel, loading }) => {
           </div>
 
           {/* 底部按钮 */}
-          <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-3">
+          <div className="flex justify-end gap-3 border-t border-slate-100 bg-white px-6 py-4">
             <Button variant="ghost" type="button" onClick={onCancel} disabled={loading}>
               取消
             </Button>
@@ -336,7 +342,8 @@ const PricingForm = ({ pricing, onSave, onCancel, loading }) => {
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

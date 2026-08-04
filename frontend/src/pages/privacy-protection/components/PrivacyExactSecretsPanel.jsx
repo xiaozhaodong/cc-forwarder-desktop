@@ -52,7 +52,7 @@ const placeholderForCategory = (category) => {
   return '[敏感值]';
 };
 
-const ExactSecretDrawer = ({ open, secret, saving, onSave, onClose }) => {
+const ExactSecretDialog = ({ open, secret, saving, onSave, onClose }) => {
   const [form, setForm] = useState(() => exactSecretToForm(secret || createEmptyExactSecretForm()));
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState('');
@@ -103,31 +103,31 @@ const ExactSecretDrawer = ({ open, secret, saving, onSave, onClose }) => {
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/30 animate-fade-in" onClick={handleRequestClose} />
+    <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[15vh]">
+      <div className="absolute inset-0 bg-slate-900/40" />
       <form
         onSubmit={handleSubmit}
         role="dialog"
         aria-modal="true"
         aria-label={form.id > 0 ? '编辑本地敏感值' : '新增本地敏感值'}
-        className="relative flex h-full w-full max-w-lg flex-col bg-white shadow-2xl"
+        className="relative flex max-h-[75vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-          <h3 className="text-base font-semibold text-slate-800">
+          <h3 className="text-lg font-semibold text-slate-900">
             {form.id > 0 ? '编辑本地敏感值' : '新增本地敏感值'}
           </h3>
           <button
             type="button"
             ref={closeButtonRef}
-            aria-label="关闭抽屉"
             onClick={handleRequestClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            disabled={saving}
+            className="text-sm text-slate-400 hover:text-slate-600"
           >
-            <X size={18} />
+            关闭
           </button>
         </div>
 
-        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-4">
+        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
           <Input
             label="名称 *"
             value={form.name}
@@ -184,10 +184,10 @@ const ExactSecretDrawer = ({ open, secret, saving, onSave, onClose }) => {
           )}
         </div>
 
-        <div className="border-t border-slate-100 bg-slate-50/70 px-6 py-4">
+        <div className="border-t border-slate-100 bg-white px-6 py-4">
           {submitError && <p className="mb-2 break-all text-xs text-rose-500">{submitError}</p>}
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={handleRequestClose} disabled={saving}>
+            <Button type="button" variant="ghost" onClick={handleRequestClose} disabled={saving}>
               取消
             </Button>
             <Button type="submit" loading={saving}>
@@ -502,9 +502,9 @@ const PrivacyExactSecretsPanel = ({
   onLoadCandidates,
   onImportCandidate
 }) => {
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerSecret, setDrawerSecret] = useState(null);
-  const [drawerKey, setDrawerKey] = useState(0);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogSecret, setDialogSecret] = useState(null);
+  const [dialogKey, setDialogKey] = useState(0);
   const [importOpen, setImportOpen] = useState(false);
   const [manualImportOpen, setManualImportOpen] = useState(false);
   const [candidateLoading, setCandidateLoading] = useState(false);
@@ -522,10 +522,10 @@ const PrivacyExactSecretsPanel = ({
     setFilters((prev) => ({ ...prev, ...patch }));
   };
 
-  const openDrawer = (secret) => {
-    setDrawerSecret(secret);
-    setDrawerKey((key) => key + 1);
-    setDrawerOpen(true);
+  const openDialog = (secret) => {
+    setDialogSecret(secret);
+    setDialogKey((key) => key + 1);
+    setDialogOpen(true);
   };
 
   const handleToggle = async (secret, enabled) => {
@@ -589,7 +589,7 @@ const PrivacyExactSecretsPanel = ({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" icon={Plus} onClick={() => openDrawer(createEmptyExactSecretForm())} disabled={actionBusy}>
+        <Button size="sm" icon={Plus} onClick={() => openDialog(createEmptyExactSecretForm())} disabled={actionBusy}>
           新增敏感值
         </Button>
         <Button size="sm" variant="secondary" icon={Upload} onClick={openImport} disabled={actionBusy}>
@@ -682,7 +682,7 @@ const PrivacyExactSecretsPanel = ({
                       <button
                         type="button"
                         disabled={actionBusy}
-                        onClick={() => openDrawer(exactSecretToForm(secret))}
+                        onClick={() => openDialog(exactSecretToForm(secret))}
                         className="rounded-lg p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600"
                         title="编辑"
                       >
@@ -722,13 +722,13 @@ const PrivacyExactSecretsPanel = ({
         />
       )}
 
-      <ExactSecretDrawer
-        key={drawerKey}
-        open={drawerOpen}
-        secret={drawerSecret}
+      <ExactSecretDialog
+        key={dialogKey}
+        open={dialogOpen}
+        secret={dialogSecret}
         saving={actionBusy}
         onSave={onSave}
-        onClose={() => setDrawerOpen(false)}
+        onClose={() => setDialogOpen(false)}
       />
       <ManualImportDialog
         open={manualImportOpen}
