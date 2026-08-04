@@ -31,7 +31,6 @@ type EndpointService struct {
 func NewEndpointService(
 	store store.EndpointStore,
 	manager *endpoint.Manager,
-	cfg *config.Config,
 ) *EndpointService {
 	return &EndpointService{
 		store:   store,

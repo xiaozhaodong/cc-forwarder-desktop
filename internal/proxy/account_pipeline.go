@@ -146,7 +146,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		accountName := accountFailoverDisplayName(acc)
 
 		lifecycleManager.SetUpstream("account", "account-pool", accountName, acc.ID)
-		lifecycleManager.SetEndpoint(accountName, "", "account-pool")
+		lifecycleManager.SetEndpoint(accountName)
 		lifecycleManager.UpdateStatus("forwarding", idx, 0)
 		attemptStartedAt := time.Now()
 		hasNextAccount := hasNextAccountFailoverCandidate(accounts, idx)

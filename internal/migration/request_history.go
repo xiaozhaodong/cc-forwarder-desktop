@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"cc-forwarder/internal/tracking"
 )
 
 var requestLogTargetColumns = []string{
@@ -101,6 +103,8 @@ func requestHistoryExpression(column string, columns map[string]bool) string {
 	case "upstream_name":
 		return `COALESCE(NULLIF(` + value("upstream_name", "''") + `, ''), NULLIF(` +
 			value("effective_endpoint", "''") + `, ''), NULLIF(` + value("endpoint_name", "''") + `, ''), '')`
+	case "upstream_source_name":
+		return `COALESCE(` + value(column, "''") + `, '')`
 	case "upstream_type":
 		path := value("path", "''")
 		existing := value("upstream_type", "''")
@@ -243,7 +247,7 @@ func rebuildUsageSummary(ctx context.Context, tx *sql.Tx) error {
 	)`); err != nil {
 		return fmt.Errorf("create usage_summary target table: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO usage_summary (
+	summaryQuery := fmt.Sprintf(`INSERT INTO usage_summary (
 		date, model_name, request_family, upstream_type, upstream_name, upstream_id,
 		request_count, success_count, error_count, total_input_tokens, total_output_tokens,
 		total_cache_creation_tokens, total_cache_read_tokens, total_cost_usd, avg_duration_ms
@@ -251,12 +255,14 @@ func rebuildUsageSummary(ctx context.Context, tx *sql.Tx) error {
 		COALESCE(substr(start_time, 1, 10), ''), COALESCE(model_name, ''), request_family,
 		COALESCE(upstream_type, ''), COALESCE(upstream_name, ''), COALESCE(upstream_id, 0),
 		COUNT(*), SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
-		SUM(CASE WHEN status IN ('failed', 'cancelled') THEN 1 ELSE 0 END),
+		SUM(CASE WHEN status IN (%s) THEN 1 ELSE 0 END),
 		SUM(COALESCE(input_tokens, 0)), SUM(COALESCE(output_tokens, 0)),
 		SUM(COALESCE(cache_creation_tokens, 0)), SUM(COALESCE(cache_read_tokens, 0)),
-		SUM(COALESCE(total_cost_usd, 0)), AVG(COALESCE(duration_ms, 0))
+		SUM(COALESCE(total_cost_usd, 0)),
+		AVG(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE NULL END)
 	FROM request_logs
-	GROUP BY 1, 2, 3, 4, 5, 6`); err != nil {
+	GROUP BY 1, 2, 3, 4, 5, 6`, tracking.FailedRequestStatusesSQLList)
+	if _, err := tx.ExecContext(ctx, summaryQuery); err != nil {
 		return fmt.Errorf("rebuild usage_summary: %w", err)
 	}
 	statements := []string{

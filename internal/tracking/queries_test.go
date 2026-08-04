@@ -268,6 +268,48 @@ func TestQueryOperations(t *testing.T) {
 	})
 }
 
+func TestUpdateUsageSummaryUsesCanonicalFailureAndDurationRules(t *testing.T) {
+	config := &Config{
+		Enabled:       true,
+		DatabasePath:  ":memory:",
+		BufferSize:    100,
+		BatchSize:     10,
+		FlushInterval: time.Hour,
+		HotPool:       &HotPoolSettings{Enabled: false},
+	}
+	tracker, err := NewUsageTracker(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracker.Close()
+
+	if _, err := tracker.db.Exec(`INSERT INTO request_logs (
+		request_id, start_time, model_name, request_family, upstream_type,
+		upstream_name, upstream_id, status, duration_ms
+	) VALUES
+		('req-summary-completed', datetime('now', 'localtime'), 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'completed', 100),
+		('req-summary-failed', datetime('now', 'localtime'), 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'failed', 300),
+		('req-summary-error', datetime('now', 'localtime'), 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'error', 0),
+		('req-summary-auth-error', datetime('now', 'localtime'), 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'auth_error', 500),
+		('req-summary-cancelled', datetime('now', 'localtime'), 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'cancelled', NULL)`); err != nil {
+		t.Fatal(err)
+	}
+
+	tracker.updateUsageSummary()
+
+	var requestCount, successCount, errorCount int
+	var avgDuration float64
+	if err := tracker.db.QueryRow(`SELECT request_count, success_count, error_count, avg_duration_ms
+		FROM usage_summary WHERE model_name = 'summary-model'`).Scan(
+		&requestCount, &successCount, &errorCount, &avgDuration,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if requestCount != 5 || successCount != 1 || errorCount != 3 || avgDuration != 300 {
+		t.Fatalf("summary = requests:%d success:%d errors:%d avg:%v", requestCount, successCount, errorCount, avgDuration)
+	}
+}
+
 func TestQueryUsageSummary_NilOptions(t *testing.T) {
 	tracker := newSourceRoutingTracker(t)
 	ctx := context.Background()

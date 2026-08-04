@@ -512,8 +512,8 @@ func (rlm *RequestLifecycleManager) analyzeResponseType(responseContent string) 
 	return "non_token_response"
 }
 
-// SetEndpoint 设置端点或账号显示名。保留旧参数以兼容测试调用，运行态不再保存 group/channel。
-func (rlm *RequestLifecycleManager) SetEndpoint(endpointName string, _ ...string) {
+// SetEndpoint 设置端点或账号显示名。
+func (rlm *RequestLifecycleManager) SetEndpoint(endpointName string) {
 	rlm.setEndpoint(endpointName, 0)
 }
 

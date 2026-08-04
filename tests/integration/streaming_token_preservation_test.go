@@ -125,7 +125,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 		nil, // eventBus
 	)
 
-	lifecycleManager.SetEndpoint("streaming-test-endpoint", "test-group", "")
+	lifecycleManager.SetEndpoint("streaming-test-endpoint")
 	lifecycleManager.StartRequest("192.168.1.100", "test-client", "POST", "/v1/messages", true)
 
 	// 创建响应记录器和模拟流处理器
@@ -297,7 +297,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 		nil, // eventBus
 	)
 
-	lifecycleManager.SetEndpoint("streaming-test-endpoint", "test-group", "")
+	lifecycleManager.SetEndpoint("streaming-test-endpoint")
 	lifecycleManager.StartRequest("192.168.1.101", "test-client", "POST", "/v1/messages", true)
 
 	recorder := httptest.NewRecorder()
@@ -405,7 +405,7 @@ data: {"type":"error","error":{"type":"rate_limit_error","message":"Rate limit e
 		nil, // eventBus
 	)
 
-	lifecycleManager.SetEndpoint("streaming-test-endpoint", "test-group", "")
+	lifecycleManager.SetEndpoint("streaming-test-endpoint")
 	lifecycleManager.StartRequest("192.168.1.102", "test-client", "POST", "/v1/messages", true)
 
 	recorder := httptest.NewRecorder()
@@ -528,7 +528,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 		nil, // eventBus
 	)
 
-	lifecycleManager.SetEndpoint("streaming-test-endpoint", "test-group", "")
+	lifecycleManager.SetEndpoint("streaming-test-endpoint")
 	lifecycleManager.StartRequest("192.168.1.103", "test-client", "POST", "/v1/messages", true)
 
 	recorder := httptest.NewRecorder()
@@ -635,7 +635,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 		nil, // eventBus
 	)
 
-	lifecycleManager.SetEndpoint("streaming-test-endpoint", "test-group", "")
+	lifecycleManager.SetEndpoint("streaming-test-endpoint")
 	lifecycleManager.StartRequest("192.168.1.104", "test-client", "POST", "/v1/messages", true)
 
 	recorder := httptest.NewRecorder()
@@ -752,7 +752,7 @@ func TestStreamingFailureStatusIntegrity(t *testing.T) {
 				nil, // eventBus
 			)
 
-			lifecycleManager.SetEndpoint("streaming-test-endpoint", "test-group", "")
+			lifecycleManager.SetEndpoint("streaming-test-endpoint")
 			lifecycleManager.StartRequest("192.168.1.100", "test-client", "POST", "/v1/messages", true)
 
 			// 模拟Token信息

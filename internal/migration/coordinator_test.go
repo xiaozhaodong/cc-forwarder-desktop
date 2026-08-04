@@ -109,12 +109,71 @@ func TestCoordinatorRetryAfterConfigRewriteFailureDoesNotRepeatSplit(t *testing.
 	if retried.State != StartupReady || retried.Phase != PhaseCompleted || retried.RetryAllowed {
 		t.Fatalf("retried status = %+v", retried)
 	}
+	if retried.BackupIntegrity != failed.BackupIntegrity ||
+		retried.EndpointCountBefore != failed.EndpointCountBefore ||
+		retried.EndpointCountAfter != failed.EndpointCountAfter ||
+		retried.SplitEndpointCount != failed.SplitEndpointCount ||
+		retried.DerivedRecordCount != failed.DerivedRecordCount ||
+		retried.RequestLogCount != failed.RequestLogCount {
+		t.Fatalf("retried status metadata changed: failed=%+v retried=%+v", failed, retried)
+	}
 	var endpointCountAfterRetry int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM endpoints`).Scan(&endpointCountAfterRetry); err != nil {
 		t.Fatal(err)
 	}
 	if endpointCountAfterRetry != endpointCount {
 		t.Fatalf("retry repeated endpoint split: before=%d after=%d", endpointCount, endpointCountAfterRetry)
+	}
+}
+
+func TestCoordinatorPublishesDBCommittedStatusBeforeConfigRewriteCompletes(t *testing.T) {
+	db := openLegacyFixtureDB(t)
+	defer db.Close()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	raw, err := os.ReadFile(filepath.Join("testdata", "legacy_config.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rewriteStarted := make(chan struct{})
+	releaseRewrite := make(chan struct{})
+	coordinator := &Coordinator{
+		DB: db, DatabasePath: filepath.Join(dir, "usage.db"), ConfigPath: configPath,
+		DataDir: dir, DatabaseExisted: true,
+		RewriteConfig: func(string) error {
+			close(rewriteStarted)
+			<-releaseRewrite
+			return fmt.Errorf("fixture rewrite stop")
+		},
+	}
+
+	result := make(chan Status, 1)
+	go func() {
+		status, _ := coordinator.Run(context.Background())
+		result <- status
+	}()
+
+	select {
+	case <-rewriteStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("config rewrite did not start")
+	}
+	status := coordinator.Status()
+	if status.State != StartupMigrating || status.Phase != PhaseDBCommitted ||
+		status.EndpointCountBefore != 2 || status.EndpointCountAfter != 10 ||
+		status.BackupIntegrity != "ok" || status.RequestLogCount != 4 {
+		t.Fatalf("published status = %+v", status)
+	}
+
+	close(releaseRewrite)
+	select {
+	case <-result:
+	case <-time.After(5 * time.Second):
+		t.Fatal("coordinator did not stop after rewrite release")
 	}
 }
 

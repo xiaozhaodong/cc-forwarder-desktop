@@ -142,34 +142,43 @@ CREATE TABLE IF NOT EXISTS endpoints (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
     -- ========== 基本信息 ==========
-    name TEXT UNIQUE NOT NULL,                      -- 端点唯一名称
-    url TEXT NOT NULL,                              -- 端点 URL
+    name TEXT UNIQUE NOT NULL CHECK (length(trim(name)) > 0), -- 端点唯一名称
+    url TEXT NOT NULL CHECK (length(trim(url)) > 0),          -- 端点 URL
 
     -- ========== 认证配置 ==========
     token TEXT,                                     -- Bearer Token
     api_key TEXT,                                   -- API Key (备用)
-    headers TEXT,                                   -- 自定义请求头 (JSON格式)
+    headers TEXT NOT NULL DEFAULT '{}'
+        CHECK (json_valid(headers) AND json_type(headers) = 'object'), -- 自定义请求头
 
     -- ========== 路由配置 ==========
-    priority INTEGER DEFAULT 1,                     -- 优先级（数字越小越高）
-    failover_enabled INTEGER DEFAULT 1,             -- 是否参与故障转移 (1=是, 0=否)
+    priority INTEGER NOT NULL DEFAULT 1 CHECK (priority >= 0), -- 优先级（数字越小越高）
+    failover_enabled INTEGER NOT NULL DEFAULT 1
+        CHECK (failover_enabled IN (0, 1)),          -- 是否参与故障转移 (1=是, 0=否)
+    availability_enabled INTEGER NOT NULL DEFAULT 1
+        CHECK (availability_enabled IN (0, 1)),      -- 硬启用：0=任何模式都不可使用
     cooldown_seconds INTEGER,                       -- 冷却时间（秒，NULL=使用全局配置）
-    timeout_seconds INTEGER DEFAULT 300,            -- 请求超时（秒）
+    timeout_seconds INTEGER NOT NULL DEFAULT 300
+        CHECK (timeout_seconds > 0),                 -- 请求超时（秒）
 
     -- ========== 功能支持 ==========
-    supports_count_tokens INTEGER DEFAULT 0,        -- 是否支持 count_tokens 端点
-    model_rewrite_rules TEXT DEFAULT '',            -- CC 端点模型兼容改写规则 JSON
+    supports_count_tokens INTEGER NOT NULL DEFAULT 0
+        CHECK (supports_count_tokens IN (0, 1)),     -- 是否支持 count_tokens 端点
+    model_rewrite_rules TEXT NOT NULL DEFAULT '',   -- CC 端点模型兼容改写规则 JSON
 
     -- ========== 成本倍率 ==========
-    cost_multiplier REAL DEFAULT 1.0,               -- 总成本倍率
-    input_cost_multiplier REAL DEFAULT 1.0,         -- 输入成本倍率
-    output_cost_multiplier REAL DEFAULT 1.0,        -- 输出成本倍率
-    cache_creation_cost_multiplier REAL DEFAULT 1.0,-- 5分钟缓存创建成本倍率（默认）
-    cache_creation_cost_multiplier_1h REAL DEFAULT 1.0, -- 1小时缓存创建成本倍率
-    cache_read_cost_multiplier REAL DEFAULT 1.0,    -- 缓存读取成本倍率
-
-    -- ========== 状态 ==========
-    availability_enabled INTEGER NOT NULL DEFAULT 1,-- 硬启用：0=任何模式都不可使用
+    cost_multiplier REAL NOT NULL DEFAULT 1.0
+        CHECK (cost_multiplier > 0),                 -- 总成本倍率
+    input_cost_multiplier REAL NOT NULL DEFAULT 1.0
+        CHECK (input_cost_multiplier > 0),           -- 输入成本倍率
+    output_cost_multiplier REAL NOT NULL DEFAULT 1.0
+        CHECK (output_cost_multiplier > 0),          -- 输出成本倍率
+    cache_creation_cost_multiplier REAL NOT NULL DEFAULT 1.0
+        CHECK (cache_creation_cost_multiplier > 0),  -- 5分钟缓存创建成本倍率（默认）
+    cache_creation_cost_multiplier_1h REAL NOT NULL DEFAULT 1.0
+        CHECK (cache_creation_cost_multiplier_1h > 0), -- 1小时缓存创建成本倍率
+    cache_read_cost_multiplier REAL NOT NULL DEFAULT 1.0
+        CHECK (cache_read_cost_multiplier > 0),      -- 缓存读取成本倍率
 
     -- ========== 审计字段 ==========
     created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),

@@ -69,12 +69,28 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
-    getMigrationStatus().then((status) => {
-      if (!cancelled) setMigrationStatus(status);
-    }).catch((error) => {
-      if (!cancelled) setMigrationStatus({ state: 'migration_failed', error: error?.message || '迁移状态读取失败', retryAllowed: true });
-    });
-    return () => { cancelled = true; };
+    let timer = null;
+
+    const pollMigrationStatus = async () => {
+      try {
+        const status = await getMigrationStatus();
+        if (cancelled) return;
+        setMigrationStatus(status);
+        if (status.state !== 'ready') {
+          timer = window.setTimeout(pollMigrationStatus, status.state === 'migration_failed' ? 1000 : 400);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setMigrationStatus({ state: 'migration_failed', error: error?.message || '迁移状态读取失败', retryAllowed: true });
+        timer = window.setTimeout(pollMigrationStatus, 1000);
+      }
+    };
+
+    pollMigrationStatus();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
   }, []);
 
   // 渲染当前页面
@@ -98,7 +114,7 @@ function App() {
     return pages[activeTab] || <OverviewPage />;
   };
 
-  if (migrationStatus.state === 'migration_failed') {
+  if (migrationStatus.state !== 'ready') {
     return <MigrationRecoveryPage status={migrationStatus} onStatusChange={setMigrationStatus} />;
   }
 

@@ -45,6 +45,7 @@ type App struct {
 	eventBus             events.EventBus // 接口类型，不是指针
 	usageTracker         *tracking.UsageTracker
 	coreDatabase         *tracking.CoreDatabase
+	migrationMu          sync.RWMutex
 	migrationCoordinator *migration.Coordinator
 	migrationStatus      migration.Status
 	proxyHandler         *proxy.Handler
@@ -117,8 +118,9 @@ func (a *App) startup(ctx context.Context) {
 
 	// 1. 准备核心数据库，并在任何运行时写入组件启动前完成一次性迁移。
 	if err := a.prepareCoreDatabaseAndMigration(ctx); err != nil {
+		migrationStatus := a.GetMigrationStatus()
 		a.logger.Error("❌ 启动迁移失败，应用进入只读恢复模式", "error", err,
-			"backup_dir", a.migrationStatus.BackupDir, "phase", a.migrationStatus.Phase)
+			"backup_dir", migrationStatus.BackupDir, "phase", migrationStatus.Phase)
 		return
 	}
 
@@ -331,7 +333,7 @@ func (a *App) setupEndpointStore() {
 	a.endpointStore = store.NewSQLiteEndpointStore(db)
 
 	// 创建 EndpointService
-	a.endpointService = service.NewEndpointService(a.endpointStore, a.endpointManager, a.config)
+	a.endpointService = service.NewEndpointService(a.endpointStore, a.endpointManager)
 
 	// 从数据库同步端点到内存
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

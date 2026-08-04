@@ -1263,7 +1263,7 @@ func (ut *UsageTracker) updateUsageSummary() {
 			COALESCE(upstream_id, 0) AS upstream_id,
 			COUNT(*) AS request_count,
 			SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS success_count,
-			SUM(CASE WHEN status IN ('error', 'failed') THEN 1 ELSE 0 END) AS error_count,
+			SUM(CASE WHEN status IN (%s) THEN 1 ELSE 0 END) AS error_count,
 			SUM(input_tokens) AS total_input_tokens,
 			SUM(output_tokens) AS total_output_tokens,
 			SUM(cache_creation_tokens) AS total_cache_creation_tokens,
@@ -1288,7 +1288,7 @@ func (ut *UsageTracker) updateUsageSummary() {
 			total_cost_usd = EXCLUDED.total_cost_usd,
 			avg_duration_ms = EXCLUDED.avg_duration_ms,
 			updated_at = %s
-		`, strings.Join(columns, ", "), nowExpr, nowExpr, nowExpr)
+			`, strings.Join(columns, ", "), FailedRequestStatusesSQLList, nowExpr, nowExpr, nowExpr)
 	} else {
 		placeholders := make([]string, len(columns))
 		for i := range placeholders {
@@ -1308,7 +1308,7 @@ func (ut *UsageTracker) updateUsageSummary() {
 			COALESCE(upstream_id, 0) as upstream_id,
 			COUNT(*) as request_count,
 			SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_count,
-			SUM(CASE WHEN status IN ('error', 'failed') THEN 1 ELSE 0 END) as error_count,
+			SUM(CASE WHEN status IN (%s) THEN 1 ELSE 0 END) as error_count,
 			SUM(input_tokens) as total_input_tokens,
 			SUM(output_tokens) as total_output_tokens,
 			SUM(cache_creation_tokens) as total_cache_creation_tokens,
@@ -1322,7 +1322,7 @@ func (ut *UsageTracker) updateUsageSummary() {
 			AND length(start_time) >= 10
 			AND start_time >= ? AND start_time < ?
 		GROUP BY substr(start_time, 1, 10), model_name, request_family, upstream_type, upstream_name, upstream_id
-		`, ut.adapter.BuildDateTimeNow(), ut.adapter.BuildDateTimeNow())
+			`, FailedRequestStatusesSQLList, ut.adapter.BuildDateTimeNow(), ut.adapter.BuildDateTimeNow())
 
 		query = strings.Replace(baseQuery, "VALUES ("+strings.Join(placeholders, ", ")+")", "("+selectQuery+")", 1)
 	}

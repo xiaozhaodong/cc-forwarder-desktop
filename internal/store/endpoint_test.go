@@ -23,7 +23,7 @@ func createTestDB(t *testing.T) *sql.DB {
 			url TEXT NOT NULL,
 			token TEXT NOT NULL DEFAULT '',
 			api_key TEXT NOT NULL DEFAULT '',
-			headers TEXT NOT NULL DEFAULT '{}',
+			headers TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(headers) AND json_type(headers) = 'object'),
 			priority INTEGER NOT NULL DEFAULT 1 CHECK(priority >= 0),
 			failover_enabled INTEGER NOT NULL DEFAULT 1,
 			cooldown_seconds INTEGER,
@@ -151,6 +151,39 @@ func TestSQLiteEndpointStoreDefaultsAndOrdering(t *testing.T) {
 			t.Fatalf("availability 默认必须启用: %+v", record)
 		}
 	}
+}
+
+func TestSQLiteEndpointStoreNormalizesNilHeadersToObject(t *testing.T) {
+	db := createTestDB(t)
+	store := NewSQLiteEndpointStore(db)
+	ctx := context.Background()
+	assertObject := func(name string) {
+		t.Helper()
+		var raw, jsonType string
+		if err := db.QueryRow(`SELECT headers, json_type(headers) FROM endpoints WHERE name = ?`, name).Scan(&raw, &jsonType); err != nil {
+			t.Fatalf("读取 %s headers 失败: %v", name, err)
+		}
+		if raw != "{}" || jsonType != "object" {
+			t.Fatalf("%s headers = %q (%s), want {} (object)", name, raw, jsonType)
+		}
+	}
+
+	created, err := store.Create(ctx, &EndpointRecord{Name: "create-nil", URL: "https://create.example.com"})
+	if err != nil {
+		t.Fatalf("创建 nil headers 端点失败: %v", err)
+	}
+	assertObject(created.Name)
+
+	created.Headers = nil
+	if err := store.Update(ctx, created); err != nil {
+		t.Fatalf("更新 nil headers 端点失败: %v", err)
+	}
+	assertObject(created.Name)
+
+	if err := store.BatchCreate(ctx, []*EndpointRecord{{Name: "batch-nil", URL: "https://batch.example.com"}}); err != nil {
+		t.Fatalf("批量创建 nil headers 端点失败: %v", err)
+	}
+	assertObject("batch-nil")
 }
 
 func TestSQLiteEndpointStoreStateMutations(t *testing.T) {

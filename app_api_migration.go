@@ -7,30 +7,30 @@ func (a *App) GetMigrationStatus() migration.Status {
 	if a == nil {
 		return migration.Status{State: migration.StartupInitializing, MigrationID: migration.MigrationID}
 	}
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	if a.migrationCoordinator != nil {
-		return a.migrationCoordinator.Status()
+	coordinator, status := a.migrationState()
+	if coordinator != nil {
+		return coordinator.Status()
 	}
-	return a.migrationStatus
+	return status
 }
 
 // RetryStartupMigration 仅重试协调器允许的幂等阶段；成功后启动此前被阻断的运行态组件。
 func (a *App) RetryStartupMigration() (migration.Status, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.migrationCoordinator == nil {
-		return a.migrationStatus, nil
+	coordinator, fallback := a.migrationState()
+	if coordinator == nil {
+		return fallback, nil
 	}
-	status, err := a.migrationCoordinator.Run(a.ctx)
-	a.migrationStatus = status
+	status, err := coordinator.Run(a.ctx)
+	a.setMigrationStatus(status)
 	if err != nil {
 		return status, err
 	}
 	if a.isRunning {
 		return status, nil
 	}
-	if err := a.loadRuntimeConfig(a.migrationCoordinator.DatabasePath); err != nil {
+	if err := a.loadRuntimeConfig(coordinator.DatabasePath); err != nil {
 		return status, err
 	}
 	if a.coreDatabase != nil {
@@ -41,4 +41,22 @@ func (a *App) RetryStartupMigration() (migration.Status, error) {
 	a.setupLogger()
 	a.startOperationalComponentsLocked(a.ctx)
 	return status, nil
+}
+
+func (a *App) migrationState() (*migration.Coordinator, migration.Status) {
+	a.migrationMu.RLock()
+	defer a.migrationMu.RUnlock()
+	return a.migrationCoordinator, a.migrationStatus
+}
+
+func (a *App) setMigrationCoordinator(coordinator *migration.Coordinator) {
+	a.migrationMu.Lock()
+	a.migrationCoordinator = coordinator
+	a.migrationMu.Unlock()
+}
+
+func (a *App) setMigrationStatus(status migration.Status) {
+	a.migrationMu.Lock()
+	a.migrationStatus = status
+	a.migrationMu.Unlock()
 }

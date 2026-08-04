@@ -282,6 +282,9 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 	if err != nil {
 		return fmt.Errorf("获取端点失败: %w", err)
 	}
+	if existingRecord == nil {
+		return fmt.Errorf("端点 '%s' 不存在", name)
+	}
 
 	token, err := resolveSecretEdit(existingRecord.Token, input.Token, input.ClearToken, "Token")
 	if err != nil {

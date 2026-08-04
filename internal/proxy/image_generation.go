@@ -58,7 +58,7 @@ func (h *Handler) handleImageEdit(ctx context.Context, w http.ResponseWriter, r 
 
 func (h *Handler) handleImageAPIRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, lifecycleManager *RequestLifecycleManager) {
 	lifecycleManager.SetUpstream("endpoint", "image_generation", "image-generation", 0)
-	lifecycleManager.SetEndpoint("image-generation", "", "image")
+	lifecycleManager.SetEndpoint("image-generation")
 	if r.Method != http.MethodPost {
 		h.failImageGenerationRequest(w, lifecycleManager, http.StatusMethodNotAllowed, "method_not_allowed", "only POST is supported")
 		return
@@ -71,7 +71,7 @@ func (h *Handler) handleImageAPIRequest(ctx context.Context, w http.ResponseWrit
 	}
 	providerName := imageGenerationProviderName(config.EndpointURL)
 	lifecycleManager.SetUpstream("endpoint", "image_generation", providerName, 0)
-	lifecycleManager.SetEndpoint(providerName, "", "image")
+	lifecycleManager.SetEndpoint(providerName)
 
 	if !config.Enabled || strings.TrimSpace(config.EndpointURL) == "" || strings.TrimSpace(config.APIKey) == "" {
 		h.failImageGenerationRequest(w, lifecycleManager, http.StatusServiceUnavailable, "image_generation_not_configured", "image generation provider is not configured or enabled")

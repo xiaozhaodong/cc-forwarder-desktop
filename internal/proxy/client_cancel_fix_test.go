@@ -75,7 +75,7 @@ func TestClientCancelDetection(t *testing.T) {
 func TestLifecycleManagerClientCancel(t *testing.T) {
 	// 创建生命周期管理器
 	lifecycle := NewRequestLifecycleManager(nil, nil, "test-req-123", nil)
-	lifecycle.SetEndpoint("test-endpoint", "test-group", "")
+	lifecycle.SetEndpoint("test-endpoint")
 
 	// 模拟客户端取消错误
 	cancelErr := context.Canceled

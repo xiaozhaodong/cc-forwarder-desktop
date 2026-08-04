@@ -3,8 +3,11 @@ package migration
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -117,6 +120,15 @@ func (c *Coordinator) Run(ctx context.Context) (Status, error) {
 		status.BackupDir = ledger.BackupDir
 		status.ManifestSHA256 = ledger.ManifestSHA256
 		status.Phase = ledger.Phase
+		if ledger.SourceMode != "" {
+			status.SourceMode = string(ledger.SourceMode)
+		}
+		if ledger.Phase == PhaseCompleted {
+			status.DatabaseIntegrity = "ok"
+		} else {
+			c.restoreStatusMetadata(ctx, &status, ledger)
+		}
+		c.setStatus(status)
 	}
 	if ledger != nil && ledger.Phase == PhaseCompleted && needs {
 		return c.fail(status, fmt.Errorf("migration ledger is completed but legacy schema or config is still active"))
@@ -155,7 +167,13 @@ func (c *Coordinator) Run(ctx context.Context) (Status, error) {
 		status.SplitEndpointCount = migrationResult.SplitEndpointCount
 		status.DerivedRecordCount = migrationResult.DerivedRecordCount
 		status.RequestLogCount = migrationResult.RequestLogCount
-		ledger = &migrationLedger{Phase: PhaseDBCommitted, BackupDir: backup.Directory, ManifestSHA256: backup.ManifestSHA256}
+		ledger = &migrationLedger{
+			Phase:          PhaseDBCommitted,
+			SourceMode:     legacy.SourceMode,
+			BackupDir:      backup.Directory,
+			ManifestSHA256: backup.ManifestSHA256,
+		}
+		c.setStatus(status)
 	}
 
 	if ledger.Phase == PhaseDBCommitted {
@@ -231,6 +249,7 @@ func sanitizeError(err error) string {
 
 type migrationLedger struct {
 	Phase          Phase
+	SourceMode     SourceMode
 	BackupDir      string
 	ManifestSHA256 string
 }
@@ -240,15 +259,123 @@ func loadLedger(ctx context.Context, db *sql.DB) (*migrationLedger, error) {
 	if err != nil || !exists {
 		return nil, err
 	}
-	var phase, backupDir, manifest string
-	err = db.QueryRowContext(ctx, `SELECT phase, backup_dir, backup_manifest_sha256 FROM app_schema_migrations WHERE migration_id = ?`, MigrationID).Scan(&phase, &backupDir, &manifest)
+	var phase, sourceMode, backupDir, manifest string
+	err = db.QueryRowContext(ctx, `SELECT phase, source_mode, backup_dir, backup_manifest_sha256 FROM app_schema_migrations WHERE migration_id = ?`, MigrationID).Scan(&phase, &sourceMode, &backupDir, &manifest)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read migration ledger: %w", err)
 	}
-	return &migrationLedger{Phase: Phase(phase), BackupDir: backupDir, ManifestSHA256: manifest}, nil
+	return &migrationLedger{Phase: Phase(phase), SourceMode: SourceMode(sourceMode), BackupDir: backupDir, ManifestSHA256: manifest}, nil
+}
+
+func (c *Coordinator) restoreStatusMetadata(ctx context.Context, status *Status, ledger *migrationLedger) {
+	if status == nil || ledger == nil {
+		return
+	}
+
+	manifest, err := readVerifiedBackupManifest(ledger.BackupDir, ledger.ManifestSHA256)
+	if err != nil {
+		c.warnStatusRestore("读取迁移备份清单失败", err)
+	} else {
+		status.BackupIntegrity = manifest.IntegrityCheck
+	}
+
+	if count, ok, err := countSQLiteTableRows(ctx, c.DB, "endpoints"); err != nil {
+		c.warnStatusRestore("恢复迁移后端点计数失败", err)
+	} else if ok {
+		status.EndpointCountAfter = int(count)
+	}
+	if count, ok, err := countSQLiteTableRows(ctx, c.DB, "request_logs"); err != nil {
+		c.warnStatusRestore("恢复请求历史计数失败", err)
+	} else if ok {
+		status.RequestLogCount = count
+	}
+
+	backupDBPath := filepath.Join(ledger.BackupDir, "usage.db")
+	if _, err := os.Stat(backupDBPath); err == nil {
+		backupDB, openErr := sql.Open("sqlite", "file:"+backupDBPath+"?mode=ro")
+		if openErr != nil {
+			c.warnStatusRestore("打开迁移备份数据库失败", openErr)
+		} else {
+			if count, ok, countErr := countSQLiteTableRows(ctx, backupDB, "endpoints"); countErr != nil {
+				c.warnStatusRestore("恢复迁移前端点计数失败", countErr)
+			} else if ok {
+				status.EndpointCountBefore = int(count)
+			}
+			_ = backupDB.Close()
+		}
+	} else if !os.IsNotExist(err) {
+		c.warnStatusRestore("检查迁移备份数据库失败", err)
+	}
+
+	if ledger.SourceMode == SourceModeYAML {
+		legacy, loadErr := LoadLegacyConfig(filepath.Join(ledger.BackupDir, "config.yaml"))
+		if loadErr != nil {
+			c.warnStatusRestore("读取迁移前配置失败", loadErr)
+			return
+		}
+		flattened, flattenErr := FlattenLegacyEndpoints(legacy)
+		if flattenErr != nil {
+			c.warnStatusRestore("恢复端点拆分计数失败", flattenErr)
+			return
+		}
+		status.SplitEndpointCount = flattened.SplitEndpointCount
+		status.DerivedRecordCount = flattened.DerivedRecordCount
+	}
+}
+
+func readVerifiedBackupManifest(directory, expectedSHA256 string) (BackupManifest, error) {
+	var manifest BackupManifest
+	if strings.TrimSpace(directory) == "" {
+		return manifest, fmt.Errorf("backup directory is empty")
+	}
+	manifestPath := filepath.Join(directory, "manifest.json")
+	_, actualSHA256, err := fileInfoAndSHA256(manifestPath)
+	if err != nil {
+		return manifest, err
+	}
+	if expectedSHA256 != "" && !strings.EqualFold(actualSHA256, expectedSHA256) {
+		return manifest, fmt.Errorf("backup manifest hash mismatch")
+	}
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return manifest, err
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return manifest, err
+	}
+	if manifest.MigrationID != MigrationID {
+		return manifest, fmt.Errorf("unexpected backup migration id %q", manifest.MigrationID)
+	}
+	return manifest, nil
+}
+
+func countSQLiteTableRows(ctx context.Context, db *sql.DB, table string) (int64, bool, error) {
+	if db == nil {
+		return 0, false, nil
+	}
+	switch table {
+	case "endpoints", "request_logs":
+	default:
+		return 0, false, fmt.Errorf("unsupported count table %q", table)
+	}
+	exists, err := tableExists(ctx, db, table)
+	if err != nil || !exists {
+		return 0, false, err
+	}
+	var count int64
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+quoteIdentifier(table)).Scan(&count); err != nil {
+		return 0, false, err
+	}
+	return count, true, nil
+}
+
+func (c *Coordinator) warnStatusRestore(message string, err error) {
+	if c.Logger != nil && err != nil {
+		c.Logger.Warn(message, "migration_id", MigrationID, "error", err)
+	}
 }
 
 func updateLedgerPhase(ctx context.Context, db *sql.DB, phase Phase, errorMessage string) error {

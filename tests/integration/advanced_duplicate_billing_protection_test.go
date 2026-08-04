@@ -40,7 +40,7 @@ func testDatabaseConstraintProtection(t *testing.T) {
 
 		// 先创建初始记录
 		initialRLM := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
-		initialRLM.SetEndpoint("test-endpoint", "test-group", "")
+		initialRLM.SetEndpoint("test-endpoint")
 		initialRLM.SetModel("claude-3-5-haiku-20241022")
 		initialRLM.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
 
@@ -56,7 +56,7 @@ func testDatabaseConstraintProtection(t *testing.T) {
 				defer wg.Done()
 
 				rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
-				rlm.SetEndpoint(fmt.Sprintf("endpoint-%d", index), "test-group", "")
+				rlm.SetEndpoint(fmt.Sprintf("endpoint-%d", index))
 				rlm.SetModel("claude-3-5-haiku-20241022")
 
 				// 尝试记录失败Token（这应该触发数据库约束）
@@ -88,7 +88,7 @@ func testDatabaseConstraintProtection(t *testing.T) {
 
 		// 创建初始记录
 		rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
-		rlm.SetEndpoint("test-endpoint", "test-group", "")
+		rlm.SetEndpoint("test-endpoint")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 		rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
 
@@ -132,7 +132,7 @@ func testDatabaseConstraintProtection(t *testing.T) {
 
 		// 模拟事务中断情况
 		rlm := proxy.NewRequestLifecycleManager(tracker, nil, requestID, nil)
-		rlm.SetEndpoint("test-endpoint", "test-group", "")
+		rlm.SetEndpoint("test-endpoint")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 		rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
 
@@ -192,7 +192,7 @@ func testBusinessLogicProtection(t *testing.T) {
 
 		requestID := generateAdvancedTestRequestID("state-machine")
 		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
-		rlm.SetEndpoint("test-endpoint", "test-group", "")
+		rlm.SetEndpoint("test-endpoint")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
 		rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -234,7 +234,7 @@ func testBusinessLogicProtection(t *testing.T) {
 
 		requestID := generateAdvancedTestRequestID("retry-logic")
 		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
-		rlm.SetEndpoint("test-endpoint", "test-group", "")
+		rlm.SetEndpoint("test-endpoint")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
 		rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -285,7 +285,7 @@ func testBusinessLogicProtection(t *testing.T) {
 
 		requestID := generateAdvancedTestRequestID("token-validation")
 		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
-		rlm.SetEndpoint("test-endpoint", "test-group", "")
+		rlm.SetEndpoint("test-endpoint")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
 		rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -371,7 +371,7 @@ func testRaceConditionBillingConsistency(t *testing.T) {
 
 		for i := 0; i < numManagers; i++ {
 			managers[i] = proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
-			managers[i].SetEndpoint(fmt.Sprintf("endpoint-%d", i), "test-group", "")
+			managers[i].SetEndpoint(fmt.Sprintf("endpoint-%d", i))
 			managers[i].SetModel("claude-3-5-haiku-20241022")
 		}
 
@@ -424,7 +424,7 @@ func testRaceConditionBillingConsistency(t *testing.T) {
 
 		requestID := generateAdvancedTestRequestID("read-write-consistency")
 		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
-		rlm.SetEndpoint("test-endpoint", "test-group", "")
+		rlm.SetEndpoint("test-endpoint")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
 		rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -483,7 +483,7 @@ func testFailureRetryBillingAccuracy(t *testing.T) {
 
 		requestID := generateAdvancedTestRequestID("partial-stream")
 		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
-		rlm.SetEndpoint("test-endpoint", "test-group", "")
+		rlm.SetEndpoint("test-endpoint")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
 		rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", true) // 流式请求
@@ -524,7 +524,7 @@ func testFailureRetryBillingAccuracy(t *testing.T) {
 
 		requestID := generateAdvancedTestRequestID("retry-success")
 		rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
-		rlm.SetEndpoint("test-endpoint", "test-group", "")
+		rlm.SetEndpoint("test-endpoint")
 		rlm.SetModel("claude-3-5-haiku-20241022")
 
 		rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
@@ -581,7 +581,7 @@ func testCrossSessionBillingProtection(t *testing.T) {
 
 		// 第一个实例处理请求
 		rlm1 := proxy.NewRequestLifecycleManager(tracker1, nil, requestID, nil)
-		rlm1.SetEndpoint("instance-1", "test-group", "")
+		rlm1.SetEndpoint("instance-1")
 		rlm1.SetModel("claude-3-5-haiku-20241022")
 		rlm1.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
 
@@ -595,7 +595,7 @@ func testCrossSessionBillingProtection(t *testing.T) {
 
 		// 第二个实例尝试处理相同请求（异常情况）
 		rlm2 := proxy.NewRequestLifecycleManager(tracker2, nil, requestID, nil)
-		rlm2.SetEndpoint("instance-2", "test-group", "")
+		rlm2.SetEndpoint("instance-2")
 		rlm2.SetModel("claude-3-5-haiku-20241022")
 
 		// 注意：第二个实例没有调用StartRequest，因为请求ID已存在
@@ -639,7 +639,7 @@ func testExtremeConcurrencyBillingCorrectness(t *testing.T) {
 
 				requestID := generateAdvancedTestRequestID(fmt.Sprintf("extreme-concurrency-%d", requestIndex))
 				rlm := proxy.NewRequestLifecycleManager(tracker, middleware, requestID, nil)
-				rlm.SetEndpoint("test-endpoint", "test-group", "")
+				rlm.SetEndpoint("test-endpoint")
 				rlm.SetModel("claude-3-5-haiku-20241022")
 				rlm.StartRequest("192.168.1.1", "test-agent", "POST", "/v1/messages", false)
 

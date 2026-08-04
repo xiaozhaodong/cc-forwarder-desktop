@@ -98,6 +98,13 @@ func NewSQLiteEndpointStore(db *sql.DB) *SQLiteEndpointStore {
 	return &SQLiteEndpointStore{db: db}
 }
 
+func marshalEndpointHeaders(headers map[string]string) ([]byte, error) {
+	if headers == nil {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(headers)
+}
+
 // getQuerier 返回用于执行查询的对象（事务或数据库连接）
 func (s *SQLiteEndpointStore) getQuerier() interface {
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
@@ -116,7 +123,7 @@ func (s *SQLiteEndpointStore) Create(ctx context.Context, record *EndpointRecord
 	defer s.mu.Unlock()
 
 	// 序列化 headers
-	headersJSON, err := json.Marshal(record.Headers)
+	headersJSON, err := marshalEndpointHeaders(record.Headers)
 	if err != nil {
 		return nil, fmt.Errorf("序列化 headers 失败: %w", err)
 	}
@@ -240,7 +247,7 @@ func (s *SQLiteEndpointStore) Update(ctx context.Context, record *EndpointRecord
 	defer s.mu.Unlock()
 
 	// 序列化 headers
-	headersJSON, err := json.Marshal(record.Headers)
+	headersJSON, err := marshalEndpointHeaders(record.Headers)
 	if err != nil {
 		return fmt.Errorf("序列化 headers 失败: %w", err)
 	}
@@ -402,7 +409,7 @@ func (s *SQLiteEndpointStore) BatchCreate(ctx context.Context, records []*Endpoi
 			record.TimeoutSeconds = 300
 		}
 
-		headersJSON, err := json.Marshal(record.Headers)
+		headersJSON, err := marshalEndpointHeaders(record.Headers)
 		if err != nil {
 			return fmt.Errorf("序列化 headers 失败: %w", err)
 		}

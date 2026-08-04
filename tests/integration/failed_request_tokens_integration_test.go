@@ -38,7 +38,7 @@ func TestFailedRequestTokensIntegration(t *testing.T) {
 	rlm := proxy.NewRequestLifecycleManager(tracker, monitoringMiddleware, "req-integration-test", nil)
 
 	// 4. 设置请求信息
-	rlm.SetEndpoint("integration-endpoint", "integration-group", "")
+	rlm.SetEndpoint("integration-endpoint")
 	rlm.SetModel("claude-3-5-sonnet")
 
 	// 5. 模拟完整的失败请求流程
@@ -185,7 +185,7 @@ func TestFailedRequestTokensConcurrency(t *testing.T) {
 			rlm := proxy.NewRequestLifecycleManager(tracker, monitoringMiddleware,
 				"req-concurrent-"+string(rune('A'+managerID)), nil)
 
-			rlm.SetEndpoint("concurrent-endpoint-"+string(rune('0'+managerID)), "concurrent-group", "")
+			rlm.SetEndpoint("concurrent-endpoint-" + string(rune('0'+managerID)))
 
 			for j := 0; j < tokensPerManager; j++ {
 				tokens := &tracking.TokenUsage{

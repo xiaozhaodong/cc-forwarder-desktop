@@ -109,12 +109,13 @@ func (a *App) prepareCoreDatabaseAndMigration(ctx context.Context) error {
 		return err
 	}
 	a.coreDatabase = core
-	a.migrationCoordinator = &migration.Coordinator{
+	coordinator := &migration.Coordinator{
 		DB: core.DB(), DatabasePath: databasePath, ConfigPath: resolvedConfigPath,
 		DataDir: utils.GetDataDir(), DatabaseExisted: databaseExisted, Logger: tempLogger,
 	}
-	status, err := a.migrationCoordinator.Run(ctx)
-	a.migrationStatus = status
+	a.setMigrationCoordinator(coordinator)
+	status, err := coordinator.Run(ctx)
+	a.setMigrationStatus(status)
 	if err != nil {
 		return err
 	}

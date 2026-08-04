@@ -70,7 +70,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 		nil, // eventBus
 	)
 
-	lifecycleManager.SetEndpoint("test-endpoint", "test-group", "")
+	lifecycleManager.SetEndpoint("test-endpoint")
 	lifecycleManager.StartRequest("192.168.1.100", "test-client", "POST", "/v1/messages", true)
 
 	// 创建流处理器

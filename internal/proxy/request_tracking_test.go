@@ -23,7 +23,7 @@ func TestRequestIDLogging(t *testing.T) {
 	lifecycleManager.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/messages", false)
 
 	// 2. 设置端点信息
-	lifecycleManager.SetEndpoint("test-endpoint", "test-group", "")
+	lifecycleManager.SetEndpoint("test-endpoint")
 
 	// 3. 测试各种状态更新
 	t.Logf("2️⃣ 测试状态更新日志")

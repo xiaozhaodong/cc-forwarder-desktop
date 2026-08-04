@@ -70,7 +70,7 @@ func TestStreamingTokenPreservationCore(t *testing.T) {
 			nil, // eventBus
 		)
 
-		lifecycleManager.SetEndpoint("test-endpoint", "test-group", "")
+		lifecycleManager.SetEndpoint("test-endpoint")
 		lifecycleManager.StartRequest("127.0.0.1", "test-client", "POST", "/v1/messages", true)
 
 		// 模拟EOF错误的SSE数据
@@ -161,7 +161,7 @@ data: {"type":"message_delta","usage":{"input_tokens":257,"output_tokens":25}}
 			nil, // eventBus
 		)
 
-		lifecycleManager.SetEndpoint("test-endpoint", "test-group", "")
+		lifecycleManager.SetEndpoint("test-endpoint")
 		lifecycleManager.StartRequest("127.0.0.1", "test-client", "POST", "/v1/messages", true)
 
 		// 模拟网络错误的SSE数据

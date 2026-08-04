@@ -58,7 +58,7 @@ func TestRequestLifecycleManager_UpdateStatus(t *testing.T) {
 	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
 
 	// 设置端点信息
-	rlm.SetEndpoint("test-endpoint", "test-group", "")
+	rlm.SetEndpoint("test-endpoint")
 
 	// 更新状态
 	rlm.UpdateStatus("processing", 1, 200)
@@ -290,7 +290,7 @@ func TestRequestLifecycleManager_FailRequest_LogsErrorDetail(t *testing.T) {
 	defer slog.SetDefault(originalLogger)
 
 	rlm := NewRequestLifecycleManager(nil, nil, "req-fail-log", nil)
-	rlm.SetEndpoint("claude-endpoint", "claude-group", "")
+	rlm.SetEndpoint("claude-endpoint")
 
 	errorDetail := `status=429 endpoint=claude-endpoint request_id=req_upstream_123 body={"error":{"message":"quota exceeded"}}`
 	rlm.FailRequest("rate_limited", errorDetail, http.StatusTooManyRequests)
@@ -385,7 +385,7 @@ func TestRequestLifecycleManager_UpdateStatusWithAttemptCounter(t *testing.T) {
 	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
 
 	// 设置端点信息
-	rlm.SetEndpoint("test-endpoint", "test-group", "")
+	rlm.SetEndpoint("test-endpoint")
 
 	// 增加尝试计数器
 	rlm.IncrementAttempt()
@@ -446,7 +446,7 @@ func TestRequestLifecycleManager_UpdateStatusSemanticFix(t *testing.T) {
 	requestID := "test-semantic-1111"
 	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
 
-	rlm.SetEndpoint("endpoint1", "group1", "")
+	rlm.SetEndpoint("endpoint1")
 
 	// 模拟流式请求的挂起逻辑
 	rlm.IncrementAttempt() // 第一次尝试
@@ -518,7 +518,7 @@ func TestRequestLifecycleManager_CompleteRequestWithQuality_NoFailure(t *testing
 	// 测试正常完成（无质量问题）
 	requestID := "test-quality-ok-1"
 	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
-	rlm.SetEndpoint("test-endpoint", "test-group", "test-channel")
+	rlm.SetEndpoint("test-endpoint")
 	rlm.SetModel("claude-sonnet-4-20250514")
 
 	// 调用带空 failureReason 的完成方法
@@ -536,7 +536,7 @@ func TestRequestLifecycleManager_CompleteRequestWithQuality_IncompleteStream(t *
 	// 测试不完整流的标记
 	requestID := "test-quality-incomplete-2"
 	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
-	rlm.SetEndpoint("test-endpoint", "test-group", "test-channel")
+	rlm.SetEndpoint("test-endpoint")
 	rlm.SetModel("claude-sonnet-4-20250514")
 
 	// 调用带 incomplete_stream failureReason 的完成方法
@@ -554,7 +554,7 @@ func TestRequestLifecycleManager_CompleteRequestWithQuality_StreamTruncated(t *t
 	// 测试流截断的标记
 	requestID := "test-quality-truncated-3"
 	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
-	rlm.SetEndpoint("test-endpoint", "test-group", "test-channel")
+	rlm.SetEndpoint("test-endpoint")
 	rlm.SetModel("claude-sonnet-4-20250514")
 
 	// 调用带 stream_truncated failureReason 的完成方法
@@ -572,7 +572,7 @@ func TestRequestLifecycleManager_CompleteRequestWithQuality_WithTokens(t *testin
 	// 测试带 Token 信息的质量标记
 	requestID := "test-quality-tokens-4"
 	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
-	rlm.SetEndpoint("test-endpoint", "test-group", "test-channel")
+	rlm.SetEndpoint("test-endpoint")
 	rlm.SetModel("claude-sonnet-4-20250514")
 
 	tokens := &tracking.TokenUsage{

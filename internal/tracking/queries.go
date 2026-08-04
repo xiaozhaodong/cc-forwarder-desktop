@@ -18,6 +18,9 @@ const (
 	requestQuerySourceRaw      requestQuerySource = "raw"
 )
 
+// FailedRequestStatusesSQLList 是历史兼容失败状态的统一 SQL 列表，不包含独立统计的 cancelled。
+const FailedRequestStatusesSQLList = "'failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout'"
+
 const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(client_ip, '') as client_ip,
 	COALESCE(user_agent, '') as user_agent,
@@ -67,7 +70,7 @@ func appendRequestStatusFilter(query string, args []interface{}, status string) 
 		query += " AND status = ?"
 		args = append(args, "completed")
 	case "failed":
-		query += " AND status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout')"
+		query += " AND status IN (" + FailedRequestStatusesSQLList + ")"
 	case "processing":
 		query += " AND status = ?"
 		args = append(args, "processing")
@@ -384,7 +387,7 @@ type AggregatedRequestStats struct {
 const aggregatedRequestStatsSelectBase = `SELECT
 	COUNT(*) as total_requests,
 	COALESCE(SUM(CASE WHEN status IN ('completed', 'processing') THEN 1 ELSE 0 END), 0) as success_requests,
-	COALESCE(SUM(CASE WHEN status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout') THEN 1 ELSE 0 END), 0) as failed_requests,
+	COALESCE(SUM(CASE WHEN status IN (` + FailedRequestStatusesSQLList + `) THEN 1 ELSE 0 END), 0) as failed_requests,
 	COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
 	COALESCE(SUM(total_cost_usd), 0.0) as total_cost_usd,
 	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE 0 END), 0) as total_duration_ms,
