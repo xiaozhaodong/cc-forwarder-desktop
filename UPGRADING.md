@@ -48,6 +48,7 @@ migration-backups/20260804-timezone-utc-<timestamp>/
 ### 升级后检查
 
 - 「Claude 端点」页能看到扁平端点表，并能执行单点/批量健康检查。
+- 端点 priority 按旧版运行时口径原样保留，仅在端点未设置 priority 时用 v3.x `group-priority` 补位。若旧配置各组内 priority 曾从 1 重新编号，请核对全局优先级：相同数字会并列为同一调度层，层内按名称序尝试并带成功粘性。
 - 请求页使用「类型」和「上游」筛选，不再显示 channel/group。
 - 旧多凭据拆分生成的派生端点默认处于硬关闭状态；核对后再手动启用。
 - 活动配置中只保留 `endpoints_storage.type: sqlite`，不再存在 YAML `endpoints` 或 `group`。
