@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	timezonepolicy "cc-forwarder/internal/timezone"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -125,19 +127,46 @@ func LoadLegacyConfig(path string) (*LegacyConfig, error) {
 	}, nil
 }
 
+// EffectiveGlobalTimezone 返回运行时展示时区：留空或 "local" 时跟随系统时区。
 func (c *LegacyConfig) EffectiveGlobalTimezone() string {
-	if c != nil && strings.TrimSpace(c.GlobalTimezone) != "" {
-		return strings.TrimSpace(c.GlobalTimezone)
+	if c != nil {
+		return timezonepolicy.ResolveConfigured(c.GlobalTimezone)
 	}
-	return "Asia/Shanghai"
+	return timezonepolicy.SystemDefault()
 }
 
 // LegacyTrackingTimezone 仅用于解释迁移前无 offset 的历史数据库时间。
-func (c *LegacyConfig) LegacyTrackingTimezone() string {
-	if c != nil && strings.TrimSpace(c.DatabaseTimezone) != "" {
-		return strings.TrimSpace(c.DatabaseTimezone)
+// 口径必须与旧版本 Tracker 的实际写入行为一致：
+//   - 显式 IANA 名称：原样使用；
+//   - 精确的 "Local"（Go time.LoadLocation 的特殊值，旧版合法）：旧版会使用系统
+//     时区，这里探测出具体 IANA 名称固定使用；探测失败时报错，要求用户在配置中
+//     显式指定，绝不静默按 Asia/Shanghai 解释；
+//   - "local" / "LOCAL" 等非精确形式：旧版 time.LoadLocation 无法加载，Tracker
+//     实际回退 Asia/Shanghai 写入，因此解释口径同样固定 Asia/Shanghai；
+//   - 留空：旧版默认 Asia/Shanghai，保持钉死，不跟随当前系统时区。
+func (c *LegacyConfig) LegacyTrackingTimezone() (string, error) {
+	candidate := ""
+	if c != nil {
+		candidate = strings.TrimSpace(c.DatabaseTimezone)
+		if candidate == "" {
+			candidate = strings.TrimSpace(c.GlobalTimezone)
+		}
 	}
-	return c.EffectiveGlobalTimezone()
+	if candidate == "" {
+		return timezonepolicy.FallbackName, nil
+	}
+	if candidate == "Local" {
+		name, err := timezonepolicy.DetectSystem()
+		if err != nil {
+			return "", fmt.Errorf(
+				"legacy timezone %q relies on the system timezone but detection failed (%v); set an explicit IANA timezone in the config before migrating", candidate, err)
+		}
+		return name, nil
+	}
+	if strings.EqualFold(candidate, "local") {
+		return timezonepolicy.FallbackName, nil
+	}
+	return candidate, nil
 }
 
 func (c *LegacyConfig) ResolveDatabasePath(defaultPath string) string {

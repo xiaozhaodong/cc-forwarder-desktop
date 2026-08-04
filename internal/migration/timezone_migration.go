@@ -123,8 +123,9 @@ func (c *Coordinator) runTimezoneUTCMigration(ctx context.Context, legacy *Legac
 		return status, nil
 	}
 
-	legacyTimezone := legacy.LegacyTrackingTimezone()
+	// 失败重试时优先使用 manifest 已固定的时区口径，避免依赖当前系统探测。
 	var backup *BackupResult
+	var legacyTimezone string
 	if ledger != nil && strings.TrimSpace(ledger.BackupDir) != "" {
 		manifest, err := readVerifiedBackupManifest(ledger.BackupDir, ledger.ManifestSHA256, TimezoneUTCMigrationID)
 		if err != nil {
@@ -136,6 +137,10 @@ func (c *Coordinator) runTimezoneUTCMigration(ctx context.Context, legacy *Legac
 		legacyTimezone = manifest.LegacyTimezone
 		backup = &BackupResult{Directory: ledger.BackupDir, ManifestSHA256: ledger.ManifestSHA256, IntegrityCheck: manifest.IntegrityCheck}
 	} else {
+		legacyTimezone, err = legacy.LegacyTrackingTimezone()
+		if err != nil {
+			return c.failForMigration(status, TimezoneUTCMigrationID, fmt.Errorf("resolve legacy tracking timezone: %w", err))
+		}
 		preflight, err := inspectTimezoneData(ctx, c.DB, legacyTimezone)
 		if err != nil {
 			return c.failForMigration(status, TimezoneUTCMigrationID, err)

@@ -451,10 +451,8 @@ func (c *Config) setDefaults() {
 		c.GlobalTimeout = 300 * time.Second // Default 5 minutes for non-streaming requests
 	}
 
-	// Set global timezone default
-	if c.Timezone == "" {
-		c.Timezone = "Asia/Shanghai" // Default timezone for all components
-	}
+	// 时区留空或 "local" 时跟随系统时区
+	c.Timezone = timezonepolicy.ResolveConfigured(c.Timezone)
 
 	// Set failover defaults (v4.0+)
 	// Failover.Enabled defaults to true if not explicitly set
@@ -579,18 +577,20 @@ func (c *Config) setDefaults() {
 
 // validate validates the configuration
 func (c *Config) validate() error {
-	if strings.TrimSpace(c.Timezone) == "" {
-		c.Timezone = "Asia/Shanghai"
-	}
+	c.Timezone = timezonepolicy.ResolveConfigured(c.Timezone)
 	if _, err := timezonepolicy.Load(c.Timezone); err != nil {
 		return err
 	}
 	if c.UsageTracking.Database != nil {
 		legacyTimezone := strings.TrimSpace(c.UsageTracking.Database.Timezone)
-		if legacyTimezone != "" && legacyTimezone != c.Timezone {
+		normalizedLegacy := legacyTimezone
+		if legacyTimezone != "" {
+			normalizedLegacy = timezonepolicy.ResolveConfigured(legacyTimezone)
+		}
+		if legacyTimezone != "" && normalizedLegacy != c.Timezone {
 			return fmt.Errorf("usage_tracking.database.timezone %q conflicts with top-level timezone %q; remove it and use the top-level timezone", legacyTimezone, c.Timezone)
 		}
-		if legacyTimezone == c.Timezone {
+		if legacyTimezone != "" && normalizedLegacy == c.Timezone {
 			slog.Warn("usage_tracking.database.timezone 已弃用，请删除并仅使用顶层 timezone", "timezone", c.Timezone)
 		}
 	}

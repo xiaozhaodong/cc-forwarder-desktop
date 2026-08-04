@@ -148,6 +148,7 @@ func (a *App) startOperationalComponentsLocked(ctx context.Context) {
 
 	// 5.5 初始化设置服务 (v5.1+ SQLite)
 	a.setupSettingsStore()
+	a.noteTimezoneChange(ctx)
 
 	// 6. 创建端点管理器（但不启动健康检查）
 	a.endpointManager = endpoint.NewManager(a.config)

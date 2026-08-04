@@ -16,7 +16,7 @@
 6. 请求历史保留记录数、Token 与成本，来源维度改为 `request_family` 和 `upstream_*`。
 7. 成功后活动配置固定为 `endpoints_storage.type: sqlite`，并删除 YAML `endpoints` 和 legacy `group`。
 8. UTC 迁移按字段历史语义解析已有时间并重建相关表；`usage_summary` 作为缓存会清空，由 Tracker 启动后按活动时区重建最近 7 个业务日。查询超出缓存窗口时会整段从请求明细实时聚合。
-9. 顶层 `timezone` 成为唯一展示和业务日期时区；旧 `usage_tracking.database.timezone` 仅在与顶层相同的情况下兼容接受。
+9. 顶层 `timezone` 成为唯一展示和业务日期时区；留空或写 `local` 时自动跟随系统时区（探测失败回退 `Asia/Shanghai`）。旧 `usage_tracking.database.timezone` 仅在与顶层语义相同的情况下兼容接受。迁移解释无 offset 历史时间时：留空或旧版无法加载的写法（如小写 `local`）按旧版实际回退口径 `Asia/Shanghai` 钉死解释；精确的旧值 `Local` 按探测出的系统时区解释，探测失败会中止迁移并要求显式配置。
 10. UTC 迁移完成后的日常启动只执行 schema 快检，不再每次扫描全部请求历史；若需要核查历史值，应在离线副本上运行完整迁移测试或专项诊断。
 
 备份默认位于应用数据目录的：

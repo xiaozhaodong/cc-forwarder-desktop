@@ -4,6 +4,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
 func TestConfigValidateEndpointModelRewriteRules(t *testing.T) {
@@ -101,10 +103,13 @@ func TestLoadConfigTimezoneAuthority(t *testing.T) {
 		wantTimezone string
 		wantErr      bool
 	}{
-		{name: "missing uses default", yaml: "endpoints_storage:\n  type: sqlite\n", wantTimezone: "Asia/Shanghai"},
+		{name: "missing follows system", yaml: "endpoints_storage:\n  type: sqlite\n", wantTimezone: timezonepolicy.SystemDefault()},
+		{name: "local follows system", yaml: "timezone: local\nendpoints_storage:\n  type: sqlite\n", wantTimezone: timezonepolicy.SystemDefault()},
 		{name: "valid IANA timezone", yaml: "timezone: America/New_York\nendpoints_storage:\n  type: sqlite\n", wantTimezone: "America/New_York"},
 		{name: "invalid timezone", yaml: "timezone: Mars/Olympus_Mons\nendpoints_storage:\n  type: sqlite\n", wantErr: true},
 		{name: "matching deprecated database timezone", yaml: "timezone: UTC\nendpoints_storage:\n  type: sqlite\nusage_tracking:\n  database:\n    type: sqlite\n    timezone: UTC\n", wantTimezone: "UTC"},
+		{name: "both local not conflicting", yaml: "timezone: local\nendpoints_storage:\n  type: sqlite\nusage_tracking:\n  database:\n    type: sqlite\n    timezone: local\n", wantTimezone: timezonepolicy.SystemDefault()},
+		{name: "local and Local not conflicting", yaml: "timezone: local\nendpoints_storage:\n  type: sqlite\nusage_tracking:\n  database:\n    type: sqlite\n    timezone: Local\n", wantTimezone: timezonepolicy.SystemDefault()},
 		{name: "conflicting database timezone", yaml: "timezone: UTC\nendpoints_storage:\n  type: sqlite\nusage_tracking:\n  database:\n    type: sqlite\n    timezone: Asia/Shanghai\n", wantErr: true},
 	}
 	for _, tc := range tests {

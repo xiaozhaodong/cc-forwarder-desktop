@@ -95,7 +95,7 @@ func (a *App) prepareCoreDatabaseAndMigration(ctx context.Context) error {
 		return err
 	}
 	globalTimezone := legacy.EffectiveGlobalTimezone()
-	if legacy.DatabaseTimezone != "" && legacy.DatabaseTimezone != globalTimezone {
+	if legacy.DatabaseTimezone != "" && timezonepolicy.ResolveConfigured(legacy.DatabaseTimezone) != globalTimezone {
 		return fmt.Errorf("usage_tracking.database.timezone %q conflicts with top-level timezone %q; remove it and use the top-level timezone", legacy.DatabaseTimezone, globalTimezone)
 	}
 	policy, err := timezonepolicy.New(globalTimezone)
@@ -157,4 +157,33 @@ func (a *App) loadRuntimeConfig(databasePath string) error {
 		return fmt.Errorf("runtime timezone %q differs from validated startup timezone %q", cfg.Timezone, a.timezonePolicy.Name())
 	}
 	return nil
+}
+
+const (
+	timezoneSettingCategory = "system"
+	timezoneSettingKey      = "last_seen_timezone"
+)
+
+// noteTimezoneChange 对比上次运行使用的时区并记录当前值。
+// 时区变化只影响展示与业务日期分组口径，这里仅提示，不做任何数据处理。
+func (a *App) noteTimezoneChange(ctx context.Context) {
+	if a.settingsStore == nil || a.timezonePolicy == nil {
+		return
+	}
+	current := a.timezonePolicy.Name()
+	record, err := a.settingsStore.Get(ctx, timezoneSettingCategory, timezoneSettingKey)
+	if err != nil {
+		a.logger.Warn("读取上次运行时区失败", "error", err)
+		return
+	}
+	if record != nil && record.Value != "" && record.Value != current {
+		a.logger.Warn("⏰ 检测到时区变化，历史日统计将按新时区展示",
+			"previous_timezone", record.Value,
+			"current_timezone", current)
+	}
+	if record == nil || record.Value != current {
+		if err := a.settingsStore.Set(ctx, timezoneSettingCategory, timezoneSettingKey, current); err != nil {
+			a.logger.Warn("记录当前时区失败", "error", err)
+		}
+	}
 }

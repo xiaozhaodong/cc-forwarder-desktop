@@ -2,8 +2,8 @@
 # 完整配置示例，展示所有可用的配置选项
 
 # 全局时区配置 - 影响所有时间相关功能
-timezone: "Asia/Shanghai"      # 全局时区设置，默认: Asia/Shanghai
-                               # 其他有效值: "UTC", "America/New_York", "Europe/London" 等
+# 留空或不配置时自动跟随系统时区（也可显式写 "local"）
+# timezone: "Asia/Shanghai"    # 显式指定示例，其他有效值: "UTC", "America/New_York", "Europe/London" 等
 
 # 服务器配置
 server:

@@ -140,7 +140,7 @@ claude config set --global apiBaseUrl http://127.0.0.1:8080
 编辑 `config/config.yaml` 配置全局选项：
 
 ```yaml
-# 时区设置
+# 时区设置（留空或写 "local" 时自动跟随系统时区）
 timezone: "Asia/Shanghai"
 
 # 日志配置
@@ -173,7 +173,7 @@ endpoints_storage:
   type: "sqlite"
 ```
 
-`timezone` 是唯一活动时区：数据库时间点固定保存为 UTC，Wails API 返回 UTC，桌面前端按该 IANA 时区显示并计算“今天”等业务日期。旧的 `usage_tracking.database.timezone` 已弃用；若仍保留，必须与顶层值相同，否则应用会拒绝启动或热重载。
+`timezone` 是唯一活动时区：数据库时间点固定保存为 UTC，Wails API 返回 UTC，桌面前端按该 IANA 时区显示并计算“今天”等业务日期。留空或写 `local` 时自动跟随系统时区（探测失败回退 `Asia/Shanghai`）；切换系统时区后重启应用生效，历史日统计将按新时区重新分组展示。旧的 `usage_tracking.database.timezone` 已弃用；若仍保留，必须与顶层值语义相同，否则应用会拒绝启动或热重载。
 
 ## 技术架构
 

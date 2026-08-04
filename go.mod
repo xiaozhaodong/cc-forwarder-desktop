@@ -11,6 +11,7 @@ require (
 	github.com/klauspost/compress v1.18.4
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/stretchr/testify v1.10.0
+	github.com/thlib/go-timezone-local v0.0.8
 	github.com/wailsapp/wails/v2 v2.11.0
 	golang.org/x/net v0.43.0
 	golang.org/x/sys v0.35.0
