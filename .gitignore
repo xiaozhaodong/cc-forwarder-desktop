@@ -79,3 +79,6 @@ build.log
 # 废弃代码
 internal/tracking/deprecated/
 tests/mock_claude_api/mock_server
+
+# 本地保留、不入库的方案文档
+docs/plans/2026-06-02-claude-endpoint-routing-strategy-plan.md
