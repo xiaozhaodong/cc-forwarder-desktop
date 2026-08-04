@@ -19,8 +19,9 @@ type EndpointAttemptPlan struct {
 	SupportsCountTokens bool          `json:"supports_count_tokens"`
 	ConfigRevision      int64         `json:"config_revision"`
 	SelectionSource     string        `json:"selection_source"` // auto_priority / auto_retained / manual_preferred / manual_fixed / fallback
-	resolvedToken       string
-	resolvedAPIKey      string
+	// 仅供进程内 admission 使用；私有字段不会进入 JSON 或 Wails 模型。
+	resolvedToken  string
+	resolvedAPIKey string
 }
 
 // EndpointAttemptTarget 是 admission 时生成的不可变出站快照。

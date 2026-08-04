@@ -116,6 +116,27 @@ func TestUpdateAutoRetentionIgnoresManualTargetButKeepsPreferredFallback(t *test
 	}
 }
 
+func TestUpdateAutoRetentionDoesNotRestoreEndpointAfterConcurrentCooldown(t *testing.T) {
+	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "cooling"))
+
+	if !manager.UpdateAutoRetention("cooling", 1, "auto_priority", 0) {
+		t.Fatal("expected initial retained update")
+	}
+	manager.SetEndpointCooldown("cooling", time.Minute, "soft_failure_rate_limit")
+	if got := manager.RetainedInTier(1); got != "" {
+		t.Fatalf("cooldown must clear retained state, got %q", got)
+	}
+
+	// 模拟同一端点较早发起的慢请求随后成功：更新路径必须观察当前 cooldown，
+	// 不能把并发失败刚清除的 retained 状态重新写回。
+	if manager.UpdateAutoRetention("cooling", 1, "auto_priority", 0) {
+		t.Fatal("slow success must not restore retained state after a newer cooldown")
+	}
+	if got := manager.RetainedInTier(1); got != "" {
+		t.Fatalf("retained state was restored during cooldown: %q", got)
+	}
+}
+
 func TestPrepareRouteCandidates_FiltersWithAvailableAtSources(t *testing.T) {
 	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "active-ep", "cooling", "tripped", "negcached", "ok"))
 

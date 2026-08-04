@@ -74,7 +74,6 @@ const RequestsPage = () => {
     filters,
     updateFilter,
     updateFilters,
-    resetFilters,
     buildQueryParams
   } = useFilters();
   const [appliedQueryParams, setAppliedQueryParams] = useState(() => buildQueryParams());

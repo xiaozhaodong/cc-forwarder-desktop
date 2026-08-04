@@ -521,7 +521,9 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 		if retainedName != "" {
 			for i, candidate := range bestTier {
 				if candidate.config.Name == retainedName && i > 0 {
-					bestTier = append([]endpointScheduleCandidateSnapshot{candidate}, append(bestTier[:i:i], bestTier[i+1:]...)...)
+					// retained 只调整同层顺序：保存目标后将前缀整体右移，避免隐晦的嵌套 append。
+					copy(bestTier[1:i+1], bestTier[:i])
+					bestTier[0] = candidate
 					break
 				}
 			}

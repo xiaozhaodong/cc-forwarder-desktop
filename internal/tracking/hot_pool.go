@@ -91,8 +91,9 @@ type HotPool struct {
 	// 归档回调（当请求需要归档时调用）
 	archiveCallback func(*ActiveRequest)
 
-	// 统计信息
-	stats HotPoolStats
+	// 统计信息；锁由 HotPool 持有，HotPoolStats 保持为可安全复制的纯数据快照。
+	statsMu sync.RWMutex
+	stats   HotPoolStats
 
 	// 生命周期控制
 	ctx    chan struct{}
@@ -101,7 +102,6 @@ type HotPool struct {
 
 // HotPoolStats 热池统计信息
 type HotPoolStats struct {
-	mu            sync.RWMutex
 	TotalAdded    int64 `json:"total_added"`    // 累计添加次数
 	TotalRemoved  int64 `json:"total_removed"`  // 累计移除次数
 	TotalArchived int64 `json:"total_archived"` // 累计归档次数
@@ -164,9 +164,9 @@ func (hp *HotPool) Add(req *ActiveRequest) error {
 
 	// 检查容量
 	if len(hp.requests) >= hp.config.MaxSize {
-		hp.stats.mu.Lock()
+		hp.statsMu.Lock()
 		hp.stats.TotalOverflow++
-		hp.stats.mu.Unlock()
+		hp.statsMu.Unlock()
 		slog.Warn("🔥 HotPool 容量已满，拒绝新请求",
 			"request_id", req.RequestID,
 			"current_size", len(hp.requests),
@@ -177,13 +177,13 @@ func (hp *HotPool) Add(req *ActiveRequest) error {
 	hp.requests[req.RequestID] = req
 
 	// 更新统计
-	hp.stats.mu.Lock()
+	hp.statsMu.Lock()
 	hp.stats.TotalAdded++
 	hp.stats.CurrentSize = len(hp.requests)
 	if hp.stats.CurrentSize > hp.stats.PeakSize {
 		hp.stats.PeakSize = hp.stats.CurrentSize
 	}
-	hp.stats.mu.Unlock()
+	hp.statsMu.Unlock()
 
 	return nil
 }
@@ -228,10 +228,10 @@ func (hp *HotPool) Remove(requestID string) *ActiveRequest {
 	delete(hp.requests, requestID)
 
 	// 更新统计
-	hp.stats.mu.Lock()
+	hp.statsMu.Lock()
 	hp.stats.TotalRemoved++
 	hp.stats.CurrentSize = len(hp.requests)
-	hp.stats.mu.Unlock()
+	hp.statsMu.Unlock()
 
 	return req
 }
@@ -244,9 +244,9 @@ func (hp *HotPool) Archive(requestID string) error {
 	}
 
 	// 更新统计
-	hp.stats.mu.Lock()
+	hp.statsMu.Lock()
 	hp.stats.TotalArchived++
-	hp.stats.mu.Unlock()
+	hp.statsMu.Unlock()
 
 	// 调用归档回调
 	hp.mu.RLock()
@@ -290,11 +290,11 @@ func (hp *HotPool) CompleteAndArchive(requestID string, finalizer func(*ActiveRe
 	req.mu.Unlock()
 
 	// 更新统计
-	hp.stats.mu.Lock()
+	hp.statsMu.Lock()
 	hp.stats.TotalRemoved++
 	hp.stats.TotalArchived++
 	hp.stats.CurrentSize = currentSize
-	hp.stats.mu.Unlock()
+	hp.statsMu.Unlock()
 
 	// 调用归档回调
 	if callback != nil {
@@ -353,8 +353,8 @@ func (hp *HotPool) GetArchivingCount() int {
 
 // GetStats 获取统计信息
 func (hp *HotPool) GetStats() HotPoolStats {
-	hp.stats.mu.RLock()
-	defer hp.stats.mu.RUnlock()
+	hp.statsMu.RLock()
+	defer hp.statsMu.RUnlock()
 
 	return HotPoolStats{
 		TotalAdded:    hp.stats.TotalAdded,
@@ -414,11 +414,11 @@ func (hp *HotPool) cleanup() {
 
 	if len(expiredRequests) > 0 {
 		// 更新统计
-		hp.stats.mu.Lock()
+		hp.statsMu.Lock()
 		hp.stats.TotalExpired += int64(len(expiredRequests))
 		hp.stats.TotalRemoved += int64(len(expiredRequests))
 		hp.stats.CurrentSize = len(hp.requests)
-		hp.stats.mu.Unlock()
+		hp.statsMu.Unlock()
 
 		slog.Warn("🔥 HotPool 清理过期请求",
 			"expired_count", len(expiredRequests),
@@ -433,9 +433,9 @@ func (hp *HotPool) cleanup() {
 	if archiveOnCleanup && callback != nil {
 		for _, req := range expiredRequests {
 			callback(req)
-			hp.stats.mu.Lock()
+			hp.statsMu.Lock()
 			hp.stats.TotalArchived++
-			hp.stats.mu.Unlock()
+			hp.statsMu.Unlock()
 		}
 	}
 }

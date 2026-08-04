@@ -137,7 +137,7 @@ export const subscribeToEvent = (eventName, callback) => {
 export const unsubscribeAll = () => {
   if (!WailsRuntime) return;
 
-  eventListeners.forEach((listeners, eventName) => {
+  eventListeners.forEach((listeners) => {
     listeners.forEach(({ unsubscribe }) => {
       if (typeof unsubscribe === 'function') {
         unsubscribe();
