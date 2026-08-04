@@ -1528,6 +1528,39 @@ func TestAccountPipeline_ConnectionFailureBeforeWroteHeaders_PinnedAccountDoesNo
 	}
 }
 
+func TestAccountPipeline_ExhaustedPreservesLastAttemptedUpstream(t *testing.T) {
+	noFailover := false
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 55, ProviderType: "api_key", AccountName: "fastaitoken", CredentialRaw: "sk-fast", BaseURL: newRefusedConnectionURL(t), Enabled: true, State: "active"},
+		},
+		pinned:                    true,
+		softFailureShouldFailover: &noFailover,
+	}
+	handler := newAccountPipelineTestHandler(t, "https://example.com", service)
+	body := []byte(`{"model":"gpt-5.6-sol","input":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	lifecycleManager := NewRequestLifecycleManager(nil, nil, "req-upstream-attribution", nil)
+
+	handler.handleAccountPipeline(context.Background(), rec, req, body, lifecycleManager)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected exhausted account pool status 503, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	state := lifecycleManager.snapshotState()
+	if state.upstreamType != "account" || state.upstreamSourceName != "account-pool" {
+		t.Fatalf("unexpected upstream classification: type=%q source=%q", state.upstreamType, state.upstreamSourceName)
+	}
+	if state.upstreamName != "fastaitoken" || state.upstreamID != 55 {
+		t.Fatalf("expected real attempted upstream to be preserved, got name=%q id=%d", state.upstreamName, state.upstreamID)
+	}
+	if state.endpointName != "fastaitoken" {
+		t.Fatalf("expected endpoint compatibility field to preserve account name, got %q", state.endpointName)
+	}
+}
+
 func TestAccountPipeline_FailureAfterWroteHeaders_KeepsThresholdSemantics(t *testing.T) {
 	var firstHits int32
 	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

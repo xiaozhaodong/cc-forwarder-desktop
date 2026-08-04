@@ -136,14 +136,16 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 
 	isSSE := h.detectSSERequest(r, bodyBytes)
 	var lastErr error
+	attemptedAccount := false
 
 	for idx, acc := range accounts {
 		if acc == nil {
 			continue
 		}
+		attemptedAccount = true
 		accountName := accountFailoverDisplayName(acc)
 
-		lifecycleManager.SetUpstream("account", "", accountName, acc.ID)
+		lifecycleManager.SetUpstream("account", "account-pool", accountName, acc.ID)
 		lifecycleManager.SetEndpoint(accountName, "", "account-pool")
 		lifecycleManager.UpdateStatus("forwarding", idx, 0)
 		attemptStartedAt := time.Now()
@@ -351,7 +353,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		reason = lastErr.Error()
 	}
 	_ = h.completeAccountScheduleSnapshot(ctx, requestID, 0, "", svc.AccountScheduleOutcomeTransientFailure, reason)
-	lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
+	if !attemptedAccount {
+		lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
+	}
 	lifecycleManager.FailRequest("account_pool_exhausted", reason, http.StatusServiceUnavailable)
 	writeAccountPipelineError(w, http.StatusServiceUnavailable, "account_pool_unavailable", reason)
 }
