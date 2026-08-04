@@ -1,3 +1,14 @@
+// Package timezone 定义数据库时间的存储与读取契约。
+//
+// 存储：所有真实时间点统一为固定微秒精度 UTC 文本（StorageLayout），
+// 由 DBTime / NullDBTime 在写入时完成格式化。
+//
+// 读取：SQL 必须以 CAST(col AS TEXT) 选取时间列。schema 中时间列声明为
+// DATETIME，SQLite 驱动会对该声明类型的裸查询自动把文本解析成 time.Time：
+// 解析规则不受本包控制（会剥离 Z、逐个猜格式），且 mattn 驱动在解析失败时
+// 会静默返回零值时间。因此 DBTime.Scan 拒收 time.Time，强制读取路径经过
+// ParseStorage 显式校验——违反约定的查询会在第一行立刻报错，
+// 而不是随数据静默出错。
 package timezone
 
 import (

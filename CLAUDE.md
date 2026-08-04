@@ -15,6 +15,8 @@
 - 多端点智能路由、健康检查、故障转移与自愈
 - 桌面端启动完成后异步执行端点与账号池批量连通性检查
 - 请求生命周期追踪、Token/成本统计、SQLite 持久化
+- 数据库时间统一 UTC：真实时间点以固定微秒精度 UTC 文本存储，前端按顶层 IANA `timezone` 显示并生成业务日期范围（DST 日按真实 23/25 小时计算）
+  - SQL 读取时间列必须 `CAST(col AS TEXT)`；`internal/timezone.DBTime` 拒收驱动解析出的 `time.Time`，违规查询首行即报错
 - 独立图像 API 代理：设置页维护单一 OpenAI 兼容生图 URL / API Key / 每次固定价格，`POST /v1/images/generations` 与 `POST /v1/images/edits` 不进入端点或账号池调度，但保留请求追踪、成本与 prompt 隐私扫描
 - Codex `/v1/responses/compact` 已接入账号池路由、请求追踪与 OAuth compact 上游透传
 - Claude `/v1/messages` 与 Codex `/v1/responses` 流式尾部断连保护：

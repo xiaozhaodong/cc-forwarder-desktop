@@ -2,6 +2,11 @@
 -- 使用跟踪系统数据库结构
 -- 创建时间: 2025-09-04
 
+-- 时间列约定：所有 DATETIME 列实际存储固定微秒精度 UTC 文本
+-- （strftime('%Y-%m-%dT%H:%M:%f000Z')，对应 Go 侧 timezone.StorageLayout）。
+-- 读取必须写 CAST(col AS TEXT)：SQLite 驱动会把 DATETIME 声明列的裸查询
+-- 自动解析成 time.Time，internal/timezone.DBTime 拒收该类型并直接报错。
+
 -- 请求记录主表：统一使用 request_family + upstream 维度。
 CREATE TABLE IF NOT EXISTS request_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
