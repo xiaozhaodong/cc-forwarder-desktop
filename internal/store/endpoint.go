@@ -197,7 +197,7 @@ func (s *SQLiteEndpointStore) Get(ctx context.Context, name string) (*EndpointRe
 			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			availability_enabled, created_at, updated_at
+			availability_enabled, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM endpoints WHERE name = ?
 	`
 
@@ -215,7 +215,7 @@ func (s *SQLiteEndpointStore) GetByID(ctx context.Context, id int64) (*EndpointR
 			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			availability_enabled, created_at, updated_at
+			availability_enabled, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM endpoints WHERE id = ?
 	`
 
@@ -233,7 +233,7 @@ func (s *SQLiteEndpointStore) List(ctx context.Context) ([]*EndpointRecord, erro
 			supports_count_tokens, model_rewrite_rules,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			availability_enabled, created_at, updated_at
+			availability_enabled, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM endpoints
 		ORDER BY priority ASC, name ASC
 	`
@@ -525,9 +525,12 @@ func (s *SQLiteEndpointStore) scanEndpoint(row *sql.Row) (*EndpointRecord, error
 	availValue := availabilityEnabled == 1
 	record.AvailabilityEnabled = &availValue
 
-	// 解析时间
-	record.CreatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", createdAt)
-	record.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", updatedAt)
+	if record.CreatedAt, err = parseDBTime(createdAt); err != nil {
+		return nil, fmt.Errorf("解析端点 created_at 失败: %w", err)
+	}
+	if record.UpdatedAt, err = parseDBTime(updatedAt); err != nil {
+		return nil, fmt.Errorf("解析端点 updated_at 失败: %w", err)
+	}
 
 	return &record, nil
 }
@@ -585,9 +588,12 @@ func (s *SQLiteEndpointStore) scanEndpointsWithArgs(ctx context.Context, query s
 		availValue := availabilityEnabled == 1
 		record.AvailabilityEnabled = &availValue
 
-		// 解析时间
-		record.CreatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", createdAt)
-		record.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", updatedAt)
+		if record.CreatedAt, err = parseDBTime(createdAt); err != nil {
+			return nil, fmt.Errorf("解析端点 created_at 失败: %w", err)
+		}
+		if record.UpdatedAt, err = parseDBTime(updatedAt); err != nil {
+			return nil, fmt.Errorf("解析端点 updated_at 失败: %w", err)
+		}
 
 		records = append(records, &record)
 	}

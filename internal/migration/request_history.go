@@ -120,7 +120,7 @@ func requestHistoryExpression(column string, columns map[string]bool) string {
 	case "request_id":
 		return value(column, "''")
 	case "start_time":
-		return value(column, "CURRENT_TIMESTAMP")
+		return value(column, "strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')")
 	case "status":
 		return `COALESCE(NULLIF(` + value(column, "'pending'") + `, ''), 'pending')`
 	case "method":
@@ -136,7 +136,7 @@ func requestHistoryExpression(column string, columns map[string]bool) string {
 		"cache_creation_5m_cost_usd", "cache_creation_1h_cost_usd", "cache_read_cost_usd", "total_cost_usd":
 		return `COALESCE(` + value(column, "0") + `, 0)`
 	case "created_at", "updated_at":
-		return `COALESCE(` + value(column, "CURRENT_TIMESTAMP") + `, CURRENT_TIMESTAMP)`
+		return `COALESCE(` + value(column, "strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')") + `, strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))`
 	default:
 		return value(column, "NULL")
 	}
@@ -187,8 +187,8 @@ func requestLogsTargetSchema(table string) string {
 		cache_creation_1h_cost_usd REAL DEFAULT 0,
 		cache_read_cost_usd REAL DEFAULT 0,
 		total_cost_usd REAL DEFAULT 0,
-		created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-		updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+		created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+		updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 	)`
 }
 
@@ -206,7 +206,7 @@ func createRequestLogAuxiliarySchema(ctx context.Context, tx *sql.Tx) error {
 		`CREATE TRIGGER IF NOT EXISTS update_request_logs_timestamp
 			AFTER UPDATE ON request_logs FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at
 		BEGIN
-			UPDATE request_logs SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+			UPDATE request_logs SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 		END`,
 	}
 	for _, statement := range statements {
@@ -241,8 +241,8 @@ func rebuildUsageSummary(ctx context.Context, tx *sql.Tx) error {
 		total_cache_read_tokens INTEGER DEFAULT 0,
 		total_cost_usd REAL DEFAULT 0,
 		avg_duration_ms REAL DEFAULT 0,
-		created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-		updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+		created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+		updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
 		UNIQUE(date, model_name, request_family, upstream_type, upstream_name, upstream_id)
 	)`); err != nil {
 		return fmt.Errorf("create usage_summary target table: %w", err)
@@ -273,7 +273,7 @@ func rebuildUsageSummary(ctx context.Context, tx *sql.Tx) error {
 		`CREATE TRIGGER update_usage_summary_timestamp
 			AFTER UPDATE ON usage_summary FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at
 		BEGIN
-			UPDATE usage_summary SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+			UPDATE usage_summary SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 		END`,
 	}
 	for _, statement := range statements {

@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
 type requestQuerySource string
@@ -24,7 +26,7 @@ const FailedRequestStatusesSQLList = "'failed', 'error', 'auth_error', 'rate_lim
 const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(client_ip, '') as client_ip,
 	COALESCE(user_agent, '') as user_agent,
-	method, path, start_time, end_time, duration_ms, first_token_ms, completion_ms,
+	method, path, CAST(start_time AS TEXT), CAST(end_time AS TEXT), duration_ms, first_token_ms, completion_ms,
 	COALESCE(request_family, 'other') as request_family,
 	COALESCE(endpoint_name, '') as endpoint_name,
 	COALESCE(upstream_type, 'endpoint') as upstream_type,
@@ -35,7 +37,7 @@ const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(requested_endpoint, '') as requested_endpoint,
 	COALESCE(effective_endpoint, '') as effective_endpoint,
 	COALESCE(fallback_reason, '') as fallback_reason,
-	route_decision_at,
+	CAST(route_decision_at AS TEXT),
 	COALESCE(model_name, '') as model_name,
 	COALESCE(is_streaming, false) as is_streaming,
 	status, http_status_code, retry_count,
@@ -47,7 +49,7 @@ const requestDetailsSelectBase = `SELECT id, request_id,
 	cache_read_tokens,
 	input_cost_usd, output_cost_usd, cache_creation_cost_usd,
 	cache_read_cost_usd, total_cost_usd,
-	created_at, updated_at
+	CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 	FROM request_logs WHERE 1=1`
 
 func resolveRequestQuerySource(upstreamType string) requestQuerySource {
@@ -103,11 +105,11 @@ func appendRequestQueryFilters(query string, args []interface{}, opts *QueryOpti
 
 	if opts.StartDate != nil {
 		query += " AND start_time >= ?"
-		args = append(args, opts.StartDate.Format("2006-01-02 15:04:05-07:00"))
+		args = append(args, timezonepolicy.FormatStorage(*opts.StartDate))
 	}
 	if opts.EndDate != nil {
-		query += " AND start_time <= ?"
-		args = append(args, opts.EndDate.Format("2006-01-02 15:04:05-07:00"))
+		query += " AND start_time < ?"
+		args = append(args, timezonepolicy.FormatStorage(*opts.EndDate))
 	}
 	if opts.ModelName != "" {
 		query += " AND model_name = ?"
@@ -172,13 +174,15 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 	var details []RequestDetail
 	for rows.Next() {
 		var detail RequestDetail
+		var startAt, createdAt, updatedAt timezonepolicy.DBTime
+		var endAt, routeDecisionAt timezonepolicy.NullDBTime
 		err := rows.Scan(
 			&detail.ID, &detail.RequestID,
 			&detail.ClientIP, &detail.UserAgent, &detail.Method, &detail.Path,
-			&detail.StartTime, &detail.EndTime, &detail.DurationMs, &detail.FirstTokenMs, &detail.CompletionMs,
+			&startAt, &endAt, &detail.DurationMs, &detail.FirstTokenMs, &detail.CompletionMs,
 			&detail.RequestFamily, &detail.EndpointName,
 			&detail.UpstreamType, &detail.UpstreamSourceName, &detail.UpstreamName, &detail.UpstreamID,
-			&detail.RouteMode, &detail.RequestedEndpoint, &detail.EffectiveEndpoint, &detail.FallbackReason, &detail.RouteDecisionAt,
+			&detail.RouteMode, &detail.RequestedEndpoint, &detail.EffectiveEndpoint, &detail.FallbackReason, &routeDecisionAt,
 			&detail.ModelName, &detail.IsStreaming,
 			&detail.Status, &detail.HTTPStatusCode, &detail.RetryCount,
 			&detail.FailureReason, &detail.LastFailureReason, &detail.CancelReason,
@@ -186,11 +190,22 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 			&detail.CacheCreationTokens, &detail.CacheCreation5mTokens, &detail.CacheCreation1hTokens, &detail.CacheReadTokens,
 			&detail.InputCostUSD, &detail.OutputCostUSD,
 			&detail.CacheCreationCostUSD, &detail.CacheReadCostUSD, &detail.TotalCostUSD,
-			&detail.CreatedAt, &detail.UpdatedAt,
+			&createdAt, &updatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan request detail: %w", err)
 		}
+		detail.StartTime = startAt.Time.UTC()
+		if endAt.Valid {
+			value := endAt.Time.UTC()
+			detail.EndTime = &value
+		}
+		if routeDecisionAt.Valid {
+			value := routeDecisionAt.Time.UTC()
+			detail.RouteDecisionAt = &value
+		}
+		detail.CreatedAt = createdAt.Time.UTC()
+		detail.UpdatedAt = updatedAt.Time.UTC()
 		details = append(details, detail)
 	}
 
@@ -288,6 +303,7 @@ type QueryOptions struct {
 
 // UsageSummary represents a summary of usage data
 type UsageSummary struct {
+	TimezoneName  string `json:"timezone_name"`
 	Date          string `json:"date"`
 	ModelName     string `json:"model_name"`
 	RequestFamily string `json:"request_family"`
@@ -617,24 +633,48 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 	if opts == nil {
 		opts = &QueryOptions{}
 	}
+	if ut.timezonePolicy == nil {
+		return nil, fmt.Errorf("timezone policy is not initialized")
+	}
+	policy := ut.timezonePolicy.Snapshot()
+	today := policy.BusinessDate(time.Now())
+	todayValue, err := time.Parse(time.DateOnly, today)
+	if err != nil {
+		return nil, err
+	}
+	startDate := todayValue.AddDate(0, 0, -6).Format(time.DateOnly)
+	endDate := today
+	if opts.StartDate != nil {
+		startDate = policy.BusinessDate(*opts.StartDate)
+	}
+	if opts.EndDate != nil {
+		endProbe := opts.EndDate.Add(-time.Nanosecond)
+		endDate = policy.BusinessDate(endProbe)
+	}
+	startUTC, _, err := policy.DayRange(startDate)
+	if err != nil {
+		return nil, err
+	}
+	_, endUTC, err := policy.DayRange(endDate)
+	if err != nil {
+		return nil, err
+	}
+	if !ut.summaryCovers(policy.Name(), startDate, endDate) {
+		return ut.aggregateUsageSummary(ctx, startUTC, endUTC, opts, policy)
+	}
 
-	query := `SELECT date, model_name, request_family, upstream_type, upstream_name, upstream_id,
+	query := `SELECT timezone_name, date, model_name, request_family, upstream_type, upstream_name, upstream_id,
 		request_count, success_count, error_count,
 		total_input_tokens, total_output_tokens, 
 		total_cache_creation_tokens, total_cache_read_tokens,
-		total_cost_usd, COALESCE(avg_duration_ms, 0.0) as avg_duration_ms, created_at, updated_at
-		FROM usage_summary WHERE 1=1`
+		total_cost_usd, COALESCE(avg_duration_ms, 0.0) as avg_duration_ms,
+		CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
+		FROM usage_summary WHERE timezone_name = ?`
 
-	var args []interface{}
+	args := []interface{}{policy.Name()}
 
-	if opts.StartDate != nil {
-		query += " AND date >= ?"
-		args = append(args, opts.StartDate.Format("2006-01-02"))
-	}
-	if opts.EndDate != nil {
-		query += " AND date <= ?"
-		args = append(args, opts.EndDate.Format("2006-01-02"))
-	}
+	query += " AND date >= ? AND date <= ?"
+	args = append(args, startDate, endDate)
 	if opts.ModelName != "" {
 		query += " AND model_name = ?"
 		args = append(args, opts.ModelName)
@@ -653,6 +693,8 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 	if opts.Limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, opts.Limit)
+	} else if opts.Offset > 0 {
+		query += " LIMIT -1"
 	}
 	if opts.Offset > 0 {
 		query += " OFFSET ?"
@@ -668,17 +710,20 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 	var summaries []UsageSummary
 	for rows.Next() {
 		var summary UsageSummary
+		var createdAt, updatedAt timezonepolicy.DBTime
 		err := rows.Scan(
-			&summary.Date, &summary.ModelName, &summary.RequestFamily, &summary.UpstreamType, &summary.UpstreamName, &summary.UpstreamID,
+			&summary.TimezoneName, &summary.Date, &summary.ModelName, &summary.RequestFamily, &summary.UpstreamType, &summary.UpstreamName, &summary.UpstreamID,
 			&summary.RequestCount, &summary.SuccessCount, &summary.ErrorCount,
 			&summary.TotalInputTokens, &summary.TotalOutputTokens,
 			&summary.TotalCacheCreationTokens, &summary.TotalCacheReadTokens,
 			&summary.TotalCostUSD, &summary.AvgDurationMs,
-			&summary.CreatedAt, &summary.UpdatedAt,
+			&createdAt, &updatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan usage summary: %w", err)
 		}
+		summary.CreatedAt = createdAt.Time.UTC()
+		summary.UpdatedAt = updatedAt.Time.UTC()
 		summaries = append(summaries, summary)
 	}
 
@@ -805,15 +850,10 @@ func (ut *UsageTracker) GetEndpointCostsForDate(ctx context.Context, date string
 
 	// Convert date to time range for timezone-aware querying
 	// Parse the date and create start/end times in local timezone
-	startTime, err := time.Parse("2006-01-02", date)
+	startOfDay, endOfDay, err := ut.timezonePolicy.DayRange(date)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse date: %w", err)
+		return nil, err
 	}
-
-	// Use local timezone for the date range
-	location := time.Local
-	startOfDay := time.Date(startTime.Year(), startTime.Month(), startTime.Day(), 0, 0, 0, 0, location)
-	endOfDay := time.Date(startTime.Year(), startTime.Month(), startTime.Day(), 23, 59, 59, 999999999, location)
 
 	query := `SELECT
 		request_family,
@@ -833,11 +873,11 @@ func (ut *UsageTracker) GetEndpointCostsForDate(ctx context.Context, date string
 		COALESCE(SUM(cache_creation_cost_usd), 0.0) as cache_creation_cost_usd,
 		COALESCE(SUM(cache_read_cost_usd), 0.0) as cache_read_cost_usd
 		FROM request_logs
-		WHERE start_time >= ? AND start_time <= ?
+		WHERE start_time >= ? AND start_time < ?
 		GROUP BY request_family, upstream_type, upstream_name, upstream_id
 		ORDER BY total_cost_usd DESC`
 
-	rows, err := ut.readDB.QueryContext(ctx, query, startOfDay, endOfDay)
+	rows, err := ut.readDB.QueryContext(ctx, query, timezonepolicy.FormatStorage(startOfDay), timezonepolicy.FormatStorage(endOfDay))
 	if err != nil {
 		slog.Error("Failed to query endpoint costs", "error", err, "date", date, "start_time", startOfDay, "end_time", endOfDay)
 		return nil, fmt.Errorf("failed to query endpoint costs for date %s: %w", date, err)

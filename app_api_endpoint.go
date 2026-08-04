@@ -5,7 +5,6 @@ package main
 
 import (
 	"fmt"
-	"time"
 )
 
 // ============================================================
@@ -73,7 +72,7 @@ func (a *App) GetEndpoints() []EndpointInfo {
 			ResponseTimeMs:  float64(ep.Status.ResponseTime.Milliseconds()),
 		}
 		if !ep.Status.LastCheck.IsZero() {
-			info.LastCheck = ep.Status.LastCheck.Format(time.RFC3339)
+			info.LastCheck = formatAPITime(ep.Status.LastCheck)
 		}
 
 		result = append(result, info)

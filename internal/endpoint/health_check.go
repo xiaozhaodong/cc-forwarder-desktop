@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"cc-forwarder/internal/events"
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"cc-forwarder/internal/utils"
 )
 
@@ -39,7 +40,7 @@ func (m *Manager) notifyWebInterface(endpoint *Endpoint) {
 		Data: map[string]interface{}{
 			"endpoint": name, "healthy": status.Healthy,
 			"response_time":     utils.FormatResponseTime(status.ResponseTime),
-			"last_check":        status.LastCheck.Format("2006-01-02 15:04:05"),
+			"last_check":        timezonepolicy.FormatStorage(status.LastCheck),
 			"consecutive_fails": status.ConsecutiveFails,
 			"change_type":       "health_changed",
 		},

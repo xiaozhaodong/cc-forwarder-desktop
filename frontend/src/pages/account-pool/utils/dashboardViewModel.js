@@ -14,6 +14,7 @@ import {
   toQuotaStatusLabel,
   toRemainingPercent
 } from './accountPool.js';
+import { formatTimestamp as formatConfiguredTimestamp } from '../../../utils/timezone.js';
 
 const COLD_STANDBY_GROUP_LABEL = '冷备';
 const UNKNOWN_TEXT = '-';
@@ -73,24 +74,7 @@ const resolveAccountStateKey = (account = {}) => {
   return normalizeText(account?.state) || 'active';
 };
 
-const formatTimestampText = (value) => {
-  if (!value) return UNKNOWN_TEXT;
-
-  if (typeof value === 'string' && !value.includes('T') && !value.includes('+') && !value.includes('Z')) {
-    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?/);
-    if (match) {
-      const [, year, month, day, hours, minutes, seconds = '00'] = match;
-      return `${year}/${Number(month)}/${Number(day)} ${hours}:${minutes}:${seconds}`;
-    }
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return UNKNOWN_TEXT;
-  }
-
-  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
-};
+const formatTimestampText = (value, timezone) => formatConfiguredTimestamp(value, timezone);
 
 const toDate = (value) => {
   if (!value) return null;
@@ -167,7 +151,7 @@ const getQuotaText = (account = {}, key = '5h') => {
   return `${remaining.toFixed(0)}%`;
 };
 
-const getQuotaResetTexts = (account = {}) => {
+const getQuotaResetTexts = (account = {}, timezone) => {
   const quota5hResetAt = account.quota_5h_reset_at ?? account.quota5hResetAt;
   const quota7dResetAt = account.quota_weekly_reset_at ?? account.quotaWeeklyResetAt;
   const providerType = normalizeText(account.provider_type ?? account.providerType);
@@ -182,7 +166,7 @@ const getQuotaResetTexts = (account = {}) => {
   }
 
   if (planType === 'free') {
-    const quota7dResetText = quota7dResetAt ? formatTimestampText(quota7dResetAt) : '未设置';
+    const quota7dResetText = quota7dResetAt ? formatTimestampText(quota7dResetAt, timezone) : '未设置';
     return {
       nextResetText: quota7dResetText,
       quota5hResetText: '',
@@ -190,8 +174,8 @@ const getQuotaResetTexts = (account = {}) => {
     };
   }
 
-  const quota5hResetText = quota5hResetAt ? formatTimestampText(quota5hResetAt) : '';
-  const quota7dResetText = quota7dResetAt ? formatTimestampText(quota7dResetAt) : '';
+  const quota5hResetText = quota5hResetAt ? formatTimestampText(quota5hResetAt, timezone) : '';
+  const quota7dResetText = quota7dResetAt ? formatTimestampText(quota7dResetAt, timezone) : '';
   return {
     nextResetText: quota5hResetText || quota7dResetText || '未设置',
     quota5hResetText,
@@ -447,7 +431,7 @@ const buildSchedulerActions = (groupKey, hasActiveAccount = false) => {
   return actions;
 };
 
-const buildInventoryRows = (accounts, sortedPriorities, latestScheduleSnapshot, now) => accounts.map((account) => {
+const buildInventoryRows = (accounts, sortedPriorities, latestScheduleSnapshot, now, timezone) => accounts.map((account) => {
   const priority = getPriorityValue(account);
   const groupMeta = getGroupMeta(account, sortedPriorities);
   const stateKey = resolveAccountStateKey(account);
@@ -470,7 +454,7 @@ const buildInventoryRows = (accounts, sortedPriorities, latestScheduleSnapshot, 
     nextResetText,
     quota5hResetText,
     quota7dResetText
-  } = getQuotaResetTexts(account);
+  } = getQuotaResetTexts(account, timezone);
   const healthLabel = getHealthLabel(account, riskLevel);
   const riskLabel = getRiskLabel(account, riskLevel);
   const lastErrorText = String(account.last_error ?? account.lastError ?? '').trim() || '暂无错误记录';
@@ -497,8 +481,8 @@ const buildInventoryRows = (accounts, sortedPriorities, latestScheduleSnapshot, 
     quota7dText: getQuotaText(account, '7d'),
     quota5hPercent: quota5hRemaining,
     quota7dPercent: quota7dRemaining,
-    lastSuccessText: formatTimestampText(lastSuccessAt),
-    refreshedAtText: formatTimestampText(refreshedAt),
+    lastSuccessText: formatTimestampText(lastSuccessAt, timezone),
+    refreshedAtText: formatTimestampText(refreshedAt, timezone),
     lastSuccessAtMs: toDate(lastSuccessAt)?.getTime() || 0,
     refreshedAtMs: toDate(refreshedAt)?.getTime() || 0,
     riskLevel,
@@ -517,9 +501,9 @@ const buildInventoryRows = (accounts, sortedPriorities, latestScheduleSnapshot, 
       quotaStatusLabel,
       quota5hText: getQuotaText(account, '5h'),
       quota7dText: getQuotaText(account, '7d'),
-      lastSuccessText: formatTimestampText(lastSuccessAt),
+      lastSuccessText: formatTimestampText(lastSuccessAt, timezone),
       lastSuccessAt,
-      refreshedAtText: formatTimestampText(refreshedAt),
+      refreshedAtText: formatTimestampText(refreshedAt, timezone),
       refreshedAt,
       lastError: lastErrorText,
       lastErrorText,
@@ -581,7 +565,7 @@ const buildSchedulerGroups = (rows) => {
   }));
 };
 
-const buildSchedulerSummary = (snapshot = {}, rows = []) => {
+const buildSchedulerSummary = (snapshot = {}, rows = [], timezone) => {
   const hasSnapshot = snapshot?.hasSnapshot === true || snapshot?.has_snapshot === true;
   const pinnedAccount = (Array.isArray(rows) ? rows : []).find((row) => (row?.raw?.is_active_selection ?? row?.raw?.isActiveSelection) === true) || null;
   return {
@@ -589,7 +573,7 @@ const buildSchedulerSummary = (snapshot = {}, rows = []) => {
     currentGroupLabel: snapshot?.selectedTierLabel || snapshot?.selected_tier_label || '暂无调度',
     activeAccountName: snapshot?.selectedAccountName || snapshot?.selected_account_name || '暂无命中账号',
     degraded: Boolean(snapshot?.degradedToLowerPriority || snapshot?.degraded_to_lower_priority),
-    updatedAtText: formatTimestampText(snapshot?.updatedAt || snapshot?.updated_at || snapshot?.capturedAt || snapshot?.captured_at),
+    updatedAtText: formatTimestampText(snapshot?.updatedAt || snapshot?.updated_at || snapshot?.capturedAt || snapshot?.captured_at, timezone),
     finalOutcomeLabel: snapshot?.finalOutcome || snapshot?.final_outcome || 'pending',
     selectionMode: pinnedAccount ? 'manual' : 'auto',
     selectionModeLabel: pinnedAccount ? '手动模式' : 'Auto 模式',
@@ -613,13 +597,15 @@ const buildAccountPoolDashboardModel = ({
   latestScheduleSnapshot = null,
   searchTerm = '',
   filters = {},
-  selectedIds = []
+  selectedIds = [],
+  timezone
 } = {}) => {
+  if (!timezone) throw new Error('buildAccountPoolDashboardModel requires an injected timezone');
   const normalizedFilters = normalizeFilters(filters);
   const now = new Date();
   const sortedPriorities = getSortedPriorities(accounts);
-  const allRows = buildInventoryRows(accounts, sortedPriorities, latestScheduleSnapshot, now);
-  const schedulerSummary = buildSchedulerSummary(latestScheduleSnapshot, allRows);
+  const allRows = buildInventoryRows(accounts, sortedPriorities, latestScheduleSnapshot, now, timezone);
+  const schedulerSummary = buildSchedulerSummary(latestScheduleSnapshot, allRows, timezone);
 
   return {
     inventory: {

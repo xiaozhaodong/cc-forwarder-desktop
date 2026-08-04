@@ -2,6 +2,7 @@
 // 提供实时日志流查看、过滤、搜索功能
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useWailsLogs } from '@/hooks/useWailsLogs';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import {
   FileText,
   Pause,
@@ -45,6 +46,7 @@ const LOG_LEVELS = {
 
 // 单条日志组件
 function LogEntry({ log, searchQuery }) {
+  const { formatTimeOnly } = useTimezone();
   const levelConfig = LOG_LEVELS[log.level] || LOG_LEVELS.INFO;
   const Icon = levelConfig.icon;
 
@@ -65,13 +67,7 @@ function LogEntry({ log, searchQuery }) {
     <div className="flex items-start gap-3 px-4 py-2 hover:bg-slate-50 border-b border-slate-100 font-mono text-xs">
       {/* 时间戳 */}
       <div className="text-slate-400 whitespace-nowrap w-32 flex-shrink-0">
-        {new Date(log.timestamp).toLocaleTimeString('zh-CN', {
-          hour12: false,
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-          fractionalSecondDigits: 3,
-        })}
+        {formatTimeOnly(log.timestamp)}
       </div>
 
       {/* 日志级别 */}

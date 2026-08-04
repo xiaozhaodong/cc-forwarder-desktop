@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchConnections, fetchEndpoints, fetchStatus, formatUptime } from '@utils/api.js';
 import useSSE from './useSSE.js';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
 const useOverviewData = () => {
+  const { formatTimeOnly } = useTimezone();
   const [data, setData] = useState({
     status: { status: 'running', uptime: '加载中...' },
     endpoints: { total: 0, healthy: 0, endpoints: [] },
@@ -35,7 +37,7 @@ const useOverviewData = () => {
         status: { ...current.status, ...formattedStatus },
         endpoints: { ...current.endpoints, ...endpoints },
         connections: { ...current.connections, ...connections },
-        lastUpdate: new Date().toLocaleTimeString(),
+        lastUpdate: formatTimeOnly(new Date()),
         loading: false,
         error: null
       }));
@@ -43,7 +45,7 @@ const useOverviewData = () => {
     } catch (error) {
       setData((current) => ({ ...current, loading: false, error: error?.message || '数据加载失败' }));
     }
-  }, [isInitialized]);
+  }, [formatTimeOnly, isInitialized]);
 
   const handleRealtimeUpdate = useCallback((event, eventType) => {
     const payload = event?.data && typeof event.data === 'object' ? event.data : event;

@@ -1,4 +1,4 @@
-import { buildQueryParamsFromFilters } from '../hooks/useFilters.js';
+import { buildQueryParamsFromFilters } from './filterTime.js';
 
 const buildTimeRangeSelectionState = (currentFilters = {}, nextTimeRange = {}) => {
   const filters = {

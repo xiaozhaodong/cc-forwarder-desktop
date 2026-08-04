@@ -8,7 +8,8 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { Waves, RefreshCw } from 'lucide-react';
 import { LoadingSpinner } from '@components/ui';
-import { formatCost, formatTimestamp } from '@utils/api.js';
+import { formatCost } from '@utils/api.js';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import RequestStatusBadge from './RequestStatusBadge.jsx';
 import ModelTag from './ModelTag.jsx';
 import Pagination from './Pagination.jsx';
@@ -108,7 +109,7 @@ const RequestTimingCell = ({ request }) => {
 /**
  * 渲染单元格内容
  */
-const renderCell = (columnId, request) => {
+const renderCell = (columnId, request, formatTimestamp) => {
   switch (columnId) {
     case 'requestId':
       return (
@@ -149,7 +150,7 @@ const renderCell = (columnId, request) => {
 /**
  * RequestRow - 单行请求数据（支持单击复制、双击查看详情）
  */
-const RequestRow = ({ request, visibleColumns, onCopyId, onDoubleClick }) => {
+const RequestRow = ({ request, visibleColumns, onCopyId, onDoubleClick, formatTimestamp }) => {
   const clickCountRef = React.useRef(0);
   const clickTimerRef = React.useRef(null);
 
@@ -194,7 +195,7 @@ const RequestRow = ({ request, visibleColumns, onCopyId, onDoubleClick }) => {
           key={colId}
           className={`px-3 py-3 ${colId === 'cost' || colId.includes('Tokens') ? 'text-right' : ''}`}
         >
-          {renderCell(colId, request)}
+          {renderCell(colId, request, formatTimestamp)}
         </td>
       ))}
     </tr>
@@ -223,6 +224,7 @@ const RequestsTable = ({
   columnConfigs = [],
   onRowDoubleClick
 }) => {
+  const { formatTimestamp } = useTimezone();
   // 复制请求 ID
   const handleCopyId = async (id) => {
     await copyTextToClipboard(id, '请求 ID');
@@ -279,6 +281,7 @@ const RequestsTable = ({
                     visibleColumns={visibleColumns}
                     onCopyId={handleCopyId}
                     onDoubleClick={onRowDoubleClick}
+                    formatTimestamp={formatTimestamp}
                   />
                 ))
               )}

@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"cc-forwarder/internal/modelrewrite"
+	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
 type Config struct {
@@ -578,6 +579,22 @@ func (c *Config) setDefaults() {
 
 // validate validates the configuration
 func (c *Config) validate() error {
+	if strings.TrimSpace(c.Timezone) == "" {
+		c.Timezone = "Asia/Shanghai"
+	}
+	if _, err := timezonepolicy.Load(c.Timezone); err != nil {
+		return err
+	}
+	if c.UsageTracking.Database != nil {
+		legacyTimezone := strings.TrimSpace(c.UsageTracking.Database.Timezone)
+		if legacyTimezone != "" && legacyTimezone != c.Timezone {
+			return fmt.Errorf("usage_tracking.database.timezone %q conflicts with top-level timezone %q; remove it and use the top-level timezone", legacyTimezone, c.Timezone)
+		}
+		if legacyTimezone == c.Timezone {
+			slog.Warn("usage_tracking.database.timezone 已弃用，请删除并仅使用顶层 timezone", "timezone", c.Timezone)
+		}
+	}
+
 	if c.EndpointsStorage.Type != "sqlite" {
 		return fmt.Errorf("endpoints_storage.type must be 'sqlite'")
 	}
@@ -660,7 +677,7 @@ type ConfigWatcher struct {
 	mutex         sync.RWMutex
 	watcher       *fsnotify.Watcher
 	logger        *slog.Logger
-	callbacks     []func(*Config)
+	callbacks     []func(*Config) error
 	lastModTime   time.Time
 	debounceTimer *time.Timer
 }
@@ -690,7 +707,7 @@ func NewConfigWatcher(configPath string, logger *slog.Logger) (*ConfigWatcher, e
 		config:      config,
 		watcher:     watcher,
 		logger:      logger,
-		callbacks:   make([]func(*Config), 0),
+		callbacks:   make([]func(*Config) error, 0),
 		lastModTime: fileInfo.ModTime(),
 	}
 
@@ -721,7 +738,7 @@ func (cw *ConfigWatcher) UpdateLogger(logger *slog.Logger) {
 }
 
 // AddReloadCallback adds a callback function that will be called when config is reloaded
-func (cw *ConfigWatcher) AddReloadCallback(callback func(*Config)) {
+func (cw *ConfigWatcher) AddReloadCallback(callback func(*Config) error) {
 	cw.mutex.Lock()
 	defer cw.mutex.Unlock()
 	cw.callbacks = append(cw.callbacks, callback)
@@ -794,17 +811,21 @@ func (cw *ConfigWatcher) reloadConfig() error {
 		return err
 	}
 
-	cw.mutex.Lock()
+	cw.mutex.RLock()
 	oldConfig := cw.config
-	cw.config = newConfig
-	callbacks := make([]func(*Config), len(cw.callbacks))
+	callbacks := make([]func(*Config) error, len(cw.callbacks))
 	copy(callbacks, cw.callbacks)
-	cw.mutex.Unlock()
+	cw.mutex.RUnlock()
 
 	// Call all registered callbacks
 	for _, callback := range callbacks {
-		callback(newConfig)
+		if err := callback(newConfig); err != nil {
+			return fmt.Errorf("apply reloaded config: %w", err)
+		}
 	}
+	cw.mutex.Lock()
+	cw.config = newConfig
+	cw.mutex.Unlock()
 
 	// Log configuration changes
 	cw.logConfigChanges(oldConfig, newConfig)

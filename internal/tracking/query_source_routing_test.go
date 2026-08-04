@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	timezonepolicy "cc-forwarder/internal/timezone"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +44,7 @@ func insertEndpointRequestLog(t *testing.T, tracker *UsageTracker, requestID str
 			endpoint_name, upstream_name, model_name
 		) VALUES (?, ?, 'completed', 'claude', 'endpoint', ?, ?, ?)`,
 		requestID,
-		startTime.Format("2006-01-02 15:04:05"),
+		timezonepolicy.FormatStorage(startTime),
 		"ep-"+requestID,
 		"ep-"+requestID,
 		"gpt-4.1",
@@ -62,7 +64,7 @@ func insertAccountRequestLog(t *testing.T, tracker *UsageTracker, requestID stri
 			upstream_source_name, upstream_name, upstream_id, model_name
 		) VALUES (?, ?, 'completed', 'codex', 'account', ?, ?, ?, ?, ?)`,
 		requestID,
-		startTime.Format("2006-01-02 15:04:05"),
+		timezonepolicy.FormatStorage(startTime),
 		accountName,
 		"",
 		accountName,

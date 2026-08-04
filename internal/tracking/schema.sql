@@ -68,8 +68,8 @@ CREATE TABLE IF NOT EXISTS request_logs (
     total_cost_usd REAL DEFAULT 0,         -- 总成本
     
     -- 审计字段（统一使用带时区格式，微秒精度）
-    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 );
 
 -- 索引优化
@@ -86,6 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_upstream_type_time ON request_logs(u
 -- 使用统计汇总表 (可选，用于快速查询)
 CREATE TABLE IF NOT EXISTS usage_summary (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timezone_name TEXT NOT NULL,
     date TEXT NOT NULL,                    -- YYYY-MM-DD
     model_name TEXT NOT NULL,
     request_family TEXT NOT NULL
@@ -106,14 +107,15 @@ CREATE TABLE IF NOT EXISTS usage_summary (
     
     avg_duration_ms REAL DEFAULT 0,        -- 平均响应时间
     
-    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
     
-    UNIQUE(date, model_name, request_family, upstream_type, upstream_name, upstream_id)
+    UNIQUE(timezone_name, date, model_name, request_family, upstream_type, upstream_name, upstream_id)
 );
 
 -- 汇总表索引
 CREATE INDEX IF NOT EXISTS idx_usage_summary_date ON usage_summary(date);
+CREATE INDEX IF NOT EXISTS idx_usage_summary_timezone_date ON usage_summary(timezone_name, date);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_model ON usage_summary(model_name);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_family ON usage_summary(request_family);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_upstream ON usage_summary(upstream_type, upstream_name, upstream_id);
@@ -124,7 +126,7 @@ CREATE TRIGGER IF NOT EXISTS update_request_logs_timestamp
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE request_logs SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+    UPDATE request_logs SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS update_usage_summary_timestamp
@@ -132,7 +134,7 @@ CREATE TRIGGER IF NOT EXISTS update_usage_summary_timestamp
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE usage_summary SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+    UPDATE usage_summary SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 END;
 
 -- ============================================================================
@@ -181,8 +183,8 @@ CREATE TABLE IF NOT EXISTS endpoints (
         CHECK (cache_read_cost_multiplier > 0),      -- 缓存读取成本倍率
 
     -- ========== 审计字段 ==========
-    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 );
 
 -- v8 端点运行态（收敛方案 §7.2）：按 scope 保存达到阈值后的持久化 cooldown。
@@ -195,7 +197,7 @@ CREATE TABLE IF NOT EXISTS endpoint_runtime_states (
     cooldown_until DATETIME,
     cooldown_reason TEXT NOT NULL DEFAULT '',
     revision INTEGER NOT NULL DEFAULT 0,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
     PRIMARY KEY (endpoint_id, scope),
     FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE CASCADE
 );
@@ -214,7 +216,7 @@ CREATE TRIGGER IF NOT EXISTS update_endpoints_timestamp
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE endpoints SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+    UPDATE endpoints SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 END;
 
 -- ============================================================================
@@ -240,8 +242,8 @@ CREATE TABLE IF NOT EXISTS model_pricing (
     is_default INTEGER DEFAULT 0,                   -- 是否为默认定价 (1=是)
 
     -- ========== 审计字段 ==========
-    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 );
 
 -- 模型定价表索引
@@ -254,7 +256,7 @@ CREATE TRIGGER IF NOT EXISTS update_model_pricing_timestamp
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE model_pricing SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+    UPDATE model_pricing SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 END;
 
 -- ============================================================================
@@ -281,8 +283,8 @@ CREATE TABLE IF NOT EXISTS settings (
     requires_restart INTEGER DEFAULT 0,             -- 是否需要重启生效 (1=需要, 0=立即生效)
 
     -- ========== 审计字段 ==========
-    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
 
     UNIQUE(category, key)
 );
@@ -297,7 +299,7 @@ CREATE TRIGGER IF NOT EXISTS update_settings_timestamp
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE settings SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+    UPDATE settings SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 END;
 
 -- ============================================================================
@@ -346,8 +348,8 @@ CREATE TABLE IF NOT EXISTS upstream_accounts (
     fingerprint TEXT UNIQUE NOT NULL,               -- 去重指纹
 
     -- ========== 审计字段 ==========
-    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_upstream_accounts_priority ON upstream_accounts(priority);
@@ -360,7 +362,7 @@ CREATE TRIGGER IF NOT EXISTS update_upstream_accounts_timestamp
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE upstream_accounts SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+    UPDATE upstream_accounts SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 END;
 
 -- ============================================================================
@@ -373,7 +375,7 @@ CREATE TABLE IF NOT EXISTS privacy_settings (
     scan_max_bytes INTEGER NOT NULL DEFAULT 4194304,-- 单请求累计扫描文本字节上限
     over_limit_action TEXT NOT NULL DEFAULT 'scan_prefix', -- scan_prefix / fail_closed
     on_error TEXT NOT NULL DEFAULT 'fail_open',     -- fail_open / fail_closed
-    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 );
 
 INSERT OR IGNORE INTO privacy_settings (id) VALUES (1);
@@ -391,8 +393,8 @@ CREATE TABLE IF NOT EXISTS privacy_rules (
     scope_json TEXT NOT NULL DEFAULT '{}',          -- 作用域 JSON
     source TEXT NOT NULL DEFAULT 'custom',          -- custom / preset / builtin
     compile_error TEXT DEFAULT '',                  -- 历史规则编译失败信息
-    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_privacy_rules_enabled_priority
@@ -433,8 +435,8 @@ CREATE TABLE IF NOT EXISTS privacy_exact_secrets (
     source_type TEXT NOT NULL DEFAULT 'manual',
     source_ref TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
-    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_privacy_exact_secrets_value_hash
@@ -445,7 +447,7 @@ CREATE TRIGGER IF NOT EXISTS update_privacy_settings_timestamp
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE privacy_settings SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+    UPDATE privacy_settings SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS update_privacy_rules_timestamp
@@ -453,7 +455,7 @@ CREATE TRIGGER IF NOT EXISTS update_privacy_rules_timestamp
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE privacy_rules SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+    UPDATE privacy_rules SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS update_privacy_exact_secrets_timestamp
@@ -461,5 +463,5 @@ CREATE TRIGGER IF NOT EXISTS update_privacy_exact_secrets_timestamp
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE privacy_exact_secrets SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+    UPDATE privacy_exact_secrets SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 END;

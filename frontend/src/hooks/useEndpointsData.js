@@ -8,6 +8,7 @@ import {
   subscribeToEvent,
   triggerHealthCheck
 } from '@utils/wailsApi.js';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
 const computeStats = (endpoints = []) => {
   const checked = endpoints.filter((endpoint) => !endpoint.neverChecked && endpoint.lastCheck);
@@ -24,6 +25,7 @@ const computeStats = (endpoints = []) => {
 };
 
 const useEndpointsData = () => {
+  const { formatTimeOnly } = useTimezone();
   const [endpoints, setEndpoints] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -34,7 +36,7 @@ const useEndpointsData = () => {
       const records = await getEndpointRecords();
       setEndpoints(records);
       setError(null);
-      setLastUpdate(new Date().toLocaleTimeString());
+      setLastUpdate(formatTimeOnly(new Date()));
       return records;
     } catch (loadError) {
       setError(loadError?.message || 'Claude 端点加载失败');
@@ -42,7 +44,7 @@ const useEndpointsData = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [formatTimeOnly]);
 
   useEffect(() => {
     loadData().catch(() => {});

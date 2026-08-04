@@ -10,6 +10,7 @@ import { LoadingSpinner } from '@components/ui';
 import useSSE from '@hooks/useSSE.js';
 import useGlobalToasts from '@hooks/useGlobalToasts.js';
 import { getMigrationStatus } from '@utils/wailsApi.js';
+import { TimezoneProvider } from '@/contexts/TimezoneContext.jsx';
 
 // 懒加载页面组件
 const OverviewPage = lazy(() => import('@pages/overview/index.jsx'));
@@ -119,7 +120,8 @@ function App() {
   }
 
   return (
-    <div className="h-screen overflow-hidden bg-[#FAFAFA] font-sans text-slate-900 flex flex-col">
+    <TimezoneProvider>
+      <div className="h-screen overflow-hidden bg-[#FAFAFA] font-sans text-slate-900 flex flex-col">
       {/* 背景纹理 */}
       <div
         className="fixed inset-0 pointer-events-none opacity-[0.4]"
@@ -148,7 +150,8 @@ function App() {
           </Suspense>
         </div>
       </main>
-    </div>
+      </div>
+    </TimezoneProvider>
   );
 }
 

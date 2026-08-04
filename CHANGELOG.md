@@ -12,6 +12,8 @@
 - **Claude 端点扁平化管理**：移除 channel/group/组密钥和单激活端点模型，端点改为 SQLite 中的独立记录。
 - **启动迁移与恢复页**：迁移前自动备份数据库和配置，校验完整性与 SHA-256；失败时进入只读恢复状态并支持重试。
 - **请求来源统一**：历史记录改用 `request_family` 和 `upstream_*` 表达 Claude、Codex、Image 与 Other 请求的实际上游。
+- **配置时区全链路收敛**：数据库时间点统一为固定微秒精度 UTC，前端按顶层 IANA `timezone` 显示和生成业务日期范围。
+- **UTC 历史迁移**：新增独立备份、格式预检、表重建、汇总缓存重置、外键/完整性校验、幂等重试与只读恢复流程。
 
 ### 🔧 改进 (Improvements)
 
@@ -19,11 +21,15 @@
 - 端点 Token 和 API Key 可单独或同时配置，编辑时不回显明文，删除凭据需显式操作。
 - CodeRelay 不再改写业务请求体；AnyRoute 仅对精确 HTTPS 主机名应用兼容头。
 - Codex `/v1/models` 在本地目录和账号池都不可用时返回稳定的 503，不再回退 Claude 端点。
+- 请求、账号、端点、日志、OAuth、quota 与调度时间 API 统一返回 UTC；日期筛选使用配置时区和半开区间，支持 DST 23/25 小时日。
+- `usage_summary` 收敛为活动时区最近 7 个业务日缓存；查询超出缓存覆盖范围或热切换缓存未就绪时，整段从请求明细聚合，缓存与实时路径保持相同分页语义。
+- UTC 迁移 completed ledger 的正常启动只做 schema 快检，避免冷启动反复扫描全部请求历史；首次迁移仍执行完整数据校验。
 
 ### ⚠️ 升级注意 (Upgrade Notes)
 
 - 运行时仅支持 SQLite 端点存储；旧 YAML `endpoints`、`group`、`tokens` 和 `api-keys` 只在首次升级时读取。
 - 旧 API 和旧数据库列已物理删除；代码降级必须同时离线恢复迁移前数据库与配置备份。详见 `UPGRADING.md`。
+- `usage_tracking.database.timezone` 已弃用且不得与顶层 `timezone` 冲突；UTC 迁移前同文件系统可用空间必须至少为活动数据库大小的 3 倍。
 
 ## [5.2.5] - 2025-12-24
 

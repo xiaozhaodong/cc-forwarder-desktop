@@ -329,5 +329,5 @@ func formatRouteTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format(time.RFC3339)
+	return formatAPITime(t)
 }

@@ -1,0 +1,65 @@
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { getConfig, subscribeToEvent } from '@utils/wailsApi.js';
+import {
+  formatTimeOnly,
+  formatMonthDayTime,
+  formatTimestamp,
+  getRecentDaysRange,
+  getTodayTimeRange,
+  validateTimezone
+} from '@utils/timezone.js';
+
+const TimezoneContext = createContext(null);
+
+export const TimezoneProvider = ({ children }) => {
+  const [state, setState] = useState({ timezone: '', loading: true, error: '' });
+
+  const reload = useCallback(async () => {
+    try {
+      const config = await getConfig();
+      const timezone = validateTimezone(config?.timezone ?? config?.Timezone);
+      setState({ timezone, loading: false, error: '' });
+    } catch (error) {
+      setState({ timezone: '', loading: false, error: error?.message || '活动时区加载失败' });
+    }
+  }, []);
+
+  useEffect(() => {
+    reload();
+    const unsubscribe = subscribeToEvent('config:reloaded', reload);
+    return () => unsubscribe?.();
+  }, [reload]);
+
+  const value = useMemo(() => {
+    if (!state.timezone) return null;
+    return {
+      timezone: state.timezone,
+      formatTimestamp: (timestamp) => formatTimestamp(timestamp, state.timezone),
+      formatTimeOnly: (timestamp) => formatTimeOnly(timestamp, state.timezone),
+      formatMonthDayTime: (timestamp) => formatMonthDayTime(timestamp, state.timezone),
+      getTodayTimeRange: (now) => getTodayTimeRange(state.timezone, now),
+      getRecentDaysRange: (days, now) => getRecentDaysRange(days, state.timezone, now),
+      reload
+    };
+  }, [reload, state.timezone]);
+
+  if (state.loading) {
+    return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">正在加载活动时区…</div>;
+  }
+  if (state.error || !value) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 px-6">
+        <div role="alert" className="max-w-lg rounded-xl border border-rose-200 bg-white px-5 py-4 text-sm text-rose-700 shadow-sm">
+          时区配置不可用：{state.error || '未知错误'}
+        </div>
+      </div>
+    );
+  }
+  return <TimezoneContext.Provider value={value}>{children}</TimezoneContext.Provider>;
+};
+
+export const useTimezone = () => {
+  const context = useContext(TimezoneContext);
+  if (!context) throw new Error('useTimezone 必须在 TimezoneProvider 内使用');
+  return context;
+};

@@ -82,7 +82,7 @@ func (s *SQLiteSettingsStore) Get(ctx context.Context, category, key string) (*S
 		SELECT id, category, key, value, value_type,
 			COALESCE(label, '') as label,
 			COALESCE(description, '') as description,
-			display_order, requires_restart, created_at, updated_at
+			display_order, requires_restart, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM settings
 		WHERE category = ? AND key = ?
 	`
@@ -105,8 +105,12 @@ func (s *SQLiteSettingsStore) Get(ctx context.Context, category, key string) (*S
 	}
 
 	record.RequiresRestart = requiresRestart == 1
-	record.CreatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", createdAt)
-	record.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", updatedAt)
+	if record.CreatedAt, err = parseDBTime(createdAt); err != nil {
+		return nil, fmt.Errorf("解析设置 created_at 失败: %w", err)
+	}
+	if record.UpdatedAt, err = parseDBTime(updatedAt); err != nil {
+		return nil, fmt.Errorf("解析设置 updated_at 失败: %w", err)
+	}
 
 	return &record, nil
 }
@@ -198,7 +202,7 @@ func (s *SQLiteSettingsStore) GetByCategory(ctx context.Context, category string
 		SELECT id, category, key, value, value_type,
 			COALESCE(label, '') as label,
 			COALESCE(description, '') as description,
-			display_order, requires_restart, created_at, updated_at
+			display_order, requires_restart, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM settings
 		WHERE category = ?
 		ORDER BY display_order ASC, key ASC
@@ -216,7 +220,7 @@ func (s *SQLiteSettingsStore) GetAll(ctx context.Context) ([]*SettingRecord, err
 		SELECT id, category, key, value, value_type,
 			COALESCE(label, '') as label,
 			COALESCE(description, '') as description,
-			display_order, requires_restart, created_at, updated_at
+			display_order, requires_restart, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM settings
 		ORDER BY category ASC, display_order ASC, key ASC
 	`
@@ -442,8 +446,12 @@ func (s *SQLiteSettingsStore) scanSettings(ctx context.Context, query string, ar
 		}
 
 		record.RequiresRestart = requiresRestart == 1
-		record.CreatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", createdAt)
-		record.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", updatedAt)
+		if record.CreatedAt, err = parseDBTime(createdAt); err != nil {
+			return nil, fmt.Errorf("解析设置 created_at 失败: %w", err)
+		}
+		if record.UpdatedAt, err = parseDBTime(updatedAt); err != nil {
+			return nil, fmt.Errorf("解析设置 updated_at 失败: %w", err)
+		}
 
 		records = append(records, &record)
 	}

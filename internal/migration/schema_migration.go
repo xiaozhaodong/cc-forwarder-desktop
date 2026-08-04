@@ -31,6 +31,11 @@ func migrateDatabase(ctx context.Context, db *sql.DB, legacy *LegacyConfig, back
 	if err := createMigrationLedger(ctx, tx, legacy.SourceMode, backup); err != nil {
 		return databaseMigrationResult{}, err
 	}
+	for _, table := range []string{"endpoints", "request_logs"} {
+		if err := normalizeCurrentTimestampAuditColumns(ctx, tx, table); err != nil {
+			return databaseMigrationResult{}, err
+		}
+	}
 	var endpointCountBefore int
 	if exists, err := tableExistsTx(ctx, tx, "endpoints"); err != nil {
 		return databaseMigrationResult{}, err
@@ -69,7 +74,7 @@ func migrateDatabase(ctx context.Context, db *sql.DB, legacy *LegacyConfig, back
 		return databaseMigrationResult{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE app_schema_migrations
-		SET phase = ?, db_committed_at = CURRENT_TIMESTAMP, error_message = ''
+		SET phase = ?, db_committed_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'), error_message = ''
 		WHERE migration_id = ?`, string(PhaseDBCommitted), MigrationID); err != nil {
 		return databaseMigrationResult{}, fmt.Errorf("mark migration database committed: %w", err)
 	}
@@ -92,7 +97,7 @@ func createMigrationLedger(ctx context.Context, tx *sql.Tx, sourceMode SourceMod
 		source_mode TEXT NOT NULL,
 		backup_dir TEXT NOT NULL,
 		backup_manifest_sha256 TEXT NOT NULL,
-		started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		started_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
 		db_committed_at DATETIME,
 		config_committed_at DATETIME,
 		completed_at DATETIME,
@@ -142,7 +147,7 @@ func rebuildEndpoints(ctx context.Context, tx *sql.Tx, flattened EndpointFlatten
 		model_rewrite_rules, cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 		cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h,
 		cache_read_cost_multiplier, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), CURRENT_TIMESTAMP), COALESCE(NULLIF(?, ''), CURRENT_TIMESTAMP))`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')), COALESCE(NULLIF(?, ''), strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')))`
 	for _, endpoint := range flattened.Endpoints {
 		headers, err := json.Marshal(endpoint.Headers)
 		if err != nil {
@@ -214,8 +219,8 @@ func endpointTargetSchema(table string) string {
 		cache_creation_cost_multiplier REAL NOT NULL DEFAULT 1.0 CHECK (cache_creation_cost_multiplier > 0),
 		cache_creation_cost_multiplier_1h REAL NOT NULL DEFAULT 1.0 CHECK (cache_creation_cost_multiplier_1h > 0),
 		cache_read_cost_multiplier REAL NOT NULL DEFAULT 1.0 CHECK (cache_read_cost_multiplier > 0),
-		created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-		updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+		created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+		updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 	)`
 }
 
@@ -231,7 +236,7 @@ func endpointAuxiliarySchema() []string {
 			cooldown_until DATETIME,
 			cooldown_reason TEXT NOT NULL DEFAULT '',
 			revision INTEGER NOT NULL DEFAULT 0,
-			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
 			PRIMARY KEY (endpoint_id, scope),
 			FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE CASCADE
 		)`,
@@ -239,7 +244,7 @@ func endpointAuxiliarySchema() []string {
 		`CREATE TRIGGER update_endpoints_timestamp
 			AFTER UPDATE ON endpoints FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at
 		BEGIN
-			UPDATE endpoints SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+			UPDATE endpoints SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 		END`,
 	}
 }

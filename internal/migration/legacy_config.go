@@ -64,6 +64,7 @@ type LegacyEndpoint struct {
 }
 
 type legacyConfigDocument struct {
+	Timezone         string `yaml:"timezone"`
 	EndpointsStorage struct {
 		Type string `yaml:"type"`
 	} `yaml:"endpoints_storage"`
@@ -85,6 +86,7 @@ type LegacyConfig struct {
 	SourceMode       SourceMode
 	DatabasePath     string
 	DatabaseTimezone string
+	GlobalTimezone   string
 	GlobalTimeout    time.Duration
 	Endpoints        []LegacyEndpoint
 }
@@ -117,9 +119,25 @@ func LoadLegacyConfig(path string) (*LegacyConfig, error) {
 		SourceMode:       mode,
 		DatabasePath:     databasePath,
 		DatabaseTimezone: strings.TrimSpace(document.UsageTracking.Database.Timezone),
+		GlobalTimezone:   strings.TrimSpace(document.Timezone),
 		GlobalTimeout:    document.GlobalTimeout.Duration,
 		Endpoints:        document.Endpoints,
 	}, nil
+}
+
+func (c *LegacyConfig) EffectiveGlobalTimezone() string {
+	if c != nil && strings.TrimSpace(c.GlobalTimezone) != "" {
+		return strings.TrimSpace(c.GlobalTimezone)
+	}
+	return "Asia/Shanghai"
+}
+
+// LegacyTrackingTimezone 仅用于解释迁移前无 offset 的历史数据库时间。
+func (c *LegacyConfig) LegacyTrackingTimezone() string {
+	if c != nil && strings.TrimSpace(c.DatabaseTimezone) != "" {
+		return strings.TrimSpace(c.DatabaseTimezone)
+	}
+	return c.EffectiveGlobalTimezone()
 }
 
 func (c *LegacyConfig) ResolveDatabasePath(defaultPath string) string {

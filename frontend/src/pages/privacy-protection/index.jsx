@@ -35,6 +35,7 @@ import {
   moveRuleInList,
   ruleToForm
 } from './utils/privacyRules.js';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
 // 模式分段控件（修改后立即保存热生效）
 const ModeSegmentedControl = ({ mode, busy, onChange }) => (
@@ -132,13 +133,14 @@ const ScanSettingsBar = ({ settings, busy, onSave }) => {
 };
 
 const StatusBand = ({ settings, stats }) => {
+  const { formatTimestamp } = useTimezone();
   const modeLabel = PRIVACY_MODE_OPTIONS.find((opt) => opt.value === settings.mode)?.label || settings.mode;
   const items = [
     { label: '当前模式', value: modeLabel },
     { label: '已启用规则', value: settings.enabled_rules },
     { label: '快照版本', value: `v${settings.version}` },
     { label: '扫描上限', value: formatScanBytes(settings.scan_max_bytes) },
-    { label: '最近更新', value: settings.updated_at || '-' }
+    { label: '最近更新', value: settings.updated_at ? formatTimestamp(settings.updated_at) : '-' }
   ];
   if (stats && stats.scan_count > 0) {
     items.push({ label: '累计扫描/命中', value: `${stats.scan_count} / ${stats.hit_count}` });

@@ -1,10 +1,10 @@
 package logging
 
 import (
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"context"
 	"log/slog"
 	"sync"
-	"time"
 )
 
 // LogEntry 表示一条结构化的日志记录
@@ -107,7 +107,7 @@ func (h *BroadcastHandler) GetRecentLogs(limit int) []LogEntry {
 // buildLogEntry 从 slog.Record 构建 LogEntry
 func (h *BroadcastHandler) buildLogEntry(r slog.Record) LogEntry {
 	entry := LogEntry{
-		Timestamp: r.Time.Format(time.RFC3339),
+		Timestamp: timezonepolicy.FormatStorage(r.Time),
 		Level:     r.Level.String(),
 		Message:   r.Message,
 		Attrs:     make(map[string]string),

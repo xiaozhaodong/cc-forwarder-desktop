@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, Info } from 'lucide-react';
-import { formatTimestamp } from '@utils/api.js';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import Badge from './Badge.jsx';
 import ScheduleCandidateCard from './ScheduleCandidateCard.jsx';
 import {
@@ -17,9 +17,9 @@ import {
 const DEFAULT_VISIBLE_CANDIDATES = 3;
 const EMPTY_CANDIDATES = [];
 
-const toDisplayTime = (value) => (value ? formatTimestamp(value) : '-');
-
 const LatestScheduleSnapshotCard = ({ snapshot = {}, snapshotUnsupported = false }) => {
+  const { formatTimestamp } = useTimezone();
+  const toDisplayTime = (value) => (value ? formatTimestamp(value) : '-');
   const [isExpanded, setIsExpanded] = useState(false);
   const [showAllCandidates, setShowAllCandidates] = useState(false);
 

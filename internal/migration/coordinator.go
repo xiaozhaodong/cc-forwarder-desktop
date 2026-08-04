@@ -13,7 +13,11 @@ import (
 	"time"
 )
 
-const MigrationID = "20260803_claude_endpoint_flatten_v1"
+const (
+	EndpointFlattenMigrationID = "20260803_claude_endpoint_flatten_v1"
+	TimezoneUTCMigrationID     = "20260804_timezone_utc_v1"
+	MigrationID                = EndpointFlattenMigrationID
+)
 
 type Phase string
 
@@ -83,6 +87,18 @@ func (c *Coordinator) setStatus(status Status) {
 }
 
 func (c *Coordinator) Run(ctx context.Context) (Status, error) {
+	status, err := c.runEndpointFlatten(ctx)
+	if err != nil {
+		return status, err
+	}
+	legacy, err := LoadLegacyConfig(c.ConfigPath)
+	if err != nil {
+		return c.failForMigration(status, TimezoneUTCMigrationID, err)
+	}
+	return c.runTimezoneUTCMigration(ctx, legacy, status)
+}
+
+func (c *Coordinator) runEndpointFlatten(ctx context.Context) (Status, error) {
 	if c.DB == nil {
 		return c.fail(Status{}, fmt.Errorf("migration database is nil"))
 	}
@@ -223,15 +239,19 @@ func (c *Coordinator) Run(ctx context.Context) (Status, error) {
 }
 
 func (c *Coordinator) fail(status Status, err error) (Status, error) {
+	return c.failForMigration(status, EndpointFlattenMigrationID, err)
+}
+
+func (c *Coordinator) failForMigration(status Status, migrationID string, err error) (Status, error) {
 	status.State = StartupMigrationFailed
 	status.Error = sanitizeError(err)
 	status.RetryAllowed = true
 	if status.MigrationID == "" {
-		status.MigrationID = MigrationID
+		status.MigrationID = migrationID
 	}
 	c.setStatus(status)
 	if c.Logger != nil {
-		c.Logger.Error("Claude 端点扁平化迁移失败", "migration_id", MigrationID, "phase", status.Phase, "error", status.Error, "backup_dir", status.BackupDir)
+		c.Logger.Error("数据库迁移失败", "migration_id", migrationID, "phase", status.Phase, "error", status.Error, "backup_dir", status.BackupDir)
 	}
 	return status, err
 }
@@ -275,7 +295,7 @@ func (c *Coordinator) restoreStatusMetadata(ctx context.Context, status *Status,
 		return
 	}
 
-	manifest, err := readVerifiedBackupManifest(ledger.BackupDir, ledger.ManifestSHA256)
+	manifest, err := readVerifiedBackupManifest(ledger.BackupDir, ledger.ManifestSHA256, EndpointFlattenMigrationID)
 	if err != nil {
 		c.warnStatusRestore("读取迁移备份清单失败", err)
 	} else {
@@ -326,7 +346,7 @@ func (c *Coordinator) restoreStatusMetadata(ctx context.Context, status *Status,
 	}
 }
 
-func readVerifiedBackupManifest(directory, expectedSHA256 string) (BackupManifest, error) {
+func readVerifiedBackupManifest(directory, expectedSHA256, expectedMigrationID string) (BackupManifest, error) {
 	var manifest BackupManifest
 	if strings.TrimSpace(directory) == "" {
 		return manifest, fmt.Errorf("backup directory is empty")
@@ -346,7 +366,7 @@ func readVerifiedBackupManifest(directory, expectedSHA256 string) (BackupManifes
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return manifest, err
 	}
-	if manifest.MigrationID != MigrationID {
+	if manifest.MigrationID != expectedMigrationID {
 		return manifest, fmt.Errorf("unexpected backup migration id %q", manifest.MigrationID)
 	}
 	return manifest, nil
@@ -382,11 +402,11 @@ func updateLedgerPhase(ctx context.Context, db *sql.DB, phase Phase, errorMessag
 	column := ""
 	switch phase {
 	case PhaseDBCommitted:
-		column = ", db_committed_at = CURRENT_TIMESTAMP"
+		column = ", db_committed_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')"
 	case PhaseConfigCommitted:
-		column = ", config_committed_at = CURRENT_TIMESTAMP"
+		column = ", config_committed_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')"
 	case PhaseCompleted:
-		column = ", completed_at = CURRENT_TIMESTAMP"
+		column = ", completed_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')"
 	}
 	_, err := db.ExecContext(ctx, `UPDATE app_schema_migrations SET phase = ?, error_message = ?`+column+` WHERE migration_id = ?`, string(phase), errorMessage, MigrationID)
 	if err != nil {
@@ -431,7 +451,7 @@ func tableExists(ctx context.Context, db queryRower, table string) (bool, error)
 	return count > 0, nil
 }
 
-func columnExists(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
+func columnExists(ctx context.Context, db queryContexter, table, column string) (bool, error) {
 	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+quoteIdentifier(table)+`)`)
 	if err != nil {
 		return false, err
@@ -454,6 +474,10 @@ func columnExists(ctx context.Context, db *sql.DB, table, column string) (bool, 
 
 type queryRower interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+type queryContexter interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
 func quoteIdentifier(value string) string {

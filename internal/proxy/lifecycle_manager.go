@@ -13,6 +13,7 @@ import (
 	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/proxy/handlers"
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"cc-forwarder/internal/tracking"
 )
 
@@ -777,7 +778,7 @@ func (rlm *RequestLifecycleManager) GetStats() map[string]any {
 		"status":         state.lastStatus,
 		"retry_count":    state.retryCount,
 		"duration_ms":    time.Since(rlm.startTime).Milliseconds(),
-		"start_time":     rlm.startTime.Format(time.RFC3339),
+		"start_time":     timezonepolicy.FormatStorage(rlm.startTime),
 	}
 
 	// 如果有错误信息，包含在统计中

@@ -1,6 +1,7 @@
 package migration
 
 import (
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -18,6 +19,7 @@ import (
 
 type BackupManifest struct {
 	MigrationID     string `json:"migration_id"`
+	LegacyTimezone  string `json:"legacy_timezone,omitempty"`
 	CreatedAt       string `json:"created_at"`
 	SourceMode      string `json:"source_mode"`
 	DatabasePath    string `json:"database_path"`
@@ -41,6 +43,9 @@ type BackupResult struct {
 
 type BackupOptions struct {
 	DB              *sql.DB
+	MigrationID     string
+	DirectorySlug   string
+	LegacyTimezone  string
 	DatabasePath    string
 	ConfigPath      string
 	DataDir         string
@@ -56,6 +61,15 @@ func CreateMigrationBackup(ctx context.Context, options BackupOptions) (*BackupR
 	if options.Now == nil {
 		options.Now = time.Now
 	}
+	if options.MigrationID == "" {
+		options.MigrationID = EndpointFlattenMigrationID
+	}
+	if options.DirectorySlug == "" {
+		options.DirectorySlug = "20260803-claude-endpoint-flatten"
+	}
+	if strings.ContainsAny(options.DirectorySlug, `/\\`) || options.DirectorySlug == "." || options.DirectorySlug == ".." {
+		return nil, fmt.Errorf("invalid migration backup directory slug %q", options.DirectorySlug)
+	}
 	stamp := options.Now().Format("20060102-150405.000000000")
 	root := filepath.Join(options.DataDir, "migration-backups")
 	if err := os.MkdirAll(root, 0o700); err != nil {
@@ -64,14 +78,15 @@ func CreateMigrationBackup(ctx context.Context, options BackupOptions) (*BackupR
 	if err := os.Chmod(root, 0o700); err != nil {
 		return nil, fmt.Errorf("chmod migration backup root: %w", err)
 	}
-	directory := filepath.Join(root, "20260803-claude-endpoint-flatten-"+stamp)
+	directory := filepath.Join(root, options.DirectorySlug+"-"+stamp)
 	if err := os.Mkdir(directory, 0o700); err != nil {
 		return nil, fmt.Errorf("create migration backup directory: %w", err)
 	}
 
 	manifest := BackupManifest{
-		MigrationID:     MigrationID,
-		CreatedAt:       options.Now().Format(time.RFC3339Nano),
+		MigrationID:     options.MigrationID,
+		LegacyTimezone:  options.LegacyTimezone,
+		CreatedAt:       timezonepolicy.FormatStorage(options.Now()),
 		SourceMode:      string(options.SourceMode),
 		DatabasePath:    options.DatabasePath,
 		ConfigPath:      options.ConfigPath,

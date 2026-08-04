@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
 // Helper functions for pointer creation
@@ -472,7 +474,7 @@ func TestConcurrentWebRequests(t *testing.T) {
 	defer tracker.Close()
 
 	// Ensure tables exist by direct insert (similar to cleanup test fix)
-	_, err = tracker.db.Exec(`INSERT INTO request_logs (request_id, start_time, status) VALUES (?, datetime('now'), ?)`, "test-init-web", "pending")
+	_, err = tracker.db.Exec(`INSERT INTO request_logs (request_id, start_time, status) VALUES (?, ?, ?)`, "test-init-web", timezonepolicy.FormatStorage(time.Now()), "pending")
 	if err != nil {
 		t.Fatalf("Failed to ensure tables exist: %v", err)
 	}

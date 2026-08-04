@@ -28,7 +28,7 @@ import {
   fetchLatestAccountScheduleSnapshot
 } from '@utils/api.js';
 import { subscribeToEvent, isWailsEnvironment } from '@utils/wailsApi.js';
-import { buildQueryParamsFromFilters, createInitialFilters, useFilters } from './hooks/useFilters.js';
+import { buildQueryParamsFromFilters, useFilters } from './hooks/useFilters.js';
 import { useColumnConfig } from './hooks/useColumnConfig.js';
 import { useTimeRange } from './hooks/useTimeRange.js';
 import { useAutoRefresh } from './hooks/useAutoRefresh.js';
@@ -74,6 +74,7 @@ const RequestsPage = () => {
     filters,
     updateFilter,
     updateFilters,
+    resetFilters,
     buildQueryParams
   } = useFilters();
   const [appliedQueryParams, setAppliedQueryParams] = useState(() => buildQueryParams());
@@ -256,8 +257,7 @@ const RequestsPage = () => {
 
   // 重置筛选
   const handleResetFilters = () => {
-    const nextFilters = createInitialFilters();
-    updateFilters(nextFilters);
+    const nextFilters = resetFilters();
     setAppliedQueryParams(buildQueryParamsFromFilters(nextFilters));
     setPagination(prev => ({ ...prev, page: 1 }));
   };

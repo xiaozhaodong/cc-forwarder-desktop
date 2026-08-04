@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"cc-forwarder/internal/accountauth"
+	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
 const (
@@ -24,8 +25,6 @@ const (
 	accountGroupBackup    = "backup"
 	accountGroupCold      = "cold"
 )
-
-var accountDBTimeZone = time.FixedZone("UTC+8", 8*60*60)
 
 // UpstreamAccountRecord 上游账号记录
 type UpstreamAccountRecord struct {
@@ -486,10 +485,10 @@ func (s *SQLiteAccountPoolStore) getAccountByID(ctx context.Context, id int64) (
 		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules, enable_request_compression,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
+			group_key, priority, enabled, state, CAST(cooldown_until AS TEXT), fail_count, CAST(last_success_at AS TEXT), last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
-			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
-			quota_status, quota_refreshed_at, fingerprint, created_at, updated_at
+			quota_5h_used_percent, CAST(quota_5h_reset_at AS TEXT), quota_weekly_used_percent, CAST(quota_weekly_reset_at AS TEXT),
+			quota_status, CAST(quota_refreshed_at AS TEXT), fingerprint, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM upstream_accounts
 		WHERE id = ?
 	`
@@ -536,10 +535,10 @@ func (s *SQLiteAccountPoolStore) listAccountsRaw(ctx context.Context, includeDis
 		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules, enable_request_compression,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
+			group_key, priority, enabled, state, CAST(cooldown_until AS TEXT), fail_count, CAST(last_success_at AS TEXT), last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
-			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
-			quota_status, quota_refreshed_at, fingerprint, created_at, updated_at
+			quota_5h_used_percent, CAST(quota_5h_reset_at AS TEXT), quota_weekly_used_percent, CAST(quota_weekly_reset_at AS TEXT),
+			quota_status, CAST(quota_refreshed_at AS TEXT), fingerprint, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM upstream_accounts
 	`
 	if !includeDisabled {
@@ -579,10 +578,10 @@ func (s *SQLiteAccountPoolStore) ListSchedulableAccounts(ctx context.Context, no
 		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules, enable_request_compression,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
+			group_key, priority, enabled, state, CAST(cooldown_until AS TEXT), fail_count, CAST(last_success_at AS TEXT), last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
-			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
-			quota_status, quota_refreshed_at, fingerprint, created_at, updated_at
+			quota_5h_used_percent, CAST(quota_5h_reset_at AS TEXT), quota_weekly_used_percent, CAST(quota_weekly_reset_at AS TEXT),
+			quota_status, CAST(quota_refreshed_at AS TEXT), fingerprint, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM upstream_accounts
 		WHERE enabled = 1
 			AND state != 'disabled_auth'
@@ -621,10 +620,10 @@ func (s *SQLiteAccountPoolStore) FindAccountByFingerprint(ctx context.Context, f
 		SELECT id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules, enable_request_compression,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
-			group_key, priority, enabled, state, cooldown_until, fail_count, last_success_at, last_error,
+			group_key, priority, enabled, state, CAST(cooldown_until AS TEXT), fail_count, CAST(last_success_at AS TEXT), last_error,
 			plan_type, chatgpt_account_id, chatgpt_user_id, organization_id,
-			quota_5h_used_percent, quota_5h_reset_at, quota_weekly_used_percent, quota_weekly_reset_at,
-			quota_status, quota_refreshed_at, fingerprint, created_at, updated_at
+			quota_5h_used_percent, CAST(quota_5h_reset_at AS TEXT), quota_weekly_used_percent, CAST(quota_weekly_reset_at AS TEXT),
+			quota_status, CAST(quota_refreshed_at AS TEXT), fingerprint, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM upstream_accounts
 		WHERE fingerprint = ?
 	`
@@ -918,15 +917,15 @@ func nullableFloat(v *float64) any {
 }
 
 func formatDBTime(t time.Time) string {
-	return t.In(accountDBTimeZone).Format("2006-01-02 15:04:05.000000-07:00")
+	return timezonepolicy.FormatStorage(t)
 }
 
-// FormatAccountDisplayTime 统一将账号池时间输出为展示时区字符串。
+// FormatAccountDisplayTime 保留旧调用名，API 契约统一输出 UTC；展示转换由前端 Policy 完成。
 func FormatAccountDisplayTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.In(accountDBTimeZone).Format("2006-01-02 15:04:05")
+	return timezonepolicy.FormatStorage(t)
 }
 
 func currentDBTime() string {
@@ -972,21 +971,36 @@ func scanAccountRow(scanner rowScanner) (*UpstreamAccountRecord, error) {
 	}
 	rec.Enabled = enabled == 1
 	rec.EnableRequestCompression = enabledRequestCompression == 1
-	rec.CooldownUntil = parseNullableTime(cooldownUntilStr)
+	var err error
+	if rec.CooldownUntil, err = parseNullableTime(cooldownUntilStr); err != nil {
+		return nil, fmt.Errorf("parse account cooldown_until: %w", err)
+	}
 	rec.CostMultiplier = parseMultiplierFloat(costMultiplier)
 	rec.InputCostMultiplier = parseMultiplierFloat(inputCostMultiplier)
 	rec.OutputCostMultiplier = parseMultiplierFloat(outputCostMultiplier)
 	rec.CacheCreationCostMultiplier = parseMultiplierFloat(cacheCreationMultiplier)
 	rec.CacheCreationCostMultiplier1h = parseMultiplierFloat(cacheCreationMultiplier1h)
 	rec.CacheReadCostMultiplier = parseMultiplierFloat(cacheReadMultiplier)
-	rec.LastSuccessAt = parseNullableTime(lastSuccessAtStr)
+	if rec.LastSuccessAt, err = parseNullableTime(lastSuccessAtStr); err != nil {
+		return nil, fmt.Errorf("parse account last_success_at: %w", err)
+	}
 	rec.Quota5HUsedPercent = parseNullableFloat(quota5HUsedPercent)
-	rec.Quota5HResetAt = parseNullableTime(quota5HResetAtStr)
+	if rec.Quota5HResetAt, err = parseNullableTime(quota5HResetAtStr); err != nil {
+		return nil, fmt.Errorf("parse account quota_5h_reset_at: %w", err)
+	}
 	rec.QuotaWeeklyUsedPercent = parseNullableFloat(quotaWeeklyUsedPercent)
-	rec.QuotaWeeklyResetAt = parseNullableTime(quotaWeeklyResetAtStr)
-	rec.QuotaRefreshedAt = parseNullableTime(quotaRefreshedAtStr)
-	rec.CreatedAt = parseDBTime(createdAtStr)
-	rec.UpdatedAt = parseDBTime(updatedAtStr)
+	if rec.QuotaWeeklyResetAt, err = parseNullableTime(quotaWeeklyResetAtStr); err != nil {
+		return nil, fmt.Errorf("parse account quota_weekly_reset_at: %w", err)
+	}
+	if rec.QuotaRefreshedAt, err = parseNullableTime(quotaRefreshedAtStr); err != nil {
+		return nil, fmt.Errorf("parse account quota_refreshed_at: %w", err)
+	}
+	if rec.CreatedAt, err = parseDBTime(createdAtStr); err != nil {
+		return nil, fmt.Errorf("parse account created_at: %w", err)
+	}
+	if rec.UpdatedAt, err = parseDBTime(updatedAtStr); err != nil {
+		return nil, fmt.Errorf("parse account updated_at: %w", err)
+	}
 	return &rec, nil
 }
 
@@ -1162,12 +1176,15 @@ func parseMultiplierFloat(v sql.NullFloat64) float64 {
 	return v.Float64
 }
 
-func parseNullableTime(v sql.NullString) *time.Time {
+func parseNullableTime(v sql.NullString) (*time.Time, error) {
 	if !v.Valid || strings.TrimSpace(v.String) == "" {
-		return nil
+		return nil, nil
 	}
-	t := parseDBTime(v.String)
-	return &t
+	t, err := parseDBTime(v.String)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 func parseNullableFloat(v sql.NullFloat64) *float64 {
@@ -1178,37 +1195,6 @@ func parseNullableFloat(v sql.NullFloat64) *float64 {
 	return &value
 }
 
-func parseDBTime(text string) time.Time {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return time.Time{}
-	}
-
-	if t, err := time.Parse("2006-01-02 15:04:05.999999-07:00", text); err == nil {
-		return t
-	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
-		if t, err := time.Parse(layout, text); err == nil {
-			if looksLikeLegacySQLiteUTC(text, t) {
-				return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), accountDBTimeZone)
-			}
-			return t
-		}
-	}
-	localCandidates := []string{
-		"2006-01-02 15:04:05.999999",
-		"2006-01-02 15:04:05",
-	}
-	for _, layout := range localCandidates {
-		if t, err := time.ParseInLocation(layout, text, accountDBTimeZone); err == nil {
-			return t
-		}
-	}
-	return time.Time{}
-}
-
-func looksLikeLegacySQLiteUTC(text string, parsed time.Time) bool {
-	return strings.Contains(text, "T") &&
-		strings.HasSuffix(text, "Z") &&
-		parsed.Location() == time.UTC
+func parseDBTime(text string) (time.Time, error) {
+	return timezonepolicy.ParseStorage(text)
 }

@@ -6,6 +6,7 @@
 import { API_ENDPOINTS, ERROR_MESSAGES } from './constants.js';
 import * as WailsApi from './wailsApi.js';
 import { normalizeRequestSource } from '@pages/requests/utils/requestSource.js';
+import { formatTimestamp as formatConfiguredTimestamp } from './timezone.js';
 
 // 检测是否在 Wails 环境中运行
 export const isWailsEnvironment = WailsApi.isWailsEnvironment;
@@ -358,7 +359,10 @@ export const fetchModels = async () => {
 // ============================================
 
 export const fetchConfig = async () => {
-  return await fetchWithTimeout(API_ENDPOINTS.CONFIG);
+  if (!isWailsEnvironment()) {
+    throw new Error('当前配置界面仅支持 Wails 桌面环境');
+  }
+  return await WailsApi.getConfig();
 };
 
 // ============================================
@@ -566,37 +570,7 @@ export const formatDuration = (ms) => {
   return `${ms}ms`;
 };
 
-// 格式化时间戳
-// 后端返回的时间已经是配置时区的时间（如北京时间），格式：2025-12-04 17:18:48
-// 直接格式化显示，不做时区转换
-export const formatTimestamp = (timestamp) => {
-  if (!timestamp) return 'N/A';
-
-  // 如果是纯时间格式（无T、无时区），直接格式化显示
-  // 格式：2025-12-04 17:18:48 → 2025/12/4 17:18:48
-  if (typeof timestamp === 'string' && !timestamp.includes('T') && !timestamp.includes('+') && !timestamp.includes('Z')) {
-    // 解析 "2025-12-04 17:18:48" 格式
-    const match = timestamp.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
-    if (match) {
-      const [, year, month, day, hours, minutes, seconds] = match;
-      // 直接显示，不转换时区
-      return `${year}/${parseInt(month)}/${parseInt(day)} ${hours}:${minutes}:${seconds}`;
-    }
-  }
-
-  // 带时区的格式（RFC3339），用 Date 解析
-  const date = new Date(timestamp);
-  if (isNaN(date.getTime())) return 'Invalid Date';
-
-  const year = date.getFullYear();
-  const month = date.getMonth() + 1;
-  const day = date.getDate();
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const seconds = String(date.getSeconds()).padStart(2, '0');
-
-  return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
-};
+export const formatTimestamp = (timestamp, timezone) => formatConfiguredTimestamp(timestamp, timezone);
 
 // ============================================
 // v5.0+ 端点存储 API (SQLite)

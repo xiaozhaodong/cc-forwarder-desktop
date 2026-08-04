@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"cc-forwarder/internal/tracking"
 )
 
@@ -63,22 +64,19 @@ func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, er
 
 		if a.usageTracker != nil {
 			ctx := context.Background()
-
-			// 获取配置的时区
-			loc := time.Local
-			if a.config != nil && a.config.Timezone != "" {
-				if parsedLoc, err := time.LoadLocation(a.config.Timezone); err == nil {
-					loc = parsedLoc
-				}
+			policy, err := a.activeTimezonePolicy()
+			if err != nil {
+				return UsageSummary{}, err
 			}
 
 			// 查询全部历史统计（endpoint + account）
 			allTimeTotalCost, allTimeTotalTokens, allTimeTotal = a.queryStatsFromDB(ctx, time.Time{}, time.Now(), "all")
 
 			// 查询今日统计（使用配置的时区）
-			now := time.Now().In(loc)
-			todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-			todayEnd := todayStart.Add(24 * time.Hour)
+			todayStart, todayEnd, err := policy.DayRange(policy.BusinessDate(time.Now()))
+			if err != nil {
+				return UsageSummary{}, err
+			}
 			todayCost, todayTokens, todayRequests = a.queryStatsFromDB(ctx, todayStart, todayEnd, "all")
 		}
 
@@ -107,19 +105,23 @@ func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, er
 	var startTime, endTime time.Time
 	var err error
 
+	policy, err := a.activeTimezonePolicy()
+	if err != nil {
+		return UsageSummary{}, err
+	}
 	if startTimeStr != "" {
-		startTime, err = time.Parse(time.RFC3339, startTimeStr)
+		startTime, err = policy.ParseInput(startTimeStr)
 		if err != nil {
-			startTime = time.Now().AddDate(0, 0, -7) // 默认最近7天
+			return UsageSummary{}, err
 		}
 	} else {
 		startTime = time.Now().AddDate(0, 0, -7)
 	}
 
 	if endTimeStr != "" {
-		endTime, err = time.Parse(time.RFC3339, endTimeStr)
+		endTime, err = policy.ParseInput(endTimeStr)
 		if err != nil {
-			endTime = time.Now()
+			return UsageSummary{}, err
 		}
 	} else {
 		endTime = time.Now()
@@ -180,7 +182,7 @@ func (a *App) queryStatsFromSingleTable(ctx context.Context, db *sql.DB, tableNa
 	}
 	if !startTime.IsZero() {
 		conditions = append(conditions, "start_time >= ? AND start_time < ?")
-		args = append(args, startTime, endTime)
+		args = append(args, timezonepolicy.FormatStorage(startTime), timezonepolicy.FormatStorage(endTime))
 	}
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
@@ -308,37 +310,40 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 
 	ctx := context.Background()
 
-	// 解析时间参数（使用配置的时区）
-	loc := time.Local
-	if a.config != nil && a.config.Timezone != "" {
-		if l, err := time.LoadLocation(a.config.Timezone); err == nil {
-			loc = l
-		}
+	policy, err := a.activeTimezonePolicy()
+	if err != nil {
+		return RequestListResult{}, err
 	}
 
 	var startTime, endTime time.Time
 
 	// 解析开始时间
 	if params.StartDate != "" {
-		if t, err := parseTimeWithLocation(params.StartDate, loc); err == nil {
-			startTime = t
+		startTime, err = policy.ParseInput(params.StartDate)
+		if err != nil {
+			return RequestListResult{}, err
 		}
 	}
 	// 解析结束时间
 	if params.EndDate != "" {
-		if t, err := parseTimeWithLocation(params.EndDate, loc); err == nil {
-			endTime = t
+		endTime, err = policy.ParseInput(params.EndDate)
+		if err != nil {
+			return RequestListResult{}, err
 		}
 	}
 
 	// 如果没有传时间参数，默认查询今天
 	if startTime.IsZero() {
-		now := time.Now().In(loc)
-		startTime = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+		startTime, endTime, err = policy.DayRange(policy.BusinessDate(time.Now()))
+		if err != nil {
+			return RequestListResult{}, err
+		}
 	}
 	if endTime.IsZero() {
-		now := time.Now().In(loc)
-		endTime = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, loc)
+		_, endTime, err = policy.DayRange(policy.BusinessDate(time.Now()))
+		if err != nil {
+			return RequestListResult{}, err
+		}
 	}
 
 	// 使用热池+数据库双源查询（与 HTTP API 一致）
@@ -371,7 +376,7 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 		// 数据库存储的就是配置时区的时间，直接格式化，不做时区转换
 		record := RequestRecord{
 			RequestID:             r.RequestID,
-			Timestamp:             r.StartTime.Format("2006-01-02 15:04:05"),
+			Timestamp:             formatAPITime(r.StartTime),
 			RequestFamily:         r.RequestFamily,
 			Endpoint:              r.EndpointName,
 			Model:                 r.ModelName,
@@ -405,7 +410,7 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 			record.ResponseTime = *r.DurationMs
 		}
 		if r.RouteDecisionAt != nil {
-			record.RouteDecisionAt = r.RouteDecisionAt.Format("2006-01-02 15:04:05")
+			record.RouteDecisionAt = formatAPITime(*r.RouteDecisionAt)
 		}
 		record.FirstTokenMs = r.FirstTokenMs
 
@@ -458,12 +463,9 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 		Period: period,
 	}
 
-	// 解析时间参数（使用配置的时区）
-	loc := time.Local
-	if a.config != nil && a.config.Timezone != "" {
-		if l, err := time.LoadLocation(a.config.Timezone); err == nil {
-			loc = l
-		}
+	policy, err := a.activeTimezonePolicy()
+	if err != nil {
+		return result, err
 	}
 
 	var startTime, endTime time.Time
@@ -471,16 +473,18 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 
 	// 优先使用自定义时间范围
 	if params.StartDate != "" {
-		if t, err := parseTimeWithLocation(params.StartDate, loc); err == nil {
-			startTime = t
-			useCustomRange = true
+		startTime, err = policy.ParseInput(params.StartDate)
+		if err != nil {
+			return result, err
 		}
+		useCustomRange = true
 	}
 	if params.EndDate != "" {
-		if t, err := parseTimeWithLocation(params.EndDate, loc); err == nil {
-			endTime = t
-			useCustomRange = true
+		endTime, err = policy.ParseInput(params.EndDate)
+		if err != nil {
+			return result, err
 		}
+		useCustomRange = true
 	}
 
 	// 如果没有自定义时间，使用 period 计算

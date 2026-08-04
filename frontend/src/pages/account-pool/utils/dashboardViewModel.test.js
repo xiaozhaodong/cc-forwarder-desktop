@@ -8,6 +8,7 @@ import {
 
 test('buildAccountPoolDashboardModel returns full inventory rows and mapped scheduler fields without pre-filtering', () => {
   const model = buildAccountPoolDashboardModel({
+    timezone: 'Asia/Shanghai',
     accounts: [
       {
         id: 1,
@@ -122,6 +123,7 @@ test('buildAccountPoolDashboardModel returns full inventory rows and mapped sche
 
 test('buildAccountPoolDashboardModel leaves saved views to runtime state while keeping batch action defaults', () => {
   const model = buildAccountPoolDashboardModel({
+    timezone: 'Asia/Shanghai',
     accounts: [
       {
         id: 1,
@@ -178,6 +180,7 @@ test('buildAccountPoolDashboardModel leaves saved views to runtime state while k
 
 test('buildAccountPoolDashboardModel keeps api_key accounts filterable under the prepaid plan bucket', () => {
   const model = buildAccountPoolDashboardModel({
+    timezone: 'Asia/Shanghai',
     accounts: [
       {
         id: 11,
@@ -211,6 +214,7 @@ test('buildAccountPoolDashboardModel keeps api_key accounts filterable under the
 
 test('buildAccountPoolDashboardModel emits state tones that the reviewed components can render directly', () => {
   const model = buildAccountPoolDashboardModel({
+    timezone: 'Asia/Shanghai',
     accounts: [
       { id: 1, account_name: 'active-a', enabled: true, provider_type: 'api_key', priority: 10, state: 'active', quota_status: 'ok' },
       { id: 2, account_name: 'cooldown-a', enabled: true, provider_type: 'api_key', priority: 20, state: 'cooldown', quota_status: 'ok' },
@@ -237,6 +241,7 @@ test('buildAccountPoolDashboardModel emits state tones that the reviewed compone
 
 test('buildAccountPoolDashboardModel keeps low-quota backup accounts counted as available while they remain schedulable', () => {
   const model = buildAccountPoolDashboardModel({
+    timezone: 'Asia/Shanghai',
     accounts: [
       {
         id: 21,

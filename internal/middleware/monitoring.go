@@ -12,6 +12,7 @@ import (
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/monitor"
+	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
 // MonitoringMiddleware provides health and metrics endpoints
@@ -132,12 +133,16 @@ func (mm *MonitoringMiddleware) handleDetailedHealth(w http.ResponseWriter, r *h
 			healthyCount++
 		}
 
+		lastCheckTime := ""
+		if !status.LastCheck.IsZero() {
+			lastCheckTime = timezonepolicy.FormatStorage(status.LastCheck)
+		}
 		endpointHealths = append(endpointHealths, EndpointHealth{
 			Name:             ep.Config.Name,
 			URL:              ep.Config.URL,
 			Healthy:          status.Healthy,
 			ResponseTimeMs:   status.ResponseTime.Milliseconds(),
-			LastCheckTime:    status.LastCheck.Format("2006-01-02T15:04:05Z"),
+			LastCheckTime:    lastCheckTime,
 			ConsecutiveFails: status.ConsecutiveFails,
 			Priority:         ep.Config.Priority,
 		})
@@ -160,7 +165,7 @@ func (mm *MonitoringMiddleware) handleDetailedHealth(w http.ResponseWriter, r *h
 
 	response := HealthResponse{
 		Status:    overallStatus,
-		Timestamp: time.Now().Format("2006-01-02T15:04:05Z"),
+		Timestamp: timezonepolicy.FormatStorage(time.Now()),
 		Endpoints: endpointHealths,
 	}
 

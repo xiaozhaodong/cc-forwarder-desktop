@@ -84,4 +84,3 @@ func sortAccountsWithinGroup(accounts []*store.UpstreamAccountRecord) {
 		return left.ID < right.ID
 	})
 }
-

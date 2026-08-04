@@ -503,8 +503,8 @@ func TestMarkAccountSuccessIfNoNewerFailure_PreservesSameMillisecondNewerCooldow
 	ctx := context.Background()
 
 	record := mustCreateTestAccount(t, st, "same-ms-guarded", 10)
-	attemptStartedAt := time.Date(2026, 3, 9, 12, 34, 56, 789123000, accountDBTimeZone)
-	newerFailureAt := time.Date(2026, 3, 9, 12, 34, 56, 789456000, accountDBTimeZone)
+	attemptStartedAt := time.Date(2026, 3, 9, 12, 34, 56, 789123000, time.UTC)
+	newerFailureAt := time.Date(2026, 3, 9, 12, 34, 56, 789456000, time.UTC)
 	cooldownUntil := newerFailureAt.Add(60 * time.Second)
 
 	if _, err := st.db.ExecContext(ctx,
@@ -545,11 +545,11 @@ func TestMarkAccountTransientFailure_StoresMicrosecondUpdatedAt(t *testing.T) {
 	}
 
 	var updatedAt string
-	if err := st.db.QueryRowContext(ctx, `SELECT updated_at FROM upstream_accounts WHERE id = ?`, record.ID).Scan(&updatedAt); err != nil {
+	if err := st.db.QueryRowContext(ctx, `SELECT CAST(updated_at AS TEXT) FROM upstream_accounts WHERE id = ?`, record.ID).Scan(&updatedAt); err != nil {
 		t.Fatalf("query updated_at failed: %v", err)
 	}
 
-	pattern := regexp.MustCompile(`\.\d{6}[+-]\d{2}:\d{2}$`)
+	pattern := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$`)
 	if !pattern.MatchString(updatedAt) {
 		t.Fatalf("expected microsecond precision updated_at, got %q", updatedAt)
 	}

@@ -1,6 +1,7 @@
 // LogEntry.jsx - 单条日志显示组件
 import React from 'react';
 import { LOG_LEVELS } from '../constants';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
 /**
  * 单条日志组件
@@ -8,6 +9,7 @@ import { LOG_LEVELS } from '../constants';
  * @param {string} searchQuery 搜索关键词
  */
 function LogEntry({ log, searchQuery }) {
+  const { formatTimeOnly } = useTimezone();
   const levelConfig = LOG_LEVELS[log.level] || LOG_LEVELS.INFO;
   const Icon = levelConfig.icon;
 
@@ -28,13 +30,7 @@ function LogEntry({ log, searchQuery }) {
     <div className="flex items-start gap-3 px-4 py-2 hover:bg-slate-50 border-b border-slate-100 font-mono text-xs">
       {/* 时间戳 */}
       <div className="text-slate-400 whitespace-nowrap w-32 flex-shrink-0">
-        {new Date(log.timestamp).toLocaleTimeString('zh-CN', {
-          hour12: false,
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-          fractionalSecondDigits: 3,
-        })}
+        {formatTimeOnly(log.timestamp)}
       </div>
 
       {/* 日志级别 */}

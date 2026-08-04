@@ -4,7 +4,7 @@ import { Button, ErrorMessage, LoadingSpinner } from '@components/ui';
 import useEndpointsData from '@hooks/useEndpointsData.js';
 import { DeleteConfirmDialog, EndpointForm, EndpointRow, EndpointScheduleDrawer, resolveSnapshotOutcome } from './components';
 import { fetchLatestEndpointScheduleSnapshot } from '@utils/endpointScheduleApi.js';
-import { formatTimestamp } from '@utils/api.js';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import {
   clearClaudeRoutingOverride,
   createEndpointRecord,
@@ -19,6 +19,7 @@ import {
 const initialRoutingState = { mode: 'auto', endpointName: '', fallbackEnabled: true };
 
 const EndpointsPage = () => {
+  const { formatTimestamp } = useTimezone();
   const { endpoints, loading, error, stats, lastUpdate, refresh, testEndpoint, testAllEndpoints, setAvailability, setAutoSchedule } = useEndpointsData();
   const [routingState, setRoutingState] = useState(initialRoutingState);
   const [snapshot, setSnapshot] = useState({ hasSnapshot: false, decisions: [] });

@@ -14,7 +14,7 @@ import {
   SkipForward,
   X
 } from 'lucide-react';
-import { formatTimestamp } from '@utils/api.js';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
 
 export const resolveSnapshotOutcome = (snapshot = {}) => {
@@ -98,9 +98,9 @@ const routeModeLabels = {
   manual_fixed: '手动固定'
 };
 
-const formatTime = (value) => (value ? formatTimestamp(value) : '-');
-
 const EndpointScheduleDrawer = ({ open = false, onClose, snapshot = {}, unsupported = false }) => {
+  const { formatTimestamp } = useTimezone();
+  const formatTime = (value) => (value ? formatTimestamp(value) : '-');
   const closeButtonRef = useRef(null);
 
   useModalLifecycle({ open, onClose, initialFocusRef: closeButtonRef });

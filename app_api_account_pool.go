@@ -684,14 +684,14 @@ func formatAccountRecordTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return store.FormatAccountDisplayTime(t)
+	return formatAPITime(t)
 }
 
 func formatTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format("2006-01-02 15:04:05")
+	return formatAPITime(t)
 }
 
 func maskCredentialRaw(providerType, raw string) string {

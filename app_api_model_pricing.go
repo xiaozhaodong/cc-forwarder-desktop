@@ -279,10 +279,10 @@ func (a *App) pricingRecordToInfo(r *store.ModelPricingRecord) ModelPricingInfo 
 	}
 
 	if !r.CreatedAt.IsZero() {
-		info.CreatedAt = r.CreatedAt.Format("2006-01-02 15:04:05")
+		info.CreatedAt = formatAPITime(r.CreatedAt)
 	}
 	if !r.UpdatedAt.IsZero() {
-		info.UpdatedAt = r.UpdatedAt.Format("2006-01-02 15:04:05")
+		info.UpdatedAt = formatAPITime(r.UpdatedAt)
 	}
 
 	return info

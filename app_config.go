@@ -10,6 +10,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/migration"
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"cc-forwarder/internal/tracking"
 	"cc-forwarder/internal/utils"
 )
@@ -93,6 +94,15 @@ func (a *App) prepareCoreDatabaseAndMigration(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	globalTimezone := legacy.EffectiveGlobalTimezone()
+	if legacy.DatabaseTimezone != "" && legacy.DatabaseTimezone != globalTimezone {
+		return fmt.Errorf("usage_tracking.database.timezone %q conflicts with top-level timezone %q; remove it and use the top-level timezone", legacy.DatabaseTimezone, globalTimezone)
+	}
+	policy, err := timezonepolicy.New(globalTimezone)
+	if err != nil {
+		return fmt.Errorf("validate configured timezone: %w", err)
+	}
+	a.timezonePolicy = policy
 	databasePath := legacy.ResolveDatabasePath(filepath.Join(utils.GetDataDir(), "usage.db"))
 	databaseExisted := false
 	if databasePath != ":memory:" {
@@ -102,9 +112,7 @@ func (a *App) prepareCoreDatabaseAndMigration(ctx context.Context) error {
 			return fmt.Errorf("inspect application database: %w", statErr)
 		}
 	}
-	core, err := tracking.OpenCoreDatabase(tracking.DatabaseConfig{
-		Type: "sqlite", DatabasePath: databasePath, Timezone: legacy.DatabaseTimezone,
-	})
+	core, err := tracking.OpenCoreDatabase(tracking.DatabaseConfig{Type: "sqlite", DatabasePath: databasePath})
 	if err != nil {
 		return err
 	}
@@ -139,5 +147,14 @@ func (a *App) loadRuntimeConfig(databasePath string) error {
 		cfg.UsageTracking.Database.Path = databasePath
 	}
 	a.config = cfg
+	if a.timezonePolicy == nil {
+		policy, err := timezonepolicy.New(cfg.Timezone)
+		if err != nil {
+			return err
+		}
+		a.timezonePolicy = policy
+	} else if a.timezonePolicy.Name() != cfg.Timezone {
+		return fmt.Errorf("runtime timezone %q differs from validated startup timezone %q", cfg.Timezone, a.timezonePolicy.Name())
+	}
 	return nil
 }

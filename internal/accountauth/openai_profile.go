@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
 // OpenAIAccountProfile 表示从 ChatGPT OAuth 凭据中提取的账号画像。
@@ -86,7 +88,7 @@ func BuildStoredOpenAICredential(refreshToken, accessToken, idToken string, prof
 		payload["organization_id"] = strings.TrimSpace(profile.OrganizationID)
 	}
 	if !expiresAt.IsZero() {
-		payload["expires_at"] = expiresAt.Format(time.RFC3339)
+		payload["expires_at"] = timezonepolicy.FormatStorage(expiresAt)
 	}
 	if len(payload) == 0 {
 		return ""

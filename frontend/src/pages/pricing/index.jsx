@@ -32,6 +32,7 @@ import {
   deleteModelPricing,
   setDefaultModelPricing
 } from '@utils/wailsApi.js';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
 const PRICE_INPUT_STEP = '0.001';
 const CACHE_PRICE_DECIMALS = 3;
@@ -410,6 +411,7 @@ const DeleteConfirmDialog = ({ pricing, onConfirm, onCancel, loading }) => {
 // ============================================
 
 const PricingCard = ({ pricing, onEdit, onDelete, onSetDefault }) => {
+  const { formatTimestamp } = useTimezone();
   const isDefault = pricing.isDefault;
 
   // 计算价格等级颜色
@@ -529,7 +531,7 @@ const PricingCard = ({ pricing, onEdit, onDelete, onSetDefault }) => {
 
       {/* 底部信息 */}
       <div className="px-4 py-2 border-t border-slate-50 text-xs text-slate-400">
-        更新于 {pricing.updatedAt || '-'}
+        更新于 {pricing.updatedAt ? formatTimestamp(pricing.updatedAt) : '-'}
       </div>
     </div>
   );

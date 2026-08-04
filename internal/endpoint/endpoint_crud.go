@@ -10,6 +10,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/events"
+	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
 // SyncEndpoints 从数据库同步端点（v5.0 Desktop 专用）
@@ -81,7 +82,7 @@ func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
 				"name":      cfg.Name,
 				"url":       cfg.URL,
 				"priority":  cfg.Priority,
-				"timestamp": time.Now().Format("2006-01-02 15:04:05"),
+				"timestamp": timezonepolicy.FormatStorage(time.Now()),
 			},
 		})
 	}
@@ -143,7 +144,7 @@ func (m *Manager) RemoveEndpoint(name string) error {
 			Data: map[string]interface{}{
 				"name":      name,
 				"url":       removedURL,
-				"timestamp": time.Now().Format("2006-01-02 15:04:05"),
+				"timestamp": timezonepolicy.FormatStorage(time.Now()),
 			},
 		})
 	}
@@ -192,7 +193,7 @@ func (m *Manager) UpdateEndpointConfig(name string, cfg config.EndpointConfig) e
 				"name":      name,
 				"url":       cfg.URL,
 				"priority":  cfg.Priority,
-				"timestamp": time.Now().Format("2006-01-02 15:04:05"),
+				"timestamp": timezonepolicy.FormatStorage(time.Now()),
 			},
 		})
 	}

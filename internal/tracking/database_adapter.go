@@ -29,7 +29,7 @@ type DatabaseAdapter interface {
 
 	// SQL语法适配
 	BuildInsertOrReplaceQuery(table string, columns []string, values []string) string
-	BuildDateTimeNow() string
+	BuildUTCDateTimeNow() string
 	BuildLimitOffset(limit, offset int) string
 
 	// 数据库特定操作
@@ -51,9 +51,6 @@ type DatabaseConfig struct {
 
 	// SQLite配置
 	DatabasePath string `yaml:"database_path,omitempty"`
-
-	// 时区配置（用于时间格式化）
-	Timezone string `yaml:"timezone,omitempty"`
 
 	// ===== 以下 MySQL 相关字段已废弃，保留用于配置文件向后兼容 =====
 	// 注意：这些字段不再生效，配置这些字段会打印警告日志
@@ -115,8 +112,5 @@ func setDefaultConfig(config *DatabaseConfig) {
 	// SQLite 默认配置
 	if config.DatabasePath == "" {
 		config.DatabasePath = "data/usage.db"
-	}
-	if config.Timezone == "" {
-		config.Timezone = "Asia/Shanghai"
 	}
 }

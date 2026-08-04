@@ -16,6 +16,7 @@ import {
 } from 'recharts';
 import { fetchRequestTrendData } from '@utils/api.js';
 import { CustomSelect } from '@components/ui';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
 // 时间范围选项
 const TIME_RANGE_OPTIONS = [
@@ -28,6 +29,7 @@ const TIME_RANGE_OPTIONS = [
 ];
 
 const RequestTrendChart = () => {
+  const { formatTimeOnly } = useTimezone();
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState(30);
@@ -41,14 +43,14 @@ const RequestTrendChart = () => {
     }
     try {
       const data = await fetchRequestTrendData(timeRange);
-      setChartData(data);
+      setChartData(data.map((point) => ({ ...point, time: formatTimeOnly(point.timestamp || point.time) })));
     } catch (error) {
       console.error('加载请求趋势数据失败:', error);
     } finally {
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, [timeRange]);
+  }, [formatTimeOnly, timeRange]);
 
   // 初始加载和时间范围变化时重新加载
   useEffect(() => {
@@ -84,7 +86,7 @@ const RequestTrendChart = () => {
           }));
           setChartData(rechartsData);
         } else if (Array.isArray(data)) {
-          setChartData(data);
+          setChartData(data.map((point) => ({ ...point, time: formatTimeOnly(point.timestamp || point.time) })));
         }
         console.log('📊 [SSE] 请求趋势图已更新');
       }
@@ -94,7 +96,7 @@ const RequestTrendChart = () => {
     return () => {
       document.removeEventListener('chartUpdate', handleChartUpdate);
     };
-  }, []);
+  }, [formatTimeOnly]);
 
   // 手动刷新
   const handleRefresh = () => {

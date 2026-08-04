@@ -15,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestGetUpstreamAccounts_UsesAccountDisplayTimeZone(t *testing.T) {
+func TestGetUpstreamAccounts_ReturnsUTC(t *testing.T) {
 	app, _ := newAccountPoolAPITestApp(t)
 
 	resetAtUTC := time.Date(2026, 3, 11, 13, 6, 0, 0, time.UTC)
@@ -48,12 +48,12 @@ func TestGetUpstreamAccounts_UsesAccountDisplayTimeZone(t *testing.T) {
 	if len(accounts) != 1 {
 		t.Fatalf("expected 1 account, got %d", len(accounts))
 	}
-	if got := accounts[0].Quota5HResetAt; got != "2026-03-11 21:06:00" {
-		t.Fatalf("expected quota reset in UTC+8, got %q", got)
+	if got := accounts[0].Quota5HResetAt; got != "2026-03-11T13:06:00.000000Z" {
+		t.Fatalf("expected quota reset in UTC, got %q", got)
 	}
 }
 
-func TestGetUpstreamAccounts_PreservesLegacyNaiveTimestamps(t *testing.T) {
+func TestGetUpstreamAccounts_RejectsUnmigratedNaiveTimestamps(t *testing.T) {
 	app, db := newAccountPoolAPITestApp(t)
 
 	created, err := app.accountPoolStore.CreateAccount(context.Background(), &store.UpstreamAccountRecord{
@@ -85,18 +85,8 @@ func TestGetUpstreamAccounts_PreservesLegacyNaiveTimestamps(t *testing.T) {
 		t.Fatalf("seed legacy naive timestamps failed: %v", err)
 	}
 
-	accounts, err := app.GetUpstreamAccounts()
-	if err != nil {
-		t.Fatalf("GetUpstreamAccounts failed: %v", err)
-	}
-	if len(accounts) != 1 {
-		t.Fatalf("expected 1 account, got %d", len(accounts))
-	}
-	if got := accounts[0].Quota5HResetAt; got != "2026-03-11 21:06:00" {
-		t.Fatalf("expected legacy naive quota reset to stay in UTC+8 wall clock, got %q", got)
-	}
-	if got := accounts[0].UpdatedAt; got != "2026-03-11 21:06:00" {
-		t.Fatalf("expected legacy naive updated_at to stay in UTC+8 wall clock, got %q", got)
+	if _, err := app.GetUpstreamAccounts(); err == nil {
+		t.Fatal("expected unmigrated naive account time to fail closed")
 	}
 }
 
@@ -204,8 +194,8 @@ func TestGetLatestAccountScheduleSnapshot_UsesAccountDisplayTimeZoneForCandidate
 	if len(snapshot.Candidates) == 0 {
 		t.Fatal("expected snapshot candidates")
 	}
-	if got := snapshot.Candidates[0].LastSuccessAt; got != "2026-03-11 21:06:00" {
-		t.Fatalf("expected candidate last_success_at in UTC+8, got %q", got)
+	if got := snapshot.Candidates[0].LastSuccessAt; got != "2026-03-11T13:06:00.000000Z" {
+		t.Fatalf("expected candidate last_success_at in UTC, got %q", got)
 	}
 }
 
@@ -386,9 +376,9 @@ func TestMoveUpstreamAccountToTier_MessageReflectsSchedulableStatusWithoutLeavin
 		State:         "active",
 		QuotaStatus:   "ok",
 	})
-		if err != nil {
-			t.Fatalf("CreateAccount primary failed: %v", err)
-		}
+	if err != nil {
+		t.Fatalf("CreateAccount primary failed: %v", err)
+	}
 	backup, err := app.accountPoolService.CreateAccount(ctx, &store.UpstreamAccountRecord{
 		ProviderType:  "api_key",
 		AccountName:   "backup-promote",
@@ -681,12 +671,12 @@ func TestMoveUpstreamAccountToTier_SupportsColdTier(t *testing.T) {
 	}
 }
 
-func TestFormatTime_PreservesInputLocationWallClock(t *testing.T) {
+func TestFormatTime_NormalizesUTC(t *testing.T) {
 	loc := time.FixedZone("UTC-7", -7*60*60)
 	timestamp := time.Date(2026, 3, 11, 6, 30, 0, 0, loc)
 
-	if got := formatTime(timestamp); got != "2026-03-11 06:30:00" {
-		t.Fatalf("expected wall clock to stay in source location, got %q", got)
+	if got := formatTime(timestamp); got != "2026-03-11T13:30:00.000000Z" {
+		t.Fatalf("expected UTC API time, got %q", got)
 	}
 }
 

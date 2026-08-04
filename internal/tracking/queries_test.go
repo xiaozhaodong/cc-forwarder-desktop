@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
 func TestQueryOperations(t *testing.T) {
@@ -283,15 +285,16 @@ func TestUpdateUsageSummaryUsesCanonicalFailureAndDurationRules(t *testing.T) {
 	}
 	defer tracker.Close()
 
+	now := timezonepolicy.FormatStorage(time.Now())
 	if _, err := tracker.db.Exec(`INSERT INTO request_logs (
 		request_id, start_time, model_name, request_family, upstream_type,
 		upstream_name, upstream_id, status, duration_ms
 	) VALUES
-		('req-summary-completed', datetime('now', 'localtime'), 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'completed', 100),
-		('req-summary-failed', datetime('now', 'localtime'), 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'failed', 300),
-		('req-summary-error', datetime('now', 'localtime'), 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'error', 0),
-		('req-summary-auth-error', datetime('now', 'localtime'), 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'auth_error', 500),
-		('req-summary-cancelled', datetime('now', 'localtime'), 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'cancelled', NULL)`); err != nil {
+		('req-summary-completed', ?, 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'completed', 100),
+		('req-summary-failed', ?, 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'failed', 300),
+		('req-summary-error', ?, 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'error', 0),
+		('req-summary-auth-error', ?, 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'auth_error', 500),
+		('req-summary-cancelled', ?, 'summary-model', 'claude', 'endpoint', 'summary-endpoint', 1, 'cancelled', NULL)`, now, now, now, now, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -320,6 +323,110 @@ func TestQueryUsageSummary_NilOptions(t *testing.T) {
 	}
 	if len(summaries) != 0 {
 		t.Fatalf("expected empty summaries for fresh tracker, got %d", len(summaries))
+	}
+}
+
+func TestQueryUsageSummaryFallsBackWhileTimezoneCacheRebuilds(t *testing.T) {
+	policy, err := timezonepolicy.New("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker, err := NewUsageTrackerWithPolicy(&Config{
+		Enabled: true, DatabasePath: ":memory:", BufferSize: 16, BatchSize: 4,
+		FlushInterval: time.Hour, HotPool: &HotPoolSettings{Enabled: false},
+	}, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracker.Close()
+
+	if _, err := tracker.db.Exec(`INSERT INTO request_logs (
+		request_id, start_time, model_name, request_family, upstream_type, upstream_name, status
+	) VALUES (?, ?, 'timezone-model', 'claude', 'endpoint', 'timezone-endpoint', 'completed')`,
+		"req-timezone-fallback", "2026-01-01T20:00:00.000000Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	tracker.summaryRebuildMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			tracker.summaryRebuildMu.Unlock()
+		}
+	}()
+	if err := policy.Update("America/New_York"); err != nil {
+		t.Fatal(err)
+	}
+	tracker.OnTimezoneChanged()
+	if tracker.summaryCovers("America/New_York", "2026-01-01", "2026-01-01") {
+		t.Fatal("new timezone cache must not be ready before rebuild")
+	}
+	start, end, err := policy.Snapshot().DayRange("2026-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := tracker.QueryUsageSummary(context.Background(), &QueryOptions{StartDate: &start, EndDate: &end})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].TimezoneName != "America/New_York" || summaries[0].Date != "2026-01-01" || summaries[0].RequestCount != 1 {
+		t.Fatalf("fallback summaries = %+v", summaries)
+	}
+
+	tracker.summaryRebuildMu.Unlock()
+	locked = false
+}
+
+func TestQueryUsageSummaryFallsBackOutsideRecentCacheCoverage(t *testing.T) {
+	policy, err := timezonepolicy.New("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker, err := NewUsageTrackerWithPolicy(&Config{
+		Enabled: true, DatabasePath: ":memory:", BufferSize: 16, BatchSize: 4,
+		FlushInterval: time.Hour, HotPool: &HotPoolSettings{Enabled: false},
+	}, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracker.Close()
+
+	today, err := time.Parse(time.DateOnly, policy.BusinessDate(time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDate := today.AddDate(0, 0, -8).Format(time.DateOnly)
+	oldStart, oldEnd, err := policy.DayRange(oldDate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tracker.db.Exec(`INSERT INTO request_logs (
+		request_id, start_time, model_name, request_family, upstream_type, upstream_name, status
+	) VALUES (?, ?, 'old-model', 'claude', 'endpoint', 'old-endpoint', 'completed')`,
+		"req-outside-summary-cache", timezonepolicy.FormatStorage(oldStart.Add(time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, err := tracker.QueryUsageSummary(context.Background(), &QueryOptions{
+		StartDate: &oldStart, EndDate: &oldEnd,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].Date != oldDate || summaries[0].RequestCount != 1 {
+		t.Fatalf("outside-cache summaries = %+v", summaries)
+	}
+}
+
+func TestPaginateUsageSummariesMatchesCacheQuerySemantics(t *testing.T) {
+	summaries := []UsageSummary{{Date: "2026-08-04"}, {Date: "2026-08-03"}, {Date: "2026-08-02"}}
+	page := paginateUsageSummaries(summaries, &QueryOptions{Offset: 1, Limit: 1})
+	if len(page) != 1 || page[0].Date != "2026-08-03" {
+		t.Fatalf("paginated summaries = %+v", page)
+	}
+	remaining := paginateUsageSummaries(summaries, &QueryOptions{Offset: 1})
+	if len(remaining) != 2 || remaining[0].Date != "2026-08-03" || remaining[1].Date != "2026-08-02" {
+		t.Fatalf("offset-only summaries = %+v", remaining)
 	}
 }
 
@@ -423,9 +530,11 @@ func TestExportOperations(t *testing.T) {
 			t.Error("JSON should contain test data")
 		}
 
-		// Should be valid JSON array
-		if !stringStartsWith(jsonStr, "[") || !stringEndsWith(jsonStr, "]") {
-			t.Error("JSON should be an array")
+		if !stringStartsWith(jsonStr, "{") || !stringEndsWith(jsonStr, "}") {
+			t.Error("JSON should include export metadata")
+		}
+		if !stringContains(jsonStr, `"display_timezone":"Asia/Shanghai"`) {
+			t.Error("JSON should declare display_timezone")
 		}
 	})
 }
@@ -452,7 +561,7 @@ func TestCleanupOperations(t *testing.T) {
 	defer tracker.Close()
 
 	// Directly insert a test record to trigger table creation
-	_, err = tracker.db.Exec(`INSERT INTO request_logs (request_id, start_time, status) VALUES (?, datetime('now'), ?)`, "test-init", "pending")
+	_, err = tracker.db.Exec(`INSERT INTO request_logs (request_id, start_time, status) VALUES (?, ?, ?)`, "test-init", timezonepolicy.FormatStorage(time.Now()), "pending")
 	if err != nil {
 		t.Fatalf("Failed to insert initial test record: %v", err)
 	}

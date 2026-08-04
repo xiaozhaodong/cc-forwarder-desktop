@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
 // ArchiveEvent 归档事件（请求完成时发送）
@@ -43,7 +45,6 @@ type ArchiveManager struct {
 	pricing             map[string]ModelPricing       // 模型定价缓存
 	endpointMultipliers map[string]EndpointMultiplier // 端点倍率缓存
 	accountMultipliers  map[int64]EndpointMultiplier  // 账号倍率缓存
-	location            *time.Location
 
 	// 热池引用（用于归档成功后清理）
 	hotPool *HotPool
@@ -72,7 +73,7 @@ type ArchiveStats struct {
 }
 
 // NewArchiveManager 创建归档管理器
-func NewArchiveManager(adapter DatabaseAdapter, config ArchiveManagerConfig, pricing map[string]ModelPricing, location *time.Location) *ArchiveManager {
+func NewArchiveManager(adapter DatabaseAdapter, config ArchiveManagerConfig, pricing map[string]ModelPricing) *ArchiveManager {
 	if config.ChannelSize <= 0 {
 		config.ChannelSize = 1000
 	}
@@ -93,7 +94,6 @@ func NewArchiveManager(adapter DatabaseAdapter, config ArchiveManagerConfig, pri
 		adapter:     adapter,
 		config:      config,
 		pricing:     cloneModelPricingMap(pricing),
-		location:    location,
 		ctx:         ctx,
 		cancel:      cancel,
 	}
@@ -495,13 +495,8 @@ func cloneAccountMultiplierMap(src map[int64]EndpointMultiplier) map[int64]Endpo
 	return cloned
 }
 
-// formatTime 格式化时间为易读格式（使用配置的时区）
-// 格式：2025-12-04 17:18:48（北京时间，无时区后缀）
 func (am *ArchiveManager) formatTime(t time.Time) string {
-	if am.location != nil {
-		t = t.In(am.location)
-	}
-	return t.Format("2006-01-02 15:04:05")
+	return timezonepolicy.FormatStorage(t)
 }
 
 // nullString 处理空字符串为SQL NULL

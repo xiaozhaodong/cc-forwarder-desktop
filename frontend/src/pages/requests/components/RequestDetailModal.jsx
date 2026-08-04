@@ -25,7 +25,8 @@ import {
 } from 'lucide-react';
 import RequestStatusBadge from './RequestStatusBadge.jsx';
 import ModelTag from './ModelTag.jsx';
-import { formatCost, formatTimestamp } from '@utils/api.js';
+import { formatCost } from '@utils/api.js';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import { copyTextToClipboard } from './clipboard.js';
 import {
@@ -154,6 +155,7 @@ const RequestTimingValue = ({ request }) => {
  * 请求详情模态框主组件
  */
 const RequestDetailModal = ({ isOpen, onClose, request }) => {
+  const { formatTimestamp } = useTimezone();
   const [activeTab, setActiveTab] = useState('overview');
   const closeButtonRef = useRef(null);
 

@@ -14,6 +14,7 @@ import (
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/modelrewrite"
 	"cc-forwarder/internal/store"
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"cc-forwarder/internal/utils"
 )
 
@@ -314,7 +315,7 @@ func (s *EndpointService) GetEndpointWithHealth(ctx context.Context, name string
 
 	if !status.LastCheck.IsZero() {
 		health := result["health"].(map[string]interface{})
-		health["last_check"] = status.LastCheck.Format("2006-01-02 15:04:05")
+		health["last_check"] = timezonepolicy.FormatStorage(status.LastCheck)
 	}
 
 	return result, nil

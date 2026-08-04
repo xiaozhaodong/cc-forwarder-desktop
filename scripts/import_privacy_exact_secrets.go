@@ -248,7 +248,7 @@ func ensurePrivacySchema(ctx context.Context, db *sql.DB) error {
 			scan_max_bytes INTEGER NOT NULL DEFAULT 4194304,
 			over_limit_action TEXT NOT NULL DEFAULT 'scan_prefix',
 			on_error TEXT NOT NULL DEFAULT 'fail_open',
-			updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+			updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 		)`,
 		`INSERT OR IGNORE INTO privacy_settings (id) VALUES (1)`,
 		`CREATE TABLE IF NOT EXISTS privacy_exact_secrets (
@@ -262,8 +262,8 @@ func ensurePrivacySchema(ctx context.Context, db *sql.DB) error {
 			source_type TEXT NOT NULL DEFAULT 'manual',
 			source_ref TEXT NOT NULL DEFAULT '',
 			description TEXT NOT NULL DEFAULT '',
-			created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-			updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+			created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+			updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 		)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_privacy_exact_secrets_value_hash
 			ON privacy_exact_secrets(value_hash)`,
@@ -273,7 +273,7 @@ func ensurePrivacySchema(ctx context.Context, db *sql.DB) error {
 			WHEN NEW.updated_at = OLD.updated_at
 		BEGIN
 			UPDATE privacy_exact_secrets
-			SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'
+			SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')
 			WHERE id = NEW.id;
 		END`,
 	}
@@ -593,7 +593,7 @@ func applyImportPlan(ctx context.Context, db *sql.DB, plan importPlan) error {
 			UPDATE privacy_exact_secrets
 			SET enabled = ?, name = ?, secret_value = ?, value_hash = ?, placeholder = ?,
 			    category = ?, source_type = ?, source_ref = ?, description = ?,
-			    updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'
+			    updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')
 			WHERE id = ?
 		`, row.Enabled, row.Name, row.SecretValue, row.ValueHash, row.Placeholder,
 			row.Category, row.SourceType, row.SourceRef, row.Description, update.ID)

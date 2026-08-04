@@ -3,7 +3,7 @@
 // 2026-03-07
 // ============================================
 
-import { formatTimestamp } from '@utils/api.js';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import Badge from './Badge.jsx';
 import {
   MANUAL_FAILOVER_TIER_PRESETS,
@@ -20,6 +20,7 @@ import {
 } from '../utils.js';
 
 const ScheduleCandidateCard = ({ candidate, index }) => {
+  const { formatTimestamp } = useTimezone();
   const candidateId = resolveAccountId(candidate) ?? `${candidate.account_name || candidate.accountName || 'candidate'}-${index}`;
   const decision = String(candidate.decision || '').trim().toLowerCase();
   const decisionClass = SCHEDULE_DECISION_STYLE[decision] || SCHEDULE_DECISION_STYLE.skipped;

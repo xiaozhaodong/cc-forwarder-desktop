@@ -14,7 +14,7 @@ test('buildTimeRangeSelectionState updates filters and applied query params toge
   };
   const nextTimeRange = {
     startDate: '2026-03-08T00:00',
-    endDate: '2026-03-14T23:59'
+    endDate: '2026-03-15T00:00'
   };
 
   const result = buildTimeRangeSelectionState(currentFilters, nextTimeRange);
@@ -24,8 +24,8 @@ test('buildTimeRangeSelectionState updates filters and applied query params toge
     ...nextTimeRange
   });
   assert.deepEqual(result.appliedQueryParams, {
-    start_date: '2026-03-08T00:00:00+08:00',
-    end_date: '2026-03-14T23:59:00+08:00',
+    start_date: '2026-03-08T00:00:00',
+    end_date: '2026-03-15T00:00:00',
     status: 'success',
     model: 'gpt-4.1',
     request_family: 'codex'

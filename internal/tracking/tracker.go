@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"cc-forwarder/config"
+	timezonepolicy "cc-forwarder/internal/timezone"
 
 	_ "modernc.org/sqlite"
 )
@@ -397,8 +398,8 @@ type UsageTracker struct {
 	mu           sync.RWMutex
 	errorHandler *ErrorHandler
 
-	// 时区支持
-	location *time.Location // 配置的时区
+	// 配置时区的共享原子快照。
+	timezonePolicy *timezonepolicy.Policy
 
 	// 新增：数据库适配器
 	adapter DatabaseAdapter // 数据库适配器接口
@@ -409,6 +410,13 @@ type UsageTracker struct {
 	writeQueue chan WriteRequest // 写操作队列
 	writeMu    sync.Mutex        // 写操作保护锁
 	writeWg    sync.WaitGroup    // 写处理器等待组
+
+	summaryMu            sync.RWMutex
+	summaryReadyTimezone string
+	summaryStartDate     string
+	summaryEndDate       string
+	summaryRebuildMu     sync.Mutex
+	summaryWg            sync.WaitGroup
 
 	// 🔥 v4.1 新增：内存热池 + 归档架构
 	hotPool        *HotPool        // 内存热池（活跃请求）
@@ -423,13 +431,9 @@ func (ut *UsageTracker) reconnectDatabases() error {
 
 	ut.mu.RLock()
 	config := ut.config
-	timezone := ""
-	if ut.location != nil {
-		timezone = ut.location.String()
-	}
 	ut.mu.RUnlock()
 
-	dbConfig, err := buildDatabaseConfig(config, timezone)
+	dbConfig, err := buildDatabaseConfig(config)
 	if err != nil {
 		return fmt.Errorf("failed to build database config: %w", err)
 	}
@@ -476,8 +480,23 @@ func (ut *UsageTracker) reconnectDatabases() error {
 
 // NewUsageTracker 创建新的使用跟踪器
 func NewUsageTracker(config *Config, globalTimezone ...string) (*UsageTracker, error) {
+	name := "Asia/Shanghai"
+	if len(globalTimezone) > 0 && strings.TrimSpace(globalTimezone[0]) != "" {
+		name = strings.TrimSpace(globalTimezone[0])
+	}
+	policy, err := timezonepolicy.New(name)
+	if err != nil {
+		return nil, err
+	}
+	return NewUsageTrackerWithPolicy(config, policy)
+}
+
+func NewUsageTrackerWithPolicy(config *Config, policy *timezonepolicy.Policy) (*UsageTracker, error) {
 	if config == nil || !config.Enabled {
-		return &UsageTracker{config: config}, nil
+		return &UsageTracker{config: config, timezonePolicy: policy}, nil
+	}
+	if policy == nil || policy.Name() == "" {
+		return nil, fmt.Errorf("timezone policy is required")
 	}
 
 	// 设置默认值
@@ -497,12 +516,8 @@ func NewUsageTracker(config *Config, globalTimezone ...string) (*UsageTracker, e
 		config.CleanupInterval = 24 * time.Hour // 默认24小时清理一次
 	}
 
-	// 构建数据库配置
-	tz := ""
-	if len(globalTimezone) > 0 {
-		tz = globalTimezone[0]
-	}
-	dbConfig, err := buildDatabaseConfig(config, tz)
+	// 构建数据库配置。数据库存储格式固定为 UTC，不再携带展示时区。
+	dbConfig, err := buildDatabaseConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build database config: %w", err)
 	}
@@ -527,20 +542,6 @@ func NewUsageTracker(config *Config, globalTimezone ...string) (*UsageTracker, e
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// 初始化时区
-	timezone := dbConfig.Timezone
-	if timezone == "" {
-		timezone = "Asia/Shanghai" // 默认时区
-	}
-	location, err := time.LoadLocation(timezone)
-	if err != nil {
-		slog.Warn("加载时区失败，使用Asia/Shanghai", "timezone", timezone, "error", err)
-		location, _ = time.LoadLocation("Asia/Shanghai")
-		if location == nil {
-			location = time.FixedZone("CST", 8*3600) // 后备方案：固定+8时区
-		}
-	}
-
 	ut := &UsageTracker{
 		// 原有字段（兼容性）
 		db:        db, // 兼容性：指向readDB
@@ -550,8 +551,7 @@ func NewUsageTracker(config *Config, globalTimezone ...string) (*UsageTracker, e
 		ctx:       ctx,
 		cancel:    cancel,
 
-		// 时区支持
-		location: location,
+		timezonePolicy: policy,
 
 		// 新增：数据库适配器
 		adapter: adapter,
@@ -590,6 +590,12 @@ func NewUsageTracker(config *Config, globalTimezone ...string) (*UsageTracker, e
 
 	// 🔥 v4.1 初始化热池架构
 	ut.initHotPool()
+	if err := ut.rebuildRecentUsageSummary(context.Background(), 7); err != nil {
+		cancel()
+		_ = ut.archiveManager.Close()
+		_ = adapter.Close()
+		return nil, fmt.Errorf("initialize usage summary cache: %w", err)
+	}
 
 	slog.Info("✅ 使用跟踪器初始化完成",
 		"database_type", adapter.GetDatabaseType(),
@@ -598,6 +604,14 @@ func NewUsageTracker(config *Config, globalTimezone ...string) (*UsageTracker, e
 		"hot_pool_enabled", ut.hotPoolEnabled)
 
 	return ut, nil
+}
+
+// TimezonePolicy 返回 tracker 使用的统一活动时区策略，供同进程 API 层复用。
+func (ut *UsageTracker) TimezonePolicy() *timezonepolicy.Policy {
+	if ut == nil {
+		return nil
+	}
+	return ut.timezonePolicy
 }
 
 // initHotPool 初始化热池和归档管理器
@@ -638,7 +652,7 @@ func (ut *UsageTracker) initHotPool() {
 		FlushInterval: ut.config.FlushInterval,
 		MaxRetry:      ut.config.MaxRetry,
 	}
-	ut.archiveManager = NewArchiveManager(ut.adapter, archiveConfig, ut.pricing, ut.location)
+	ut.archiveManager = NewArchiveManager(ut.adapter, archiveConfig, ut.pricing)
 
 	// 设置双向引用：ArchiveManager 需要访问 HotPool 来清理归档缓存
 	ut.archiveManager.SetHotPool(ut.hotPool)
@@ -656,17 +670,14 @@ func (ut *UsageTracker) initHotPool() {
 		"max_size", hotPoolConfig.MaxSize)
 }
 
-// now 返回当前配置时区的时间
+// now 返回 UTC 时刻；业务日期必须显式通过 timezonePolicy 计算。
 func (ut *UsageTracker) now() time.Time {
-	if ut.location == nil {
-		return time.Now() // 后备方案
-	}
-	return time.Now().In(ut.location)
+	return time.Now().UTC()
 }
 
 // buildDatabaseConfig 从Config构建DatabaseConfig
 // v4.1.0: 简化为仅支持 SQLite
-func buildDatabaseConfig(config *Config, globalTimezone string) (DatabaseConfig, error) {
+func buildDatabaseConfig(config *Config) (DatabaseConfig, error) {
 	var dbConfig DatabaseConfig
 
 	// 设置数据库类型（v4.1+ 仅支持 SQLite）
@@ -681,7 +692,6 @@ func buildDatabaseConfig(config *Config, globalTimezone string) (DatabaseConfig,
 				"suggestion", "请修改配置 type: sqlite 或删除 database.type 配置")
 		}
 		dbConfig.DatabasePath = config.Database.Path
-		dbConfig.Timezone = config.Database.Timezone
 	} else {
 		// 向后兼容：使用原有的DatabasePath配置
 		dbConfig.DatabasePath = config.DatabasePath
@@ -694,14 +704,6 @@ func buildDatabaseConfig(config *Config, globalTimezone string) (DatabaseConfig,
 		// macOS: ~/Library/Application Support/AI-Switchboard/data/usage.db
 		// Linux: ~/.local/share/ai-switchboard/data/usage.db
 		dbConfig.DatabasePath = filepath.Join(getAppDataDir(), "data", "usage.db")
-	}
-
-	// 时区级联逻辑：优先级 database.timezone > global.timezone > 默认值
-	if dbConfig.Timezone == "" {
-		if globalTimezone != "" {
-			dbConfig.Timezone = globalTimezone
-		}
-		// setDefaultConfig 会设置默认值 Asia/Shanghai
 	}
 
 	return dbConfig, nil
@@ -780,6 +782,7 @@ func (ut *UsageTracker) Close() error {
 	// 等待所有协程完成（包括写处理器）
 	ut.wg.Wait()
 	ut.writeWg.Wait() // 等待写处理器完成
+	ut.summaryWg.Wait()
 
 	// 现在可以安全地持有写锁进行清理
 	ut.mu.Lock()
@@ -1598,10 +1601,12 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 		SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) as total_tokens,
 		SUM(total_cost_usd) as total_cost
 		FROM request_logs 
-		WHERE start_time >= ? AND start_time <= ?`
+		WHERE start_time >= ? AND start_time < ?`
 
 	var stats UsageStatsDetailed
-	err := ut.readDB.QueryRowContext(ctx, query, startTime, endTime).Scan(
+	startArg := timezonepolicy.FormatStorage(startTime)
+	endArg := timezonepolicy.FormatStorage(endTime)
+	err := ut.readDB.QueryRowContext(ctx, query, startArg, endArg).Scan(
 		&stats.TotalRequests,
 		&stats.SuccessRequests,
 		&stats.ErrorRequests,
@@ -1615,10 +1620,10 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 	// 获取模型统计（使用读连接）
 	modelQuery := `SELECT model_name, COUNT(*), SUM(total_cost_usd)
 		FROM request_logs 
-		WHERE start_time >= ? AND start_time <= ? AND model_name IS NOT NULL AND model_name != ''
+		WHERE start_time >= ? AND start_time < ? AND model_name IS NOT NULL AND model_name != ''
 		GROUP BY model_name`
 
-	rows, err := ut.readDB.QueryContext(ctx, modelQuery, startTime, endTime)
+	rows, err := ut.readDB.QueryContext(ctx, modelQuery, startArg, endArg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query model stats: %w", err)
 	}
@@ -1641,10 +1646,10 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 	// 获取端点统计（使用读连接）
 	endpointQuery := `SELECT endpoint_name, COUNT(*), SUM(total_cost_usd)
 		FROM request_logs 
-		WHERE start_time >= ? AND start_time <= ? AND endpoint_name IS NOT NULL AND endpoint_name != ''
+		WHERE start_time >= ? AND start_time < ? AND endpoint_name IS NOT NULL AND endpoint_name != ''
 		GROUP BY endpoint_name`
 
-	rows2, err := ut.readDB.QueryContext(ctx, endpointQuery, startTime, endTime)
+	rows2, err := ut.readDB.QueryContext(ctx, endpointQuery, startArg, endArg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query endpoint stats: %w", err)
 	}
@@ -1684,7 +1689,7 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 	for _, log := range logs {
 		endTime := ""
 		if log.EndTime != nil {
-			endTime = log.EndTime.Format(time.RFC3339)
+			endTime = ut.timezonePolicy.FormatDisplay(*log.EndTime)
 		}
 
 		durationMs := ""
@@ -1699,13 +1704,13 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 
 		if err := writer.Write([]string{
 			log.RequestID, log.ClientIP, log.UserAgent, log.Method, log.Path, log.RequestFamily,
-			log.StartTime.Format(time.RFC3339), endTime, durationMs, log.EndpointName,
+			ut.timezonePolicy.FormatDisplay(log.StartTime), endTime, durationMs, log.EndpointName,
 			log.UpstreamType, log.UpstreamSourceName, log.UpstreamName, strconv.FormatInt(log.UpstreamID, 10),
 			log.RouteMode, log.RequestedEndpoint, log.EffectiveEndpoint, log.FallbackReason,
 			log.ModelName, log.Status, httpStatus, strconv.Itoa(log.RetryCount),
 			strconv.FormatInt(log.InputTokens, 10), strconv.FormatInt(log.OutputTokens, 10), strconv.FormatInt(log.CacheCreationTokens, 10), strconv.FormatInt(log.CacheReadTokens, 10),
 			strconv.FormatFloat(log.InputCostUSD, 'f', 6, 64), strconv.FormatFloat(log.OutputCostUSD, 'f', 6, 64), strconv.FormatFloat(log.CacheCreationCostUSD, 'f', 6, 64), strconv.FormatFloat(log.CacheReadCostUSD, 'f', 6, 64), strconv.FormatFloat(log.TotalCostUSD, 'f', 6, 64),
-			log.CreatedAt.Format(time.RFC3339), log.UpdatedAt.Format(time.RFC3339),
+			ut.timezonePolicy.FormatDisplay(log.CreatedAt), ut.timezonePolicy.FormatDisplay(log.UpdatedAt),
 		}); err != nil {
 			return nil, err
 		}
@@ -1724,8 +1729,11 @@ func (ut *UsageTracker) ExportToJSON(ctx context.Context, startTime, endTime tim
 		return nil, fmt.Errorf("failed to get request logs for JSON export: %w", err)
 	}
 
-	// 使用标准库的json包序列化
-	jsonBytes, err := json.Marshal(logs)
+	payload := struct {
+		DisplayTimezone string          `json:"display_timezone"`
+		Requests        []RequestDetail `json:"requests"`
+	}{DisplayTimezone: ut.timezonePolicy.Name(), Requests: logs}
+	jsonBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal logs to JSON: %w", err)
 	}
@@ -2305,7 +2313,7 @@ func (ut *UsageTracker) getFilteredHotPoolRequests(opts *QueryOptions) []Request
 			if opts.StartDate != nil && req.StartTime.Before(*opts.StartDate) {
 				continue
 			}
-			if opts.EndDate != nil && req.StartTime.After(*opts.EndDate) {
+			if opts.EndDate != nil && !req.StartTime.Before(*opts.EndDate) {
 				continue
 			}
 		}

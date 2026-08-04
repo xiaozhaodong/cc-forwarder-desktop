@@ -143,7 +143,7 @@ func (s *SQLiteModelPricingStore) Get(ctx context.Context, modelName string) (*M
 		SELECT id, model_name, input_price, output_price,
 			cache_creation_price_5m, cache_creation_price_1h, cache_read_price,
 			display_name, description, is_default,
-			created_at, updated_at
+			CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM model_pricing WHERE model_name = ?
 	`
 
@@ -159,7 +159,7 @@ func (s *SQLiteModelPricingStore) GetByID(ctx context.Context, id int64) (*Model
 		SELECT id, model_name, input_price, output_price,
 			cache_creation_price_5m, cache_creation_price_1h, cache_read_price,
 			display_name, description, is_default,
-			created_at, updated_at
+			CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM model_pricing WHERE id = ?
 	`
 
@@ -175,7 +175,7 @@ func (s *SQLiteModelPricingStore) List(ctx context.Context) ([]*ModelPricingReco
 		SELECT id, model_name, input_price, output_price,
 			cache_creation_price_5m, cache_creation_price_1h, cache_read_price,
 			display_name, description, is_default,
-			created_at, updated_at
+			CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM model_pricing
 		ORDER BY is_default DESC, model_name ASC
 	`
@@ -390,7 +390,7 @@ func (s *SQLiteModelPricingStore) GetDefault(ctx context.Context) (*ModelPricing
 		SELECT id, model_name, input_price, output_price,
 			cache_creation_price_5m, cache_creation_price_1h, cache_read_price,
 			display_name, description, is_default,
-			created_at, updated_at
+			CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM model_pricing WHERE is_default = 1 LIMIT 1
 	`
 
@@ -491,9 +491,12 @@ func (s *SQLiteModelPricingStore) scanModelPricing(row *sql.Row) (*ModelPricingR
 	// 转换布尔值
 	record.IsDefault = isDefault == 1
 
-	// 解析时间
-	record.CreatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", createdAt)
-	record.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", updatedAt)
+	if record.CreatedAt, err = parseDBTime(createdAt); err != nil {
+		return nil, fmt.Errorf("解析模型定价 created_at 失败: %w", err)
+	}
+	if record.UpdatedAt, err = parseDBTime(updatedAt); err != nil {
+		return nil, fmt.Errorf("解析模型定价 updated_at 失败: %w", err)
+	}
 
 	return &record, nil
 }
@@ -535,9 +538,12 @@ func (s *SQLiteModelPricingStore) scanModelPricings(ctx context.Context, query s
 		// 转换布尔值
 		record.IsDefault = isDefault == 1
 
-		// 解析时间
-		record.CreatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", createdAt)
-		record.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", updatedAt)
+		if record.CreatedAt, err = parseDBTime(createdAt); err != nil {
+			return nil, fmt.Errorf("解析模型定价 created_at 失败: %w", err)
+		}
+		if record.UpdatedAt, err = parseDBTime(updatedAt); err != nil {
+			return nil, fmt.Errorf("解析模型定价 updated_at 失败: %w", err)
+		}
 
 		records = append(records, &record)
 	}

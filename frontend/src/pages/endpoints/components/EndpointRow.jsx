@@ -4,6 +4,7 @@ import { summarizeEndpointModelRewriteRules } from '../utils/modelRewrite.js';
 import { summarizeEndpointAuthentication } from '../utils/endpointFormState.js';
 import ActionButtons from './ActionButtons.jsx';
 import ToggleSwitch from './ToggleSwitch.jsx';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
 const Health = ({ endpoint }) => {
   const neverChecked = endpoint.neverChecked || !endpoint.lastCheck;
@@ -13,8 +14,10 @@ const Health = ({ endpoint }) => {
 };
 
 const EndpointRow = ({ endpoint, routingState, busy, onEdit, onDelete, onTest, onAvailabilityChange, onAutoScheduleChange, onSetRouting }) => {
+  const { formatTimestamp } = useTimezone();
   const rewrite = summarizeEndpointModelRewriteRules(endpoint.modelRewriteRules || '');
-  const lastCheck = getEndpointLastCheckDisplayValue(endpoint);
+  const lastCheckRaw = getEndpointLastCheckDisplayValue(endpoint);
+  const lastCheck = lastCheckRaw === '-' ? '-' : formatTimestamp(lastCheckRaw);
   return (
     <tr className={`${endpoint.availabilityEnabled ? 'bg-white hover:bg-slate-50/70' : 'bg-slate-50/70 text-slate-400'} transition-colors`}>
       <td className="px-3 py-3 align-top">
@@ -38,7 +41,7 @@ const EndpointRow = ({ endpoint, routingState, busy, onEdit, onDelete, onTest, o
       </td>
       <td className="px-3 py-3 align-top">
         {endpoint.inCooldown ? (
-          <div className="max-w-[150px] text-xs text-amber-700" title={endpoint.cooldownReason}><span className="inline-flex items-center gap-1 font-medium"><Snowflake size={13} />冷却中</span><div className="mt-1 truncate text-[11px] text-amber-600">{endpoint.cooldownUntil || endpoint.cooldownReason || '-'}</div></div>
+          <div className="max-w-[150px] text-xs text-amber-700" title={endpoint.cooldownReason}><span className="inline-flex items-center gap-1 font-medium"><Snowflake size={13} />冷却中</span><div className="mt-1 truncate text-[11px] text-amber-600">{endpoint.cooldownUntil ? formatTimestamp(endpoint.cooldownUntil) : (endpoint.cooldownReason || '-')}</div></div>
         ) : <span className="text-xs text-slate-300">—</span>}
       </td>
       <td className="px-3 py-3 align-top">{rewrite ? <span className="block max-w-[150px] truncate rounded-md border border-cyan-100 bg-cyan-50 px-2 py-1 text-[11px] text-cyan-700" title={rewrite.title}>{rewrite.label}</span> : <span className="text-xs text-slate-300">无</span>}</td>

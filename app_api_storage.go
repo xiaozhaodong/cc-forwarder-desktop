@@ -149,12 +149,12 @@ func (a *App) GetEndpointRecords() ([]EndpointRecordInfo, error) {
 			info.ResponseTimeMs = float64(status.ResponseTime.Milliseconds())
 			// 格式化最后检查时间
 			if !status.LastCheck.IsZero() {
-				info.LastCheck = status.LastCheck.Format("2006-01-02 15:04:05")
+				info.LastCheck = formatAPITime(status.LastCheck)
 			}
 			// 冷却状态（两个 scope 槽取生效且截止最晚者）
 			if until, reason, active := status.EffectiveCooldown(time.Now()); active {
 				info.InCooldown = true
-				info.CooldownUntil = until.Format("2006-01-02 15:04:05")
+				info.CooldownUntil = formatAPITime(until)
 				info.CooldownReason = reason
 			}
 		}
@@ -191,7 +191,7 @@ func (a *App) GetEndpointRecord(name string) (EndpointRecordInfo, error) {
 		info.NeverChecked = status.NeverChecked
 		info.ResponseTimeMs = float64(status.ResponseTime.Milliseconds())
 		if !status.LastCheck.IsZero() {
-			info.LastCheck = status.LastCheck.Format("2006-01-02 15:04:05")
+			info.LastCheck = formatAPITime(status.LastCheck)
 		}
 	}
 
@@ -430,10 +430,10 @@ func (a *App) recordToInfo(r *store.EndpointRecord) EndpointRecordInfo {
 	}
 
 	if !r.CreatedAt.IsZero() {
-		info.CreatedAt = r.CreatedAt.Format("2006-01-02 15:04:05")
+		info.CreatedAt = formatAPITime(r.CreatedAt)
 	}
 	if !r.UpdatedAt.IsZero() {
-		info.UpdatedAt = r.UpdatedAt.Format("2006-01-02 15:04:05")
+		info.UpdatedAt = formatAPITime(r.UpdatedAt)
 	}
 
 	return info

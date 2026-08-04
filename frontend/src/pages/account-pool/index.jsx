@@ -39,6 +39,7 @@ import {
   useLatestScheduleSnapshot,
   useNotice
 } from './hooks';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
 const openExternalURL = (url = '') => {
   const target = String(url || '').trim();
@@ -78,6 +79,7 @@ const buildBatchResultMessage = (actionLabel, successCount, failedCount, skipped
 };
 
 const AccountPoolPage = () => {
+  const { timezone } = useTimezone();
   const { notice, showNotice, closeNotice } = useNotice();
   const { accounts, loading, error, loadData } = useAccountPoolAccounts();
   const {
@@ -132,8 +134,8 @@ const AccountPoolPage = () => {
   const [schedulerBusyKey, setSchedulerBusyKey] = useState('');
 
   const dashboardModel = useMemo(
-    () => buildAccountPoolDashboardModel({ accounts, latestScheduleSnapshot }),
-    [accounts, latestScheduleSnapshot]
+    () => buildAccountPoolDashboardModel({ accounts, latestScheduleSnapshot, timezone }),
+    [accounts, latestScheduleSnapshot, timezone]
   );
 
   const rowById = useMemo(

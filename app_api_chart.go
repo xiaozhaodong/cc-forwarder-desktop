@@ -56,11 +56,13 @@ func (a *App) GetRequestTrendChart(minutes int) []ChartDataPoint {
 
 	result := make([]ChartDataPoint, len(requestHistory))
 	for i, point := range requestHistory {
+		timestamp := formatAPITime(point.Timestamp)
 		result[i] = ChartDataPoint{
-			Time:    point.Timestamp.Format("15:04"),
-			Total:   point.Total,
-			Success: point.Successful,
-			Fail:    point.Failed,
+			Time:      timestamp,
+			Total:     point.Total,
+			Success:   point.Successful,
+			Fail:      point.Failed,
+			Timestamp: timestamp,
 		}
 	}
 
@@ -81,11 +83,13 @@ func (a *App) GetResponseTimeChart(minutes int) []ChartDataPoint {
 
 	result := make([]ChartDataPoint, len(responseHistory))
 	for i, point := range responseHistory {
+		timestamp := formatAPITime(point.Timestamp)
 		result[i] = ChartDataPoint{
-			Time: point.Timestamp.Format("15:04"),
-			Avg:  float64(point.AverageTime) / float64(time.Millisecond),
-			Min:  float64(point.MinTime) / float64(time.Millisecond),
-			Max:  float64(point.MaxTime) / float64(time.Millisecond),
+			Time:      timestamp,
+			Avg:       float64(point.AverageTime) / float64(time.Millisecond),
+			Min:       float64(point.MinTime) / float64(time.Millisecond),
+			Max:       float64(point.MaxTime) / float64(time.Millisecond),
+			Timestamp: timestamp,
 		}
 	}
 
@@ -107,9 +111,11 @@ func (a *App) GetConnectionActivityChart(minutes int) []ChartDataPoint {
 
 	result := make([]ChartDataPoint, len(requestHistory))
 	for i, point := range requestHistory {
+		timestamp := formatAPITime(point.Timestamp)
 		result[i] = ChartDataPoint{
-			Time:  point.Timestamp.Format("15:04"),
-			Value: point.Total, // 使用总请求数作为连接活动指标
+			Time:      timestamp,
+			Value:     point.Total, // 使用总请求数作为连接活动指标
+			Timestamp: timestamp,
 		}
 	}
 
@@ -181,8 +187,14 @@ func (a *App) GetEndpointCosts() []EndpointCostItem {
 		return []EndpointCostItem{}
 	}
 
-	// 获取当日日期
-	date := time.Now().Format("2006-01-02")
+	policy, err := a.activeTimezonePolicy()
+	if err != nil {
+		if a.logger != nil {
+			a.logger.Error("获取活动时区失败", "error", err)
+		}
+		return []EndpointCostItem{}
+	}
+	date := policy.BusinessDate(time.Now())
 
 	// 查询端点成本数据
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

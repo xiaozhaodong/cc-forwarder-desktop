@@ -271,6 +271,7 @@ export namespace main {
 	}
 	
 	export class ConfigInfo {
+	    timezone: string;
 	    server_host: string;
 	    server_port: number;
 	    auth_enabled: boolean;
@@ -284,6 +285,7 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.timezone = source["timezone"];
 	        this.server_host = source["server_host"];
 	        this.server_port = source["server_port"];
 	        this.auth_enabled = source["auth_enabled"];

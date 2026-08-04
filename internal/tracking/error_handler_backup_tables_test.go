@@ -38,9 +38,9 @@ func TestCreateBackupAndRestore_PreservesCoreTables(t *testing.T) {
 	}
 
 	if _, err := tracker.db.ExecContext(ctx, `
-		INSERT INTO usage_summary (date, model_name, request_family, upstream_type, upstream_name, upstream_id, request_count, success_count, error_count, total_input_tokens, total_output_tokens, total_cache_creation_tokens, total_cache_read_tokens, total_cost_usd, avg_duration_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, "2026-03-06", "gpt-5-codex", "codex", "account", "account-1", 10, 1, 1, 0, 10, 5, 0, 0, 1.25, 120); err != nil {
+		INSERT INTO usage_summary (timezone_name, date, model_name, request_family, upstream_type, upstream_name, upstream_id, request_count, success_count, error_count, total_input_tokens, total_output_tokens, total_cache_creation_tokens, total_cache_read_tokens, total_cost_usd, avg_duration_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "Asia/Shanghai", "2026-03-06", "gpt-5-codex", "codex", "account", "account-1", 10, 1, 1, 0, 10, 5, 0, 0, 1.25, 120); err != nil {
 		t.Fatalf("failed to insert usage_summary seed: %v", err)
 	}
 

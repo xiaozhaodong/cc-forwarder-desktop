@@ -4,7 +4,7 @@
 // ============================================
 
 import { Edit3, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
-import { formatTimestamp } from '@utils/api.js';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import Badge from './Badge.jsx';
 import {
   ACCOUNT_STATE_STYLE,
@@ -21,25 +21,7 @@ import {
   toRemainingPercent
 } from '../utils.js';
 
-const toDisplayTime = (value) => (value ? formatTimestamp(value) : '-');
-
-const formatQuotaResetTime = (value) => {
-  if (!value) return '';
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-
-  return `${month}-${day} ${hours}:${minutes}`;
-};
-
-const buildQuotaDisplayText = (remaining, resetAt) => {
+const buildQuotaDisplayText = (remaining, resetAt, formatQuotaResetTime) => {
   const remainingText = Number.isFinite(remaining) ? `${remaining.toFixed(0)}%` : '';
   const resetText = formatQuotaResetTime(resetAt);
 
@@ -65,6 +47,9 @@ const AccountRow = ({
   onDelete,
   onToggle
 }) => {
+  const { formatTimestamp, formatMonthDayTime } = useTimezone();
+  const toDisplayTime = (value) => (value ? formatTimestamp(value) : '-');
+  const formatQuotaResetTime = (value) => (value ? formatMonthDayTime(value) : '');
   const accountId = resolveAccountId(account) ?? account.account_name ?? account.accountName;
   const accountName = account.account_name || account.accountName || '-';
   const state = account.state || 'active';
@@ -101,8 +86,8 @@ const AccountRow = ({
   const quotaWeeklyRemaining = toRemainingPercent(quotaWeeklyUsed);
   const quota5hResetAt = account.quota_5h_reset_at || account.quota5hResetAt;
   const quotaWeeklyResetAt = account.quota_weekly_reset_at || account.quotaWeeklyResetAt;
-  const quota5hDisplayText = buildQuotaDisplayText(quota5hRemaining, quota5hResetAt);
-  const quotaWeeklyDisplayText = buildQuotaDisplayText(quotaWeeklyRemaining, quotaWeeklyResetAt);
+  const quota5hDisplayText = buildQuotaDisplayText(quota5hRemaining, quota5hResetAt, formatQuotaResetTime);
+  const quotaWeeklyDisplayText = buildQuotaDisplayText(quotaWeeklyRemaining, quotaWeeklyResetAt, formatQuotaResetTime);
   const quota5hResetLabel = formatQuotaResetTime(quota5hResetAt);
   const quotaWeeklyResetLabel = formatQuotaResetTime(quotaWeeklyResetAt);
 

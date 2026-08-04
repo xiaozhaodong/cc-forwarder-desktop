@@ -22,8 +22,7 @@ export const API_ENDPOINTS = {
   // 实时流
   STREAM: '/api/v1/stream',
 
-  // 配置
-  CONFIG: '/api/v1/config'
+  // 配置仅通过已绑定的 Wails API 读取，不在代理端口暴露管理接口。
 };
 
 // 请求状态配置 (v3.5.0 状态机)

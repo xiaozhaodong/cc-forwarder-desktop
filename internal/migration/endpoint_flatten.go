@@ -313,8 +313,8 @@ func loadSQLiteEndpointSnapshots(ctx context.Context, tx *sql.Tx) (EndpointFlatt
 		expr("model_rewrite_rules", "''"), expr("cost_multiplier", "1.0"),
 		expr("input_cost_multiplier", "1.0"), expr("output_cost_multiplier", "1.0"),
 		expr("cache_creation_cost_multiplier", "1.0"), expr("cache_creation_cost_multiplier_1h", "1.0"),
-		expr("cache_read_cost_multiplier", "1.0"), expr("created_at", "CURRENT_TIMESTAMP"),
-		expr("updated_at", "CURRENT_TIMESTAMP"),
+		expr("cache_read_cost_multiplier", "1.0"), expr("created_at", "strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')"),
+		expr("updated_at", "strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')"),
 	}, ", ") + ` FROM endpoints ORDER BY id ASC`
 	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {

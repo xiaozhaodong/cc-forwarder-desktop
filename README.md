@@ -133,7 +133,7 @@ claude config set --global apiBaseUrl http://127.0.0.1:8080
 
 ### 从旧版升级
 
-首次启动新版时，应用会在启动代理前执行一次迁移：先对数据库和活动配置创建带校验清单的完整备份，再将旧渠道/组/多凭据结构拆分为独立端点。迁移失败时应用仅显示只读恢复页，不启动代理或后台写入。详见 [UPGRADING.md](UPGRADING.md)。
+首次启动新版时，应用会在启动代理前顺序执行端点扁平化与 UTC 时间规范化迁移。每项迁移都会创建独立的数据库/活动配置一致性备份和校验清单；迁移失败时应用仅显示只读恢复页，不启动代理或后台写入。详见 [UPGRADING.md](UPGRADING.md)。
 
 ### 全局配置
 
@@ -172,6 +172,8 @@ usage_tracking:
 endpoints_storage:
   type: "sqlite"
 ```
+
+`timezone` 是唯一活动时区：数据库时间点固定保存为 UTC，Wails API 返回 UTC，桌面前端按该 IANA 时区显示并计算“今天”等业务日期。旧的 `usage_tracking.database.timezone` 已弃用；若仍保留，必须与顶层值相同，否则应用会拒绝启动或热重载。
 
 ## 技术架构
 

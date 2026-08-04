@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
 // initDatabase 初始化数据库
@@ -236,10 +238,10 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			total_cost_usd = ?,
 			status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
 			updated_at = %s
-		WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
+		WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
 		args := []interface{}{
-			event.Timestamp,
+			timezonepolicy.FormatStorage(event.Timestamp),
 			data.Duration.Milliseconds(), // 直接使用生命周期管理器计算的持续时间
 			data.ModelName,
 			data.InputTokens,
@@ -297,7 +299,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			total_cost_usd = ?,
 			duration_ms = COALESCE(?, duration_ms),
 			updated_at = %s
-		WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
+		WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
 		args := []interface{}{
 			data.ModelName,
@@ -356,7 +358,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			cache_read_cost_usd = ?,
 			total_cost_usd = ?,
 			updated_at = %s
-		WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
+		WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
 		args := []interface{}{
 			data.ModelName,
@@ -395,7 +397,7 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 		upstreamType = "endpoint"
 	}
 	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow()}
 
 	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
@@ -406,7 +408,7 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 		data.Method,
 		data.Path,
 		normalizeRequestFamily(data.RequestFamily),
-		event.Timestamp,
+		timezonepolicy.FormatStorage(event.Timestamp),
 		data.IsStreaming,
 		upstreamType,
 		data.UpstreamSourceName,
@@ -431,7 +433,7 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 			retry_count = ?,
 			http_status_code = ?,
 			updated_at = %s
-		WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
+		WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
 		args := []interface{}{
 			data.Status,
@@ -446,7 +448,7 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 	// 使用适配器构建INSERT OR REPLACE查询
 	// 重新加入start_time，但在UPSERT时保护已有值不被覆盖
 	columns := []string{"request_id", "endpoint_name", "status", "retry_count", "http_status_code", "start_time", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow()}
 	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
 	args := []interface{}{
@@ -455,7 +457,7 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 		data.Status,
 		data.RetryCount,
 		data.HTTPStatus,
-		event.Timestamp, // 提供start_time值用于插入新记录
+		timezonepolicy.FormatStorage(event.Timestamp), // 提供start_time值用于插入新记录
 	}
 
 	return query, args, nil
@@ -516,7 +518,7 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 	}
 	if opts.EndTime != nil {
 		setParts = append(setParts, "end_time = ?")
-		args = append(args, *opts.EndTime)
+		args = append(args, timezonepolicy.FormatStorage(*opts.EndTime))
 	}
 	if opts.Duration != nil {
 		setParts = append(setParts, "duration_ms = ?")
@@ -552,7 +554,7 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 	}
 	if opts.RouteDecisionAt != nil {
 		setParts = append(setParts, "route_decision_at = ?")
-		args = append(args, *opts.RouteDecisionAt)
+		args = append(args, timezonepolicy.FormatStorage(*opts.RouteDecisionAt))
 	}
 
 	// 如果没有字段需要更新，返回错误
@@ -561,7 +563,7 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 	}
 
 	// 总是更新updated_at字段
-	setParts = append(setParts, fmt.Sprintf("updated_at = %s", ut.adapter.BuildDateTimeNow()))
+	setParts = append(setParts, fmt.Sprintf("updated_at = %s", ut.adapter.BuildUTCDateTimeNow()))
 
 	// 构建完整的UPDATE语句
 	query := fmt.Sprintf("UPDATE request_logs SET %s WHERE request_id = ?",
@@ -620,10 +622,10 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 		http_status_code = CASE WHEN http_status_code IS NULL OR http_status_code = 0 THEN 200 ELSE http_status_code END,
 		status = 'completed',
 		updated_at = %s
-	WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
+	WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
 	args := []interface{}{
-		event.Timestamp,
+		timezonepolicy.FormatStorage(event.Timestamp),
 		data.Duration.Milliseconds(),
 		data.ModelName,
 		data.InputTokens,
@@ -687,10 +689,10 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			cache_creation_1h_tokens = ?,
 			cache_read_tokens = ?,
 			updated_at = %s
-		WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
+		WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
 		args = []interface{}{
-			event.Timestamp,
+			timezonepolicy.FormatStorage(event.Timestamp),
 			duration.Milliseconds(),
 			reason,     // cancel_reason
 			httpStatus, // http_status_code
@@ -720,10 +722,10 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			cache_creation_1h_tokens = ?,
 			cache_read_tokens = ?,
 			updated_at = %s
-		WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
+		WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
 		args = []interface{}{
-			event.Timestamp,
+			timezonepolicy.FormatStorage(event.Timestamp),
 			duration.Milliseconds(),
 			reason,      // failure_reason
 			errorDetail, // last_failure_reason
@@ -753,8 +755,9 @@ func (ut *UsageTracker) buildCompleteQueryWithTx(ctx context.Context, tx *sql.Tx
 	var startTime time.Time
 	var durationMs int64
 
-	queryStartTime := `SELECT start_time FROM request_logs WHERE request_id = ?`
-	err := tx.QueryRowContext(ctx, queryStartTime, event.RequestID).Scan(&startTime)
+	queryStartTime := `SELECT CAST(start_time AS TEXT) FROM request_logs WHERE request_id = ?`
+	var storedStart timezonepolicy.DBTime
+	err := tx.QueryRowContext(ctx, queryStartTime, event.RequestID).Scan(&storedStart)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// 记录不存在，使用估算的开始时间
@@ -764,6 +767,7 @@ func (ut *UsageTracker) buildCompleteQueryWithTx(ctx context.Context, tx *sql.Tx
 			return "", nil, fmt.Errorf("failed to get start time for duration calculation: %w", err)
 		}
 	} else {
+		startTime = storedStart.Time
 		// 计算正确的持续时间：end_time - start_time
 		durationMs = event.Timestamp.Sub(startTime).Milliseconds()
 	}
@@ -794,10 +798,10 @@ func (ut *UsageTracker) buildCompleteQueryWithTx(ctx context.Context, tx *sql.Tx
 		total_cost_usd = ?,
 		status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
 		updated_at = %s
-	WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
+	WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
 	args := []interface{}{
-		event.Timestamp,
+		timezonepolicy.FormatStorage(event.Timestamp),
 		durationMs, // 使用计算出的准确持续时间
 		data.ModelName,
 		data.InputTokens,
@@ -828,7 +832,7 @@ func (ut *UsageTracker) insertRequestStart(ctx context.Context, tx *sql.Tx, even
 		upstreamType = "endpoint"
 	}
 	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow()}
 	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
 	_, err := tx.ExecContext(ctx, query,
@@ -838,7 +842,7 @@ func (ut *UsageTracker) insertRequestStart(ctx context.Context, tx *sql.Tx, even
 		data.Method,
 		data.Path,
 		normalizeRequestFamily(data.RequestFamily),
-		event.Timestamp,
+		timezonepolicy.FormatStorage(event.Timestamp),
 		data.IsStreaming,
 		upstreamType,
 		data.UpstreamSourceName,
@@ -862,7 +866,7 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 			retry_count = ?,
 			http_status_code = ?,
 			updated_at = %s
-		WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
+		WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
 		result, err := tx.ExecContext(ctx, query,
 			data.Status,
@@ -906,7 +910,7 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 		retry_count = ?,
 		http_status_code = ?,
 		updated_at = %s
-	WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
+	WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
 	result, err := tx.ExecContext(ctx, query,
 		data.EndpointName,
@@ -928,7 +932,7 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 	if rowsAffected == 0 {
 		// 记录不存在，使用适配器构建INSERT OR REPLACE查询
 		columns := []string{"request_id", "endpoint_name", "status", "retry_count", "http_status_code", "start_time", "updated_at"}
-		placeholders := []string{"?", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
+		placeholders := []string{"?", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow()}
 		insertQuery := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
 		_, err = tx.ExecContext(ctx, insertQuery,
@@ -937,7 +941,7 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 			data.Status,
 			data.RetryCount,
 			data.HTTPStatus,
-			event.Timestamp)
+			timezonepolicy.FormatStorage(event.Timestamp))
 	}
 
 	return err
@@ -954,8 +958,9 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 	var startTime time.Time
 	var durationMs int64
 
-	queryStartTime := `SELECT start_time FROM request_logs WHERE request_id = ?`
-	err := tx.QueryRowContext(ctx, queryStartTime, event.RequestID).Scan(&startTime)
+	queryStartTime := `SELECT CAST(start_time AS TEXT) FROM request_logs WHERE request_id = ?`
+	var storedStart timezonepolicy.DBTime
+	err := tx.QueryRowContext(ctx, queryStartTime, event.RequestID).Scan(&storedStart)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// 记录不存在，使用估算的开始时间
@@ -965,6 +970,7 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 			return fmt.Errorf("failed to get start time for duration calculation: %w", err)
 		}
 	} else {
+		startTime = storedStart.Time
 		// 计算正确的持续时间：end_time - start_time
 		durationMs = event.Timestamp.Sub(startTime).Milliseconds()
 	}
@@ -1001,10 +1007,10 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 		total_cost_usd = ?,
 		status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
 		updated_at = %s
-	WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
+	WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
 	result, err := tx.ExecContext(ctx, query,
-		event.Timestamp,
+		timezonepolicy.FormatStorage(event.Timestamp),
 		durationMs, // 使用计算出的正确持续时间
 		data.ModelName,
 		data.InputTokens,
@@ -1044,8 +1050,8 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 		// 使用已计算的 startTime 和 durationMs
 		_, err = tx.ExecContext(ctx, insertQuery,
 			event.RequestID,
-			startTime,
-			event.Timestamp,
+			timezonepolicy.FormatStorage(startTime),
+			timezonepolicy.FormatStorage(event.Timestamp),
 			durationMs,
 			data.ModelName,
 			data.InputTokens,
@@ -1131,7 +1137,7 @@ func (ut *UsageTracker) cleanupOldRecords() error {
 	requestQuery := "DELETE FROM request_logs WHERE start_time < ?"
 	requestWriteReq := WriteRequest{
 		Query:     requestQuery,
-		Args:      []interface{}{cutoffTime},
+		Args:      []interface{}{timezonepolicy.FormatStorage(cutoffTime)},
 		Response:  make(chan error, 1),
 		Context:   context.Background(),
 		EventType: "cleanup_requests",
@@ -1156,7 +1162,7 @@ func (ut *UsageTracker) cleanupOldRecords() error {
 	summaryQuery := "DELETE FROM usage_summary WHERE date < ?"
 	summaryWriteReq := WriteRequest{
 		Query:     summaryQuery,
-		Args:      []interface{}{cutoffTime.Format("2006-01-02")},
+		Args:      []interface{}{ut.timezonePolicy.BusinessDate(cutoffTime)},
 		Response:  make(chan error, 1),
 		Context:   context.Background(),
 		EventType: "cleanup_summaries",
@@ -1205,7 +1211,7 @@ func (ut *UsageTracker) cleanupOldRecords() error {
 
 	// 记录清理结果
 	slog.Info("Cleaned up old records",
-		"cutoff_date", cutoffTime.Format("2006-01-02"),
+		"cutoff_date", ut.timezonePolicy.BusinessDate(cutoffTime),
 		"retention_days", ut.config.RetentionDays)
 
 	// 更新汇总统计（异步）
@@ -1233,125 +1239,13 @@ func (ut *UsageTracker) vacuumDatabase(ctx context.Context) error {
 	return nil
 }
 
-// updateUsageSummary 更新使用汇总数据（使用写队列）
+// updateUsageSummary 更新活动配置时区最近 7 个业务日的汇总缓存。
 func (ut *UsageTracker) updateUsageSummary() {
-	// 获取需要更新汇总的日期范围（最近7天）
-	endDate := time.Now()
-	startDate := endDate.AddDate(0, 0, -7)
-
-	// 使用适配器构建INSERT OR REPLACE查询
-	columns := []string{
-		"date", "model_name", "request_family", "upstream_type", "upstream_name", "upstream_id",
-		"request_count", "success_count", "error_count",
-		"total_input_tokens", "total_output_tokens",
-		"total_cache_creation_tokens", "total_cache_read_tokens",
-		"total_cost_usd", "avg_duration_ms",
-		"created_at", "updated_at",
+	if err := ut.rebuildRecentUsageSummary(context.Background(), 7); err != nil {
+		slog.Error("Failed to update usage summary", "error", err)
+		return
 	}
-
-	var query string
-	if ut.adapter.GetDatabaseType() == "sqlite" {
-		nowExpr := ut.adapter.BuildDateTimeNow()
-		query = fmt.Sprintf(`
-		INSERT INTO usage_summary (%s)
-		SELECT
-			substr(start_time, 1, 10) AS date,
-			COALESCE(model_name, '') AS model_name,
-			request_family,
-			COALESCE(upstream_type, '') AS upstream_type,
-			COALESCE(upstream_name, '') AS upstream_name,
-			COALESCE(upstream_id, 0) AS upstream_id,
-			COUNT(*) AS request_count,
-			SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS success_count,
-			SUM(CASE WHEN status IN (%s) THEN 1 ELSE 0 END) AS error_count,
-			SUM(input_tokens) AS total_input_tokens,
-			SUM(output_tokens) AS total_output_tokens,
-			SUM(cache_creation_tokens) AS total_cache_creation_tokens,
-			SUM(cache_read_tokens) AS total_cache_read_tokens,
-			SUM(total_cost_usd) AS total_cost_usd,
-			AVG(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE NULL END) AS avg_duration_ms,
-			%s AS created_at,
-			%s AS updated_at
-		FROM request_logs
-		WHERE start_time IS NOT NULL
-			AND length(start_time) >= 10
-			AND start_time >= ? AND start_time < ?
-		GROUP BY substr(start_time, 1, 10), COALESCE(model_name, ''), request_family, COALESCE(upstream_type, ''), COALESCE(upstream_name, ''), COALESCE(upstream_id, 0)
-		ON CONFLICT(date, model_name, request_family, upstream_type, upstream_name, upstream_id) DO UPDATE SET
-			request_count = EXCLUDED.request_count,
-			success_count = EXCLUDED.success_count,
-			error_count = EXCLUDED.error_count,
-			total_input_tokens = EXCLUDED.total_input_tokens,
-			total_output_tokens = EXCLUDED.total_output_tokens,
-			total_cache_creation_tokens = EXCLUDED.total_cache_creation_tokens,
-			total_cache_read_tokens = EXCLUDED.total_cache_read_tokens,
-			total_cost_usd = EXCLUDED.total_cost_usd,
-			avg_duration_ms = EXCLUDED.avg_duration_ms,
-			updated_at = %s
-			`, strings.Join(columns, ", "), FailedRequestStatusesSQLList, nowExpr, nowExpr, nowExpr)
-	} else {
-		placeholders := make([]string, len(columns))
-		for i := range placeholders {
-			placeholders[i] = "?"
-		}
-
-		baseQuery := ut.adapter.BuildInsertOrReplaceQuery("usage_summary", columns, placeholders)
-
-		// 非SQLite分支沿用原有构建逻辑
-		selectQuery := fmt.Sprintf(`
-		SELECT
-			substr(start_time, 1, 10) as date,
-			COALESCE(model_name, '') as model_name,
-			request_family,
-			COALESCE(upstream_type, '') as upstream_type,
-			COALESCE(upstream_name, '') as upstream_name,
-			COALESCE(upstream_id, 0) as upstream_id,
-			COUNT(*) as request_count,
-			SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_count,
-			SUM(CASE WHEN status IN (%s) THEN 1 ELSE 0 END) as error_count,
-			SUM(input_tokens) as total_input_tokens,
-			SUM(output_tokens) as total_output_tokens,
-			SUM(cache_creation_tokens) as total_cache_creation_tokens,
-			SUM(cache_read_tokens) as total_cache_read_tokens,
-			SUM(total_cost_usd) as total_cost_usd,
-			AVG(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE NULL END) as avg_duration_ms,
-			%s as created_at,
-			%s as updated_at
-		FROM request_logs
-		WHERE start_time IS NOT NULL
-			AND length(start_time) >= 10
-			AND start_time >= ? AND start_time < ?
-		GROUP BY substr(start_time, 1, 10), model_name, request_family, upstream_type, upstream_name, upstream_id
-			`, FailedRequestStatusesSQLList, ut.adapter.BuildDateTimeNow(), ut.adapter.BuildDateTimeNow())
-
-		query = strings.Replace(baseQuery, "VALUES ("+strings.Join(placeholders, ", ")+")", "("+selectQuery+")", 1)
-	}
-
-	summaryWriteReq := WriteRequest{
-		Query:     query,
-		Args:      []interface{}{startDate, endDate.AddDate(0, 0, 1)},
-		Response:  make(chan error, 1),
-		Context:   context.Background(),
-		EventType: "update_summary",
-	}
-
-	select {
-	case ut.writeQueue <- summaryWriteReq:
-		var err error
-		select {
-		case err = <-summaryWriteReq.Response:
-		case <-ut.ctx.Done():
-			slog.Debug("Usage summary update cancelled while waiting for write response")
-			return
-		}
-		if err != nil {
-			slog.Error("Failed to update usage summary", "error", err)
-		} else {
-			slog.Info("Usage summary updated successfully")
-		}
-	case <-ut.ctx.Done():
-		slog.Debug("Usage summary update cancelled due to context cancellation")
-	}
+	slog.Info("Usage summary updated successfully", "timezone", ut.timezonePolicy.Name())
 }
 
 // GetDatabaseStats 获取数据库统计信息（使用读连接）
@@ -1376,18 +1270,18 @@ func (ut *UsageTracker) getDatabaseStatsInternal(ctx context.Context) (*Database
 
 	// 获取最早和最新的记录时间（使用读连接）
 	var earliestStr, latestStr sql.NullString
-	err = ut.readDB.QueryRowContext(ctx, "SELECT MIN(start_time), MAX(start_time) FROM request_logs").Scan(&earliestStr, &latestStr)
+	err = ut.readDB.QueryRowContext(ctx, "SELECT CAST(MIN(start_time) AS TEXT), CAST(MAX(start_time) AS TEXT) FROM request_logs").Scan(&earliestStr, &latestStr)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("failed to get record time range: %w", err)
 	}
 
 	if earliestStr.Valid {
-		if t, err := time.Parse(time.RFC3339, earliestStr.String); err == nil {
+		if t, err := timezonepolicy.ParseStorage(earliestStr.String); err == nil {
 			stats.EarliestRecord = &t
 		}
 	}
 	if latestStr.Valid {
-		if t, err := time.Parse(time.RFC3339, latestStr.String); err == nil {
+		if t, err := timezonepolicy.ParseStorage(latestStr.String); err == nil {
 			stats.LatestRecord = &t
 		}
 	}

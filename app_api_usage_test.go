@@ -6,6 +6,7 @@ import (
 
 	"cc-forwarder/internal/middleware"
 	"cc-forwarder/internal/monitor"
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"cc-forwarder/internal/tracking"
 )
 
@@ -123,5 +124,53 @@ func TestGetUsageStats_DoesNotFallbackToRuntimeWhenFiltered(t *testing.T) {
 	}
 	if result.TotalTokens != 0 {
 		t.Fatalf("expected filtered zero tokens, got %d", result.TotalTokens)
+	}
+}
+
+func TestGetRequestsUsesConfiguredDSTDayRangeAndReturnsUTC(t *testing.T) {
+	policy, err := timezonepolicy.New("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker, err := tracking.NewUsageTrackerWithPolicy(&tracking.Config{
+		Enabled: true, DatabasePath: ":memory:", BufferSize: 16, BatchSize: 4,
+		FlushInterval: time.Hour, HotPool: &tracking.HotPoolSettings{Enabled: false},
+	}, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracker.Close()
+
+	for _, row := range []struct{ id, start string }{
+		{id: "dst-start", start: "2026-03-08T05:00:00.000000Z"},
+		{id: "dst-last", start: "2026-03-09T03:59:59.999999Z"},
+		{id: "dst-end-exclusive", start: "2026-03-09T04:00:00.000000Z"},
+	} {
+		if _, err := tracker.GetWriteDB().Exec(`INSERT INTO request_logs (
+			request_id, start_time, status, request_family, upstream_type, upstream_name
+		) VALUES (?, ?, 'completed', 'claude', 'endpoint', 'dst-endpoint')`, row.id, row.start); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	app := NewApp()
+	app.timezonePolicy = policy
+	app.usageTracker = tracker
+	result, err := app.GetRequests(RequestQueryParams{
+		StartDate: "2026-03-08T00:00", EndDate: "2026-03-09T00:00", Page: 1, PageSize: 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 2 || len(result.Requests) != 2 {
+		t.Fatalf("DST day requests = total:%d rows:%d", result.Total, len(result.Requests))
+	}
+	for _, request := range result.Requests {
+		if request.RequestID == "dst-end-exclusive" {
+			t.Fatal("half-open end boundary was included")
+		}
+		if request.Timestamp == "" || request.Timestamp[len(request.Timestamp)-1] != 'Z' {
+			t.Fatalf("request timestamp is not UTC: %q", request.Timestamp)
+		}
 	}
 }

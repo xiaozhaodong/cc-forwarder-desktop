@@ -15,6 +15,7 @@ import (
 
 	"cc-forwarder/internal/privacy"
 	"cc-forwarder/internal/store"
+	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
 // 隐私服务状态
@@ -365,7 +366,7 @@ func (s *PrivacyService) ExportRules(ctx context.Context) (*PrivacyRuleExport, e
 		return nil, err
 	}
 	return &PrivacyRuleExport{
-		ExportedAt: time.Now().Format("2006-01-02 15:04:05.000000-07:00"),
+		ExportedAt: timezonepolicy.FormatStorage(time.Now()),
 		Settings:   settings,
 		Rules:      rules,
 	}, nil

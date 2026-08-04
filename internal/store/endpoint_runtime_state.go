@@ -4,6 +4,7 @@
 package store
 
 import (
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"context"
 	"database/sql"
 	"fmt"
@@ -60,19 +61,20 @@ func (s *SQLiteEndpointRuntimeStateStore) Upsert(ctx context.Context, record *En
 	}
 	var cooldownUntil interface{}
 	if record.CooldownUntil != nil {
-		cooldownUntil = record.CooldownUntil.UTC().Format(time.RFC3339Nano)
+		cooldownUntil = timezonepolicy.FormatStorage(*record.CooldownUntil)
 	}
+	nowUTC := timezonepolicy.FormatStorage(time.Now())
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO endpoint_runtime_states (endpoint_id, scope, state, cooldown_until, cooldown_reason, revision, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(endpoint_id, scope) DO UPDATE SET
 			state = excluded.state,
 			cooldown_until = excluded.cooldown_until,
 			cooldown_reason = excluded.cooldown_reason,
 			revision = excluded.revision,
-			updated_at = CURRENT_TIMESTAMP
+			updated_at = excluded.updated_at
 		WHERE excluded.revision > endpoint_runtime_states.revision
-	`, record.EndpointID, record.Scope, record.State, cooldownUntil, record.CooldownReason, record.Revision)
+	`, record.EndpointID, record.Scope, record.State, cooldownUntil, record.CooldownReason, record.Revision, nowUTC)
 	if err != nil {
 		return fmt.Errorf("写入端点运行态失败: %w", err)
 	}
@@ -82,10 +84,10 @@ func (s *SQLiteEndpointRuntimeStateStore) Upsert(ctx context.Context, record *En
 // ListActiveCooldowns 列出仍在生效的 cooldown
 func (s *SQLiteEndpointRuntimeStateStore) ListActiveCooldowns(ctx context.Context, now time.Time) ([]*EndpointRuntimeStateRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT endpoint_id, scope, state, cooldown_until, cooldown_reason, revision
+		SELECT endpoint_id, scope, state, CAST(cooldown_until AS TEXT), cooldown_reason, revision, CAST(updated_at AS TEXT)
 		FROM endpoint_runtime_states
 		WHERE cooldown_until IS NOT NULL AND cooldown_until > ?
-	`, now.UTC().Format(time.RFC3339Nano))
+	`, timezonepolicy.FormatStorage(now))
 	if err != nil {
 		return nil, fmt.Errorf("查询端点运行态失败: %w", err)
 	}
@@ -94,18 +96,17 @@ func (s *SQLiteEndpointRuntimeStateStore) ListActiveCooldowns(ctx context.Contex
 	var records []*EndpointRuntimeStateRecord
 	for rows.Next() {
 		var record EndpointRuntimeStateRecord
-		var cooldownUntil sql.NullString
+		var cooldownUntil timezonepolicy.NullDBTime
+		var updatedAt timezonepolicy.DBTime
 		if err := rows.Scan(&record.EndpointID, &record.Scope, &record.State,
-			&cooldownUntil, &record.CooldownReason, &record.Revision); err != nil {
+			&cooldownUntil, &record.CooldownReason, &record.Revision, &updatedAt); err != nil {
 			return nil, fmt.Errorf("扫描端点运行态失败: %w", err)
 		}
 		if cooldownUntil.Valid {
-			if parsed, err := time.Parse(time.RFC3339Nano, cooldownUntil.String); err == nil {
-				// 库内按 UTC 存储；转回本地时区，与运行中 time.Now() 设置的冷却口径一致
-				local := parsed.Local()
-				record.CooldownUntil = &local
-			}
+			value := cooldownUntil.Time.UTC()
+			record.CooldownUntil = &value
 		}
+		record.UpdatedAt = updatedAt.Time.UTC()
 		records = append(records, &record)
 	}
 	return records, rows.Err()

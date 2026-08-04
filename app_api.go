@@ -11,6 +11,7 @@
 package main
 
 import (
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"fmt"
 	"net"
 	"sync"
@@ -58,7 +59,7 @@ func (a *App) GetSystemStatus() SystemStatus {
 		Version:       Version,
 		Uptime:        formatDuration(uptime),
 		UptimeSeconds: int64(uptime.Seconds()),
-		StartTime:     a.startTime.Format(time.RFC3339),
+		StartTime:     formatAPITime(a.startTime),
 		ProxyRunning:  a.isRunning && a.proxyServer != nil,
 		ConfigPath:    a.configPath,
 	}
@@ -117,6 +118,7 @@ func (a *App) checkPortListening(host string, port int) bool {
 
 // ConfigInfo 配置信息（脱敏）
 type ConfigInfo struct {
+	Timezone        string `json:"timezone"`
 	ServerHost      string `json:"server_host"`
 	ServerPort      int    `json:"server_port"`
 	AuthEnabled     bool   `json:"auth_enabled"`
@@ -135,6 +137,7 @@ func (a *App) GetConfig() ConfigInfo {
 	}
 
 	return ConfigInfo{
+		Timezone:        a.config.Timezone,
 		ServerHost:      a.config.Server.Host,
 		ServerPort:      a.config.Server.Port,
 		AuthEnabled:     a.config.Auth.Enabled,
@@ -197,38 +200,32 @@ func formatDuration(d time.Duration) string {
 //   - 2025-12-05 00:00:00 (简单格式，使用 loc)
 //   - 2025-12-05 (仅日期，当天开始)
 func parseTimeWithLocation(s string, loc *time.Location) (time.Time, error) {
-	if s == "" {
-		return time.Time{}, fmt.Errorf("empty time string")
+	if loc == nil {
+		return time.Time{}, fmt.Errorf("time location is required")
 	}
-
-	// 尝试各种格式
-	formats := []struct {
-		layout string
-		useLoc bool // 是否使用 loc
-	}{
-		{"2006-01-02T15:04:05Z07:00", false}, // RFC3339
-		{"2006-01-02T15:04:05+08:00", false}, // 带固定时区
-		{"2006-01-02T15:04:05", true},        // 不带时区
-		{"2006-01-02T15:04", true},           // 不带秒
-		{"2006-01-02 15:04:05", true},        // 简单格式
-		{"2006-01-02 15:04", true},           // 简单格式不带秒
-		{"2006-01-02", true},                 // 仅日期
+	policy, err := timezonepolicy.New(loc.String())
+	if err != nil {
+		return time.Time{}, err
 	}
+	return policy.ParseInput(s)
+}
 
-	for _, f := range formats {
-		var t time.Time
-		var err error
-
-		if f.useLoc && loc != nil {
-			t, err = time.ParseInLocation(f.layout, s, loc)
-		} else {
-			t, err = time.Parse(f.layout, s)
-		}
-
-		if err == nil {
-			return t, nil
-		}
+func formatAPITime(value time.Time) string {
+	if value.IsZero() {
+		return ""
 	}
+	return timezonepolicy.FormatStorage(value)
+}
 
-	return time.Time{}, fmt.Errorf("unable to parse time: %s", s)
+func (a *App) activeTimezonePolicy() (*timezonepolicy.Policy, error) {
+	if a != nil && a.timezonePolicy != nil {
+		return a.timezonePolicy.Snapshot(), nil
+	}
+	if a != nil && a.usageTracker != nil && a.usageTracker.TimezonePolicy() != nil {
+		return a.usageTracker.TimezonePolicy().Snapshot(), nil
+	}
+	if a == nil || a.config == nil || a.config.Timezone == "" {
+		return nil, fmt.Errorf("active timezone policy is not initialized")
+	}
+	return timezonepolicy.New(a.config.Timezone)
 }

@@ -100,7 +100,7 @@ func (s *SQLitePrivacyStore) ensureSchema(ctx context.Context) error {
 				scan_max_bytes INTEGER NOT NULL DEFAULT 4194304,
 				over_limit_action TEXT NOT NULL DEFAULT 'scan_prefix',
 				on_error TEXT NOT NULL DEFAULT 'fail_open',
-				updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+				updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 			)`,
 			`INSERT OR IGNORE INTO privacy_settings (id) VALUES (1)`,
 			`CREATE TABLE IF NOT EXISTS privacy_rules (
@@ -116,8 +116,8 @@ func (s *SQLitePrivacyStore) ensureSchema(ctx context.Context) error {
 				scope_json TEXT NOT NULL DEFAULT '{}',
 				source TEXT NOT NULL DEFAULT 'custom',
 				compile_error TEXT DEFAULT '',
-				created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-				updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+				created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+				updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 			)`,
 			`CREATE INDEX IF NOT EXISTS idx_privacy_rules_enabled_priority ON privacy_rules(enabled, priority)`,
 			`CREATE TABLE IF NOT EXISTS privacy_exact_secrets (
@@ -131,8 +131,8 @@ func (s *SQLitePrivacyStore) ensureSchema(ctx context.Context) error {
 				source_type TEXT NOT NULL DEFAULT 'manual',
 				source_ref TEXT NOT NULL DEFAULT '',
 				description TEXT NOT NULL DEFAULT '',
-				created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-				updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+				created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+				updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 			)`,
 			`CREATE UNIQUE INDEX IF NOT EXISTS idx_privacy_exact_secrets_value_hash
 				ON privacy_exact_secrets(value_hash)`,
@@ -142,7 +142,7 @@ func (s *SQLitePrivacyStore) ensureSchema(ctx context.Context) error {
 				WHEN NEW.updated_at = OLD.updated_at
 			BEGIN
 				UPDATE privacy_exact_secrets
-				SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'
+				SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')
 				WHERE id = NEW.id;
 			END`,
 		}
@@ -162,7 +162,7 @@ func (s *SQLitePrivacyStore) GetSettings(ctx context.Context) (*PrivacySettingsR
 		return nil, err
 	}
 	row := s.db.QueryRowContext(ctx, `
-		SELECT mode, scan_max_bytes, over_limit_action, on_error, COALESCE(updated_at, '')
+		SELECT mode, scan_max_bytes, over_limit_action, on_error, COALESCE(CAST(updated_at AS TEXT), '')
 		FROM privacy_settings WHERE id = 1
 	`)
 	record := &PrivacySettingsRecord{}
@@ -170,7 +170,10 @@ func (s *SQLitePrivacyStore) GetSettings(ctx context.Context) (*PrivacySettingsR
 	if err := row.Scan(&record.Mode, &record.ScanMaxBytes, &record.OverLimitAction, &record.OnError, &updatedAt); err != nil {
 		return nil, fmt.Errorf("read privacy settings failed: %w", err)
 	}
-	record.UpdatedAt = parseDBTime(updatedAt)
+	var err error
+	if record.UpdatedAt, err = parseDBTime(updatedAt); err != nil {
+		return nil, fmt.Errorf("parse privacy settings updated_at: %w", err)
+	}
 	return record, nil
 }
 
@@ -185,7 +188,7 @@ func (s *SQLitePrivacyStore) UpdateSettings(ctx context.Context, record *Privacy
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE privacy_settings
 		SET mode = ?, scan_max_bytes = ?, over_limit_action = ?, on_error = ?,
-		    updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'
+		    updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')
 		WHERE id = 1
 	`, record.Mode, record.ScanMaxBytes, record.OverLimitAction, record.OnError)
 	if err != nil {
@@ -196,7 +199,7 @@ func (s *SQLitePrivacyStore) UpdateSettings(ctx context.Context, record *Privacy
 
 const privacyRuleColumns = `id, enabled, name, COALESCE(description, ''), priority, match_type, pattern,
 	placeholder, action, scope_json, source, COALESCE(compile_error, ''),
-	COALESCE(created_at, ''), COALESCE(updated_at, '')`
+	COALESCE(CAST(created_at AS TEXT), ''), COALESCE(CAST(updated_at AS TEXT), '')`
 
 // ListRules 列出全部规则（priority 升序，同优先级按 ID）
 func (s *SQLitePrivacyStore) ListRules(ctx context.Context) ([]*PrivacyRuleRecord, error) {
@@ -413,7 +416,12 @@ func scanPrivacyRule(row privacyRuleScanner) (*PrivacyRuleRecord, error) {
 	); err != nil {
 		return nil, fmt.Errorf("scan privacy rule failed: %w", err)
 	}
-	record.CreatedAt = parseDBTime(createdAt)
-	record.UpdatedAt = parseDBTime(updatedAt)
+	var err error
+	if record.CreatedAt, err = parseDBTime(createdAt); err != nil {
+		return nil, fmt.Errorf("parse privacy rule created_at: %w", err)
+	}
+	if record.UpdatedAt, err = parseDBTime(updatedAt); err != nil {
+		return nil, fmt.Errorf("parse privacy rule updated_at: %w", err)
+	}
 	return record, nil
 }

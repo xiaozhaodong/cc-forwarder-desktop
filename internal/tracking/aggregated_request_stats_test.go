@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
 func TestQueryAggregatedRequestStatsWithHotPool(t *testing.T) {
@@ -125,7 +127,7 @@ func TestQueryAggregatedRequestStatsWithHotPool_DeduplicatesOverlap(t *testing.T
 			model_name, input_tokens, output_tokens, total_cost_usd, duration_ms
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"req-overlap",
-		now.Add(-2*time.Minute).Format("2006-01-02 15:04:05"),
+		timezonepolicy.FormatStorage(now.Add(-2*time.Minute)),
 		"completed",
 		"endpoint",
 		"test-model",

@@ -6,7 +6,8 @@ import (
 )
 
 const privacyExactSecretColumns = `id, enabled, name, secret_value, value_hash, placeholder,
-	category, source_type, source_ref, description, COALESCE(created_at, ''), COALESCE(updated_at, '')`
+	category, source_type, source_ref, description,
+	COALESCE(CAST(created_at AS TEXT), ''), COALESCE(CAST(updated_at AS TEXT), '')`
 
 // ListExactSecrets 列出本地精确敏感值。调用方负责遮蔽 SecretValue。
 func (s *SQLitePrivacyStore) ListExactSecrets(ctx context.Context) ([]*PrivacyExactSecretRecord, error) {
@@ -112,7 +113,7 @@ func (s *SQLitePrivacyStore) UpdateExactSecret(ctx context.Context, record *Priv
 		UPDATE privacy_exact_secrets
 		SET enabled = ?, name = ?, secret_value = ?, value_hash = ?, placeholder = ?,
 		    category = ?, source_type = ?, source_ref = ?, description = ?,
-		    updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'
+		    updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')
 		WHERE id = ?
 	`, record.Enabled, record.Name, record.SecretValue, record.ValueHash, record.Placeholder,
 		record.Category, record.SourceType, record.SourceRef, record.Description, record.ID)
@@ -173,7 +174,12 @@ func scanPrivacyExactSecret(row privacyExactSecretScanner) (*PrivacyExactSecretR
 	); err != nil {
 		return nil, fmt.Errorf("scan privacy exact secret failed: %w", err)
 	}
-	record.CreatedAt = parseDBTime(createdAt)
-	record.UpdatedAt = parseDBTime(updatedAt)
+	var err error
+	if record.CreatedAt, err = parseDBTime(createdAt); err != nil {
+		return nil, fmt.Errorf("parse privacy exact secret created_at: %w", err)
+	}
+	if record.UpdatedAt, err = parseDBTime(updatedAt); err != nil {
+		return nil, fmt.Errorf("parse privacy exact secret updated_at: %w", err)
+	}
 	return record, nil
 }

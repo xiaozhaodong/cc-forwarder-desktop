@@ -94,6 +94,48 @@ func TestLoadConfigRejectsNonSQLiteEndpointStorage(t *testing.T) {
 	}
 }
 
+func TestLoadConfigTimezoneAuthority(t *testing.T) {
+	tests := []struct {
+		name         string
+		yaml         string
+		wantTimezone string
+		wantErr      bool
+	}{
+		{name: "missing uses default", yaml: "endpoints_storage:\n  type: sqlite\n", wantTimezone: "Asia/Shanghai"},
+		{name: "valid IANA timezone", yaml: "timezone: America/New_York\nendpoints_storage:\n  type: sqlite\n", wantTimezone: "America/New_York"},
+		{name: "invalid timezone", yaml: "timezone: Mars/Olympus_Mons\nendpoints_storage:\n  type: sqlite\n", wantErr: true},
+		{name: "matching deprecated database timezone", yaml: "timezone: UTC\nendpoints_storage:\n  type: sqlite\nusage_tracking:\n  database:\n    type: sqlite\n    timezone: UTC\n", wantTimezone: "UTC"},
+		{name: "conflicting database timezone", yaml: "timezone: UTC\nendpoints_storage:\n  type: sqlite\nusage_tracking:\n  database:\n    type: sqlite\n    timezone: Asia/Shanghai\n", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeConfigFixture(t, tc.yaml)
+			cfg, err := LoadConfig(path)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected timezone validation error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Timezone != tc.wantTimezone {
+				t.Fatalf("timezone = %q, want %q", cfg.Timezone, tc.wantTimezone)
+			}
+		})
+	}
+}
+
+func writeConfigFixture(t *testing.T, content string) string {
+	t.Helper()
+	path := t.TempDir() + "/config.yaml"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestLoadConfig_AccountPoolEnabledDefaultWhenMissing(t *testing.T) {
 	configContent := `
 endpoints_storage:

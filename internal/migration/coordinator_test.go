@@ -212,6 +212,10 @@ func TestCoordinatorOfflineCopyDrill(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM endpoints`).Scan(&endpointsBefore); err != nil {
 		t.Fatal(err)
 	}
+	legacyEndpointSchemaBefore, err := columnExists(context.Background(), db, "endpoints", "channel")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	coordinator := &Coordinator{
 		DB: db, DatabasePath: databasePath, ConfigPath: configPath,
@@ -281,6 +285,21 @@ func TestCoordinatorOfflineCopyDrill(t *testing.T) {
 	if endpointCountSecond != endpointCountAfter {
 		t.Fatalf("idempotent run changed endpoint count: first=%d second=%d", endpointCountAfter, endpointCountSecond)
 	}
+	timezoneManifest, err := readVerifiedBackupManifest(status.BackupDir, status.ManifestSHA256, TimezoneUTCMigrationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if timezoneManifest.LegacyTimezone == "" {
+		t.Fatal("timezone rollback backup did not pin the legacy timezone")
+	}
+
+	rollbackBackupDir := status.BackupDir
+	if legacyBefore.SourceMode != SourceModeSQLite || len(legacyBefore.Endpoints) > 0 || legacyEndpointSchemaBefore {
+		if err := db.QueryRow(`SELECT backup_dir FROM app_schema_migrations WHERE migration_id=?`, EndpointFlattenMigrationID).Scan(&rollbackBackupDir); err != nil {
+			t.Fatal(err)
+		}
+		rollbackBackupDir = requirePathWithinDrillRoot(t, root, rollbackBackupDir)
+	}
 
 	rollbackDir := filepath.Join(root, "rollback-verification")
 	if err := os.Mkdir(rollbackDir, 0o700); err != nil {
@@ -288,10 +307,10 @@ func TestCoordinatorOfflineCopyDrill(t *testing.T) {
 	}
 	rollbackDB := filepath.Join(rollbackDir, "usage.db")
 	rollbackConfig := filepath.Join(rollbackDir, "config.yaml")
-	if err := copyFile0600(filepath.Join(status.BackupDir, "usage.db"), rollbackDB); err != nil {
+	if err := copyFile0600(filepath.Join(rollbackBackupDir, "usage.db"), rollbackDB); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyFile0600(filepath.Join(status.BackupDir, "config.yaml"), rollbackConfig); err != nil {
+	if err := copyFile0600(filepath.Join(rollbackBackupDir, "config.yaml"), rollbackConfig); err != nil {
 		t.Fatal(err)
 	}
 	if integrity, err := checkSQLiteIntegrity(rollbackDB); err != nil || integrity != "ok" {
@@ -309,16 +328,19 @@ func TestCoordinatorOfflineCopyDrill(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollback.Close()
-	for _, column := range []string{"channel", "enabled"} {
-		has, err := columnExists(context.Background(), rollback, "endpoints", column)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !has {
-			t.Fatalf("rollback copy is missing legacy endpoints.%s", column)
+	if legacyEndpointSchemaBefore {
+		for _, column := range []string{"channel", "enabled"} {
+			has, err := columnExists(context.Background(), rollback, "endpoints", column)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !has {
+				t.Fatalf("rollback copy is missing legacy endpoints.%s", column)
+			}
 		}
 	}
-	t.Logf("offline migration and rollback verification passed: endpoints=%d->%d requests=%d backup=%s", endpointsBefore, endpointCountAfter, after.RequestCount, status.BackupDir)
+	t.Logf("offline migration and rollback verification passed: endpoints=%d->%d requests=%d timezone_backup=%s rollback_backup=%s",
+		endpointsBefore, endpointCountAfter, after.RequestCount, status.BackupDir, rollbackBackupDir)
 }
 
 type drillMetrics struct {

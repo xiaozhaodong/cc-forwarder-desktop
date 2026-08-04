@@ -24,6 +24,7 @@ import (
 	"cc-forwarder/internal/proxy"
 	"cc-forwarder/internal/service"
 	"cc-forwarder/internal/store"
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"cc-forwarder/internal/tracking"
 	"cc-forwarder/internal/transport"
 	"cc-forwarder/internal/utils"
@@ -44,6 +45,7 @@ type App struct {
 	endpointManager      *endpoint.Manager
 	eventBus             events.EventBus // 接口类型，不是指针
 	usageTracker         *tracking.UsageTracker
+	timezonePolicy       *timezonepolicy.Policy
 	coreDatabase         *tracking.CoreDatabase
 	migrationMu          sync.RWMutex
 	migrationCoordinator *migration.Coordinator
@@ -792,7 +794,7 @@ func (a *App) setupUsageTracker() {
 	}
 
 	var err error
-	a.usageTracker, err = tracking.NewUsageTracker(trackingConfig, a.config.Timezone)
+	a.usageTracker, err = tracking.NewUsageTrackerWithPolicy(trackingConfig, a.timezonePolicy)
 	if err != nil {
 		a.logger.Error("使用追踪器初始化失败", "error", err)
 		return
@@ -944,12 +946,21 @@ func (a *App) setupConfigReload() {
 		return
 	}
 	a.configWatcher = configWatcher
-	a.configWatcher.AddReloadCallback(func(newCfg *config.Config) {
+	a.configWatcher.AddReloadCallback(func(newCfg *config.Config) error {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 
 		// 桌面版运行时强制使用用户目录下的日志与数据库路径
 		a.applyDesktopRuntimePathOverrides(newCfg)
+		if a.timezonePolicy == nil {
+			return fmt.Errorf("活动时区策略未初始化")
+		}
+		if err := a.timezonePolicy.Update(newCfg.Timezone); err != nil {
+			return fmt.Errorf("更新活动时区失败: %w", err)
+		}
+		if a.usageTracker != nil {
+			a.usageTracker.OnTimezoneChanged()
+		}
 
 		// 更新配置引用
 		a.config = newCfg
@@ -979,6 +990,7 @@ func (a *App) setupConfigReload() {
 
 		// 通知前端配置已更新
 		a.emitConfigReloaded()
+		return nil
 	})
 
 	a.logger.Info("🔄 配置热重载已启用")

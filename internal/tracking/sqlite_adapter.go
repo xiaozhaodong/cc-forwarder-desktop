@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	timezonepolicy "cc-forwarder/internal/timezone"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -21,10 +23,9 @@ var sqliteSchemaFS embed.FS
 
 // SQLiteAdapter SQLite数据库适配器实现（保持原有逻辑）
 type SQLiteAdapter struct {
-	config   DatabaseConfig
-	db       *sql.DB
-	logger   *slog.Logger
-	location *time.Location // 配置的时区
+	config DatabaseConfig
+	db     *sql.DB
+	logger *slog.Logger
 }
 
 // NewSQLiteAdapter 创建SQLite适配器实例
@@ -32,28 +33,9 @@ func NewSQLiteAdapter(config DatabaseConfig) (*SQLiteAdapter, error) {
 	// 设置默认配置
 	setDefaultConfig(&config)
 
-	// 解析时区配置
-	timezone := strings.TrimSpace(config.Timezone)
-	if timezone == "" {
-		timezone = "Asia/Shanghai" // 默认时区
-	}
-
-	location, err := time.LoadLocation(timezone)
-	if err != nil {
-		// 如果时区解析失败，记录错误但不终止，使用系统本地时区
-		location = time.Local
-		slog.Warn("SQLite时区解析失败，使用系统本地时区",
-			"configured_timezone", timezone,
-			"error", err,
-			"fallback_timezone", location.String())
-	} else {
-		slog.Info("SQLite时区配置成功", "timezone", timezone)
-	}
-
 	adapter := &SQLiteAdapter{
-		config:   config,
-		logger:   slog.Default(),
-		location: location,
+		config: config,
+		logger: slog.Default(),
 	}
 
 	return adapter, nil
@@ -104,9 +86,6 @@ func (s *SQLiteAdapter) Open() error {
 	}
 
 	s.db = db
-
-	// 诊断时区设置
-	s.diagnoseTimezoneSettings()
 
 	s.logger.Info("✅ SQLite数据库连接成功")
 
@@ -429,7 +408,7 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		cooldown_until DATETIME,
 		cooldown_reason TEXT NOT NULL DEFAULT '',
 		revision INTEGER NOT NULL DEFAULT 0,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
 		PRIMARY KEY (endpoint_id, scope),
 		FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE CASCADE
 	)`
@@ -501,8 +480,8 @@ func (s *SQLiteAdapter) ensurePrivacyExactSecretsSchema(ctx context.Context) err
 			source_type TEXT NOT NULL DEFAULT 'manual',
 			source_ref TEXT NOT NULL DEFAULT '',
 			description TEXT NOT NULL DEFAULT '',
-			created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-			updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+			created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+			updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 		)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_privacy_exact_secrets_value_hash
 			ON privacy_exact_secrets(value_hash)`,
@@ -512,7 +491,7 @@ func (s *SQLiteAdapter) ensurePrivacyExactSecretsSchema(ctx context.Context) err
 			WHEN NEW.updated_at = OLD.updated_at
 		BEGIN
 			UPDATE privacy_exact_secrets
-			SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'
+			SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')
 			WHERE id = NEW.id;
 		END`,
 	}
@@ -698,8 +677,8 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 				quota_status TEXT DEFAULT '',
 				quota_refreshed_at DATETIME,
 				fingerprint TEXT UNIQUE NOT NULL,
-				created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-				updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+				created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+				updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 			)`,
 			`INSERT INTO upstream_accounts_new (
 				id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules, enable_request_compression,
@@ -747,7 +726,7 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 				FOR EACH ROW
 				WHEN NEW.updated_at = OLD.updated_at
 			BEGIN
-				UPDATE upstream_accounts SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+				UPDATE upstream_accounts SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 			END`,
 		}
 		for _, stmt := range rebuildSQLs {
@@ -896,14 +875,9 @@ func (s *SQLiteAdapter) BuildInsertOrReplaceQuery(table string, columns []string
 	return query
 }
 
-// BuildDateTimeNow 返回当前时间函数（支持微秒精度）
-// SQLite没有时区支持，我们在Go层面生成正确时区的时间字符串
-func (s *SQLiteAdapter) BuildDateTimeNow() string {
-	// 获取当前配置时区的时间
-	now := time.Now().In(s.location)
-
-	// 格式化为SQLite兼容的datetime格式（微秒精度）
-	return fmt.Sprintf("'%s'", now.Format("2006-01-02 15:04:05.000000"))
+// BuildUTCDateTimeNow 返回数据库无关的 UTC 固定格式表达式。
+func (s *SQLiteAdapter) BuildUTCDateTimeNow() string {
+	return fmt.Sprintf("'%s'", timezonepolicy.FormatStorage(time.Now()))
 }
 
 // BuildLimitOffset 构建分页查询
@@ -948,18 +922,18 @@ func (s *SQLiteAdapter) GetDatabaseStats(ctx context.Context) (*DatabaseStats, e
 
 	// 获取最早和最新的记录时间
 	var earliestStr, latestStr sql.NullString
-	err = s.db.QueryRowContext(ctx, "SELECT MIN(start_time), MAX(start_time) FROM request_logs").Scan(&earliestStr, &latestStr)
+	err = s.db.QueryRowContext(ctx, "SELECT CAST(MIN(start_time) AS TEXT), CAST(MAX(start_time) AS TEXT) FROM request_logs").Scan(&earliestStr, &latestStr)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("failed to get record time range: %w", err)
 	}
 
 	if earliestStr.Valid {
-		if t, err := time.Parse(time.RFC3339, earliestStr.String); err == nil {
+		if t, err := timezonepolicy.ParseStorage(earliestStr.String); err == nil {
 			stats.EarliestRecord = &t
 		}
 	}
 	if latestStr.Valid {
-		if t, err := time.Parse(time.RFC3339, latestStr.String); err == nil {
+		if t, err := timezonepolicy.ParseStorage(latestStr.String); err == nil {
 			stats.LatestRecord = &t
 		}
 	}
@@ -1003,32 +977,6 @@ func (s *SQLiteAdapter) GetConnectionStats() ConnectionStats {
 // GetDatabaseType 返回数据库类型标识
 func (s *SQLiteAdapter) GetDatabaseType() string {
 	return "sqlite"
-}
-
-// diagnoseTimezoneSettings 诊断SQLite时区设置，帮助调试时区不一致问题
-func (s *SQLiteAdapter) diagnoseTimezoneSettings() {
-	// SQLite时区诊断相对简单，因为我们在应用层处理时区
-	goNow := time.Now()
-	goInConfigTZ := time.Now().In(s.location)
-
-	_, goOffset := goInConfigTZ.Zone()
-	goOffsetHours := float64(goOffset) / 3600
-
-	s.logger.Info("🔍 SQLite时区诊断信息",
-		"configured_timezone", s.location.String(),
-		"system_now", goNow.Format("2006-01-02 15:04:05 -07:00"),
-		"configured_tz_now", goInConfigTZ.Format("2006-01-02 15:04:05 -07:00"),
-		"configured_offset_hours", goOffsetHours,
-		"builddatetimenow_output", s.BuildDateTimeNow())
-
-	// 验证时区偏移是否符合预期
-	if s.location.String() == "Asia/Shanghai" && goOffsetHours == 8.0 {
-		s.logger.Info("✅ SQLite时区设置正确: 使用Asia/Shanghai时区 (+8小时)")
-	} else if s.location == time.UTC {
-		s.logger.Info("ℹ️  SQLite使用UTC时区")
-	} else {
-		s.logger.Info("ℹ️  SQLite使用自定义时区", "timezone", s.location.String(), "offset_hours", goOffsetHours)
-	}
 }
 
 // getSQLiteAppDataDir 获取应用数据目录（跨平台）

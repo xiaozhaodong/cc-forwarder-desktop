@@ -1,6 +1,7 @@
 package events
 
 import (
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"log/slog"
 	"time"
 )
@@ -36,7 +37,7 @@ func (adapter *SSEAdapter) BroadcastEvent(eventType string, data map[string]inte
 	if data == nil {
 		data = make(map[string]interface{})
 	}
-	data["timestamp"] = time.Now().Format("2006-01-02 15:04:05")
+	data["timestamp"] = timezonepolicy.FormatStorage(time.Now())
 
 	// 推送给前端
 	adapter.webBroadcaster.BroadcastEvent(eventType, data)

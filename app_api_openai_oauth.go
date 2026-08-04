@@ -108,7 +108,7 @@ func (a *App) GenerateChatGPTOAuthLink() (GenerateChatGPTOAuthLinkResult, error)
 		SessionID:   sessionID,
 		AuthURL:     authURL,
 		RedirectURI: redirectURI,
-		ExpiresAt:   expiresAt.Format(time.RFC3339),
+		ExpiresAt:   formatAPITime(expiresAt),
 	}, nil
 }
 
@@ -236,7 +236,7 @@ func (a *App) ExchangeChatGPTOAuthCallback(input ExchangeChatGPTOAuthCallbackInp
 		a.logOAuthWarn(
 			"OAuth 授权会话已过期",
 			"session_id", maskSessionIDForLog(sessionID),
-			"expires_at", session.ExpiresAt.Format(time.RFC3339),
+			"expires_at", formatAPITime(session.ExpiresAt),
 		)
 		return ExchangeChatGPTOAuthCallbackResult{}, fmt.Errorf("授权会话已过期，请重新生成授权链接")
 	}
@@ -483,7 +483,7 @@ func formatRFC3339(ts time.Time) string {
 	if ts.IsZero() {
 		return ""
 	}
-	return ts.Format(time.RFC3339)
+	return formatAPITime(ts)
 }
 
 func sha256CodeChallenge(codeVerifier string) string {

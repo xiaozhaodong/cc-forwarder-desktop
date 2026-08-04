@@ -16,6 +16,7 @@ import {
 } from 'recharts';
 import { fetchResponseTimeData } from '@utils/api.js';
 import { CustomSelect } from '@components/ui';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
 // 时间范围选项
 const TIME_RANGE_OPTIONS = [
@@ -44,6 +45,7 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 const ResponseTimeChart = () => {
+  const { formatTimeOnly } = useTimezone();
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -57,14 +59,14 @@ const ResponseTimeChart = () => {
     }
     try {
       const data = await fetchResponseTimeData(timeRange);
-      setChartData(data);
+      setChartData(data.map((point) => ({ ...point, time: formatTimeOnly(point.timestamp || point.time) })));
     } catch (error) {
       console.error('加载响应时间数据失败:', error);
     } finally {
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, [timeRange]);
+  }, [formatTimeOnly, timeRange]);
 
   // 初始加载
   useEffect(() => {
@@ -90,7 +92,7 @@ const ResponseTimeChart = () => {
       const { chart_type, data } = event.detail || {};
       if (chart_type === 'response_times' || chart_type === 'responseTimes') {
         if (Array.isArray(data)) {
-          setChartData(data);
+          setChartData(data.map((point) => ({ ...point, time: formatTimeOnly(point.timestamp || point.time) })));
         } else if (data?.labels && data?.datasets) {
           // Chart.js 格式转换
           const avgData = data.datasets[0]?.data || [];
@@ -112,7 +114,7 @@ const ResponseTimeChart = () => {
     return () => {
       document.removeEventListener('chartUpdate', handleChartUpdate);
     };
-  }, []);
+  }, [formatTimeOnly]);
 
   // 手动刷新
   const handleRefresh = () => {
