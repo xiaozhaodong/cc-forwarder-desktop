@@ -26,6 +26,15 @@ test('getModelColorClasses keeps existing model color mappings', () => {
   assert.match(getModelColorClasses('gpt-5.4-mini'), /indigo/);
 });
 
+test('getModelColorClasses supports deepseek / kimi / moonshot model families', () => {
+  assert.match(getModelColorClasses('deepseek-v4-flash'), /cyan/);
+  assert.match(getModelColorClasses('DeepSeek-R1'), /cyan/);
+  assert.match(getModelColorClasses('kimi-k3'), /pink/);
+  assert.match(getModelColorClasses('moonshot-v1-8k'), /pink/);
+  assert.match(getModelColorClasses('glm-5.2'), /teal/);
+  assert.match(getModelColorClasses('glm'), /teal/);
+});
+
 test('getModelColorClasses uses neutral color for missing or unknown models', () => {
   assert.match(getModelColorClasses('unknown'), /slate/);
   assert.match(getModelColorClasses('-'), /slate/);

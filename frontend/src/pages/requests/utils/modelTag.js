@@ -4,7 +4,15 @@ const DEFAULT_MODEL_CLASSES = 'bg-slate-50 text-slate-600 border-slate-200';
 
 const MODEL_COLOR_RULES = [
   {
-    matches: (modelName) => modelName.includes('glm-5.2') || modelName.startsWith('glm-'),
+    matches: (modelName) => modelName.includes('deepseek'),
+    classes: 'bg-cyan-50 text-cyan-700 border-cyan-200'
+  },
+  {
+    matches: (modelName) => modelName.includes('kimi') || modelName.includes('moonshot'),
+    classes: 'bg-pink-50 text-pink-700 border-pink-200'
+  },
+  {
+    matches: (modelName) => modelName.includes('glm-5.2') || modelName.startsWith('glm'),
     classes: 'bg-teal-50 text-teal-700 border-teal-200'
   },
   {
