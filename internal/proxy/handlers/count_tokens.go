@@ -234,7 +234,7 @@ func (h *CountTokensHandler) attemptEndpoint(ctx context.Context, r *http.Reques
 	resp, err := client.Do(req)
 	if err != nil {
 		slog.Debug(fmt.Sprintf("❌ [转发失败] [%s] 端点: %s, 错误: %v", connID, ep.Config.Name, err))
-		h.recordScopedSoftFailure(ep.Config.Name, target.Revision(), endpoint.SoftFailureCategoryConnection, 0)
+		h.recordScopedSoftFailure(ep.Config.Name, target.Revision(), target.FailureEpoch(), endpoint.SoftFailureCategoryConnection, 0)
 		return nil, countTokensAttemptRetryNext, err
 	}
 	defer resp.Body.Close()
@@ -242,7 +242,7 @@ func (h *CountTokensHandler) attemptEndpoint(ctx context.Context, r *http.Reques
 	if resp.StatusCode == http.StatusOK {
 		responseBytes, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
-			h.recordScopedSoftFailure(ep.Config.Name, target.Revision(), endpoint.SoftFailureCategoryTransport, 0)
+			h.recordScopedSoftFailure(ep.Config.Name, target.Revision(), target.FailureEpoch(), endpoint.SoftFailureCategoryTransport, 0)
 			return nil, countTokensAttemptRetryNext, readErr
 		}
 		return responseBytes, countTokensAttemptSuccess, nil
@@ -253,7 +253,7 @@ func (h *CountTokensHandler) attemptEndpoint(ctx context.Context, r *http.Reques
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
 		// §10 规则 4：凭据两个 path 共用，认证失败写端点全局 auth cooldown
-		h.recordAuthCooldown(ep.Config.Name, target.Revision(), connID)
+		h.recordAuthCooldown(ep.Config.Name, target.Revision(), target.FailureEpoch(), connID)
 	case isCountTokensUnsupported(resp.StatusCode, errorText):
 		// 须在 403 鉴权和 >=500 之前判定：明确的路径能力错误不应连坐 messages。
 		h.recordCountTokensNegativeHit(ep.Config.Name, target.Revision(), endpoint.FailureClassCountTokensUnsupported, profile, errorText, connID)
@@ -261,25 +261,26 @@ func (h *CountTokensHandler) attemptEndpoint(ctx context.Context, r *http.Reques
 		// 403 也可能表示当前模型不可用；按模型负缓存，不写全局 auth cooldown。
 		h.recordCountTokensNegativeHit(ep.Config.Name, target.Revision(), endpoint.FailureClassModelUnsupported, profile, errorText, connID)
 	case resp.StatusCode == http.StatusForbidden:
-		h.recordAuthCooldown(ep.Config.Name, target.Revision(), connID)
+		h.recordAuthCooldown(ep.Config.Name, target.Revision(), target.FailureEpoch(), connID)
 	case resp.StatusCode == http.StatusTooManyRequests:
-		h.recordScopedSoftFailure(ep.Config.Name, target.Revision(), endpoint.SoftFailureCategoryRateLimit, parseCountTokensRetryAfter(resp))
+		h.recordScopedSoftFailure(ep.Config.Name, target.Revision(), target.FailureEpoch(), endpoint.SoftFailureCategoryRateLimit, parseCountTokensRetryAfter(resp))
 	case resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError && IsModelUnsupportedError(errorText):
 		h.recordCountTokensNegativeHit(ep.Config.Name, target.Revision(), endpoint.FailureClassModelUnsupported, profile, errorText, connID)
 	case resp.StatusCode >= http.StatusInternalServerError:
-		h.recordScopedSoftFailure(ep.Config.Name, target.Revision(), endpoint.SoftFailureCategoryServerError, 0)
+		h.recordScopedSoftFailure(ep.Config.Name, target.Revision(), target.FailureEpoch(), endpoint.SoftFailureCategoryServerError, 0)
 	}
 	return nil, countTokensAttemptRetryNext, fmt.Errorf("upstream returned %d", resp.StatusCode)
 }
 
-func (h *CountTokensHandler) recordAuthCooldown(endpointName string, revision int64, connID string) {
+func (h *CountTokensHandler) recordAuthCooldown(endpointName string, revision int64, epoch int64, connID string) {
 	cooldown := h.config.Failover.AuthCooldown
 	if cooldown <= 0 {
 		cooldown = 30 * time.Minute
 	}
-	h.endpointManager.ApplyEndpointAttemptSettlement(endpointName, revision, func() {
-		h.endpointManager.SetEndpointCooldown(endpointName, cooldown, "auth_rejected")
-		slog.Warn(fmt.Sprintf("🔑 [Token计数] [%s] 端点 %s 认证失败，写入全局鉴权冷却", connID, endpointName))
+	h.endpointManager.ApplyEndpointFailureSettlement(endpointName, revision, epoch, func() {
+		if h.endpointManager.SetEndpointCooldownFenced(endpointName, cooldown, "auth_rejected", epoch) {
+			slog.Warn(fmt.Sprintf("🔑 [Token计数] [%s] 端点 %s 认证失败，写入全局鉴权冷却", connID, endpointName))
+		}
 	})
 }
 
@@ -292,9 +293,9 @@ func (h *CountTokensHandler) recordCountTokensNegativeHit(endpointName string, r
 
 // recordScopedSoftFailure count_tokens scope 软失败；达阈值只写进程内 scoped cooldown（D17），
 // 不得冷却 /v1/messages（§10 规则 5）
-func (h *CountTokensHandler) recordScopedSoftFailure(endpointName string, revision int64, category endpoint.SoftFailureCategory, retryAfter time.Duration) {
-	h.endpointManager.ApplyEndpointAttemptSettlement(endpointName, revision, func() {
-		count, tripped := h.endpointManager.RecordSoftFailure(endpointName, endpoint.SoftFailureScopeCountTokens, category)
+func (h *CountTokensHandler) recordScopedSoftFailure(endpointName string, revision int64, epoch int64, category endpoint.SoftFailureCategory, retryAfter time.Duration) {
+	h.endpointManager.ApplyEndpointFailureSettlement(endpointName, revision, epoch, func() {
+		count, tripped, _ := h.endpointManager.RecordSoftFailureFenced(endpointName, endpoint.SoftFailureScopeCountTokens, category, epoch)
 		slog.Debug("count_tokens 软失败", "endpoint", endpointName, "category", category, "count", count)
 		if !tripped {
 			return
@@ -319,8 +320,8 @@ func (h *CountTokensHandler) recordScopedSoftFailure(endpointName string, revisi
 				}
 			}
 		}
-		h.endpointManager.SetScopedCooldown(endpointName, endpoint.SoftFailureScopeCountTokens, cooldown,
-			endpoint.SoftFailureCooldownReason(category))
+		h.endpointManager.SetScopedCooldownFenced(endpointName, endpoint.SoftFailureScopeCountTokens, cooldown,
+			endpoint.SoftFailureCooldownReason(category), epoch)
 	})
 }
 

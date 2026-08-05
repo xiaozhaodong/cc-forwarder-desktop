@@ -164,6 +164,95 @@ func TestAttemptSettlementDoesNotMutateNewRevision(t *testing.T) {
 	}
 }
 
+// TestFailureEpochPropagationChain epoch 透传链:
+// snapshot → plan.FailureEpoch → admission → target.FailureEpoch() 全程一致;
+// Reset 后重新规划,新 plan 携带推进后的 epoch
+func TestFailureEpochPropagationChain(t *testing.T) {
+	cfg := &config.Config{
+		Strategy:       config.StrategyConfig{Type: "priority"},
+		Failover:       config.FailoverConfig{Enabled: true, MaxCandidateAttempts: 3},
+		FailureTracker: config.FailureTrackerConfig{Enabled: true, TimeWindow: time.Minute, Threshold: 3},
+		Endpoints:      []config.EndpointConfig{{Name: "epoch-chain", URL: "https://old.example.com", Priority: 1}},
+	}
+	manager := NewManager(cfg)
+	t.Cleanup(manager.Stop)
+
+	profile := BuildRouteRequestProfile("/v1/messages", []byte(`{"model":"old-model"}`))
+	snapshots := manager.snapshotEndpointCandidates()
+	if len(snapshots) != 1 {
+		t.Fatalf("快照数量应为 1: %d", len(snapshots))
+	}
+
+	result := manager.PrepareRouteCandidates(context.Background(), profile)
+	if len(result.Plans) != 1 {
+		t.Fatalf("plans 数量应为 1: %d", len(result.Plans))
+	}
+	if result.Plans[0].FailureEpoch != snapshots[0].failureEpoch {
+		t.Fatalf("plan.FailureEpoch 与快照不一致: plan=%d snapshot=%d",
+			result.Plans[0].FailureEpoch, snapshots[0].failureEpoch)
+	}
+
+	admission, err := manager.AcquireEndpointAttempt(result.Plans[0])
+	if err != nil {
+		t.Fatalf("acquire attempt: %v", err)
+	}
+	defer admission.Release()
+	if got := admission.Target.FailureEpoch(); got != result.Plans[0].FailureEpoch {
+		t.Fatalf("target.FailureEpoch() 与 plan 不一致: got=%d plan=%d", got, result.Plans[0].FailureEpoch)
+	}
+
+	// Reset 推进 epoch 后重新规划,新 plan 携带推进后的 epoch
+	if _, found := manager.ResetEndpointFailureState("epoch-chain"); !found {
+		t.Fatal("Reset 应成功")
+	}
+	result2 := manager.PrepareRouteCandidates(context.Background(), profile)
+	if result2.Plans[0].FailureEpoch != snapshots[0].failureEpoch+1 {
+		t.Fatalf("Reset 后 plan.FailureEpoch 应 +1: got=%d want=%d",
+			result2.Plans[0].FailureEpoch, snapshots[0].failureEpoch+1)
+	}
+}
+
+// TestApplyEndpointFailureSettlementEntryCheck 入口检查:
+// epoch+revision 均匹配 → apply 执行返回 true;
+// epoch 不匹配 / revision 不匹配 → 不执行返回 false
+func TestApplyEndpointFailureSettlementEntryCheck(t *testing.T) {
+	cfg := &config.Config{
+		Strategy:       config.StrategyConfig{Type: "priority"},
+		Failover:       config.FailoverConfig{Enabled: true, MaxCandidateAttempts: 3},
+		FailureTracker: config.FailureTrackerConfig{Enabled: true, TimeWindow: time.Minute, Threshold: 3},
+		Endpoints:      []config.EndpointConfig{{Name: "settlement-epoch", URL: "https://old.example.com", Priority: 1}},
+	}
+	manager := NewManager(cfg)
+	t.Cleanup(manager.Stop)
+
+	ep := manager.GetEndpointByNameAny("settlement-epoch")
+	ep.mutex.RLock()
+	revision := ep.configRevision
+	epoch := ep.failureEpoch
+	ep.mutex.RUnlock()
+
+	// 均匹配 → 执行
+	executed := false
+	ok := manager.ApplyEndpointFailureSettlement("settlement-epoch", revision, epoch, func() { executed = true })
+	if !ok || !executed {
+		t.Fatalf("均匹配应执行 apply: ok=%v executed=%v", ok, executed)
+	}
+
+	// epoch 不匹配 → 不执行
+	executed = false
+	ok = manager.ApplyEndpointFailureSettlement("settlement-epoch", revision, epoch+1, func() { executed = true })
+	if ok || executed {
+		t.Fatalf("epoch 不匹配应跳过: ok=%v executed=%v", ok, executed)
+	}
+
+	// revision 不匹配 → 不执行
+	executed = false
+	ok = manager.ApplyEndpointFailureSettlement("settlement-epoch", revision+1, epoch, func() { executed = true })
+	if ok || executed {
+		t.Fatalf("revision 不匹配应跳过: ok=%v executed=%v", ok, executed)
+	}
+}
+
 func TestPrepareRouteCandidatesUsesConsistentFlatSnapshotsDuringUpdates(t *testing.T) {
 	auto := true
 	cfgA := config.EndpointConfig{Name: "moving", URL: "https://a.example.com", Priority: 1, Timeout: time.Second, SupportsCountTokens: true, FailoverEnabled: &auto, Token: "a"}

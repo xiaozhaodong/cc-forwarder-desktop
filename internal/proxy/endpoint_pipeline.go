@@ -233,12 +233,13 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			closeEndpointResponse(resp)
 			releaseUpstream()
 			count, tripped := 0, false
-			applied := h.endpointManager.ApplyEndpointAttemptSettlement(ep.Config.Name, target.Revision(), func() {
-				count, tripped = h.endpointManager.RecordSoftFailure(ep.Config.Name, endpoint.SoftFailureScopeMessages, endpoint.SoftFailureCategoryRateLimit)
+			applied := h.endpointManager.ApplyEndpointFailureSettlement(ep.Config.Name, target.Revision(), target.FailureEpoch(), func() {
+				count, tripped, _ = h.endpointManager.RecordSoftFailureFenced(ep.Config.Name, endpoint.SoftFailureScopeMessages, endpoint.SoftFailureCategoryRateLimit, target.FailureEpoch())
 				if tripped {
 					cooldown := endpointSoftFailureCooldown(h.config, endpoint.SoftFailureCategoryRateLimit, decision.RetryAfter)
-					h.endpointManager.SetEndpointCooldown(ep.Config.Name, cooldown, endpoint.SoftFailureCooldownReason(endpoint.SoftFailureCategoryRateLimit))
-					slog.Warn(fmt.Sprintf("🧊 [限流冷却] [%s] 端点 %s 达阈值进入冷却 %s", connID, ep.Config.Name, cooldown))
+					if h.endpointManager.SetEndpointCooldownFenced(ep.Config.Name, cooldown, endpoint.SoftFailureCooldownReason(endpoint.SoftFailureCategoryRateLimit), target.FailureEpoch()) {
+						slog.Warn(fmt.Sprintf("🧊 [限流冷却] [%s] 端点 %s 达阈值进入冷却 %s", connID, ep.Config.Name, cooldown))
+					}
 				}
 			})
 			if applied {
@@ -278,7 +279,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			closeEndpointResponse(resp)
 			releaseUpstream()
 			lastErr = fmt.Errorf("%s: %s", decision.Reason, detail)
-			h.markEndpointFailure(ep.Config.Name, target.Revision(), decision, profile, detail)
+			h.markEndpointFailure(ep.Config.Name, target.Revision(), target.FailureEpoch(), decision, profile, detail)
 			h.endpointManager.RecordEndpointScheduleAttempt(connID, ep.Config.Name, endpoint.EndpointScheduleRuntimeTryNext, detail)
 			if i+1 < len(result.Candidates) && ctx.Err() == nil {
 				statusCode := 0
@@ -304,7 +305,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			detail := endpointFailureDetail(forwardErr, resp, ep.Config.Name)
 			closeEndpointResponse(resp)
 			releaseUpstream()
-			h.markEndpointFailure(ep.Config.Name, target.Revision(), decision, profile, detail)
+			h.markEndpointFailure(ep.Config.Name, target.Revision(), target.FailureEpoch(), decision, profile, detail)
 			// 「真实码→500 + Retry-After」客户端重试控制转换仅此一份（§3.1）
 			*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", http.StatusInternalServerError))
 			lifecycleManager.FailRequest(decision.Reason, detail, http.StatusInternalServerError)
@@ -328,7 +329,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			var outcome EndpointProcessOutcome
 			var outcomeDetail string
 			if isSSE {
-				outcome, outcomeDetail = h.processEndpointStreamingResponse(ctx, w, r, resp, flusher, lifecycleManager, ep.Config.Name, target.Revision(), upstreamCancel)
+				outcome, outcomeDetail = h.processEndpointStreamingResponse(ctx, w, r, resp, flusher, lifecycleManager, ep.Config.Name, target.Revision(), target.FailureEpoch(), upstreamCancel)
 			} else {
 				outcome, outcomeDetail = h.processEndpointRegularResponse(w, r, resp, lifecycleManager, ep.Config.Name)
 			}
@@ -365,18 +366,19 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 
 // markEndpointFailure 按决策标记端点状态（§9.1 状态处理列）。
 // 429（EndpointForwardRateLimited）在管线内单独结算，不走本函数。
-func (h *Handler) markEndpointFailure(name string, revision int64, decision EndpointFailureDecision, profile endpoint.RouteRequestProfile, detail string) {
+func (h *Handler) markEndpointFailure(name string, revision int64, epoch int64, decision EndpointFailureDecision, profile endpoint.RouteRequestProfile, detail string) {
 	switch decision.Mark {
 	case EndpointMarkSoftFailure:
-		h.recordEndpointAttemptSoftFailure(name, revision, decision.Category, decision.RetryAfter, decision.Reason)
+		h.recordEndpointAttemptSoftFailure(name, revision, epoch, decision.Category, decision.RetryAfter, decision.Reason)
 	case EndpointMarkAuthCooldown:
-		h.endpointManager.ApplyEndpointAttemptSettlement(name, revision, func() {
+		h.endpointManager.ApplyEndpointFailureSettlement(name, revision, epoch, func() {
 			cooldown := h.config.Failover.AuthCooldown
 			if cooldown <= 0 {
 				cooldown = 30 * time.Minute
 			}
-			h.endpointManager.SetEndpointCooldown(name, cooldown, decision.Reason)
-			slog.Warn(fmt.Sprintf("🔑 [鉴权冷却] 端点 %s 进入长冷却（%s）: %s", name, cooldown, detail))
+			if h.endpointManager.SetEndpointCooldownFenced(name, cooldown, decision.Reason, epoch) {
+				slog.Warn(fmt.Sprintf("🔑 [鉴权冷却] 端点 %s 进入长冷却（%s）: %s", name, cooldown, detail))
+			}
 		})
 	case EndpointMarkNegativeCache:
 		h.endpointManager.ApplyEndpointAttemptSettlement(name, revision, func() {
@@ -387,35 +389,22 @@ func (h *Handler) markEndpointFailure(name string, revision int64, decision Endp
 }
 
 // recordEndpointAttemptSoftFailure 记录带 config revision fencing 的 messages scope 软失败。
-func (h *Handler) recordEndpointAttemptSoftFailure(name string, revision int64, category endpoint.SoftFailureCategory, retryAfter time.Duration, reason string) (int, bool) {
+func (h *Handler) recordEndpointAttemptSoftFailure(name string, revision int64, epoch int64, category endpoint.SoftFailureCategory, retryAfter time.Duration, reason string) (int, bool) {
 	count, tripped := 0, false
-	h.endpointManager.ApplyEndpointAttemptSettlement(name, revision, func() {
-		count, tripped = h.endpointManager.RecordSoftFailure(name, endpoint.SoftFailureScopeMessages, category)
+	h.endpointManager.ApplyEndpointFailureSettlement(name, revision, epoch, func() {
+		count, tripped, _ = h.endpointManager.RecordSoftFailureFenced(name, endpoint.SoftFailureScopeMessages, category, epoch)
 		slog.Info(fmt.Sprintf("📊 [软失败] 端点 %s 记录 %s（%s），窗口内计数: %d/%d",
 			name, category, reason, count, h.endpointManager.SoftFailureThreshold()))
 		if tripped {
 			cooldown := endpointSoftFailureCooldown(h.config, category, retryAfter)
-			h.endpointManager.SetEndpointCooldown(name, cooldown, endpoint.SoftFailureCooldownReason(category))
-			slog.Warn(fmt.Sprintf("🧊 [软失败冷却] 端点 %s %s 达阈值，冷却 %s", name, category, cooldown))
+			if h.endpointManager.SetEndpointCooldownFenced(name, cooldown, endpoint.SoftFailureCooldownReason(category), epoch) {
+				slog.Warn(fmt.Sprintf("🧊 [软失败冷却] 端点 %s %s 达阈值，冷却 %s", name, category, cooldown))
+			}
 		}
 	})
 	return count, tripped
 }
 
-// recordUnfencedEndpointSoftFailure 仅供未经过 AttemptPlan、没有 config revision 的兼容链路使用。
-func (h *Handler) recordUnfencedEndpointSoftFailure(name string, category endpoint.SoftFailureCategory, retryAfter time.Duration, reason string) (int, bool) {
-	count, tripped := h.endpointManager.RecordSoftFailure(name, endpoint.SoftFailureScopeMessages, category)
-	slog.Info(fmt.Sprintf("📊 [软失败] 端点 %s 记录 %s（%s），窗口内计数: %d/%d",
-		name, category, reason, count, h.endpointManager.SoftFailureThreshold()))
-	if tripped {
-		cooldown := endpointSoftFailureCooldown(h.config, category, retryAfter)
-		h.endpointManager.SetEndpointCooldown(name, cooldown, endpoint.SoftFailureCooldownReason(category))
-		slog.Warn(fmt.Sprintf("🧊 [软失败冷却] 端点 %s %s 达阈值，冷却 %s", name, category, cooldown))
-	}
-	return count, tripped
-}
-
-// rateLimitRetryDelay 计算 429 本地重试等待（§9.2 规则 3/4）；ok=false 表示不重试
 func (h *Handler) rateLimitRetryDelay(retryAfter time.Duration) (time.Duration, bool) {
 	if !h.config.Failover.RateLimitRetryEnabled() {
 		return 0, false
@@ -463,7 +452,7 @@ func sleepWithContext(ctx context.Context, d time.Duration) bool {
 
 // processEndpointStreamingResponse P2 流式响应处理（自旧循环壳迁移，内部逻辑只搬不改；
 // 新增仅为 EndpointProcessOutcome 返回值包装）
-func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, resp *http.Response, flusher http.Flusher, lifecycleManager *RequestLifecycleManager, endpointName string, endpointRevision int64, upstreamCancel context.CancelFunc) (EndpointProcessOutcome, string) {
+func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, resp *http.Response, flusher http.Flusher, lifecycleManager *RequestLifecycleManager, endpointName string, endpointRevision int64, endpointEpoch int64, upstreamCancel context.CancelFunc) (EndpointProcessOutcome, string) {
 	connID := lifecycleManager.GetRequestID()
 	lifecycleManager.UpdateStatus("processing", lifecycleManager.GetAttemptCount(), resp.StatusCode)
 	w.WriteHeader(resp.StatusCode)
@@ -533,7 +522,7 @@ func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.R
 		slog.Warn(fmt.Sprintf("🔄 [流式处理失败] [%s] 端点: %s, 状态: %s, 错误: %v", connID, endpointName, status, err))
 
 		// 📊 [软失败] P2 流式失败计入 messages+transport（§9.1，取消除外——已提前返回）
-		h.recordEndpointAttemptSoftFailure(endpointName, endpointRevision, endpoint.SoftFailureCategoryTransport, 0, "stream_failure")
+		h.recordEndpointAttemptSoftFailure(endpointName, endpointRevision, endpointEpoch, endpoint.SoftFailureCategoryTransport, 0, "stream_failure")
 
 		if h.config.Streaming.EOFRetryHint {
 			interruptModelName := parsedModelName

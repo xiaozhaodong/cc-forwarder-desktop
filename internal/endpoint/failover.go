@@ -74,32 +74,37 @@ func (m *Manager) IsEndpointInCooldown(name string) bool {
 	return ep.IsInCooldown()
 }
 
-// ClearEndpointCooldown 清除端点冷却状态（用于手动激活时，两个 scope 槽全部清除，
-// 并以更高 revision 的 tombstone 覆盖持久化记录——物理 DELETE 会让 revision 保护失效，
-// 晚执行的旧 persist 任务能把冷却重新写回）。revision 在锁内生成，与 Set 侧共用单调序列。
-func (m *Manager) ClearEndpointCooldown(name string) {
+// ResetEndpointFailureState 手动重置端点故障运行态("解除冷却"用户操作入口)。
+// epoch 推进、两槽清空、revision 生成、软失败计数与 scoped cooldown 清理
+// 必须在同一个 ep.mutex 临界区内完成:新 epoch 只能在本锁释放后被调度快照捕获
+// (snapshotEndpointCandidates 持同一 ep.mutex 读锁),因此清除后新请求的合法
+// 故障记录严格 happens-after 本清理,不可能被误删。
+// 锁序 ep.mutex → SoftFailureTracker.mu / ScopedCooldowns.mu 无环:二者均为
+// 叶子锁(全部方法仅操作自身 map,不回调、不获取任何其他锁)。
+// 无论当前是否处于冷却都生成并返回 revision:上一次落库失败后的重试必须能补写 tombstone。
+// 本函数不做任何持久化;调用方必须同步写 tombstone 并以其成败决定对用户的成败报告。
+// 不清 negative hit cache(能力不匹配独立语义,走 ClearNegativeHitCache)。
+func (m *Manager) ResetEndpointFailureState(name string) (revision int64, found bool) {
 	ep := m.GetEndpointByNameAny(name)
 	if ep == nil {
-		return
+		return 0, false
 	}
-
-	var revision int64
 	ep.mutex.Lock()
-	cleared := !ep.Status.CooldownUntil.IsZero() || !ep.Status.GlobalCooldownUntil.IsZero()
-	if cleared {
-		slog.Info(fmt.Sprintf("🔓 [冷却] 清除端点冷却: %s (messages: %s, global: %s)",
+	ep.failureEpoch++
+	if !ep.Status.CooldownUntil.IsZero() || !ep.Status.GlobalCooldownUntil.IsZero() {
+		slog.Info(fmt.Sprintf("🔓 [冷却] 手动清除端点冷却: %s (messages: %s, global: %s)",
 			name, ep.Status.CooldownReason, ep.Status.GlobalCooldownReason))
-		ep.Status.CooldownUntil = time.Time{}
-		ep.Status.CooldownReason = ""
-		ep.Status.GlobalCooldownUntil = time.Time{}
-		ep.Status.GlobalCooldownReason = ""
-		revision = nextCooldownRevision()
 	}
+	ep.Status.CooldownUntil = time.Time{}
+	ep.Status.CooldownReason = ""
+	ep.Status.GlobalCooldownUntil = time.Time{}
+	ep.Status.GlobalCooldownReason = ""
+	revision = nextCooldownRevision()
+	m.softFailures.ClearScope(name, SoftFailureScopeMessages)
+	m.softFailures.ClearScope(name, SoftFailureScopeCountTokens)
+	m.scopedCooldowns.ClearEndpoint(name)
 	ep.mutex.Unlock()
-
-	if cleared {
-		m.notifyCooldownClear(name, revision)
-	}
+	return revision, true
 }
 
 // GetEndpointCooldownInfo 获取端点冷却信息（两个 scope 槽中取截止最晚的生效冷却）
@@ -129,9 +134,49 @@ func (m *Manager) SetEndpointCooldown(name string, duration time.Duration, reaso
 		return
 	}
 	until := time.Now().Add(duration)
-	var revision int64
-	extended := false
 	ep.mutex.Lock()
+	revision, extended := setEndpointCooldownSlotLocked(ep, until, reason)
+	ep.mutex.Unlock()
+	if !extended {
+		return
+	}
+
+	// v8：进入冷却即清除 retained（§8.4 规则 3），并触发持久化钩子（§14.4）
+	m.ClearAutoRetentionFor(name)
+	m.notifyCooldownPersist(name, until, reason, revision)
+}
+
+// SetEndpointCooldownFenced 与 SetEndpointCooldown 相同的写槽逻辑,但在 ep.mutex
+// 写锁内先比较故障 epoch,不匹配直接放弃写入并返回 false(写时 fencing,
+// 与 ResetEndpointFailureState 的写锁临界区真互斥)。
+func (m *Manager) SetEndpointCooldownFenced(name string, duration time.Duration, reason string, epoch int64) bool {
+	if duration <= 0 {
+		return false
+	}
+	ep := m.GetEndpointByNameAny(name)
+	if ep == nil {
+		return false
+	}
+	until := time.Now().Add(duration)
+	ep.mutex.Lock()
+	if ep.failureEpoch != epoch {
+		ep.mutex.Unlock()
+		return false
+	}
+	revision, extended := setEndpointCooldownSlotLocked(ep, until, reason)
+	ep.mutex.Unlock()
+	if !extended {
+		return false
+	}
+
+	m.ClearAutoRetentionFor(name)
+	m.notifyCooldownPersist(name, until, reason, revision)
+	return true
+}
+
+// setEndpointCooldownSlotLocked 在持有 ep.mutex 写锁期间按 reason 推导的 scope 写冷却槽;
+// 同槽只延长不缩短,仅实际延长时生成持久化 revision
+func setEndpointCooldownSlotLocked(ep *Endpoint, until time.Time, reason string) (revision int64, extended bool) {
 	if CooldownScopeForReason(reason) == CooldownScopeGlobal {
 		if until.After(ep.Status.GlobalCooldownUntil) {
 			ep.Status.GlobalCooldownUntil = until
@@ -146,14 +191,7 @@ func (m *Manager) SetEndpointCooldown(name string, duration time.Duration, reaso
 	if extended {
 		revision = nextCooldownRevision()
 	}
-	ep.mutex.Unlock()
-	if !extended {
-		return
-	}
-
-	// v8：进入冷却即清除 retained（§8.4 规则 3），并触发持久化钩子（§14.4）
-	m.ClearAutoRetentionFor(name)
-	m.notifyCooldownPersist(name, until, reason, revision)
+	return revision, extended
 }
 
 // SetCooldownPersistHook 注入 cooldown 持久化回调（App 层桥接 endpoint_runtime_states）；
@@ -164,28 +202,12 @@ func (m *Manager) SetCooldownPersistHook(hook func(name string, until time.Time,
 	m.cooldownPersistMu.Unlock()
 }
 
-// SetCooldownClearHook 注入 cooldown 清除回调（手动激活等清冷却时以 tombstone 覆盖持久化记录）
-func (m *Manager) SetCooldownClearHook(hook func(name string, revision int64)) {
-	m.cooldownPersistMu.Lock()
-	m.cooldownClearHook = hook
-	m.cooldownPersistMu.Unlock()
-}
-
 func (m *Manager) notifyCooldownPersist(name string, until time.Time, reason string, revision int64) {
 	m.cooldownPersistMu.RLock()
 	hook := m.cooldownPersistHook
 	m.cooldownPersistMu.RUnlock()
 	if hook != nil {
 		go hook(name, until, reason, revision)
-	}
-}
-
-func (m *Manager) notifyCooldownClear(name string, revision int64) {
-	m.cooldownPersistMu.RLock()
-	hook := m.cooldownClearHook
-	m.cooldownPersistMu.RUnlock()
-	if hook != nil {
-		go hook(name, revision)
 	}
 }
 

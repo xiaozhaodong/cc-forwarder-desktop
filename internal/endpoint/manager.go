@@ -58,6 +58,9 @@ type Endpoint struct {
 	// v8：配置修订号（publish 时递增，AttemptPlan CAS 依据）与在途 admission 计数
 	configRevision int64
 	admissions     atomic.Int64
+	// 故障运行态 epoch:手动解除冷却(ResetEndpointFailureState)时递增,
+	// 旧 epoch 的晚到故障结算被写时 fencing 拒绝,不污染已重置的运行态
+	failureEpoch int64
 }
 
 // RLock 锁定端点状态读锁（供外部安全读取状态）
@@ -97,7 +100,6 @@ type Manager struct {
 	routingNotReady     atomic.Bool         // §6.4：启动读取失败时 Claude 路由 not ready
 	cooldownPersistMu   sync.RWMutex
 	cooldownPersistHook func(name string, until time.Time, reason string, revision int64) // §14.4 冷却持久化钩子
-	cooldownClearHook   func(name string, revision int64)                                 // 手动清冷却时写 tombstone 覆盖持久化记录
 	routeDecisionMu     sync.RWMutex
 	routeDecisionNotify func(RouteOverrideState) // last_effective_endpoint 变更通知（UI 事件桥接）
 	routeOverride       *RouteOverride
@@ -255,6 +257,28 @@ func (m *Manager) RecordSoftFailure(endpointName string, scope SoftFailureScope,
 	return m.softFailures.Record(endpointName, scope, category)
 }
 
+// RecordSoftFailureFenced 在 ep.mutex.RLock 下校验故障 epoch 并完成软失败记录
+// (写时 fencing,与 ResetEndpointFailureState 的写锁临界区真互斥)。
+// RLock 必须覆盖实际写入:若校验后释放锁再落写,"读 epoch → Reset 清理 → 落写"
+// 的交错会让旧 epoch 写入残留(v4 要求零残留)。锁持有期间 Reset 的写锁被阻塞,
+// 写入完成后 Reset 的清理会一并清掉;Reset 先完成则读到新 epoch 拒写。
+// applied=false 表示 epoch 不匹配、写入被拒绝(count/tripped 为零值,
+// 调用方不得据此驱动冷却写入或换候选行为)。
+// tracker 自身叶子锁串行多个并发写者;锁序 ep.mutex(RLock) → SoftFailureTracker.mu 无环。
+func (m *Manager) RecordSoftFailureFenced(endpointName string, scope SoftFailureScope, category SoftFailureCategory, epoch int64) (count int, tripped bool, applied bool) {
+	ep := m.GetEndpointByNameAny(endpointName)
+	if ep == nil {
+		return 0, false, false
+	}
+	ep.mutex.RLock()
+	defer ep.mutex.RUnlock()
+	if ep.failureEpoch != epoch {
+		return 0, false, false
+	}
+	count, tripped = m.softFailures.Record(endpointName, scope, category)
+	return count, tripped, true
+}
+
 // RecordSuccess FullSuccess 清空端点 messages scope 的全部软失败类别。
 // count_tokens scope 由其 handler 自行清理（Phase 3 接入）。
 func (m *Manager) RecordSuccess(endpointName string) {
@@ -279,6 +303,28 @@ func (m *Manager) SetScopedCooldown(endpointName string, scope SoftFailureScope,
 		return
 	}
 	m.scopedCooldowns.Set(endpointName, scope, time.Now().Add(duration), reason)
+}
+
+// SetScopedCooldownFenced 在 ep.mutex.RLock 下校验故障 epoch 并完成 scoped cooldown
+// 写入(写时 fencing,与 ResetEndpointFailureState 的写锁临界区真互斥)。
+// RLock 必须覆盖实际写入,理由同 RecordSoftFailureFenced:校验后释放锁再落写,
+// 会残留"读 epoch → Reset 清理 → 落写"的交错窗口。
+// epoch 不匹配直接拒绝写入并返回 false。
+func (m *Manager) SetScopedCooldownFenced(endpointName string, scope SoftFailureScope, duration time.Duration, reason string, epoch int64) bool {
+	if duration <= 0 {
+		return false
+	}
+	ep := m.GetEndpointByNameAny(endpointName)
+	if ep == nil {
+		return false
+	}
+	ep.mutex.RLock()
+	defer ep.mutex.RUnlock()
+	if ep.failureEpoch != epoch {
+		return false
+	}
+	m.scopedCooldowns.Set(endpointName, scope, time.Now().Add(duration), reason)
+	return true
 }
 
 // ScopedCooldownActive 查询 scoped cooldown

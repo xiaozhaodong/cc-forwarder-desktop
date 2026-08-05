@@ -13,7 +13,7 @@ const Health = ({ endpoint }) => {
   return <span className="inline-flex items-center gap-1 text-xs font-medium text-rose-600"><XCircle size={13} />不可达</span>;
 };
 
-const EndpointRow = ({ endpoint, routingState, busy, onEdit, onDelete, onTest, onAvailabilityChange, onAutoScheduleChange, onSetRouting }) => {
+const EndpointRow = ({ endpoint, routingState, busy, onEdit, onDelete, onTest, onAvailabilityChange, onAutoScheduleChange, onSetRouting, onClearCooldown }) => {
   const { formatTimestamp } = useTimezone();
   const rewrite = summarizeEndpointModelRewriteRules(endpoint.modelRewriteRules || '');
   const lastCheckRaw = getEndpointLastCheckDisplayValue(endpoint);
@@ -40,8 +40,26 @@ const EndpointRow = ({ endpoint, routingState, busy, onEdit, onDelete, onTest, o
         {endpoint.responseTimeMs > 0 && <div className="text-[11px] font-mono text-slate-400">{Math.round(endpoint.responseTimeMs)}ms</div>}
       </td>
       <td className="px-3 py-3 align-top">
-        {endpoint.inCooldown ? (
-          <div className="max-w-[150px] text-xs text-amber-700" title={endpoint.cooldownReason}><span className="inline-flex items-center gap-1 font-medium"><Snowflake size={13} />冷却中</span><div className="mt-1 truncate text-[11px] text-amber-600">{endpoint.cooldownUntil ? formatTimestamp(endpoint.cooldownUntil) : (endpoint.cooldownReason || '-')}</div></div>
+        {(endpoint.inCooldown || endpoint.cooldownPersistPending) ? (
+          <div className="max-w-[150px] text-xs text-amber-700" title={endpoint.cooldownReason}>
+            {endpoint.inCooldown ? (
+              <>
+                <span className="inline-flex items-center gap-1 font-medium"><Snowflake size={13} />冷却中</span>
+                <div className="mt-1 truncate text-[11px] text-amber-600">{endpoint.cooldownUntil ? formatTimestamp(endpoint.cooldownUntil) : (endpoint.cooldownReason || '-')}</div>
+              </>
+            ) : (
+              <span className="inline-flex items-center gap-1 font-medium text-amber-600">解除未完全持久化</span>
+            )}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onClearCooldown?.(endpoint.name)}
+              className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+              title={endpoint.inCooldown
+                ? '确认端点已恢复：解除冷却阻断并重置失败计数（是否参与调度仍取决于硬启用与调度资格）'
+                : '上次解除未完成持久化，点击重试（否则重启后冷却可能恢复）'}
+            >{endpoint.inCooldown ? '解除冷却' : '重试持久化清除'}</button>
+          </div>
         ) : <span className="text-xs text-slate-300">—</span>}
       </td>
       <td className="px-3 py-3 align-top">{rewrite ? <span className="block max-w-[150px] truncate rounded-md border border-cyan-100 bg-cyan-50 px-2 py-1 text-[11px] text-cyan-700" title={rewrite.title}>{rewrite.label}</span> : <span className="text-xs text-slate-300">无</span>}</td>

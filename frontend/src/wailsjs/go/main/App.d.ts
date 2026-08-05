@@ -12,6 +12,8 @@ export function CheckPortAvailable(arg1:number):Promise<boolean>;
 
 export function ClearClaudeRoutingOverride():Promise<main.ClaudeRoutingState>;
 
+export function ClearEndpointCooldown(arg1:string):Promise<void>;
+
 export function ClearNegativeHitCache(arg1:string):Promise<void>;
 
 export function ClearPrivacyExactSecrets(arg1:string):Promise<void>;

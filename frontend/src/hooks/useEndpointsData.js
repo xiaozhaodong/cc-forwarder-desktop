@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   batchHealthCheckAll,
+  clearEndpointCooldown,
   getEndpointRecords,
   isWailsEnvironment,
   setEndpointAutoSchedule,
@@ -79,7 +80,8 @@ const useEndpointsData = () => {
     testEndpoint: (name) => runAndRefresh(() => triggerHealthCheck(name)),
     testAllEndpoints: () => runAndRefresh(() => batchHealthCheckAll()),
     setAvailability: (name, enabled) => runAndRefresh(() => setEndpointAvailability(name, enabled)),
-    setAutoSchedule: (name, enabled) => runAndRefresh(() => setEndpointAutoSchedule(name, enabled))
+    setAutoSchedule: (name, enabled) => runAndRefresh(() => setEndpointAutoSchedule(name, enabled)),
+    clearCooldown: (name) => runAndRefresh(() => clearEndpointCooldown(name))
   };
 };
 

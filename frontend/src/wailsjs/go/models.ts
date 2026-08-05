@@ -515,6 +515,7 @@ export namespace main {
 	    in_cooldown: boolean;
 	    cooldown_until: string;
 	    cooldown_reason: string;
+	    cooldown_persist_pending: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new EndpointRecordInfo(source);
@@ -550,6 +551,7 @@ export namespace main {
 	        this.in_cooldown = source["in_cooldown"];
 	        this.cooldown_until = source["cooldown_until"];
 	        this.cooldown_reason = source["cooldown_reason"];
+	        this.cooldown_persist_pending = source["cooldown_persist_pending"];
 	    }
 	}
 	export class EndpointScheduleDecisionInfo {

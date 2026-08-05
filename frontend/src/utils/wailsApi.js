@@ -1180,7 +1180,9 @@ export const mapEndpointRecord = (record = {}) => ({
   cooldown_until: record.cooldown_until,
   cooldownUntil: record.cooldown_until,
   cooldown_reason: record.cooldown_reason,
-  cooldownReason: record.cooldown_reason
+  cooldownReason: record.cooldown_reason,
+  cooldown_persist_pending: record.cooldown_persist_pending === true,
+  cooldownPersistPending: record.cooldown_persist_pending === true
 });
 
 export const buildEndpointRecordPayload = (input = {}, fallbackName = '') => ({
@@ -1282,6 +1284,19 @@ export const setEndpointAvailability = async (name, enabled) => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
   await WailsApp.SetEndpointAvailability(name, enabled);
+  return { success: true };
+};
+
+/**
+ * 手动解除端点冷却：推进故障 epoch、清内存冷却与软失败计数，
+ * 并同步事务化写入持久化 tombstone。落库失败时置位 pending（前端保留重试入口）。
+ * @param {string} name - 端点名称
+ * @returns {Promise<void>}
+ */
+export const clearEndpointCooldown = async (name) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+  await WailsApp.ClearEndpointCooldown(name);
   return { success: true };
 };
 

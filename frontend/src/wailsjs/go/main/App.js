@@ -18,6 +18,10 @@ export function ClearClaudeRoutingOverride() {
   return window['go']['main']['App']['ClearClaudeRoutingOverride']();
 }
 
+export function ClearEndpointCooldown(arg1) {
+  return window['go']['main']['App']['ClearEndpointCooldown'](arg1);
+}
+
 export function ClearNegativeHitCache(arg1) {
   return window['go']['main']['App']['ClearNegativeHitCache'](arg1);
 }

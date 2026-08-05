@@ -18,6 +18,7 @@ type EndpointAttemptPlan struct {
 	Timeout             time.Duration `json:"timeout"`
 	SupportsCountTokens bool          `json:"supports_count_tokens"`
 	ConfigRevision      int64         `json:"config_revision"`
+	FailureEpoch        int64         `json:"failure_epoch"`    // 快照时刻的故障 epoch;手动解除冷却会推进,旧 epoch 晚到故障结算被拒
 	SelectionSource     string        `json:"selection_source"` // auto_priority / auto_retained / manual_preferred / manual_fixed / fallback
 	// 仅供进程内 admission 使用；私有字段不会进入 JSON 或 Wails 模型。
 	resolvedToken  string
@@ -37,6 +38,7 @@ type EndpointAttemptTarget struct {
 	supportsCountTokens bool
 	modelRewriteRules   string
 	configRevision      int64
+	failureEpoch        int64
 }
 
 func (t *EndpointAttemptTarget) Name() string {
@@ -62,6 +64,15 @@ func (t *EndpointAttemptTarget) Revision() int64 {
 		return 0
 	}
 	return t.configRevision
+}
+
+// FailureEpoch 返回 admission 快照捕获时刻的故障运行态 epoch。
+// 旧 epoch 的晚到故障结算被写时 fencing 拒绝,不污染手动解除冷却后的运行态。
+func (t *EndpointAttemptTarget) FailureEpoch() int64 {
+	if t == nil {
+		return 0
+	}
+	return t.failureEpoch
 }
 
 // Config 返回仅包含本次转发所需字段的独立配置副本。
@@ -165,6 +176,7 @@ func (m *Manager) AcquireEndpointAttempt(plan EndpointAttemptPlan) (*AttemptAdmi
 		supportsCountTokens: configSnapshot.SupportsCountTokens,
 		modelRewriteRules:   configSnapshot.ModelRewriteRules,
 		configRevision:      revision,
+		failureEpoch:        plan.FailureEpoch,
 	}
 
 	released := false
@@ -197,6 +209,33 @@ func (m *Manager) ApplyEndpointAttemptSettlement(endpointName string, expectedRe
 	currentRevision := ep.configRevision
 	ep.mutex.RUnlock()
 	if currentRevision != expectedRevision {
+		return false
+	}
+	apply()
+	return true
+}
+
+// ApplyEndpointFailureSettlement 故障写入专用结算入口:配置 revision CAS + 故障
+// epoch 检查,任一不匹配则跳过整个结算(调用方记日志"跳过过期故障结算")。
+// 注意:本检查是早退优化;正确性由回调内各写时 fenced 方法保证(入口检查通过
+// 后到实际写入之间 Reset 仍可插入,写时 fencing 会再次校验)。
+// 回调在配置 generation 读锁内执行,不得调用任何配置发布/删除入口。
+func (m *Manager) ApplyEndpointFailureSettlement(endpointName string, expectedRevision, expectedEpoch int64, apply func()) bool {
+	if m == nil || endpointName == "" || expectedRevision <= 0 || apply == nil {
+		return false
+	}
+	m.endpointConfigMu.RLock()
+	defer m.endpointConfigMu.RUnlock()
+
+	ep := m.GetEndpointByNameAny(endpointName)
+	if ep == nil {
+		return false
+	}
+	ep.mutex.RLock()
+	currentRevision := ep.configRevision
+	currentEpoch := ep.failureEpoch
+	ep.mutex.RUnlock()
+	if currentRevision != expectedRevision || currentEpoch != expectedEpoch {
 		return false
 	}
 	apply()

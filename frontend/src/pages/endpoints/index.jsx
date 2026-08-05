@@ -20,7 +20,7 @@ const initialRoutingState = { mode: 'auto', endpointName: '', fallbackEnabled: t
 
 const EndpointsPage = () => {
   const { formatTimestamp } = useTimezone();
-  const { endpoints, loading, error, stats, lastUpdate, refresh, testEndpoint, testAllEndpoints, setAvailability, setAutoSchedule } = useEndpointsData();
+  const { endpoints, loading, error, stats, lastUpdate, refresh, testEndpoint, testAllEndpoints, setAvailability, setAutoSchedule, clearCooldown } = useEndpointsData();
   const [routingState, setRoutingState] = useState(initialRoutingState);
   const [snapshot, setSnapshot] = useState({ hasSnapshot: false, decisions: [] });
   const [snapshotUnsupported, setSnapshotUnsupported] = useState(false);
@@ -155,6 +155,7 @@ const EndpointsPage = () => {
                     onTest={(name) => run(`test:${name}`, () => testEndpoint(name))}
                     onAvailabilityChange={(name, enabled) => run(`availability:${name}`, () => setAvailability(name, enabled))}
                     onAutoScheduleChange={(name, enabled) => run(`auto:${name}`, () => setAutoSchedule(name, enabled))}
+                    onClearCooldown={(name) => run(`cooldown:${name}`, () => clearCooldown(name))}
                     onSetRouting={setRouting}
                   />
                 ))}

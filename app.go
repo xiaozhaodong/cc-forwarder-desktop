@@ -60,6 +60,13 @@ type App struct {
 	endpointService *service.EndpointService // 端点业务服务
 	routingMu       sync.Mutex               // v8 §6.4: Claude 路由串行协调器
 
+	// v8:端点运行态存储(冷却持久化 + 手动解除冷却 tombstone)
+	endpointRuntimeStateStore store.EndpointRuntimeStateStore
+
+	// 手动解除冷却的持久化 pending 标记(按 endpoint ID + revision 管理,§4.4)
+	cooldownPendingMu      sync.Mutex
+	cooldownPersistPending map[string]cooldownPersistPendingEntry
+
 	// v5.0+ 模型定价存储 (SQLite)
 	modelPricingStore   store.ModelPricingStore      // 模型定价数据持久化
 	modelPricingService *service.ModelPricingService // 模型定价业务服务
@@ -105,9 +112,10 @@ type App struct {
 // NewApp 创建新的应用实例
 func NewApp() *App {
 	return &App{
-		startTime:     time.Now(),
-		logger:        slog.Default(),
-		oauthSessions: make(map[string]openAIOAuthSession),
+		startTime:              time.Now(),
+		logger:                 slog.Default(),
+		oauthSessions:          make(map[string]openAIOAuthSession),
+		cooldownPersistPending: make(map[string]cooldownPersistPendingEntry),
 	}
 }
 
@@ -357,6 +365,7 @@ func (a *App) setupEndpointStore() {
 // count_tokens 普通 cooldown 保持进程内态（D17），不经过本桥接。
 func (a *App) setupEndpointRuntimeStates(ctx context.Context, db *sql.DB) {
 	runtimeStateStore := store.NewSQLiteEndpointRuntimeStateStore(db)
+	a.endpointRuntimeStateStore = runtimeStateStore
 
 	// 用库内最大 revision 播种发号器：兜底时钟回拨/数据库迁移场景，
 	// 保证本进程新发号严格大于全部历史记录，Upsert 不被静默丢弃
@@ -392,28 +401,6 @@ func (a *App) setupEndpointRuntimeStates(ctx context.Context, db *sql.DB) {
 			Revision:       revision, // Set 侧锁内生成：落库顺序与内存写入顺序一致，旧任务被 Upsert 丢弃
 		}); err != nil {
 			a.logger.Warn("⚠️ 端点 cooldown 持久化失败", "endpoint", name, "error", err)
-		}
-	})
-
-	// 手动清冷却（如手动激活）时写更高 revision 的 tombstone（state=active、until=NULL）：
-	// 物理 DELETE 会让 revision 比较失效，晚执行的旧 persist 任务能把冷却重新写回；
-	// tombstone 让乱序的新旧任务都按 revision 正确裁决，ListActiveCooldowns 已过滤空 until
-	a.endpointManager.SetCooldownClearHook(func(name string, revision int64) {
-		id, ok := endpointIDByName(name)
-		if !ok {
-			return
-		}
-		clearCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		for _, scope := range []string{store.EndpointRuntimeScopeGlobal, store.EndpointRuntimeScopeMessages} {
-			if err := runtimeStateStore.Upsert(clearCtx, &store.EndpointRuntimeStateRecord{
-				EndpointID: id,
-				Scope:      scope,
-				State:      "active",
-				Revision:   revision,
-			}); err != nil {
-				a.logger.Warn("⚠️ 端点 cooldown tombstone 写入失败", "endpoint", name, "scope", scope, "error", err)
-			}
 		}
 	})
 

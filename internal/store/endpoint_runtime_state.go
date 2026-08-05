@@ -33,6 +33,9 @@ type EndpointRuntimeStateRecord struct {
 type EndpointRuntimeStateStore interface {
 	// Upsert 写入运行态；仅当 revision 更高时覆盖（§14.4：旧任务丢弃）
 	Upsert(ctx context.Context, record *EndpointRuntimeStateRecord) error
+	// ClearCooldownTombstones 以更高 revision 的 tombstone 覆盖 global + messages 两行,
+	// 单事务原子提交;手动解除冷却的持久化出口,失败必须整体回滚
+	ClearCooldownTombstones(ctx context.Context, endpointID int64, revision int64) error
 	// ListActiveCooldowns 列出仍在生效的 cooldown（cooldown_until > now）
 	ListActiveCooldowns(ctx context.Context, now time.Time) ([]*EndpointRuntimeStateRecord, error)
 	// Clear 清除指定端点 scope 的运行态
@@ -77,6 +80,45 @@ func (s *SQLiteEndpointRuntimeStateStore) Upsert(ctx context.Context, record *En
 	`, record.EndpointID, record.Scope, record.State, cooldownUntil, record.CooldownReason, record.Revision, nowUTC)
 	if err != nil {
 		return fmt.Errorf("写入端点运行态失败: %w", err)
+	}
+	return nil
+}
+
+// tombstoneUpsertSQL 与 Upsert 同形态的覆盖写;tombstone 即 state='active'、
+// cooldown_until=NULL、cooldown_reason=” 的记录。沿用 revision 单调保护:
+// 晚执行的旧 persist 任务(更低 revision)不会复活冷却。
+const tombstoneUpsertSQL = `
+	INSERT INTO endpoint_runtime_states (endpoint_id, scope, state, cooldown_until, cooldown_reason, revision, updated_at)
+	VALUES (?, ?, 'active', NULL, '', ?, ?)
+	ON CONFLICT(endpoint_id, scope) DO UPDATE SET
+		state = excluded.state,
+		cooldown_until = excluded.cooldown_until,
+		cooldown_reason = excluded.cooldown_reason,
+		revision = excluded.revision,
+		updated_at = excluded.updated_at
+	WHERE excluded.revision > endpoint_runtime_states.revision
+`
+
+// ClearCooldownTombstones 以更高 revision 的 tombstone(state='active'、until=NULL、
+// reason=”)覆盖端点运行态,单事务原子提交,按 global → messages 固定顺序写入
+// (测试的失败注入依赖此顺序)。每行沿用 revision 单调保护(WHERE excluded.revision >
+// endpoint_runtime_states.revision),晚执行的旧 persist 任务不会复活冷却。
+// 不写 count_tokens scope(进程内态不落库,D17)。
+func (s *SQLiteEndpointRuntimeStateStore) ClearCooldownTombstones(ctx context.Context, endpointID int64, revision int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启冷却 tombstone 事务失败: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	nowUTC := timezonepolicy.FormatStorage(time.Now())
+	for _, scope := range []string{EndpointRuntimeScopeGlobal, EndpointRuntimeScopeMessages} {
+		if _, err := tx.ExecContext(ctx, tombstoneUpsertSQL, endpointID, scope, revision, nowUTC); err != nil {
+			return fmt.Errorf("写入冷却 tombstone(scope=%s)失败: %w", scope, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交冷却 tombstone 事务失败: %w", err)
 	}
 	return nil
 }

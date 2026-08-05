@@ -226,3 +226,76 @@ func TestCountTokens_GenericForbiddenTriggersGlobalAuthCooldown(t *testing.T) {
 		t.Fatalf("generic 403 must trigger global auth cooldown: %+v", status)
 	}
 }
+
+// TestCountTokens_StaleEpochSettlementDropped
+// 场景:旧 epoch 的 auth 结算与 scoped 软失败结算均被丢弃——global 槽无冷却、
+// count_tokens 计数不增加、无 scoped cooldown
+func TestCountTokens_StaleEpochSettlementDropped(t *testing.T) {
+	handler, manager := newCountTokensBaselineHandler(t, config.EndpointConfig{
+		Name: "count-stale", URL: "http://127.0.0.1:1", Timeout: 2 * time.Second,
+		SupportsCountTokens: true,
+	})
+	body := []byte(`{"model":"claude-test","messages":[{"role":"user","content":"hello"}]}`)
+	profile := endpoint.BuildRouteRequestProfile("/v1/messages/count_tokens", body)
+	plan := manager.PrepareRouteCandidates(context.Background(), profile).Plans[0]
+	oldEpoch := plan.FailureEpoch
+
+	if _, found := manager.ResetEndpointFailureState("count-stale"); !found {
+		t.Fatal("reset endpoint failure state failed")
+	}
+
+	// 旧 epoch auth 结算
+	handler.recordAuthCooldown("count-stale", plan.ConfigRevision, oldEpoch, "req-count-stale")
+	// 旧 epoch scoped 软失败结算(连记 3 次,若未被拒绝将 trip 并写 scoped cooldown)
+	for i := 0; i < 3; i++ {
+		handler.recordScopedSoftFailure("count-stale", plan.ConfigRevision, oldEpoch,
+			endpoint.SoftFailureCategoryServerError, 0)
+	}
+
+	if in, _, reason := manager.GetEndpointCooldownInfo("count-stale"); in {
+		t.Fatalf("旧 epoch auth 结算不应写 global 冷却, reason=%s", reason)
+	}
+	if counts := manager.GetSoftFailureCounts("count-stale", endpoint.SoftFailureScopeCountTokens); len(counts) != 0 {
+		t.Fatalf("旧 epoch 结算不应增加 count_tokens 计数: %+v", counts)
+	}
+	if active, _, _ := manager.ScopedCooldownActive("count-stale", endpoint.SoftFailureScopeCountTokens); active {
+		t.Fatal("旧 epoch 结算不应写入 scoped cooldown")
+	}
+}
+
+// TestCountTokens_NewEpochSettlementNormal
+// 场景:解除冷却后重新规划(新 epoch),count_tokens 计数/trip/scoped cooldown 行为与现状一致
+func TestCountTokens_NewEpochSettlementNormal(t *testing.T) {
+	handler, manager := newCountTokensBaselineHandler(t, config.EndpointConfig{
+		Name: "count-fresh", URL: "http://127.0.0.1:1", Timeout: 2 * time.Second,
+		SupportsCountTokens: true,
+	})
+	body := []byte(`{"model":"claude-test","messages":[{"role":"user","content":"hello"}]}`)
+	profile := endpoint.BuildRouteRequestProfile("/v1/messages/count_tokens", body)
+
+	if _, found := manager.ResetEndpointFailureState("count-fresh"); !found {
+		t.Fatal("reset endpoint failure state failed")
+	}
+	plan := manager.PrepareRouteCandidates(context.Background(), profile).Plans[0]
+	if plan.FailureEpoch != 1 {
+		t.Fatalf("reset 后 plan 应携带新 epoch=1, got=%d", plan.FailureEpoch)
+	}
+
+	for i := 0; i < 2; i++ {
+		handler.recordScopedSoftFailure("count-fresh", plan.ConfigRevision, plan.FailureEpoch,
+			endpoint.SoftFailureCategoryServerError, 0)
+	}
+	if counts := manager.GetSoftFailureCounts("count-fresh", endpoint.SoftFailureScopeCountTokens); counts[endpoint.SoftFailureCategoryServerError] != 2 {
+		t.Fatalf("新 epoch 计数应正常累计为 2: %+v", counts)
+	}
+	// 第 3 次 trip → scoped cooldown
+	handler.recordScopedSoftFailure("count-fresh", plan.ConfigRevision, plan.FailureEpoch,
+		endpoint.SoftFailureCategoryServerError, 0)
+	if active, _, _ := manager.ScopedCooldownActive("count-fresh", endpoint.SoftFailureScopeCountTokens); !active {
+		t.Fatal("新 epoch trip 后应写入 scoped cooldown")
+	}
+	// scoped cooldown 不影响 messages 路径
+	if in, _, _ := manager.GetEndpointCooldownInfo("count-fresh"); in {
+		t.Fatal("count_tokens scoped cooldown 不应冷却 /v1/messages")
+	}
+}

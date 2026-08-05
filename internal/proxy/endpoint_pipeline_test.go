@@ -539,3 +539,75 @@ func TestEndpointPipeline_RejectModeRejectsWhenFirstLogicalCandidateTripped(t *t
 	}
 	requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomeRejectedByFailureTracker, "")
 }
+
+// TestEndpointPipeline_StaleEpochSettlementDropped
+// 场景:清除前发出的请求(旧 epoch 的 plan),清除后失败结算——冷却槽/软失败计数
+// 三类状态零残留(auth / 软失败 / 429 三类结算全部被丢弃)
+func TestEndpointPipeline_StaleEpochSettlementDropped(t *testing.T) {
+	handler, manager := newEndpointPipelineTestHandler(t,
+		endpointPipelineConfig("primary", "http://127.0.0.1:1", 1))
+	profile := endpoint.BuildRouteRequestProfile("/v1/messages", []byte(`{"model":"claude-test","messages":[]}`))
+
+	plan := manager.PrepareRouteCandidates(context.Background(), profile).Plans[0]
+	oldEpoch := plan.FailureEpoch
+
+	// 用户解除冷却:epoch 推进,旧 plan 作废
+	if _, found := manager.ResetEndpointFailureState("primary"); !found {
+		t.Fatal("reset endpoint failure state failed")
+	}
+
+	// 旧 epoch auth 结算
+	handler.markEndpointFailure("primary", plan.ConfigRevision, oldEpoch, EndpointFailureDecision{
+		Mark: EndpointMarkAuthCooldown, Reason: "auth_rejected",
+	}, profile, "stale auth settlement")
+	// 旧 epoch 软失败结算
+	handler.recordEndpointAttemptSoftFailure("primary", plan.ConfigRevision, oldEpoch,
+		endpoint.SoftFailureCategoryServerError, 0, "stale soft failure")
+	// 旧 epoch 429 结算路径
+	applied := handler.endpointManager.ApplyEndpointFailureSettlement("primary", plan.ConfigRevision, oldEpoch, func() {
+		handler.endpointManager.RecordSoftFailureFenced("primary", endpoint.SoftFailureScopeMessages,
+			endpoint.SoftFailureCategoryRateLimit, oldEpoch)
+	})
+	if applied {
+		t.Fatal("旧 epoch 429 结算入口应被拒绝")
+	}
+
+	if in, _, reason := manager.GetEndpointCooldownInfo("primary"); in {
+		t.Fatalf("旧 epoch 结算不应写冷却, reason=%s", reason)
+	}
+	if counts := manager.GetSoftFailureCounts("primary", endpoint.SoftFailureScopeMessages); len(counts) != 0 {
+		t.Fatalf("旧 epoch 结算不应增加软失败计数: %+v", counts)
+	}
+}
+
+// TestEndpointPipeline_NewEpochSettlementNormal
+// 场景:解除冷却后重新规划(新 epoch),新请求失败结算正常记录、trip 正常冷却——自愈不破坏
+func TestEndpointPipeline_NewEpochSettlementNormal(t *testing.T) {
+	handler, manager := newEndpointPipelineTestHandler(t,
+		endpointPipelineConfig("primary", "http://127.0.0.1:1", 1))
+	profile := endpoint.BuildRouteRequestProfile("/v1/messages", []byte(`{"model":"claude-test","messages":[]}`))
+
+	if _, found := manager.ResetEndpointFailureState("primary"); !found {
+		t.Fatal("reset endpoint failure state failed")
+	}
+	plan := manager.PrepareRouteCandidates(context.Background(), profile).Plans[0]
+	if plan.FailureEpoch != 1 {
+		t.Fatalf("reset 后 plan 应携带新 epoch=1, got=%d", plan.FailureEpoch)
+	}
+
+	count, tripped := handler.recordEndpointAttemptSoftFailure("primary", plan.ConfigRevision, plan.FailureEpoch,
+		endpoint.SoftFailureCategoryServerError, 0, "fresh failure")
+	if !tripped && count != 1 {
+		t.Fatalf("新 epoch 第一次结算应正常计数: count=%d tripped=%v", count, tripped)
+	}
+	handler.recordEndpointAttemptSoftFailure("primary", plan.ConfigRevision, plan.FailureEpoch,
+		endpoint.SoftFailureCategoryServerError, 0, "fresh failure 2")
+	_, tripped = handler.recordEndpointAttemptSoftFailure("primary", plan.ConfigRevision, plan.FailureEpoch,
+		endpoint.SoftFailureCategoryServerError, 0, "fresh failure 3")
+	if !tripped {
+		t.Fatal("新 epoch 达阈值应 trip")
+	}
+	if !manager.IsEndpointInCooldown("primary") {
+		t.Fatal("新 epoch trip 后应进入冷却(自愈保护不破坏)")
+	}
+}

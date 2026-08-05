@@ -52,6 +52,8 @@ type EndpointRecordInfo struct {
 	InCooldown     bool   `json:"in_cooldown"`     // 是否处于冷却中
 	CooldownUntil  string `json:"cooldown_until"`  // 冷却截止时间
 	CooldownReason string `json:"cooldown_reason"` // 冷却原因
+	// 手动解除冷却的持久化未完成标记（落库失败后置位，前端保留重试入口）
+	CooldownPersistPending bool `json:"cooldown_persist_pending"`
 }
 
 // CreateEndpointInput 创建端点的输入参数
@@ -158,6 +160,8 @@ func (a *App) GetEndpointRecords() ([]EndpointRecordInfo, error) {
 				info.CooldownReason = reason
 			}
 		}
+		// 手动解除冷却的持久化 pending 态（endpoint ID 不匹配即 false）
+		info.CooldownPersistPending = a.isCooldownPersistPending(r.Name, r.ID)
 
 		result = append(result, info)
 	}
@@ -399,6 +403,9 @@ func (a *App) DeleteEndpointRecord(name string) error {
 		a.logger.Info("✅ 端点已删除", "name", name)
 	}
 
+	// 删除成功：按名清理孤儿 pending 标记（同名重建端点不继承旧标记）
+	a.removeCooldownPersistPending(name)
+
 	// v5.0: 删除成功后，异步同步端点倍率到 UsageTracker
 	go a.syncEndpointMultipliersToTracker(context.Background())
 
@@ -435,6 +442,7 @@ func (a *App) recordToInfo(r *store.EndpointRecord) EndpointRecordInfo {
 	if !r.UpdatedAt.IsZero() {
 		info.UpdatedAt = formatAPITime(r.UpdatedAt)
 	}
+	info.CooldownPersistPending = a.isCooldownPersistPending(r.Name, r.ID)
 
 	return info
 }

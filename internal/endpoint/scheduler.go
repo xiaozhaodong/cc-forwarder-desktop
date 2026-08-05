@@ -339,12 +339,13 @@ type EndpointScheduleResult struct {
 // endpointScheduleCandidateSnapshot 是一次调度计算使用的端点值快照。
 // 资格判断、分层、排序和 Plan 生成必须只消费这里的数据，live 仅用于兼容返回 Candidates。
 type endpointScheduleCandidateSnapshot struct {
-	live     *Endpoint
-	config   config.EndpointConfig
-	status   EndpointStatus
-	revision int64
-	token    string
-	apiKey   string
+	live         *Endpoint
+	config       config.EndpointConfig
+	status       EndpointStatus
+	revision     int64
+	failureEpoch int64
+	token        string
+	apiKey       string
 }
 
 func (m *Manager) snapshotEndpointCandidates() []endpointScheduleCandidateSnapshot {
@@ -361,10 +362,11 @@ func (m *Manager) snapshotEndpointCandidates() []endpointScheduleCandidateSnapsh
 		}
 		ep.mutex.RLock()
 		snapshots = append(snapshots, endpointScheduleCandidateSnapshot{
-			live:     ep,
-			config:   cloneEndpointConfig(ep.Config),
-			status:   ep.Status,
-			revision: ep.configRevision,
+			live:         ep,
+			config:       cloneEndpointConfig(ep.Config),
+			status:       ep.Status,
+			revision:     ep.configRevision,
+			failureEpoch: ep.failureEpoch,
 		})
 		ep.mutex.RUnlock()
 	}
@@ -434,6 +436,7 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 			Timeout:             candidate.config.Timeout,
 			SupportsCountTokens: candidate.config.SupportsCountTokens,
 			ConfigRevision:      candidate.revision,
+			FailureEpoch:        candidate.failureEpoch,
 			SelectionSource:     source,
 			resolvedToken:       candidate.token,
 			resolvedAPIKey:      candidate.apiKey,
