@@ -302,6 +302,9 @@ func TestStreamProcessor_ProcessStreamWithRetry_RecordsFirstTokenOnce(t *testing
 		"event: message_start\n",
 		`data: {"type":"message_start","message":{"model":"claude-sonnet-4-20250514","usage":{"input_tokens":12,"output_tokens":0}}}` + "\n",
 		"\n",
+		"event: content_block_start\n",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n",
+		"\n",
 		"event: content_block_delta\n",
 		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"   "}}` + "\n",
 		"\n",
@@ -310,6 +313,9 @@ func TestStreamProcessor_ProcessStreamWithRetry_RecordsFirstTokenOnce(t *testing
 		"\n",
 		"event: content_block_delta\n",
 		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}` + "\n",
+		"\n",
+		"event: content_block_stop\n",
+		`data: {"type":"content_block_stop","index":0}` + "\n",
 		"\n",
 		"event: message_delta\n",
 		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":12,"output_tokens":7}}` + "\n",
@@ -542,6 +548,10 @@ func TestStreamProcessor_ProcessStreamWithRetry_DrainsAfterDownstreamCancelUntil
 		defer writerPipe.Close()
 		_, _ = io.WriteString(writerPipe, "event: message_start\n")
 		_, _ = io.WriteString(writerPipe, "data: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-4-20250514\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n")
+		_, _ = io.WriteString(writerPipe, "event: content_block_start\n")
+		_, _ = io.WriteString(writerPipe, "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
+		_, _ = io.WriteString(writerPipe, "event: content_block_stop\n")
+		_, _ = io.WriteString(writerPipe, "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
 		_, _ = io.WriteString(writerPipe, "event: message_delta\n")
 		_, _ = io.WriteString(writerPipe, "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n\n")
 		time.Sleep(20 * time.Millisecond)
@@ -560,6 +570,59 @@ func TestStreamProcessor_ProcessStreamWithRetry_DrainsAfterDownstreamCancelUntil
 	}
 	if tokenUsage.InputTokens != 12 || tokenUsage.OutputTokens != 7 {
 		t.Fatalf("unexpected token usage after Claude drain: %+v", tokenUsage)
+	}
+	if modelName != "claude-sonnet-4-20250514" {
+		t.Fatalf("expected modelName=claude-sonnet-4-20250514, got %s", modelName)
+	}
+}
+
+func TestStreamProcessor_ProcessStreamWithRetry_TerminalEventStopsDrainBeforeQualityCheck(t *testing.T) {
+	reader, writerPipe := io.Pipe()
+	resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: reader}
+	downstreamCtx, cancelDownstream := context.WithCancel(context.Background())
+	defer cancelDownstream()
+
+	tokenParser := NewTokenParserWithRequestID("test-terminal-before-quality-check")
+	writer := &mockResponseWriter{}
+	processor := NewStreamProcessor(tokenParser, nil, writer, writer, "test-terminal-before-quality-check", "endpoint")
+	processor.EnableDownstreamTailDrain(500*time.Millisecond, func() {
+		_ = writerPipe.CloseWithError(context.DeadlineExceeded)
+	})
+
+	releaseWriter := make(chan struct{})
+	writerDone := make(chan struct{})
+	defer func() {
+		close(releaseWriter)
+		<-writerDone
+	}()
+	go func() {
+		defer close(writerDone)
+		defer writerPipe.Close()
+		_, _ = io.WriteString(writerPipe, "event: message_start\n")
+		_, _ = io.WriteString(writerPipe, "data: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-4-20250514\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n")
+		_, _ = io.WriteString(writerPipe, "event: content_block_start\n")
+		_, _ = io.WriteString(writerPipe, "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
+		_, _ = io.WriteString(writerPipe, "event: message_delta\n")
+		_, _ = io.WriteString(writerPipe, "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n\n")
+		time.Sleep(20 * time.Millisecond)
+		cancelDownstream()
+		time.Sleep(20 * time.Millisecond)
+		_, _ = io.WriteString(writerPipe, "event: message_stop\n")
+		_, _ = io.WriteString(writerPipe, "data: {\"type\":\"message_stop\"}\n\n")
+		<-releaseWriter
+	}()
+
+	startedAt := time.Now()
+	_, modelName, err := processor.ProcessStreamWithRetry(downstreamCtx, resp)
+	if elapsed := time.Since(startedAt); elapsed >= 400*time.Millisecond {
+		t.Fatalf("terminal event 后不应等待 drain 超时，实际耗时 %s", elapsed)
+	}
+	streamErr, ok := IsStreamIncompleteError(err)
+	if !ok {
+		t.Fatalf("期望 terminal 后保留 incomplete_stream，得到 %v", err)
+	}
+	if streamErr.FailureReason != "incomplete_stream" || !strings.Contains(streamErr.Reason, "尚未结束") {
+		t.Fatalf("unexpected stream completeness error: %+v", streamErr)
 	}
 	if modelName != "claude-sonnet-4-20250514" {
 		t.Fatalf("expected modelName=claude-sonnet-4-20250514, got %s", modelName)

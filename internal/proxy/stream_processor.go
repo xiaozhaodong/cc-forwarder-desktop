@@ -155,20 +155,23 @@ func (sp *StreamProcessor) stopDownstreamTailDrain() {
 	}
 }
 
-func (sp *StreamProcessor) finalizeCompletedAfterDisconnect(trigger error) (*tracking.TokenUsage, error) {
+func (sp *StreamProcessor) finalizeTerminalAfterDisconnect(trigger error) (*tracking.TokenUsage, error) {
 	sp.waitForBackgroundParsing()
-	tokenUsage, err := sp.collectAvailableInfoV2(context.Canceled, "cancelled_with_data")
-	if err != nil {
-		return tokenUsage, err
-	}
+	tokenUsage := sp.getFinalTokenUsage()
 
 	modelName := sp.tokenParser.GetModelName()
 	if modelName == "" {
 		modelName = "unknown"
 	}
 
-	slog.Info(fmt.Sprintf("✅ [完成后断连] [%s] 已确认 response.completed，按完成处理，模型: %s, 触发错误: %v",
-		sp.requestID, modelName, trigger))
+	completeness := sp.tokenParser.GetStreamCompleteness()
+	if completeness.IsComplete {
+		slog.Info(fmt.Sprintf("✅ [完成后断连] [%s] 已确认 terminal event，按完成处理，模型: %s, 触发错误: %v",
+			sp.requestID, modelName, trigger))
+	} else {
+		slog.Warn(fmt.Sprintf("⚠️ [终态质量异常] [%s] 已收到 terminal event，停止尾部读取并保留完整性错误: %s",
+			sp.requestID, completeness.Reason))
+	}
 	return tokenUsage, nil
 }
 
@@ -208,8 +211,8 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 			case <-ctx.Done():
 				if sp.enableDownstreamTailDrain {
 					sp.beginDownstreamTailDrain(ctx.Err().Error())
-					if sp.tokenParser.GetStreamCompleteness().IsComplete {
-						return sp.finalizeCompletedAfterDisconnect(ctx.Err())
+					if sp.tokenParser.HasTerminalEvent() {
+						return sp.finalizeTerminalAfterDisconnect(ctx.Err())
 					}
 				} else {
 					// 客户端取消，进入优雅取消处理
@@ -250,9 +253,9 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 			// 4. 更新处理状态
 			sp.bytesProcessed += int64(n)
 
-			if sp.tokenParser.GetStreamCompleteness().IsComplete {
+			if sp.tokenParser.HasTerminalEvent() {
 				if sp.downstreamDisconnected {
-					return sp.finalizeCompletedAfterDisconnect(context.Canceled)
+					return sp.finalizeTerminalAfterDisconnect(context.Canceled)
 				}
 				finalTokenUsage := sp.getFinalTokenUsage()
 				slog.Info(fmt.Sprintf("✅ [流式终态] [%s] 端点: %s, 已收到 terminal event，主动结束上游读取，已处理 %d 字节",
@@ -275,8 +278,8 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 		}
 
 		if err != nil {
-			if sp.downstreamDisconnected && sp.tokenParser.GetStreamCompleteness().IsComplete {
-				return sp.finalizeCompletedAfterDisconnect(err)
+			if sp.downstreamDisconnected && sp.tokenParser.HasTerminalEvent() {
+				return sp.finalizeTerminalAfterDisconnect(err)
 			}
 			// 网络中断或其他错误，尝试部分数据处理
 			return sp.handlePartialStreamV2(err)

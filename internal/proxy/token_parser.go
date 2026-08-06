@@ -97,8 +97,14 @@ type MessageStart struct {
 // MessageDelta 表示message_delta事件的结构
 type MessageDelta struct {
 	Type  string      `json:"type"`
+	Index *int        `json:"index,omitempty"`
 	Delta interface{} `json:"delta"`
 	Usage *UsageData  `json:"usage,omitempty"`
+}
+
+type contentBlockEvent struct {
+	Type  string `json:"type"`
+	Index *int   `json:"index"`
 }
 
 // SSEErrorData 表示SSE流中error事件的结构
@@ -144,8 +150,12 @@ type TokenParser struct {
 
 	// 🆕 [流完整性追踪] 2025-12-11
 	hasMessageStart      bool // 是否收到 message_start 事件
+	hasMessageDelta      bool // 是否收到 message_delta 事件
 	hasMessageDeltaUsage bool // 是否收到带 usage 的 message_delta 事件
 	hasMessageStop       bool // 是否收到 message_stop 事件
+	// Anthropic Messages API 每个内容块必须按 start -> delta* -> stop 配对。
+	contentBlockStates        map[int]bool // false=open, true=closed
+	contentBlockProtocolError string
 	// /v1/responses (Codex) 事件追踪
 	hasResponsesEvent         bool // 是否进入 response.* 事件流
 	hasResponseCompleted      bool // 是否收到 response.completed 事件
@@ -221,11 +231,12 @@ func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
 
 		// 🆕 [流完整性追踪] 检测 message_stop 事件
 		if eventType == "message_stop" {
-			tp.hasMessageStop = true
+			tp.trackMessageStop()
 		}
 
 		// 为 message_*/error 以及 /v1/responses 关键事件收集数据
-		tp.collectingData = eventType == "message_delta" || eventType == "content_block_delta" ||
+		tp.collectingData = eventType == "message_delta" || eventType == "content_block_start" ||
+			eventType == "content_block_delta" || eventType == "content_block_stop" ||
 			eventType == "message_start" || eventType == "error" ||
 			tp.isTrackedResponsesEvent(eventType)
 		tp.eventBuffer.Reset()
@@ -255,6 +266,9 @@ func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
 		case "message_delta", "content_block_delta":
 			// 使用新的V2方法解析message_delta/content_block_delta
 			return tp.parseMessageDeltaV2()
+		case "content_block_start", "content_block_stop":
+			tp.parseContentBlockBoundary(tp.currentEvent)
+			return nil
 		case "error":
 			// 使用新的V2方法解析error事件
 			return tp.parseErrorEventV2()
@@ -288,8 +302,12 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 		eventType = tp.fixMalformedEventType(eventType)
 
 		tp.currentEvent = eventType
+		if eventType == "message_stop" {
+			tp.trackMessageStop()
+		}
 		// 为 message_*/error 以及 /v1/responses 关键事件收集数据
-		tp.collectingData = eventType == "message_delta" || eventType == "content_block_delta" ||
+		tp.collectingData = eventType == "message_delta" || eventType == "content_block_start" ||
+			eventType == "content_block_delta" || eventType == "content_block_stop" ||
 			eventType == "message_start" || eventType == "error" ||
 			tp.isTrackedResponsesEvent(eventType)
 		tp.eventBuffer.Reset()
@@ -318,6 +336,9 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 		case "message_delta", "content_block_delta":
 			// 解析message_delta/content_block_delta以获取使用信息
 			return tp.parseMessageDelta()
+		case "content_block_start", "content_block_stop":
+			tp.parseContentBlockBoundary(tp.currentEvent)
+			return nil
 		case "error":
 			// 解析error事件并记录为API错误
 			// 🚫 修复：注释掉违规的直接usageTracker调用，让生命周期管理器处理
@@ -366,9 +387,10 @@ func (tp *TokenParser) beginImplicitSSEEvent(dataContent string) {
 
 	tp.currentEvent = tp.fixMalformedEventType(eventType)
 	if tp.currentEvent == "message_stop" {
-		tp.hasMessageStop = true
+		tp.trackMessageStop()
 	}
-	tp.collectingData = tp.currentEvent == "message_delta" || tp.currentEvent == "content_block_delta" ||
+	tp.collectingData = tp.currentEvent == "message_delta" || tp.currentEvent == "content_block_start" ||
+		tp.currentEvent == "content_block_delta" || tp.currentEvent == "content_block_stop" ||
 		tp.currentEvent == "message_start" || tp.currentEvent == "error" ||
 		tp.isTrackedResponsesEvent(tp.currentEvent)
 	if tp.collectingData {
@@ -389,6 +411,111 @@ func inferSSEEventTypeFromPayload(dataContent string) (string, bool) {
 		return "", false
 	}
 	return eventType, true
+}
+
+func (tp *TokenParser) markContentBlockProtocolError(reason string) {
+	if reason == "" || tp.contentBlockProtocolError != "" {
+		return
+	}
+	tp.contentBlockProtocolError = reason
+	if tp.requestID != "" {
+		slog.Warn(fmt.Sprintf("⚠️ [内容块协议] [%s] %s", tp.requestID, reason))
+	}
+}
+
+func (tp *TokenParser) parseContentBlockBoundary(eventType string) {
+	defer func() {
+		tp.eventBuffer.Reset()
+		tp.collectingData = false
+		tp.currentEvent = ""
+	}()
+
+	var event contentBlockEvent
+	if err := json.Unmarshal([]byte(tp.eventBuffer.String()), &event); err != nil {
+		tp.markContentBlockProtocolError(fmt.Sprintf("%s 事件不是有效 JSON", eventType))
+		return
+	}
+	if event.Index == nil || *event.Index < 0 {
+		tp.markContentBlockProtocolError(fmt.Sprintf("%s 事件缺少有效 index", eventType))
+		return
+	}
+
+	index := *event.Index
+	if tp.contentBlockStates == nil {
+		tp.contentBlockStates = make(map[int]bool)
+	}
+
+	switch eventType {
+	case "content_block_start":
+		if !tp.hasMessageStart {
+			tp.markContentBlockProtocolError(fmt.Sprintf("content_block_start(index=%d) 出现在 message_start 之前", index))
+			return
+		}
+		if tp.hasMessageDelta || tp.hasMessageStop {
+			tp.markContentBlockProtocolError(fmt.Sprintf("content_block_start(index=%d) 出现在消息结束阶段", index))
+			return
+		}
+		if _, exists := tp.contentBlockStates[index]; exists {
+			tp.markContentBlockProtocolError(fmt.Sprintf("content_block_start(index=%d) 重复出现", index))
+			return
+		}
+		tp.contentBlockStates[index] = false
+	case "content_block_stop":
+		closed, exists := tp.contentBlockStates[index]
+		if !exists {
+			tp.markContentBlockProtocolError(fmt.Sprintf("content_block_stop(index=%d) 缺少对应的 content_block_start", index))
+			return
+		}
+		if closed {
+			tp.markContentBlockProtocolError(fmt.Sprintf("content_block_stop(index=%d) 重复出现", index))
+			return
+		}
+		if tp.hasMessageDelta || tp.hasMessageStop {
+			tp.markContentBlockProtocolError(fmt.Sprintf("content_block_stop(index=%d) 出现在消息结束阶段", index))
+			return
+		}
+		tp.contentBlockStates[index] = true
+	}
+}
+
+func (tp *TokenParser) trackContentBlockDelta(index *int) {
+	if index == nil || *index < 0 {
+		tp.markContentBlockProtocolError("content_block_delta 事件缺少有效 index")
+		return
+	}
+	if tp.hasMessageDelta || tp.hasMessageStop {
+		tp.markContentBlockProtocolError(fmt.Sprintf("content_block_delta(index=%d) 出现在消息结束阶段", *index))
+		return
+	}
+	closed, exists := tp.contentBlockStates[*index]
+	if !exists {
+		tp.markContentBlockProtocolError(fmt.Sprintf("content_block_delta(index=%d) 缺少对应的 content_block_start", *index))
+		return
+	}
+	if closed {
+		tp.markContentBlockProtocolError(fmt.Sprintf("content_block_delta(index=%d) 出现在 content_block_stop 之后", *index))
+		return
+	}
+}
+
+func (tp *TokenParser) trackMessageDelta() {
+	tp.hasMessageDelta = true
+	for index, closed := range tp.contentBlockStates {
+		if !closed {
+			tp.markContentBlockProtocolError(fmt.Sprintf("message_delta 到达时 content block(index=%d) 尚未结束", index))
+			return
+		}
+	}
+}
+
+func (tp *TokenParser) trackMessageStop() {
+	tp.hasMessageStop = true
+	for index, closed := range tp.contentBlockStates {
+		if !closed {
+			tp.markContentBlockProtocolError(fmt.Sprintf("message_stop 到达时 content block(index=%d) 尚未结束", index))
+			return
+		}
+	}
 }
 
 // parseResponsesEventV2 解析 /v1/responses 关键事件，返回 ParseResult
@@ -977,6 +1104,7 @@ func (tp *TokenParser) parseMessageStart() *monitor.TokenUsage {
 // parseMessageDeltaV2 新版本的message_delta解析方法
 // 返回 ParseResult 而不是直接调用 usageTracker
 func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
+	eventType := tp.currentEvent
 	defer func() {
 		tp.eventBuffer.Reset()
 		tp.collectingData = false
@@ -991,7 +1119,15 @@ func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
 	// 解析JSON数据
 	var messageDelta MessageDelta
 	if err := json.Unmarshal([]byte(jsonData), &messageDelta); err != nil {
+		if eventType == "content_block_delta" {
+			tp.markContentBlockProtocolError("content_block_delta 事件不是有效 JSON")
+		}
 		return nil
+	}
+	if eventType == "content_block_delta" {
+		tp.trackContentBlockDelta(messageDelta.Index)
+	} else {
+		tp.trackMessageDelta()
 	}
 
 	hasVisibleText := extractVisibleTextFromMessageDelta(messageDelta.Delta) != ""
@@ -1136,6 +1272,7 @@ func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
 
 // parseMessageDelta 解析收集的message_delta JSON数据以获取完整的token使用信息
 func (tp *TokenParser) parseMessageDelta() *monitor.TokenUsage {
+	eventType := tp.currentEvent
 	defer func() {
 		tp.eventBuffer.Reset()
 		tp.collectingData = false
@@ -1150,7 +1287,15 @@ func (tp *TokenParser) parseMessageDelta() *monitor.TokenUsage {
 	// 解析JSON数据
 	var messageDelta MessageDelta
 	if err := json.Unmarshal([]byte(jsonData), &messageDelta); err != nil {
+		if eventType == "content_block_delta" {
+			tp.markContentBlockProtocolError("content_block_delta 事件不是有效 JSON")
+		}
 		return nil
+	}
+	if eventType == "content_block_delta" {
+		tp.trackContentBlockDelta(messageDelta.Index)
+	} else {
+		tp.trackMessageDelta()
 	}
 
 	// 检查此message_delta是否包含使用信息
@@ -1254,8 +1399,11 @@ func (tp *TokenParser) Reset() {
 	tp.startTime = time.Now()
 	// 🆕 [流完整性追踪] 重置完整性追踪字段
 	tp.hasMessageStart = false
+	tp.hasMessageDelta = false
 	tp.hasMessageDeltaUsage = false
 	tp.hasMessageStop = false
+	tp.contentBlockStates = nil
+	tp.contentBlockProtocolError = ""
 	tp.hasResponsesEvent = false
 	tp.hasResponseCompleted = false
 	tp.hasResponseCompletedUsage = false
@@ -1541,8 +1689,8 @@ func IsStreamIncompleteError(err error) (*StreamIncompleteError, bool) {
 // GetStreamCompleteness 获取流完整性状态
 // 🆕 [流完整性追踪] 2025-12-11
 // 根据接收到的 SSE 事件判断流是否完整：
-// - 完整流：收到 message_start + message_delta(usage) + message_stop
-// - 不完整流：缺少 message_start、message_stop 或 message_delta(usage)
+// - 完整流：收到 message_start + 零个或多个完整 content block + message_delta(usage) + message_stop
+// - 不完整流：缺少上述事件、content block 未配对，或事件顺序无效
 func (tp *TokenParser) GetStreamCompleteness() StreamCompleteness {
 	// /v1/responses (Codex) 事件流：以 response.completed 作为完成判据
 	if tp.hasResponsesEvent {
@@ -1589,6 +1737,23 @@ func (tp *TokenParser) GetStreamCompleteness() StreamCompleteness {
 		}
 	}
 
+	if tp.contentBlockProtocolError != "" {
+		return StreamCompleteness{
+			IsComplete:    false,
+			Reason:        tp.contentBlockProtocolError,
+			FailureReason: "incomplete_stream",
+		}
+	}
+	for index, closed := range tp.contentBlockStates {
+		if !closed {
+			return StreamCompleteness{
+				IsComplete:    false,
+				Reason:        fmt.Sprintf("content block(index=%d) 缺少 content_block_stop", index),
+				FailureReason: "incomplete_stream",
+			}
+		}
+	}
+
 	// 检查是否有完整的 usage 信息
 	if !tp.hasMessageDeltaUsage && tp.IsFallbackUsed() {
 		return StreamCompleteness{
@@ -1610,6 +1775,15 @@ func (tp *TokenParser) GetStreamCompleteness() StreamCompleteness {
 // 🆕 [流完整性追踪] 2025-12-11
 func (tp *TokenParser) IsStreamComplete() bool {
 	return tp.GetStreamCompleteness().IsComplete
+}
+
+// HasTerminalEvent 判断是否已经收到当前协议的终态事件。
+// 终态到达只控制上游读取何时结束，最终数据质量仍由 GetStreamCompleteness 判定。
+func (tp *TokenParser) HasTerminalEvent() bool {
+	if tp.hasResponsesEvent {
+		return tp.hasResponseCompleted
+	}
+	return tp.hasMessageStop
 }
 
 // GetPartialUsage 获取部分Token使用统计（用于网络中断恢复）
@@ -1635,6 +1809,12 @@ func (tp *TokenParser) FlushPendingEvent() *ParseResult {
 			slog.Info(fmt.Sprintf("🔄 [事件Flush] [%s] 强制解析缓存的delta事件: %s", tp.requestID, tp.currentEvent))
 		}
 		return tp.parseMessageDeltaV2()
+	case "content_block_start", "content_block_stop":
+		if tp.requestID != "" {
+			slog.Info(fmt.Sprintf("🔄 [事件Flush] [%s] 强制解析缓存的内容块边界事件: %s", tp.requestID, tp.currentEvent))
+		}
+		tp.parseContentBlockBoundary(tp.currentEvent)
+		return nil
 	case "message_start":
 		if tp.requestID != "" {
 			slog.Info(fmt.Sprintf("🔄 [事件Flush] [%s] 强制解析缓存的message_start事件", tp.requestID))

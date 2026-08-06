@@ -898,6 +898,7 @@ func (h *Handler) processAccountRegularResponse(w http.ResponseWriter, resp *htt
 		lifecycleManager.FailRequest("empty_response_body", "Upstream returned 2xx with empty body", http.StatusBadGateway)
 		return fmt.Errorf("empty response body")
 	}
+	lifecycleManager.RecordNonStreamingResponseComplete()
 
 	h.responseProcessor.CopyResponseHeaders(resp, w)
 	w.WriteHeader(resp.StatusCode)

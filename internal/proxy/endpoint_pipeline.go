@@ -571,6 +571,7 @@ func (h *Handler) processEndpointRegularResponse(w http.ResponseWriter, r *http.
 		http.Error(w, "Upstream returned empty response", http.StatusBadGateway)
 		return ProcessOutcomeFailedAfterCommit, "Upstream returned 200 with empty body"
 	}
+	lifecycleManager.RecordNonStreamingResponseComplete()
 
 	h.responseProcessor.CopyResponseHeaders(resp, w)
 	w.WriteHeader(resp.StatusCode)

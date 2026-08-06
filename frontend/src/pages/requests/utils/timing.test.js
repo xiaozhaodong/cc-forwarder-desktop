@@ -8,7 +8,8 @@ import {
   formatTimingBadge,
   formatTpsBadge,
   getTimingPillClassName,
-  resolveCompletionMs
+  resolveCompletionMs,
+  resolveFirstResponseMs
 } from './timing.js';
 
 test('formatTimingBadge renders milliseconds as one-decimal seconds', () => {
@@ -32,6 +33,13 @@ test('resolveCompletionMs prefers recorded completion duration and falls back fo
   assert.equal(resolveCompletionMs(14000, 26000, 6000), 14000);
   assert.equal(resolveCompletionMs(null, 26000, 6000), 20000);
   assert.equal(resolveCompletionMs(undefined, 26000, null), null);
+  assert.equal(resolveCompletionMs(null, 26000, 26000, false), 0);
+});
+
+test('resolveFirstResponseMs uses total duration for historical non-streaming requests', () => {
+  assert.equal(resolveFirstResponseMs(6100, 6300, false), 6100);
+  assert.equal(resolveFirstResponseMs(null, 6300, false), 6300);
+  assert.equal(resolveFirstResponseMs(null, 6300, true), null);
 });
 
 test('calculateTokensPerSecond uses generation duration as denominator', () => {

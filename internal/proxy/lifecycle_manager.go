@@ -68,7 +68,7 @@ type RequestLifecycleManager struct {
 	modelUpdateMu        sync.Mutex                    // 保护模型更新标记
 	firstTokenOnce       sync.Once                     // 确保首响耗时仅记录一次
 	firstTokenStartTime  time.Time                     // 首响计时起点，默认请求开始；账号链路可改为上游请求写完
-	firstTokenAt         time.Time                     // 首个有效流式响应到达时间
+	firstTokenAt         time.Time                     // 首个有效响应到达时间
 	timingMu             sync.RWMutex                  // 保护首响计时字段
 	attemptCounter       int                           // 内部尝试计数器（语义修复：统一重试计数）
 	attemptMu            sync.Mutex                    // 保护尝试计数器的互斥锁
@@ -670,7 +670,7 @@ func (rlm *RequestLifecycleManager) GetDuration() time.Duration {
 }
 
 // SetFirstTokenStartTime 设置首响计时起点。
-// 账号池上游请求写完后会把起点更新到该时刻，使 first_token_ms 更接近服务端 FRT。
+// 上游请求写完后会把起点更新到该时刻，使 first_token_ms 更接近服务端 FRT。
 func (rlm *RequestLifecycleManager) SetFirstTokenStartTime(start time.Time) {
 	if start.IsZero() {
 		return
@@ -683,8 +683,8 @@ func (rlm *RequestLifecycleManager) SetFirstTokenStartTime(start time.Time) {
 	rlm.firstTokenStartTime = start
 }
 
-// RecordFirstToken 记录首个有效流式响应到达耗时（首响）。
-// 该方法只会生效一次，用于流式请求展示“首响 / 耗时”。
+// RecordFirstToken 记录首个有效响应到达耗时（首响）。
+// 流式请求以首个有效 SSE 事件为准；非流请求以完整响应可用为准。
 func (rlm *RequestLifecycleManager) RecordFirstToken() {
 	rlm.RecordFirstTokenAndReturn()
 }
@@ -715,13 +715,13 @@ func (rlm *RequestLifecycleManager) RecordFirstTokenAndReturn() bool {
 		})
 		recorded = true
 
-		slog.Info(fmt.Sprintf("📝 [首响耗时] [%s] 记录上游首个有效流式响应耗时: %dms",
+		slog.Info(fmt.Sprintf("📝 [首响耗时] [%s] 记录上游首个有效响应耗时: %dms",
 			rlm.requestID, firstTokenMs))
 	})
 	return recorded
 }
 
-// RecordStreamCompletion 记录首响后到流式完成的耗时。
+// RecordStreamCompletion 记录首响后到响应完成的耗时。
 func (rlm *RequestLifecycleManager) RecordStreamCompletion() {
 	if rlm.usageTracker == nil || rlm.requestID == "" {
 		return
@@ -744,6 +744,19 @@ func (rlm *RequestLifecycleManager) RecordStreamCompletion() {
 
 	slog.Info(fmt.Sprintf("📝 [生成耗时] [%s] 记录首响后流式完成耗时: %dms",
 		rlm.requestID, completionMs))
+}
+
+// RecordNonStreamingResponseComplete 记录非流响应完整可用的时刻。
+// 非流响应无法观察中间 token，因此首响与完成发生在同一时刻，生成耗时记为 0ms。
+func (rlm *RequestLifecycleManager) RecordNonStreamingResponseComplete() {
+	if !rlm.RecordFirstTokenAndReturn() || rlm.usageTracker == nil || rlm.requestID == "" {
+		return
+	}
+	completionMs := int64(0)
+	rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
+		CompletionMs: &completionMs,
+	})
+	slog.Info(fmt.Sprintf("📝 [生成耗时] [%s] 非流响应完整可用，生成耗时记为 0ms", rlm.requestID))
 }
 
 // GetLastStatus 获取最后状态

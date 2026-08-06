@@ -24,10 +24,22 @@ export const calculateGenerationMs = (durationMs, firstTokenMs) => {
   return Math.max(durationMs - firstTokenMs, 0);
 };
 
-export const resolveCompletionMs = (completionMs, durationMs, firstTokenMs) => (
+export const resolveFirstResponseMs = (firstTokenMs, durationMs, isStreaming) => {
+  if (Number.isFinite(firstTokenMs)) {
+    return Math.max(firstTokenMs, 0);
+  }
+  if (!isStreaming && Number.isFinite(durationMs)) {
+    return Math.max(durationMs, 0);
+  }
+  return null;
+};
+
+export const resolveCompletionMs = (completionMs, durationMs, firstTokenMs, isStreaming = true) => (
   Number.isFinite(completionMs)
     ? Math.max(completionMs, 0)
-    : calculateGenerationMs(durationMs, firstTokenMs)
+    : (!isStreaming && Number.isFinite(firstTokenMs)
+      ? 0
+      : calculateGenerationMs(durationMs, firstTokenMs))
 );
 
 export const calculateTokensPerSecond = (outputTokens, generationMs) => {

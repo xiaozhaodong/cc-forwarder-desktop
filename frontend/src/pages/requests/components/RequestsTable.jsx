@@ -21,7 +21,8 @@ import {
   formatTimingBadge,
   formatTpsBadge,
   getTimingPillClassName,
-  resolveCompletionMs
+  resolveCompletionMs,
+  resolveFirstResponseMs
 } from '../utils/timing.js';
 
 const RequestStreamIcon = ({ request }) => {
@@ -62,9 +63,10 @@ const TimingTooltip = ({ anchorRect, items }) => {
 
 const RequestTimingCell = ({ request }) => {
   const [tooltipAnchor, setTooltipAnchor] = React.useState(null);
-  const hasFirstToken = request.isStreaming && Number.isFinite(request.firstTokenMs);
-  const completionMs = hasFirstToken
-    ? resolveCompletionMs(request.completionMs, request.duration, request.firstTokenMs)
+  const firstResponseMs = resolveFirstResponseMs(request.firstTokenMs, request.duration, request.isStreaming);
+  const hasFirstResponse = Number.isFinite(firstResponseMs);
+  const completionMs = hasFirstResponse
+    ? resolveCompletionMs(request.completionMs, request.duration, firstResponseMs, request.isStreaming)
     : null;
   const tokensPerSecond = calculateTokensPerSecond(request.outputTokens, completionMs);
   const timingTooltipItems = [
@@ -89,11 +91,11 @@ const RequestTimingCell = ({ request }) => {
       onFocus={showTooltip}
       onBlur={hideTooltip}
     >
-      {hasFirstToken && (
+      {hasFirstResponse && (
         <span
-          className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('first', request.firstTokenMs)}`}
+          className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('first', firstResponseMs)}`}
         >
-          {formatTimingBadge(request.firstTokenMs)}
+          {formatTimingBadge(firstResponseMs)}
         </span>
       )}
       <span

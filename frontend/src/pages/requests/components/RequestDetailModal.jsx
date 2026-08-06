@@ -35,7 +35,8 @@ import {
   formatTimingBadge,
   formatTpsBadge,
   getTimingPillClassName,
-  resolveCompletionMs
+  resolveCompletionMs,
+  resolveFirstResponseMs
 } from '../utils/timing.js';
 import { getRequestFamilyMeta } from '../utils/requestSource.js';
 
@@ -127,16 +128,17 @@ const formatRouteMode = (mode) => {
 };
 
 const RequestTimingValue = ({ request }) => {
-  const hasFirstToken = request.isStreaming && Number.isFinite(request.firstTokenMs);
-  const completionMs = hasFirstToken
-    ? resolveCompletionMs(request.completionMs, request.duration, request.firstTokenMs)
+  const firstResponseMs = resolveFirstResponseMs(request.firstTokenMs, request.duration, request.isStreaming);
+  const hasFirstResponse = Number.isFinite(firstResponseMs);
+  const completionMs = hasFirstResponse
+    ? resolveCompletionMs(request.completionMs, request.duration, firstResponseMs, request.isStreaming)
     : null;
   const tokensPerSecond = calculateTokensPerSecond(request.outputTokens, completionMs);
 
   return (
     <span className="inline-flex items-center justify-end gap-1.5 flex-wrap">
-      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${hasFirstToken ? getTimingPillClassName('first', request.firstTokenMs) : 'bg-slate-50 text-slate-400 border-slate-100'}`}>
-        首响 {formatOptionalTimingBadge(hasFirstToken ? request.firstTokenMs : null)}
+      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${hasFirstResponse ? getTimingPillClassName('first', firstResponseMs) : 'bg-slate-50 text-slate-400 border-slate-100'}`}>
+        首响 {formatOptionalTimingBadge(firstResponseMs)}
       </span>
       <span className="inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all bg-slate-50 text-slate-600 border-slate-100">
         生成 {formatOptionalTimingBadge(completionMs)}
