@@ -5,7 +5,7 @@
 
 import { useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, Gauge, Settings, Shield, X } from 'lucide-react';
+import { Activity, AlertTriangle, Copy, Gauge, Settings, Shield, X } from 'lucide-react';
 import { Button } from '@components/ui';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import Badge from './Badge.jsx';
@@ -22,6 +22,12 @@ const TONE_CLASS = {
   blue: 'bg-sky-50 text-sky-700 border-sky-200',
   indigo: 'bg-indigo-50 text-indigo-700 border-indigo-200',
   slate: 'bg-slate-50 text-slate-600 border-slate-200'
+};
+
+const ERROR_TONE_CLASS = {
+  amber: 'border-amber-200 bg-amber-50 text-amber-800',
+  rose: 'border-rose-200 bg-rose-50 text-rose-800',
+  slate: 'border-slate-200 bg-slate-50 text-slate-700'
 };
 
 const SECTION_THEME = {
@@ -85,9 +91,50 @@ const SectionCard = ({ icon: Icon, title, children }) => {
 const DetailRow = ({ label, value }) => (
   <div className="flex items-start justify-between gap-4 text-sm">
     <span className="text-slate-400">{label}</span>
-    <span className="text-right font-medium text-slate-700">{value || '-'}</span>
+    <span className="min-w-0 max-w-[70%] break-words text-right font-medium text-slate-700">{value || '-'}</span>
   </div>
 );
+
+const AccountErrorDetails = ({ display }) => {
+  if (!display) {
+    return <DetailRow label="最近异常" value="暂无错误记录" />;
+  }
+
+  const copyRawError = () => navigator.clipboard.writeText(display.raw);
+
+  return (
+    <div className={`rounded-lg border p-3 ${ERROR_TONE_CLASS[display.tone] || ERROR_TONE_CLASS.slate}`}>
+      <div className="flex items-center gap-2">
+        <AlertTriangle size={15} className="shrink-0" aria-hidden="true" />
+        <span className="text-sm font-semibold">{display.label}</span>
+        <span className="text-xs opacity-70">最近异常</span>
+      </div>
+      <p className="mt-2 break-words text-sm leading-6">{display.message}</p>
+      {display.requestId ? (
+        <div className="mt-2 flex items-center justify-between gap-2 border-t border-current/10 pt-2 text-xs">
+          <span className="opacity-70">Request ID</span>
+          <code className="min-w-0 truncate font-mono">{display.requestId}</code>
+        </div>
+      ) : null}
+      <details className="mt-2 border-t border-current/10 pt-2 text-xs">
+        <summary className="cursor-pointer select-none font-medium">查看原始响应</summary>
+        <div className="mt-2 rounded-md bg-white/70 p-2">
+          <div className="mb-1 flex justify-end">
+            <button
+              type="button"
+              onClick={copyRawError}
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 font-medium opacity-70 transition hover:bg-white hover:opacity-100"
+              title="复制原始响应"
+            >
+              <Copy size={12} aria-hidden="true" />复制
+            </button>
+          </div>
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono leading-5">{display.raw}</pre>
+        </div>
+      </details>
+    </div>
+  );
+};
 
 const normalizeGroupKey = (value = '') => {
   const normalized = String(value || '').trim().toLowerCase();
@@ -118,6 +165,7 @@ const AccountDetailsDrawer = ({
   }
 
   const detail = row.detail || {};
+  const errorDisplay = row.errorDisplay || detail.errorDisplay;
   const account = detail.rawAccount || detail.account || row;
   const currentGroupKey = normalizeGroupKey(detail.groupKey || row.groupKey || row.groupLabel);
   const enabled = detail.enabled ?? account.enabled ?? true;
@@ -192,7 +240,8 @@ const AccountDetailsDrawer = ({
           <SectionCard icon={Shield} title="健康">
             <DetailRow label="最近成功" value={row.lastSuccessText} />
             <DetailRow label="连通性" value={detail.healthLabel || detail.reachabilityLabel || '-'} />
-            <DetailRow label="异常摘要" value={detail.riskLabel || detail.lastErrorText || '-'} />
+            <DetailRow label="风险摘要" value={detail.riskLabel || '-'} />
+            <AccountErrorDetails display={errorDisplay} />
             <DetailRow label="观察备注" value={detail.healthNote || detail.note || '-'} />
           </SectionCard>
 

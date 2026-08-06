@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, Database, Info, Plus, RefreshCw, Route } from 'lucide-react';
 import { Button, ErrorMessage, LoadingSpinner } from '@components/ui';
 import useEndpointsData from '@hooks/useEndpointsData.js';
-import { DeleteConfirmDialog, EndpointForm, EndpointRow, EndpointScheduleDrawer, resolveSnapshotOutcome } from './components';
+import { DeleteConfirmDialog, EndpointCard, EndpointForm, EndpointRow, EndpointScheduleDrawer, ViewModeSwitcher, resolveSnapshotOutcome } from './components';
 import { fetchLatestEndpointScheduleSnapshot } from '@utils/endpointScheduleApi.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import {
@@ -18,6 +18,15 @@ import {
 
 const initialRoutingState = { mode: 'auto', endpointName: '', fallbackEnabled: true };
 
+const VIEW_MODE_STORAGE_KEY = 'endpoints.viewMode';
+const readStoredViewMode = () => {
+  try {
+    return window.localStorage.getItem(VIEW_MODE_STORAGE_KEY) === 'grid' ? 'grid' : 'table';
+  } catch {
+    return 'table';
+  }
+};
+
 const EndpointsPage = () => {
   const { formatTimestamp } = useTimezone();
   const { endpoints, loading, error, stats, lastUpdate, refresh, testEndpoint, testAllEndpoints, setAvailability, setAutoSchedule, clearCooldown } = useEndpointsData();
@@ -30,6 +39,14 @@ const EndpointsPage = () => {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [busyKey, setBusyKey] = useState('');
   const [actionError, setActionError] = useState('');
+  const [viewMode, setViewMode] = useState(readStoredViewMode);
+
+  const changeViewMode = (mode) => {
+    setViewMode(mode);
+    try {
+      window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+    } catch { /* 隐私模式等场景下写不进去就只在内存里生效 */ }
+  };
 
   const loadRouting = useCallback(async () => {
     if (!isWailsEnvironment()) return;
@@ -140,12 +157,38 @@ const EndpointsPage = () => {
         {endpoints.length === 0 ? (
           <div className="px-6 py-16 text-center"><Database size={38} className="mx-auto text-slate-300" /><div className="mt-3 font-medium text-slate-700">尚未配置 Claude 端点</div><div className="mt-1 text-sm text-slate-400">创建端点后即可参与自动调度或手动路由。</div></div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1120px] text-left">
-              <thead className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-400"><tr>{['名称 / URL', '认证', '优先级', '硬启用', '自动调度', '连通性', '冷却', '模型改写', '操作'].map((label) => <th key={label} className="px-3 py-3">{label}</th>)}</tr></thead>
-              <tbody className="divide-y divide-slate-100">
+          <>
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
+              <span className="text-xs text-slate-400">共 {endpoints.length} 个端点</span>
+              <ViewModeSwitcher value={viewMode} onChange={changeViewMode} />
+            </div>
+            {viewMode === 'table' ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1120px] text-left">
+                  <thead className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-400"><tr>{['名称 / URL', '认证', '优先级', '硬启用', '自动调度', '连通性', '冷却', '模型改写', '操作'].map((label) => <th key={label} className="px-3 py-3">{label}</th>)}</tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {endpoints.map((endpoint) => (
+                      <EndpointRow
+                        key={endpoint.id || endpoint.name}
+                        endpoint={endpoint}
+                        routingState={routingState}
+                        busy={Boolean(busyKey)}
+                        onEdit={(value) => { setEditingEndpoint(value); setFormOpen(true); }}
+                        onDelete={setDeleteTarget}
+                        onTest={(name) => run(`test:${name}`, () => testEndpoint(name))}
+                        onAvailabilityChange={(name, enabled) => run(`availability:${name}`, () => setAvailability(name, enabled))}
+                        onAutoScheduleChange={(name, enabled) => run(`auto:${name}`, () => setAutoSchedule(name, enabled))}
+                        onClearCooldown={(name) => run(`cooldown:${name}`, () => clearCooldown(name))}
+                        onSetRouting={setRouting}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="grid gap-4 p-4 sm:grid-cols-2 xl:grid-cols-3">
                 {endpoints.map((endpoint) => (
-                  <EndpointRow
+                  <EndpointCard
                     key={endpoint.id || endpoint.name}
                     endpoint={endpoint}
                     routingState={routingState}
@@ -159,9 +202,9 @@ const EndpointsPage = () => {
                     onSetRouting={setRouting}
                   />
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 

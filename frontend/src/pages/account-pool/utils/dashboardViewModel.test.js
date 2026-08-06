@@ -111,7 +111,11 @@ test('buildAccountPoolDashboardModel returns full inventory rows and mapped sche
     model.inventory.savedViews.map((item) => item.key),
     DEFAULT_SAVED_VIEWS.map((item) => item.key)
   );
-  assert.equal(model.inventory.rows.find((item) => item.name === 'main-broken')?.detail.lastErrorText, 'refresh token expired');
+  const brokenRow = model.inventory.rows.find((item) => item.name === 'main-broken');
+  assert.equal(brokenRow?.detail.lastErrorText, 'refresh token expired');
+  assert.equal(brokenRow?.errorDisplay?.category, 'auth');
+  assert.equal(brokenRow?.errorDisplay?.label, '认证异常');
+  assert.equal(brokenRow?.errorDisplay?.summary, 'refresh token expired');
   assert.match(model.inventory.rows.find((item) => item.name === 'main-broken')?.detail.nextResetText || '', /未设置|重置|暂无/);
   assert.match(model.inventory.rows.find((item) => item.name === 'main-oauth')?.detail.quota5hResetText || '', /2026\/3\/21/);
   assert.match(model.inventory.rows.find((item) => item.name === 'main-oauth')?.detail.quota7dResetText || '', /2026\/3\/24/);

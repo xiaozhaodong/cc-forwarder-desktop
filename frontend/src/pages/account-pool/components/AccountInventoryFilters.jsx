@@ -4,7 +4,7 @@
 // ============================================
 
 import { RotateCcw, Search, Sparkles, TestTube2, UserRoundCheck, Rows3 } from 'lucide-react';
-import { Button, CustomSelect } from '@components/ui';
+import { CustomSelect } from '@components/ui';
 
 const BATCH_LABELS = {
   test: '批量测试',
@@ -18,6 +18,47 @@ const BATCH_LABELS = {
 
 const findAction = (actions = [], ...keys) => actions.find((a) => keys.includes(a.key));
 const findVariant = (action, key) => action?.variants?.find((v) => v.key === key);
+
+const FILTER_SHORT_LABELS = {
+  auth: '授权',
+  plan: '计划',
+  group: '组别',
+  status: '状态',
+  risk: '风险',
+  sort: '排序'
+};
+
+const FILTER_WIDTHS = {
+  auth: 'w-28',
+  plan: 'w-28',
+  group: 'w-24',
+  status: 'w-24',
+  risk: 'w-24',
+  sort: 'w-32'
+};
+
+const FilterField = ({ config, value, onChange, wide = false, showLabel = true }) => {
+  const currentLabel = config.options?.find((option) => option.value === value)?.label;
+  const widthClass = wide ? FILTER_WIDTHS.sort : (FILTER_WIDTHS[config.key] || 'w-24');
+
+  return (
+    <div
+      className="inline-flex shrink-0 items-center gap-1.5"
+      title={`${config.label}${currentLabel ? `：${currentLabel}` : ''}`}
+    >
+      <span className={showLabel ? 'whitespace-nowrap text-[11px] font-medium text-slate-400' : 'sr-only'}>
+        {FILTER_SHORT_LABELS[config.key] || config.label}
+      </span>
+      <CustomSelect
+        size="xs"
+        options={config.options}
+        value={value}
+        onChange={onChange}
+        className={`${widthClass} [&>button]:h-8 [&>button]:min-w-0`}
+      />
+    </div>
+  );
+};
 
 const BatchActionButton = ({ icon: Icon, label, onClick, disabled, title, className = '' }) => (
   <button
@@ -43,7 +84,8 @@ const AccountInventoryFilters = ({
   selectedCount = 0,
   batchActions = [],
   batchFeedback,
-  onBatchAction
+  onBatchAction,
+  viewSwitcher = null
 }) => {
   const testAction = findAction(batchActions, 'batch-test', 'test');
   const refreshAction = findAction(batchActions, 'batch-refresh-profile', 'refresh-profile');
@@ -54,12 +96,18 @@ const AccountInventoryFilters = ({
   const primaryVariant = findVariant(moveAction, 'primary');
   const backupVariant = findVariant(moveAction, 'backup');
   const coldVariant = findVariant(moveAction, 'cold');
+  const sortConfig = filterConfigs.find((config) => config.key === 'sort');
+  const queryConfigs = filterConfigs.filter((config) => config.key !== 'sort');
+  const hasActiveFilters = Boolean(String(searchTerm || '').trim()) || filterConfigs.some((config) => {
+    const defaultValue = config.key === 'sort' ? config.options?.[0]?.value : 'all';
+    return String(filterValues[config.key] ?? defaultValue) !== String(defaultValue);
+  });
 
   return (
-    <div className="space-y-2.5 border-b border-slate-100 px-5 py-3">
-      {/* 搜索 + 筛选条 + 统计（一行） */}
-      <div className="flex items-center gap-2.5">
-        <div className="relative w-64 shrink-0">
+    <div className="border-b border-slate-100 px-5 py-3">
+      {/* 单行工具栏：查询条件与结果工具共用一条基线；窄屏时按组换行 */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="relative w-full shrink-0 sm:w-48">
           <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             id="account-inventory-search"
@@ -68,33 +116,51 @@ const AccountInventoryFilters = ({
             value={searchTerm}
             placeholder="搜索账号名 / 备注 / 标签"
             onChange={(event) => onSearchTermChange?.(event.target.value)}
-            className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs text-slate-700 outline-none placeholder:text-slate-400 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+            className="h-8 w-full rounded-lg border border-slate-200 bg-white pl-8 pr-11 text-xs text-slate-700 outline-none placeholder:text-slate-400 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
           />
+          <span
+            className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-slate-500"
+            title={`当前筛选结果：${resultCount} 个账号`}
+          >
+            {resultCount}
+          </span>
         </div>
 
-        <span className="h-5 w-px bg-slate-200" />
-
-        <div className="flex flex-wrap items-center gap-2">
-          {filterConfigs.map((config) => (
-            <div key={config.key} className="inline-flex items-center gap-1.5">
-              <span className="text-[11px] text-slate-400 whitespace-nowrap">{config.label}</span>
-              <CustomSelect
-                size="xs"
-                options={config.options}
-                value={filterValues[config.key]}
-                onChange={(value) => onFilterChange?.(config.key, value)}
-              />
-            </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {queryConfigs.map((config) => (
+            <FilterField
+              key={config.key}
+              config={config}
+              value={filterValues[config.key]}
+              onChange={(value) => onFilterChange?.(config.key, value)}
+            />
           ))}
         </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-slate-400">
-          <span className="tabular-nums">{resultCount} 个账号</span>
+          <span className="hidden h-5 w-px bg-slate-200 lg:block" />
+          {sortConfig ? (
+            <FilterField
+              config={sortConfig}
+              value={filterValues[sortConfig.key]}
+              onChange={(value) => onFilterChange?.(sortConfig.key, value)}
+              wide
+              showLabel={false}
+            />
+          ) : null}
+          <span className="hidden h-5 w-px bg-slate-200 sm:block" />
+          {viewSwitcher}
           <button
             type="button"
             onClick={onResetFilters}
-            className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
-            title="重置筛选"
+            disabled={!hasActiveFilters}
+            className={`inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs font-medium transition-colors ${
+              hasActiveFilters
+                ? 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+                : 'cursor-default text-slate-300'
+            }`}
+            title={hasActiveFilters ? '重置搜索、筛选与排序' : '当前没有需要重置的条件'}
+            aria-label="重置搜索、筛选与排序"
           >
             <RotateCcw size={12} />
           </button>
@@ -103,7 +169,7 @@ const AccountInventoryFilters = ({
 
       {/* 批量操作 - 选中时显示 */}
       {selectedCount > 0 && (
-        <div className="flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50/40 px-3 py-2">
+        <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50/40 px-3 py-2">
           <span className="shrink-0 text-xs font-medium text-indigo-600">
             {selectedCount} 个已选
           </span>

@@ -1,14 +1,26 @@
 // ============================================
 // 账号资产工作台
-// 2026-03-21
+// 2026-03-21 (Updated 2026-08-06:表格/网格双视图)
 // ============================================
 
+import { useState } from 'react';
 import { Database } from 'lucide-react';
 import { Button, CustomSelect, EmptyState } from '@components/ui';
+import ViewModeSwitcher from '@components/ViewModeSwitcher.jsx';
 import AccountDetailsDrawer from './AccountDetailsDrawer.jsx';
 import AccountInventoryFilters from './AccountInventoryFilters.jsx';
+import AccountInventoryGrid from './AccountInventoryGrid.jsx';
 import AccountInventoryTable from './AccountInventoryTable.jsx';
 import useAccountPoolDashboardState from '../hooks/useAccountPoolDashboardState.js';
+
+const VIEW_MODE_STORAGE_KEY = 'accountPool.viewMode';
+const readStoredViewMode = () => {
+  try {
+    return window.localStorage.getItem(VIEW_MODE_STORAGE_KEY) === 'grid' ? 'grid' : 'table';
+  } catch {
+    return 'table';
+  }
+};
 
 const AccountInventorySection = ({
   inventory = {},
@@ -33,6 +45,14 @@ const AccountInventorySection = ({
   const drawerRow = shouldRenderInlineDrawer ? state.drawer.activeRow : inlineDrawerRow;
   const handleCloseDrawer = shouldRenderInlineDrawer ? state.drawer.closeDetails : onInlineDrawerClose;
 
+  const [viewMode, setViewMode] = useState(readStoredViewMode);
+  const changeViewMode = (mode) => {
+    setViewMode(mode);
+    try {
+      window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+    } catch { /* 隐私模式等场景下写不进去就只在内存里生效 */ }
+  };
+
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-950/5">
       <AccountInventoryFilters
@@ -47,6 +67,7 @@ const AccountInventorySection = ({
         batchActions={state.batch.actions}
         batchFeedback={state.batch.feedback}
         onBatchAction={state.batch.runBatchAction}
+        viewSwitcher={<ViewModeSwitcher value={viewMode} onChange={changeViewMode} compact />}
       />
 
       {state.visibleRows.length === 0 ? (
@@ -54,6 +75,22 @@ const AccountInventorySection = ({
           icon={Database}
           title="暂无匹配账号"
           description="调整搜索词、保存视图或筛选条件后再试。"
+        />
+      ) : viewMode === 'grid' ? (
+        <AccountInventoryGrid
+          rows={state.visibleRows}
+          busyKey={busyKey}
+          selectedRowIds={state.selection.selectedRowIds}
+          allVisibleSelected={state.selection.allVisibleSelected}
+          selectedCount={state.selection.selectedCount}
+          onToggleAllRows={state.selection.toggleAllVisibleRows}
+          onToggleRow={state.selection.toggleRowSelection}
+          onRowClick={handleOpenDetails}
+          onToggleAccount={onToggleAccount}
+          onTestAccount={onTestAccount}
+          onRefreshAccountProfile={onRefreshAccountProfile}
+          onEditAccount={onEditAccount}
+          onDeleteAccount={onDeleteAccount}
         />
       ) : (
         <AccountInventoryTable

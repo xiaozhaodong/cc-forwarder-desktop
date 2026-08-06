@@ -14,6 +14,7 @@ import {
   toQuotaStatusLabel,
   toRemainingPercent
 } from './accountPool.js';
+import { buildAccountErrorDisplay } from './accountErrorDisplay.js';
 import { formatTimestamp as formatConfiguredTimestamp } from '../../../utils/timezone.js';
 
 const COLD_STANDBY_GROUP_LABEL = '冷备';
@@ -442,6 +443,7 @@ const buildInventoryRows = (accounts, sortedPriorities, latestScheduleSnapshot, 
   const isApiKey = isAPIKeyProviderType(account.provider_type ?? account.providerType);
   const planKey = (rawPlanKey && rawPlanKey !== 'unknown') ? rawPlanKey : (isApiKey ? 'prepaid' : 'unknown');
   const planLabel = (rawPlanLabel && rawPlanLabel !== 'Unknown') ? rawPlanLabel : (isApiKey ? 'Prepaid' : 'Unknown');
+  const providerType = account.provider_type ?? account.providerType;
   const quotaStatusLabel = toQuotaStatusLabel(account.quota_status ?? account.quotaStatus);
   const queueEntries = getQueueEntries(account, groupMeta, latestScheduleSnapshot, now);
   const riskLevel = queueEntries.reduce((highest, entry) => (
@@ -457,7 +459,9 @@ const buildInventoryRows = (accounts, sortedPriorities, latestScheduleSnapshot, 
   } = getQuotaResetTexts(account, timezone);
   const healthLabel = getHealthLabel(account, riskLevel);
   const riskLabel = getRiskLabel(account, riskLevel);
-  const lastErrorText = String(account.last_error ?? account.lastError ?? '').trim() || '暂无错误记录';
+  const rawLastError = String(account.last_error ?? account.lastError ?? '').trim();
+  const errorDisplay = buildAccountErrorDisplay(rawLastError);
+  const lastErrorText = errorDisplay?.message || '暂无错误记录';
   const { quota5hRemaining, quota7dRemaining } = getQuotaRemaining(account);
 
   return {
@@ -485,10 +489,15 @@ const buildInventoryRows = (accounts, sortedPriorities, latestScheduleSnapshot, 
     refreshedAtText: formatTimestampText(refreshedAt, timezone),
     lastSuccessAtMs: toDate(lastSuccessAt)?.getTime() || 0,
     refreshedAtMs: toDate(refreshedAt)?.getTime() || 0,
+    isApiKey,
+    providerType,
+    quota5hResetAt: account.quota_5h_reset_at ?? account.quota5hResetAt,
+    quota7dResetAt: account.quota_weekly_reset_at ?? account.quotaWeeklyResetAt,
     riskLevel,
     queueKeys: queueEntries.map((item) => item.queueKey),
     queueEntries,
-    lastError: String(account.last_error ?? account.lastError ?? '').trim(),
+    lastError: rawLastError,
+    errorDisplay,
     baseURL: account.base_url || account.baseUrl || '',
     enabled: account.enabled !== false,
     detail: {
@@ -507,6 +516,7 @@ const buildInventoryRows = (accounts, sortedPriorities, latestScheduleSnapshot, 
       refreshedAt,
       lastError: lastErrorText,
       lastErrorText,
+      errorDisplay,
       baseURL: account.base_url || account.baseUrl || UNKNOWN_TEXT,
       baseUrl: account.base_url || account.baseUrl || UNKNOWN_TEXT,
       priority: Number.isFinite(priority) ? priority : UNKNOWN_TEXT,
