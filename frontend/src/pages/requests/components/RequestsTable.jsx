@@ -125,7 +125,7 @@ const renderCell = (columnId, request, formatTimestamp) => {
     case 'status':
       return <RequestStatusBadge status={request.status} />;
     case 'model':
-      return <ModelTag model={request.model} />;
+      return <ModelTag model={request.model} compact />;
     case 'requestFamily': {
       const family = getRequestFamilyMeta(request.requestFamily);
       return <span className={`inline-flex rounded-md border px-2 py-1 text-[11px] font-semibold ${family.className}`}>{family.label}</span>;
