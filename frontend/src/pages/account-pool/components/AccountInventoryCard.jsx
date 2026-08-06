@@ -71,6 +71,7 @@ const AccountInventoryCard = ({
   const planText = normalizePlanLabel(row.planLabel);
   const account = row.raw || row.detail?.rawAccount || row;
   const errorDisplay = row.errorDisplay;
+  const statusText = `${row.lastSuccessAtMs > 0 ? `连通 ${row.lastSuccessText}` : '未连通'} · ${row.refreshedAtMs > 0 ? `刷新 ${row.refreshedAtText}` : '未刷新'}`;
 
   return (
     <div
@@ -148,8 +149,8 @@ const AccountInventoryCard = ({
           >
             <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${row.enabled === false ? 'translate-x-0' : 'translate-x-4'}`} />
           </button>
-          <span className="min-w-0 truncate whitespace-nowrap text-[11px] text-slate-400">
-            {row.lastSuccessAtMs > 0 ? `连通 ${row.lastSuccessText}` : '未连通'} · {row.refreshedAtMs > 0 ? `刷新 ${row.refreshedAtText}` : '未刷新'}
+          <span className="min-w-0 truncate whitespace-nowrap text-[11px] text-slate-400" title={statusText}>
+            {statusText}
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">

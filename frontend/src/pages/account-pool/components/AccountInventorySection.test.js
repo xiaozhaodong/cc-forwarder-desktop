@@ -138,6 +138,11 @@ test('inventory grid cards keep quick actions visible when account timestamps ar
   );
   assert.match(
     cardSource,
+    /title=\{statusText\}/,
+    'expected truncated connectivity and refresh timestamps to remain available on hover'
+  );
+  assert.match(
+    cardSource,
     /className="flex shrink-0 items-center gap-0\.5"/,
     'expected the card quick-action group to remain fixed and fully visible'
   );
