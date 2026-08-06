@@ -122,3 +122,23 @@ test('inventory workspace threads busy state into the reviewed table and drawer 
   assert.match(tableSource, /disabled=\{[^}]*busy/i, 'expected row-level quick actions to disable while busy');
   assert.match(drawerSource, /disabled=\{[^}]*busy/i, 'expected drawer actions to disable while busy');
 });
+
+test('inventory grid cards keep quick actions visible when account timestamps are long', async () => {
+  const cardSource = await loadSource('./AccountInventoryCard.jsx');
+
+  assert.match(
+    cardSource,
+    /className="flex min-w-0 flex-1 items-center gap-2\.5"/,
+    'expected the card status area to shrink before pushing quick actions outside the card'
+  );
+  assert.match(
+    cardSource,
+    /className="min-w-0 truncate whitespace-nowrap text-\[11px\] text-slate-400"/,
+    'expected long connectivity and refresh timestamps to truncate inside the available width'
+  );
+  assert.match(
+    cardSource,
+    /className="flex shrink-0 items-center gap-0\.5"/,
+    'expected the card quick-action group to remain fixed and fully visible'
+  );
+});

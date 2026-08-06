@@ -136,7 +136,7 @@ const AccountInventoryCard = ({
       </div>
 
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-slate-100 pt-3" onClick={stopEvent}>
-        <div className="flex items-center gap-2.5">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
           <button
             type="button"
             role="switch"
@@ -148,7 +148,7 @@ const AccountInventoryCard = ({
           >
             <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${row.enabled === false ? 'translate-x-0' : 'translate-x-4'}`} />
           </button>
-          <span className="whitespace-nowrap text-[11px] text-slate-400">
+          <span className="min-w-0 truncate whitespace-nowrap text-[11px] text-slate-400">
             {row.lastSuccessAtMs > 0 ? `连通 ${row.lastSuccessText}` : '未连通'} · {row.refreshedAtMs > 0 ? `刷新 ${row.refreshedAtText}` : '未刷新'}
           </span>
         </div>
