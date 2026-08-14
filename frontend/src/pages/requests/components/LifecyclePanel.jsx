@@ -19,6 +19,9 @@ import {
 
 const EMPTY_CANDIDATES = [];
 
+// 分段时间展示：<1s 用毫秒避免「0.0s」，≥1s 沿用秒格式。
+const formatSegmentMs = (ms) => (ms < 1000 ? `${Math.round(ms)}ms` : formatTimingBadge(ms));
+
 const LifecycleCell = ({ icon: Icon, iconClass, title, loading, children }) => (
   <div className="p-4 min-w-0">
     <div className="flex items-center gap-2 text-sm font-medium text-slate-500 mb-3">
@@ -103,19 +106,30 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
           </div>
         </div>
 
-        <div className="flex h-2.5 bg-slate-200 rounded-full overflow-hidden">
-          {segments.map((segment) => (
-            <div
-              key={segment.key}
-              className={`${lifecycleSegmentColors[segment.key] || 'bg-slate-200'} min-w-[2%] transition-all`}
-              style={{ width: `${Math.max(2, (segment.ms / totalMs) * 100)}%` }}
-              title={`${segment.label} ${segment.ms}ms`}
-            />
-          ))}
+        <div className="flex items-stretch gap-1 h-7">
+          {segments.map((segment) => {
+            const pct = (segment.ms / totalMs) * 100;
+            // 块宽按耗时比例伸展，但保证文字放得下（min-w-max）；
+            // 占比过小的段只显示时间，名称见下方图例与 title。
+            const showLabel = pct >= 10;
+            return (
+              <div
+                key={segment.key}
+                className={`${lifecycleSegmentColors[segment.key] || 'bg-slate-200'} rounded-md flex items-center justify-center px-2 min-w-max transition-all`}
+                style={{ flexGrow: Math.max(segment.ms, 1), flexBasis: 0 }}
+                title={`${segment.label} ${formatSegmentMs(segment.ms)}`}
+              >
+                <span className="text-[11px] font-mono font-medium text-slate-700/90 whitespace-nowrap">
+                  {showLabel ? `${segment.label} ${formatSegmentMs(segment.ms)}` : formatSegmentMs(segment.ms)}
+                </span>
+              </div>
+            );
+          })}
         </div>
-        <div className="flex justify-between mt-1.5 text-[11px] text-slate-400 font-mono">
+        <div className="flex items-center gap-4 mt-2 text-[11px] text-slate-500">
           {segments.map((segment) => (
-            <span key={segment.key} className="truncate" title={`${segment.label} ${segment.ms}ms`}>
+            <span key={segment.key} className="inline-flex items-center gap-1.5">
+              <span className={`w-2.5 h-2.5 rounded-sm ${lifecycleSegmentColors[segment.key] || 'bg-slate-200'}`} />
               {segment.label}
             </span>
           ))}
