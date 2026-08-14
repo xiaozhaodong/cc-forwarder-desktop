@@ -262,6 +262,7 @@ type RequestRecord struct {
 	CacheReadTokens       int64   `json:"cache_read_tokens"`
 	ResponseTime          int64   `json:"response_time"`
 	FirstTokenMs          *int64  `json:"first_token_ms"`
+	CompletionMs          *int64  `json:"completion_ms"` // 首个有效流式响应到流式完成耗时（毫秒）
 	IsStreaming           bool    `json:"is_streaming"`
 	Cost                  float64 `json:"cost"`
 }
@@ -372,52 +373,97 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 	}
 
 	for _, r := range requests {
-		// 使用统一的时间格式（2025-12-04 17:18:48）
-		// 数据库存储的就是配置时区的时间，直接格式化，不做时区转换
-		record := RequestRecord{
-			RequestID:             r.RequestID,
-			Timestamp:             formatAPITime(r.StartTime),
-			RequestFamily:         r.RequestFamily,
-			Endpoint:              r.EndpointName,
-			Model:                 r.ModelName,
-			Status:                r.Status,
-			RetryCount:            r.RetryCount,
-			FailureReason:         r.FailureReason,
-			CancelReason:          r.CancelReason,
-			UpstreamType:          r.UpstreamType,
-			UpstreamSourceName:    r.UpstreamSourceName,
-			UpstreamName:          r.UpstreamName,
-			UpstreamID:            r.UpstreamID,
-			RouteMode:             r.RouteMode,
-			RequestedEndpoint:     r.RequestedEndpoint,
-			EffectiveEndpoint:     r.EffectiveEndpoint,
-			FallbackReason:        r.FallbackReason,
-			InputTokens:           r.InputTokens,
-			OutputTokens:          r.OutputTokens,
-			CacheCreationTokens:   r.CacheCreationTokens,
-			CacheCreation5mTokens: r.CacheCreation5mTokens, // v5.0.1+
-			CacheCreation1hTokens: r.CacheCreation1hTokens, // v5.0.1+
-			CacheReadTokens:       r.CacheReadTokens,
-			IsStreaming:           r.IsStreaming,
-			Cost:                  r.TotalCostUSD,
-		}
-
-		// 处理指针字段
-		if r.HTTPStatusCode != nil {
-			record.HTTPStatus = *r.HTTPStatusCode
-		}
-		if r.DurationMs != nil {
-			record.ResponseTime = *r.DurationMs
-		}
-		if r.RouteDecisionAt != nil {
-			record.RouteDecisionAt = formatAPITime(*r.RouteDecisionAt)
-		}
-		record.FirstTokenMs = r.FirstTokenMs
-
-		result.Requests = append(result.Requests, record)
+		result.Requests = append(result.Requests, requestDetailToRecord(r))
 	}
 
 	return result, nil
+}
+
+// requestDetailToRecord 将 tracking.RequestDetail 映射为 Wails RequestRecord。
+// 列表与生命周期详情两出口共用，字段演进天然同步。
+// formatAPITime 的真实契约：零值返回空串，非零值经 FormatStorage 输出固定微秒精度 UTC ISO。
+func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
+	record := RequestRecord{
+		RequestID:             r.RequestID,
+		Timestamp:             formatAPITime(r.StartTime),
+		RequestFamily:         r.RequestFamily,
+		Endpoint:              r.EndpointName,
+		Model:                 r.ModelName,
+		Status:                r.Status,
+		RetryCount:            r.RetryCount,
+		FailureReason:         r.FailureReason,
+		CancelReason:          r.CancelReason,
+		UpstreamType:          r.UpstreamType,
+		UpstreamSourceName:    r.UpstreamSourceName,
+		UpstreamName:          r.UpstreamName,
+		UpstreamID:            r.UpstreamID,
+		RouteMode:             r.RouteMode,
+		RequestedEndpoint:     r.RequestedEndpoint,
+		EffectiveEndpoint:     r.EffectiveEndpoint,
+		FallbackReason:        r.FallbackReason,
+		InputTokens:           r.InputTokens,
+		OutputTokens:          r.OutputTokens,
+		CacheCreationTokens:   r.CacheCreationTokens,
+		CacheCreation5mTokens: r.CacheCreation5mTokens, // v5.0.1+
+		CacheCreation1hTokens: r.CacheCreation1hTokens, // v5.0.1+
+		CacheReadTokens:       r.CacheReadTokens,
+		IsStreaming:           r.IsStreaming,
+		Cost:                  r.TotalCostUSD,
+	}
+
+	// 处理指针字段
+	if r.HTTPStatusCode != nil {
+		record.HTTPStatus = *r.HTTPStatusCode
+	}
+	if r.DurationMs != nil {
+		record.ResponseTime = *r.DurationMs
+	}
+	if r.RouteDecisionAt != nil {
+		record.RouteDecisionAt = formatAPITime(*r.RouteDecisionAt)
+	}
+	record.FirstTokenMs = r.FirstTokenMs
+	record.CompletionMs = r.CompletionMs
+	return record
+}
+
+// RequestLifecycleDetail 请求生命周期详情（弹窗权威数据源）。
+// 三个新字段不在列表 DTO 中，只在本接口返回。
+type RequestLifecycleDetail struct {
+	Found                bool           `json:"found"`
+	Source               string         `json:"source,omitempty"` // hot_pool | database
+	Request              *RequestRecord `json:"request,omitempty"`
+	UpstreamWriteMs      *int64         `json:"upstream_write_ms,omitempty"`
+	ScheduleSnapshotJSON string         `json:"schedule_snapshot_json,omitempty"`
+	PrivacyScanJSON      string         `json:"privacy_scan_json,omitempty"`
+}
+
+// GetRequestLifecycleDetail 获取单请求生命周期详情（桌面专用）。
+// 行不存在时 Found=false；Request 为弹窗权威行数据（status/tokens/耗时/失败原因等）。
+func (a *App) GetRequestLifecycleDetail(requestID string) (RequestLifecycleDetail, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if a.usageTracker == nil || strings.TrimSpace(requestID) == "" {
+		return RequestLifecycleDetail{}, nil
+	}
+
+	data, err := a.usageTracker.GetRequestLifecycleData(context.Background(), requestID)
+	if err != nil {
+		return RequestLifecycleDetail{}, err
+	}
+	if data == nil {
+		return RequestLifecycleDetail{}, nil
+	}
+
+	record := requestDetailToRecord(data.Detail)
+	return RequestLifecycleDetail{
+		Found:                true,
+		Source:               data.Source,
+		Request:              &record,
+		UpstreamWriteMs:      data.UpstreamWriteMs,
+		ScheduleSnapshotJSON: data.ScheduleSnapshotJSON,
+		PrivacyScanJSON:      data.PrivacyScanJSON,
+	}, nil
 }
 
 // ============================================================

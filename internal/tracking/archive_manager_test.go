@@ -1,6 +1,9 @@
 package tracking
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestArchiveManager_UpdatePricingClonesInput(t *testing.T) {
 	am := &ArchiveManager{}
@@ -81,5 +84,98 @@ func TestArchiveManager_CalculateCostV2_UsesAccountMultiplierByUpstreamID(t *tes
 	expectedBase := 1000.0 * 10.0 / 1_000_000
 	if result.InputCost != expectedBase*2.0 {
 		t.Fatalf("expected account multiplier to apply by upstream_id, got %+v", result)
+	}
+}
+
+func TestArchiveManager_BatchInsertMarksArchivePersistedOnlyAfterCommit(t *testing.T) {
+	adapter, err := NewSQLiteAdapter(DatabaseConfig{DatabasePath: ":memory:"})
+	if err != nil {
+		t.Fatalf("NewSQLiteAdapter failed: %v", err)
+	}
+	if err := adapter.Open(); err != nil {
+		t.Fatalf("adapter.Open failed: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	if err := adapter.InitSchema(); err != nil {
+		t.Fatalf("adapter.InitSchema failed: %v", err)
+	}
+
+	am := &ArchiveManager{adapter: adapter}
+	startTime := time.Now().Add(-time.Second)
+	endTime := time.Now()
+	req := &ActiveRequest{
+		RequestID:  "req-archive-commit-barrier",
+		StartTime:  startTime,
+		EndTime:    &endTime,
+		Method:     "POST",
+		Path:       "/v1/responses",
+		Status:     "completed",
+		HTTPStatus: 200,
+	}
+
+	if err := am.batchInsert([]*ArchiveEvent{{Request: req, Timestamp: endTime}}); err != nil {
+		t.Fatalf("batchInsert failed: %v", err)
+	}
+
+	req.mu.RLock()
+	persisted := req.archivePersisted
+	req.mu.RUnlock()
+	if !persisted {
+		t.Fatal("expected archivePersisted after successful commit")
+	}
+
+	var status string
+	if err := adapter.GetReadDB().QueryRow(
+		"SELECT status FROM request_logs WHERE request_id = ?", req.RequestID,
+	).Scan(&status); err != nil {
+		t.Fatalf("query committed request failed: %v", err)
+	}
+	if status != "completed" {
+		t.Fatalf("expected committed status completed, got %q", status)
+	}
+}
+
+func TestArchiveManager_BatchInsertDoesNotMarkArchivePersistedOnRollback(t *testing.T) {
+	adapter, err := NewSQLiteAdapter(DatabaseConfig{DatabasePath: ":memory:"})
+	if err != nil {
+		t.Fatalf("NewSQLiteAdapter failed: %v", err)
+	}
+	if err := adapter.Open(); err != nil {
+		t.Fatalf("adapter.Open failed: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	if err := adapter.InitSchema(); err != nil {
+		t.Fatalf("adapter.InitSchema failed: %v", err)
+	}
+
+	am := &ArchiveManager{adapter: adapter}
+	req := &ActiveRequest{
+		RequestID: "req-archive-rollback",
+		StartTime: time.Now(),
+		Method:    "POST",
+		Path:      "/v1/responses",
+		Status:    "completed",
+	}
+	event := &ArchiveEvent{Request: req, Timestamp: time.Now()}
+
+	if err := am.batchInsert([]*ArchiveEvent{event, event}); err == nil {
+		t.Fatal("expected duplicate request batch to roll back")
+	}
+
+	req.mu.RLock()
+	persisted := req.archivePersisted
+	req.mu.RUnlock()
+	if persisted {
+		t.Fatal("archivePersisted must remain false after rollback")
+	}
+
+	var count int
+	if err := adapter.GetReadDB().QueryRow(
+		"SELECT COUNT(*) FROM request_logs WHERE request_id = ?", req.RequestID,
+	).Scan(&count); err != nil {
+		t.Fatalf("query rollback result failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected rolled back request absent from database, got count %d", count)
 	}
 }

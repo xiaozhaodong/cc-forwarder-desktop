@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS request_logs (
     duration_ms INTEGER,                    -- 总耗时(毫秒)
     first_token_ms INTEGER,                 -- 上游请求写完到首个有效流式响应耗时(毫秒，仅流式请求)
     completion_ms INTEGER,                  -- 首个有效流式响应到流式完成耗时(毫秒，仅流式请求)
+    upstream_write_ms INTEGER,              -- v6.2: 成功尝试上游请求写完相对 start_time 偏移（含此前失败尝试耗时）
+    schedule_snapshot_json TEXT,            -- v6.2: Codex 账号池调度快照（白名单 DTO JSON，端点链路恒为 NULL）
+    privacy_scan_json TEXT,                 -- v6.2: 隐私扫描摘要 JSON（只有规则名/计数，绝无命中原文）
     
     -- 转发信息
     request_family TEXT NOT NULL DEFAULT 'other'

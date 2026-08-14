@@ -381,6 +381,11 @@ type UpdateOptions struct {
 	EffectiveEndpoint  *string        // 实际路由端点
 	FallbackReason     *string        // fallback 或阻塞原因
 	RouteDecisionAt    *time.Time     // 路由决策时间
+
+	// v6.2 生命周期面板新增字段
+	UpstreamWriteMs      *int64  // 上游请求写完相对 start_time 的偏移（毫秒），write-once
+	ScheduleSnapshotJSON *string // Codex 账号池调度快照 JSON（裁剪 DTO），覆盖写
+	PrivacyScanJSON      *string // 隐私扫描摘要 JSON，覆盖写
 }
 
 // UsageTracker 使用跟踪器
@@ -956,6 +961,16 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 			}
 			if opts.FailureReason != nil {
 				req.FailureReason = *opts.FailureReason
+			}
+			if opts.UpstreamWriteMs != nil && *opts.UpstreamWriteMs >= 0 && req.UpstreamWriteMs == nil {
+				upstreamWriteMs := *opts.UpstreamWriteMs
+				req.UpstreamWriteMs = &upstreamWriteMs
+			}
+			if opts.ScheduleSnapshotJSON != nil {
+				req.ScheduleSnapshotJSON = *opts.ScheduleSnapshotJSON
+			}
+			if opts.PrivacyScanJSON != nil {
+				req.PrivacyScanJSON = *opts.PrivacyScanJSON
 			}
 		})
 		if err != nil {

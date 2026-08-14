@@ -9,7 +9,6 @@ import {
   X,
   Copy,
   Check,
-  Clock,
   Activity,
   DollarSign,
   Server,
@@ -25,19 +24,12 @@ import {
 } from 'lucide-react';
 import RequestStatusBadge from './RequestStatusBadge.jsx';
 import ModelTag from './ModelTag.jsx';
+import LifecyclePanel from './LifecyclePanel.jsx';
 import { formatCost } from '@utils/api.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
+import useRequestLifecycleDetail from '../hooks/useRequestLifecycleDetail.js';
 import { copyTextToClipboard } from './clipboard.js';
-import {
-  calculateTokensPerSecond,
-  formatOptionalTimingBadge,
-  formatTimingBadge,
-  formatTpsBadge,
-  getTimingPillClassName,
-  resolveCompletionMs,
-  resolveFirstResponseMs
-} from '../utils/timing.js';
 import { getRequestFamilyMeta } from '../utils/requestSource.js';
 
 /**
@@ -127,43 +119,23 @@ const formatRouteMode = (mode) => {
   }
 };
 
-const RequestTimingValue = ({ request }) => {
-  const firstResponseMs = resolveFirstResponseMs(request.firstTokenMs, request.duration, request.isStreaming);
-  const hasFirstResponse = Number.isFinite(firstResponseMs);
-  const completionMs = hasFirstResponse
-    ? resolveCompletionMs(request.completionMs, request.duration, firstResponseMs, request.isStreaming)
-    : null;
-  const tokensPerSecond = calculateTokensPerSecond(request.outputTokens, completionMs);
-
-  return (
-    <span className="inline-flex items-center justify-end gap-1.5 flex-wrap">
-      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${hasFirstResponse ? getTimingPillClassName('first', firstResponseMs) : 'bg-slate-50 text-slate-400 border-slate-100'}`}>
-        首响 {formatOptionalTimingBadge(firstResponseMs)}
-      </span>
-      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all bg-slate-50 text-slate-600 border-slate-100">
-        生成 {formatOptionalTimingBadge(completionMs)}
-      </span>
-      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('duration', request.duration)}`}>
-        总耗 {formatTimingBadge(request.duration)}
-      </span>
-      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all bg-slate-50 text-slate-600 border-slate-100">
-        TPS {formatTpsBadge(tokensPerSecond)}
-      </span>
-    </span>
-  );
-};
-
-/**
- * 请求详情模态框主组件
- */
-const RequestDetailModal = ({ isOpen, onClose, request }) => {
+const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
   const { formatTimestamp } = useTimezone();
   const [activeTab, setActiveTab] = useState('overview');
   const closeButtonRef = useRef(null);
 
   useModalLifecycle({ open: isOpen, onClose, initialFocusRef: closeButtonRef });
 
-  if (!isOpen || !request) return null;
+  // 详情接口为弹窗唯一权威数据源（F3）；列表回填仅作打开瞬间的先行渲染。
+  const { lifecycle, lifecycleLoading } = useRequestLifecycleDetail(initialRequest?.requestId, isOpen);
+
+  if (!isOpen || !initialRequest) return null;
+
+  // 详情接口为弹窗唯一权威数据源；upstreamWriteMs 仅详情携带，需合并进有效行数据，
+  // 否则 LifecyclePanel 的 buildLifecycleSegments 永远拿不到它，「连接/准备」段不展示。
+  const request = lifecycle?.request
+    ? { ...lifecycle.request, upstreamWriteMs: lifecycle.upstreamWriteMs ?? null }
+    : initialRequest;
 
   // 计算 Token 总数
   const totalTokens = (request.inputTokens || 0) + (request.outputTokens || 0);
@@ -245,6 +217,13 @@ const RequestDetailModal = ({ isOpen, onClose, request }) => {
           {/* 概览 Tab */}
           {activeTab === 'overview' && (
             <div className="space-y-6">
+              {/* 生命周期面板（详情接口为权威数据源） */}
+              <LifecyclePanel
+                request={request}
+                lifecycle={lifecycle}
+                lifecycleLoading={lifecycleLoading}
+              />
+
               {/* 状态 & 成本卡片 */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-gradient-to-br from-indigo-50 to-blue-50 rounded-xl p-4 border border-indigo-100">
@@ -274,7 +253,6 @@ const RequestDetailModal = ({ isOpen, onClose, request }) => {
                 <div className="p-4">
                   <InfoRow icon={FileText} label="请求 ID" value={request.requestId} copyable />
                   <InfoRow icon={Calendar} label="时间戳" value={formatTimestamp(request.timestamp)} />
-                  <InfoRow icon={Clock} label="耗时指标" value={<RequestTimingValue request={request} />} />
                   <InfoRow icon={Activity} label="类型" value={family.label} />
                   <InfoRow icon={Server} label="上游" value={request.upstreamName || '未知上游'} />
                   <InfoRow icon={Activity} label="路由模式" value={formatRouteMode(request.routeMode)} />

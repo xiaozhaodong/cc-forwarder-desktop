@@ -999,6 +999,21 @@ export const getRequests = async (params = {}) => {
   };
 };
 
+/**
+ * 获取单请求生命周期详情（B5.2 权威接口）。
+ * 旧后端无此方法时返回 { found: false }。
+ */
+export const getRequestLifecycleDetail = async (requestId) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('GetRequestLifecycleDetail', { optional: true });
+  if (typeof method !== 'function') {
+    return { found: false };
+  }
+  return method(requestId);
+};
+
 // ============================================
 // 代理信息
 // ============================================

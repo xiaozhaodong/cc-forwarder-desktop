@@ -103,6 +103,10 @@ func appendRequestQueryFilters(query string, args []interface{}, opts *QueryOpti
 		return query, args
 	}
 
+	if opts.RequestID != "" {
+		query += " AND request_id = ?"
+		args = append(args, opts.RequestID)
+	}
 	if opts.StartDate != nil {
 		query += " AND start_time >= ?"
 		args = append(args, timezonepolicy.FormatStorage(*opts.StartDate))
@@ -289,6 +293,7 @@ func (ut *UsageTracker) countRequestDetailsOverlapsByRequestIDs(ctx context.Cont
 
 // QueryOptions represents options for querying usage data
 type QueryOptions struct {
+	RequestID     string
 	StartDate     *time.Time
 	EndDate       *time.Time
 	ModelName     string

@@ -4,6 +4,7 @@ import {
   formatTimestamp,
   getRecentDaysRange,
   getTodayTimeRange,
+  parseTimestamp,
   validateTimezone
 } from './timezone.js';
 
@@ -29,4 +30,14 @@ test('recent range shifts calendar dates instead of subtracting fixed 24 hour du
 test('invalid or missing timezone fails explicitly', () => {
   assert.throws(() => validateTimezone(''), /未返回活动时区/);
   assert.throws(() => validateTimezone('Mars\/Olympus'), /无效时区/);
+});
+
+test('parseTimestamp accepts absolute instants and rejects ambiguous strings', () => {
+  assert.equal(parseTimestamp('2026-08-13T00:00:01.000000Z').getTime(), Date.parse('2026-08-13T00:00:01.000000Z'));
+  assert.equal(parseTimestamp('2026-08-13T08:00:00+08:00').getTime(), Date.parse('2026-08-13T08:00:00+08:00'));
+
+  assert.throws(() => parseTimestamp(''), /时间为空/);
+  assert.throws(() => parseTimestamp('2026-08-13 00:00:01'), /缺少时区/);
+  assert.throws(() => parseTimestamp('not-a-date'), /缺少时区/);
+  assert.throws(() => parseTimestamp('2026-99-99T00:00:00Z'), /无效时间/);
 });

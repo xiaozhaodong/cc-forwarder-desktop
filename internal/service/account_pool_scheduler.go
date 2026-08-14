@@ -137,7 +137,7 @@ func (s *latestAccountScheduleSnapshotStore) saveDraft(snapshot *LatestAccountSc
 
 	cutoff := now.Add(-latestAccountScheduleSnapshotPendingTTL)
 	for id, pending := range s.pending {
-		if pending == nil || pending.CapturedAt.Before(cutoff) {
+		if pending == nil || pending.UpdatedAt.Before(cutoff) {
 			delete(s.pending, id)
 		}
 	}
@@ -147,9 +147,9 @@ func (s *latestAccountScheduleSnapshotStore) saveDraft(snapshot *LatestAccountSc
 	s.latest = clone
 }
 
-func (s *latestAccountScheduleSnapshotStore) complete(requestID string, accountID int64, accountName, outcome, finalError string) {
+func (s *latestAccountScheduleSnapshotStore) complete(requestID string, accountID int64, accountName, outcome, finalError string) (*LatestAccountScheduleSnapshot, bool) {
 	if s == nil {
-		return
+		return nil, false
 	}
 
 	s.mu.Lock()
@@ -159,21 +159,21 @@ func (s *latestAccountScheduleSnapshotStore) complete(requestID string, accountI
 	if requestID != "" {
 		if pending, ok := s.pending[requestID]; ok {
 			snapshot = cloneLatestAccountScheduleSnapshot(pending)
-			delete(s.pending, requestID)
 		}
 	}
-	if snapshot == nil && s.latest != nil {
-		snapshot = cloneLatestAccountScheduleSnapshot(s.latest)
-	}
 	if snapshot == nil {
-		return
+		// pending 可能因 TTL 被清理；仅允许回退到同一 requestID 的 latest。
+		// requestID 不匹配时必须原样保留全局 latest，绝不能拿他人快照继续改写。
+		if requestID == "" || s.latest == nil || s.latest.RequestID != requestID {
+			return nil, false
+		}
+		snapshot = cloneLatestAccountScheduleSnapshot(s.latest)
 	}
 
 	snapshot.UpdatedAt = time.Now()
 	if outcome != "" {
 		snapshot.FinalOutcome = outcome
-	}
-	if finalError != "" {
+		// outcome 与错误必须成对覆盖；成功终态用空串清掉此前 attempt 错误，避免页面残留失败文案。
 		snapshot.FinalError = finalError
 	}
 	if accountID > 0 {
@@ -193,7 +193,31 @@ func (s *latestAccountScheduleSnapshotStore) complete(requestID string, accountI
 		break
 	}
 
+	terminal := isTerminalAccountScheduleSnapshotUpdate(outcome, accountID)
+	if terminal {
+		delete(s.pending, requestID)
+	} else {
+		s.pending[requestID] = cloneLatestAccountScheduleSnapshot(snapshot)
+	}
 	s.latest = snapshot
+	return cloneLatestAccountScheduleSnapshot(snapshot), true
+}
+
+// isTerminalAccountScheduleSnapshotUpdate 统一定义请求级快照的终态边界。
+// auth/transient 且带具体账号表示一次候选 attempt；全池耗尽使用 accountID=0 收口。
+func isTerminalAccountScheduleSnapshotUpdate(outcome string, accountID int64) bool {
+	switch outcome {
+	case accountScheduleOutcomeSuccess,
+		accountScheduleOutcomePassthroughNoAvailableProvider,
+		accountScheduleOutcomePassthroughOther4xx,
+		accountScheduleOutcomeNoSchedulableAccounts,
+		AccountScheduleOutcomePrivacyBlocked:
+		return true
+	case accountScheduleOutcomeTransientFailure:
+		return accountID <= 0
+	default:
+		return false
+	}
 }
 
 func (s *latestAccountScheduleSnapshotStore) getLatest() *LatestAccountScheduleSnapshot {
@@ -233,9 +257,11 @@ func cloneLatestAccountScheduleSnapshot(snapshot *LatestAccountScheduleSnapshot)
 // AccountScheduleResult 单次调度的公开结果契约。
 // Pinned 表示本次调度命中全局固定账号；转发管线只使用该调度时刻的
 // 不可变快照值判定 pinned 行为，不得事后回查 runtime cache（避免调度后 pin/unpin 竞态）。
+// Snapshot 为本次调度草稿的深拷贝，Preview 路径不带（requestID 为空）。
 type AccountScheduleResult struct {
 	Accounts []*store.UpstreamAccountRecord
 	Pinned   bool
+	Snapshot *LatestAccountScheduleSnapshot
 }
 
 func (s *AccountPoolService) PrepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) (AccountScheduleResult, error) {
@@ -260,13 +286,13 @@ func (s *AccountPoolService) GetLatestAccountScheduleSnapshot(ctx context.Contex
 	return s.scheduleSnapshots.getLatest(), nil
 }
 
-func (s *AccountPoolService) CompleteLatestScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, outcome, finalError string) error {
+func (s *AccountPoolService) CompleteLatestScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, outcome, finalError string) (*LatestAccountScheduleSnapshot, error) {
 	_ = ctx
 	if s.scheduleSnapshots == nil {
-		return nil
+		return nil, nil
 	}
-	s.scheduleSnapshots.complete(requestID, accountID, accountName, outcome, finalError)
-	return nil
+	snapshot, _ := s.scheduleSnapshots.complete(requestID, accountID, accountName, outcome, finalError)
+	return snapshot, nil
 }
 
 func (s *AccountPoolService) prepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) (AccountScheduleResult, error) {
@@ -279,7 +305,7 @@ func (s *AccountPoolService) prepareSchedulableAccounts(ctx context.Context, req
 	if s.scheduleSnapshots != nil && snapshot != nil {
 		s.scheduleSnapshots.saveDraft(snapshot)
 	}
-	return AccountScheduleResult{Accounts: ordered, Pinned: pinned}, nil
+	return AccountScheduleResult{Accounts: ordered, Pinned: pinned, Snapshot: snapshot}, nil
 }
 
 func (s *AccountPoolService) rankSchedulableAccounts(accounts []*store.UpstreamAccountRecord, now time.Time, requestID, requestPath string) ([]*store.UpstreamAccountRecord, *LatestAccountScheduleSnapshot, bool) {

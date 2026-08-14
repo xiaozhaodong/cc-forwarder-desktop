@@ -70,7 +70,8 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 
 	if len(result.Candidates) == 0 {
 		if block := h.endpointManager.GetManualFixedRouteBlock(profile); block != nil {
-			h.endpointManager.NoteRouteDecision(block.Endpoint, block.Reason)
+			routeDecision := h.endpointManager.NoteRouteDecision(block.Endpoint, block.Reason)
+			lifecycleManager.SetRouteDecision(routeDecision, "")
 			lifecycleManager.FailRequest(block.Reason, block.Message, block.StatusCode)
 			h.endpointManager.CompleteEndpointScheduleSnapshot(connID, "", endpoint.EndpointScheduleOutcomeManualFixedBlocked, block.Message)
 			h.writeEndpointPipelineError(w, isSSE, flusher, block.StatusCode,
@@ -140,7 +141,8 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 
 		lifecycleManager.SetEndpointAttempt(ep.Config.Name, target.Revision())
 		h.endpointManager.RecordEndpointScheduleAttempt(connID, ep.Config.Name, endpoint.EndpointScheduleRuntimeAttempting, "")
-		h.endpointManager.NoteRouteDecision(ep.Config.Name, "")
+		routeDecision := h.endpointManager.NoteRouteDecision(ep.Config.Name, "")
+		lifecycleManager.SetRouteDecision(routeDecision, ep.Config.Name)
 		lifecycleManager.UpdateStatus("forwarding", i, 0)
 		*r = *r.WithContext(context.WithValue(r.Context(), "selected_endpoint", ep.Config.Name))
 

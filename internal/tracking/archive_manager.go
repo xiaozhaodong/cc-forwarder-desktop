@@ -310,6 +310,7 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 		INSERT INTO request_logs (
 			request_id, client_ip, user_agent, method, path,
 			start_time, end_time, duration_ms, first_token_ms, completion_ms,
+			upstream_write_ms, schedule_snapshot_json, privacy_scan_json,
 			request_family, endpoint_name, model_name,
 			upstream_type, upstream_source_name, upstream_name, upstream_id,
 			route_mode, requested_endpoint, effective_endpoint, fallback_reason, route_decision_at,
@@ -322,92 +323,136 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			input_cost_usd, output_cost_usd,
 			cache_creation_cost_usd, cache_creation_5m_cost_usd, cache_creation_1h_cost_usd,
 			cache_read_cost_usd, total_cost_usd
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare request_logs statement: %w", err)
 	}
 	defer requestStmt.Close()
 
+	// 每个请求的锁从读取快照一直持有到事务提交完成，形成明确的提交屏障：
+	// 提交前拿到锁的更新进入本次 INSERT；提交后的更新看到 archivePersisted，
+	// 由调用方回退为数据库 UPDATE，不会出现“内存更新成功但数据库仍是旧快照”。
+	lockedRequests := make([]*ActiveRequest, 0, len(events))
+	lockedRequestIDs := make(map[string]struct{}, len(events))
+	unlockRequests := func(persisted bool) {
+		for i := len(lockedRequests) - 1; i >= 0; i-- {
+			req := lockedRequests[i]
+			if persisted {
+				req.archivePersisted = true
+			}
+			req.mu.Unlock()
+		}
+	}
+
 	for _, event := range events {
+		if event == nil || event.Request == nil {
+			unlockRequests(false)
+			return fmt.Errorf("archive event request is nil")
+		}
 		req := event.Request
-		upstreamType := strings.TrimSpace(req.UpstreamType)
-		if upstreamType == "" {
-			upstreamType = "endpoint"
+		if _, duplicate := lockedRequestIDs[req.RequestID]; duplicate {
+			unlockRequests(false)
+			return fmt.Errorf("duplicate request %s in archive batch", req.RequestID)
 		}
+		lockedRequestIDs[req.RequestID] = struct{}{}
 
-		// v5.0.1+: 计算分开的成本
-		costBreakdown := am.calculateCostV2(req)
-
-		// 格式化时间
-		startTime := am.formatTime(req.StartTime)
-		var endTime interface{}
-		if req.EndTime != nil {
-			endTime = am.formatTime(*req.EndTime)
-		} else {
-			endTime = nil
-		}
-		var routeDecisionAt interface{}
-		if req.RouteDecisionAt != nil {
-			routeDecisionAt = am.formatTime(*req.RouteDecisionAt)
-		} else {
-			routeDecisionAt = nil
-		}
-		routeMode := req.RouteMode
-		if routeMode == "" {
-			routeMode = "auto"
-		}
-
-		_, err = requestStmt.ExecContext(ctx,
-			req.RequestID,
-			req.ClientIP,
-			req.UserAgent,
-			req.Method,
-			req.Path,
-			startTime,
-			endTime,
-			req.DurationMs,
-			req.FirstTokenMs,
-			req.CompletionMs,
-			normalizeRequestFamily(req.RequestFamily),
-			req.EndpointName,
-			req.ModelName,
-			upstreamType,
-			req.UpstreamSourceName,
-			req.UpstreamName,
-			req.UpstreamID,
-			routeMode,
-			req.RequestedEndpoint,
-			req.EffectiveEndpoint,
-			req.FallbackReason,
-			routeDecisionAt,
-			req.Status,
-			req.HTTPStatus,
-			req.RetryCount,
-			nullString(req.FailureReason),
-			nullString(req.CancelReason),
-			req.IsStreaming,
-			req.InputTokens,
-			req.OutputTokens,
-			req.CacheCreationTokens,
-			req.CacheCreation5mTokens,
-			req.CacheCreation1hTokens,
-			req.CacheReadTokens,
-			costBreakdown.InputCost,
-			costBreakdown.OutputCost,
-			costBreakdown.CacheCreationCost,   // 总成本（向后兼容）
-			costBreakdown.CacheCreation5mCost, // 5分钟缓存成本
-			costBreakdown.CacheCreation1hCost, // 1小时缓存成本
-			costBreakdown.CacheReadCost,
-			costBreakdown.TotalCost,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to insert request %s: %w", req.RequestID, err)
+		req.mu.Lock()
+		lockedRequests = append(lockedRequests, req)
+		if err := am.insertRequestEventLocked(ctx, requestStmt, event); err != nil {
+			unlockRequests(false)
+			return err
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
+		unlockRequests(false)
 		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	unlockRequests(true)
+
+	return nil
+}
+
+// insertRequestEventLocked 读取单条 ActiveRequest 并写入。
+// 调用方必须持有 req.mu 写锁，并保持到事务提交或回滚完成。
+func (am *ArchiveManager) insertRequestEventLocked(ctx context.Context, requestStmt *sql.Stmt, event *ArchiveEvent) error {
+	req := event.Request
+	upstreamType := strings.TrimSpace(req.UpstreamType)
+	if upstreamType == "" {
+		upstreamType = "endpoint"
+	}
+
+	// v5.0.1+: 计算分开的成本
+	costBreakdown := am.calculateCostV2(req)
+
+	// 格式化时间
+	startTime := am.formatTime(req.StartTime)
+	var endTime interface{}
+	if req.EndTime != nil {
+		endTime = am.formatTime(*req.EndTime)
+	} else {
+		endTime = nil
+	}
+	var routeDecisionAt interface{}
+	if req.RouteDecisionAt != nil {
+		routeDecisionAt = am.formatTime(*req.RouteDecisionAt)
+	} else {
+		routeDecisionAt = nil
+	}
+	routeMode := req.RouteMode
+	if routeMode == "" {
+		routeMode = "auto"
+	}
+
+	_, err := requestStmt.ExecContext(ctx,
+		req.RequestID,
+		req.ClientIP,
+		req.UserAgent,
+		req.Method,
+		req.Path,
+		startTime,
+		endTime,
+		req.DurationMs,
+		req.FirstTokenMs,
+		req.CompletionMs,
+		req.UpstreamWriteMs,
+		nullString(req.ScheduleSnapshotJSON),
+		nullString(req.PrivacyScanJSON),
+		normalizeRequestFamily(req.RequestFamily),
+		req.EndpointName,
+		req.ModelName,
+		upstreamType,
+		req.UpstreamSourceName,
+		req.UpstreamName,
+		req.UpstreamID,
+		routeMode,
+		req.RequestedEndpoint,
+		req.EffectiveEndpoint,
+		req.FallbackReason,
+		routeDecisionAt,
+		req.Status,
+		req.HTTPStatus,
+		req.RetryCount,
+		nullString(req.FailureReason),
+		nullString(req.CancelReason),
+		req.IsStreaming,
+		req.InputTokens,
+		req.OutputTokens,
+		req.CacheCreationTokens,
+		req.CacheCreation5mTokens,
+		req.CacheCreation1hTokens,
+		req.CacheReadTokens,
+		costBreakdown.InputCost,
+		costBreakdown.OutputCost,
+		costBreakdown.CacheCreationCost,   // 总成本（向后兼容）
+		costBreakdown.CacheCreation5mCost, // 5分钟缓存成本
+		costBreakdown.CacheCreation1hCost, // 1小时缓存成本
+		costBreakdown.CacheReadCost,
+		costBreakdown.TotalCost,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert request %s: %w", req.RequestID, err)
 	}
 
 	return nil

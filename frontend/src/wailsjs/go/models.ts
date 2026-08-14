@@ -1329,6 +1329,7 @@ export namespace main {
 	    cache_read_tokens: number;
 	    response_time: number;
 	    first_token_ms?: number;
+	    completion_ms?: number;
 	    is_streaming: boolean;
 	    cost: number;
 	
@@ -1366,9 +1367,50 @@ export namespace main {
 	        this.cache_read_tokens = source["cache_read_tokens"];
 	        this.response_time = source["response_time"];
 	        this.first_token_ms = source["first_token_ms"];
+	        this.completion_ms = source["completion_ms"];
 	        this.is_streaming = source["is_streaming"];
 	        this.cost = source["cost"];
 	    }
+	}
+	export class RequestLifecycleDetail {
+	    found: boolean;
+	    source?: string;
+	    request?: RequestRecord;
+	    upstream_write_ms?: number;
+	    schedule_snapshot_json?: string;
+	    privacy_scan_json?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RequestLifecycleDetail(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.found = source["found"];
+	        this.source = source["source"];
+	        this.request = this.convertValues(source["request"], RequestRecord);
+	        this.upstream_write_ms = source["upstream_write_ms"];
+	        this.schedule_snapshot_json = source["schedule_snapshot_json"];
+	        this.privacy_scan_json = source["privacy_scan_json"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class RequestListResult {
 	    requests: RequestRecord[];

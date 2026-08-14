@@ -181,6 +181,24 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		},
 		{
 			table:       "request_logs",
+			checkColumn: "upstream_write_ms",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_write_ms INTEGER",
+			description: "上游请求写完偏移字段（生命周期面板）",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "schedule_snapshot_json",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN schedule_snapshot_json TEXT",
+			description: "账号池调度快照字段（生命周期面板）",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "privacy_scan_json",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN privacy_scan_json TEXT",
+			description: "隐私扫描摘要字段（生命周期面板）",
+		},
+		{
+			table:       "request_logs",
 			checkColumn: "cache_creation_5m_tokens",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN cache_creation_5m_tokens INTEGER DEFAULT 0",
 			description: "5分钟缓存创建tokens字段",

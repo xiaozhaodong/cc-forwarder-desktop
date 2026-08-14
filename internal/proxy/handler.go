@@ -14,6 +14,7 @@ import (
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/middleware"
+	"cc-forwarder/internal/privacy"
 	"cc-forwarder/internal/proxy/handlers"
 	"cc-forwarder/internal/proxy/response"
 	"cc-forwarder/internal/tracking"
@@ -259,7 +260,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 🛡️ 请求级隐私过滤状态：同一 requestID + scopeFingerprint 重试时复用扫描结果
 	if h.privacyFilter != nil {
-		privacyState := handlers.NewPrivacyRequestState(lifecycleManager.GetRequestID())
+		reqID := lifecycleManager.GetRequestID()
+		privacyState := handlers.NewPrivacyRequestState(reqID)
+		// B4：只在主链路挂持久化 recorder。scanMu 串行化计数与对应持久化写，
+		// 保证并发通知时 scan_count 与 last-write-wins 落库顺序一致。
+		var scanMu sync.Mutex
+		var scanCount int
+		privacyState.SetResultRecorder(func(result privacy.ApplyResult, policyErr *privacy.PolicyError) {
+			if h.usageTracker == nil || reqID == "" {
+				return
+			}
+			scanMu.Lock()
+			defer scanMu.Unlock()
+			scanCount++
+			if payload := handlers.BuildPrivacyScanJSON(result, policyErr, scanCount); payload != "" {
+				h.usageTracker.RecordRequestUpdate(reqID, tracking.UpdateOptions{PrivacyScanJSON: &payload})
+			}
+		})
 		*r = *r.WithContext(handlers.WithPrivacyRequestState(r.Context(), privacyState))
 		ctx = r.Context()
 	}

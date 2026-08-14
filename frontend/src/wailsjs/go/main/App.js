@@ -178,6 +178,10 @@ export function GetRecentLogs(arg1) {
   return window['go']['main']['App']['GetRecentLogs'](arg1);
 }
 
+export function GetRequestLifecycleDetail(arg1) {
+  return window['go']['main']['App']['GetRequestLifecycleDetail'](arg1);
+}
+
 export function GetRequestTrendChart(arg1) {
   return window['go']['main']['App']['GetRequestTrendChart'](arg1);
 }

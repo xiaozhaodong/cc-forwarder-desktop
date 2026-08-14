@@ -47,6 +47,8 @@ type PrivacyRequestState struct {
 	RequestID string
 	mu        sync.Mutex
 	cache     map[string]*privacyCacheEntry
+	// resultRecorder 仅在真实 Apply 后触发（cache hit / 关闭 / 跳过不触发）。
+	resultRecorder func(privacy.ApplyResult, *privacy.PolicyError)
 }
 
 type privacyCacheEntry struct {
@@ -98,6 +100,29 @@ func (s *PrivacyRequestState) store(fingerprint string, body []byte, err error) 
 	s.cache[fingerprint] = &privacyCacheEntry{body: body, err: err}
 }
 
+// SetResultRecorder 挂载真实扫描结果的持久化回调（加锁设置）。
+func (s *PrivacyRequestState) SetResultRecorder(recorder func(privacy.ApplyResult, *privacy.PolicyError)) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resultRecorder = recorder
+}
+
+// notifyResult 在锁内复制函数指针后解锁调用，禁止持 state 锁执行 tracker 写入。
+func (s *PrivacyRequestState) notifyResult(result privacy.ApplyResult, policyErr *privacy.PolicyError) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	recorder := s.resultRecorder
+	s.mu.Unlock()
+	if recorder != nil {
+		recorder(result, policyErr)
+	}
+}
+
 // privacyScopeFingerprint 计算 attempt cache 键：
 // 默认保守包含所有 scope 维度；PrivacyScopeFingerprinter 可在无相关 scope 规则时省略端点/账号维度。
 // body hash 用于避免不同端点预处理后 body 不同却误复用缓存。
@@ -146,10 +171,14 @@ func ApplyPrivacyFilter(filter PrivacyFilter, r *http.Request, req privacy.Reque
 	}
 	result, err := filter.Apply(ctx, req, body)
 	logPrivacyApplyResult(req, result, err)
+	// 真实 Apply 后通知持久化（cache hit 不经过这里，天然不重复计）。
 	if err != nil {
+		policyErr := AsPrivacyPolicyError(err)
+		state.notifyResult(result, policyErr)
 		state.store(fingerprint, nil, err)
 		return nil, err
 	}
+	state.notifyResult(result, nil)
 	state.store(fingerprint, result.Body, nil)
 	return result.Body, nil
 }
@@ -239,4 +268,55 @@ func formatPrivacyDebugMatches(hits []privacy.RuleHit) string {
 		}
 	}
 	return strings.Join(parts, ",")
+}
+
+// privacyScanRuleJSON 隐私扫描摘要中的单条规则（只有规则名/计数，绝无命中原文）。
+type privacyScanRuleJSON struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+// BuildPrivacyScanJSON 按白名单构造隐私扫描摘要 JSON。
+// 语义为「最后一次真实扫描的结果」；action=disabled / 模式关闭时返回空串，调用方跳过写入。
+// PolicyError 短路时同样写入（action=blocked + blocked_code，取实际 PolicyError.Code）。
+func BuildPrivacyScanJSON(result privacy.ApplyResult, policyErr *privacy.PolicyError, scanCount int) string {
+	if scanCount <= 0 {
+		return ""
+	}
+	if policyErr == nil && (result.Action == "" || result.Action == privacy.ModeDisabled) {
+		return ""
+	}
+
+	summary := struct {
+		Action      string                `json:"action"`
+		HitCount    int                   `json:"hit_count"`
+		Rules       []privacyScanRuleJSON `json:"rules"`
+		Truncated   bool                  `json:"truncated"`
+		ScanMs      int64                 `json:"scan_ms"`
+		ScanCount   int                   `json:"scan_count"`
+		BlockedCode string                `json:"blocked_code,omitempty"`
+	}{
+		Action:    result.Action,
+		HitCount:  result.HitCount,
+		Rules:     make([]privacyScanRuleJSON, 0, len(result.RuleHits)),
+		Truncated: result.Truncated,
+		ScanMs:    result.ScanDuration.Milliseconds(),
+		ScanCount: scanCount,
+	}
+	if policyErr != nil {
+		summary.Action = "blocked"
+		summary.BlockedCode = policyErr.Code
+		if policyErr.Result.HitCount > 0 {
+			summary.HitCount = policyErr.Result.HitCount
+		}
+	}
+	for _, hit := range result.RuleHits {
+		summary.Rules = append(summary.Rules, privacyScanRuleJSON{Name: hit.RuleName, Count: hit.Count})
+	}
+
+	payload, err := json.Marshal(summary)
+	if err != nil {
+		return ""
+	}
+	return string(payload)
 }

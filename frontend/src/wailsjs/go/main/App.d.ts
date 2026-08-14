@@ -92,6 +92,8 @@ export function GetProxyURL():Promise<string>;
 
 export function GetRecentLogs(arg1:number):Promise<Array<logging.LogEntry>>;
 
+export function GetRequestLifecycleDetail(arg1:string):Promise<main.RequestLifecycleDetail>;
+
 export function GetRequestTrendChart(arg1:number):Promise<Array<main.ChartDataPoint>>;
 
 export function GetRequests(arg1:main.RequestQueryParams):Promise<main.RequestListResult>;

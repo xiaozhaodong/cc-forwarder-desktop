@@ -11,7 +11,9 @@ export const validateTimezone = (timezone) => {
   return value;
 };
 
-const parseTimestamp = (value) => {
+// 严格绝对时刻解析：仅接受有效 Date 或以 Z / ±hh:mm 结尾的时间点，
+// 空串、无时区后缀、无效日期均拒绝，避免浏览器按本地时区解释无时区字符串。
+export const parseTimestamp = (value) => {
   if (value instanceof Date) {
     if (!Number.isNaN(value.getTime())) return value;
     throw new Error('无效时间');

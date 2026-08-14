@@ -556,6 +556,18 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 		setParts = append(setParts, "route_decision_at = ?")
 		args = append(args, timezonepolicy.FormatStorage(*opts.RouteDecisionAt))
 	}
+	if opts.UpstreamWriteMs != nil {
+		setParts = append(setParts, "upstream_write_ms = COALESCE(upstream_write_ms, ?)")
+		args = append(args, *opts.UpstreamWriteMs)
+	}
+	if opts.ScheduleSnapshotJSON != nil {
+		setParts = append(setParts, "schedule_snapshot_json = ?")
+		args = append(args, *opts.ScheduleSnapshotJSON)
+	}
+	if opts.PrivacyScanJSON != nil {
+		setParts = append(setParts, "privacy_scan_json = ?")
+		args = append(args, *opts.PrivacyScanJSON)
+	}
 
 	// 如果没有字段需要更新，返回错误
 	if len(setParts) == 0 {

@@ -1249,7 +1249,7 @@ func TestCompleteLatestScheduleSnapshot_UpdatesOutcomeAndRuntimeCandidate(t *tes
 	if _, err := svc.PrepareSchedulableAccounts(ctx, "req-complete", "/v1/responses"); err != nil {
 		t.Fatalf("PrepareSchedulableAccounts failed: %v", err)
 	}
-	if err := svc.CompleteLatestScheduleSnapshot(ctx, "req-complete", selected.ID, selected.AccountName, accountScheduleOutcomeSuccess, ""); err != nil {
+	if _, err := svc.CompleteLatestScheduleSnapshot(ctx, "req-complete", selected.ID, selected.AccountName, accountScheduleOutcomeSuccess, ""); err != nil {
 		t.Fatalf("CompleteLatestScheduleSnapshot failed: %v", err)
 	}
 

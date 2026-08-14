@@ -43,38 +43,44 @@ type RetryContext struct {
 // RequestLifecycleManager 请求生命周期管理器
 // 负责管理请求的完整生命周期，确保所有请求都有完整的跟踪记录
 type RequestLifecycleManager struct {
-	usageTracker         *tracking.UsageTracker        // 使用跟踪器
-	monitoringMiddleware MonitoringMiddlewareInterface // 监控中间件
-	errorRecovery        *ErrorRecoveryManager         // 错误恢复管理器
-	eventBus             events.EventBus               // EventBus事件总线
-	endpointManager      *endpoint.Manager             // 端点管理器（用于失败追踪）
-	requestID            string                        // 请求唯一标识符
-	startTime            time.Time                     // 请求开始时间
-	modelMu              sync.RWMutex                  // 保护模型字段的读写锁
-	stateMu              sync.RWMutex                  // 保护生命周期状态字段
-	modelName            string                        // 模型名称
-	requestFamily        string                        // 请求类型 claude/codex/image/other
-	endpointName         string                        // 端点名称
-	endpointRevision     int64                         // AttemptPlan 配置 revision；0 表示非端点快照链路
-	upstreamType         string                        // 上游类型：endpoint/account
-	upstreamSourceName   string                        // 上游来源名（订阅源等）
-	upstreamName         string                        // 上游名称（账号或端点）
-	upstreamID           int64                         // 上游ID（账号ID，可空）
-	retryCount           int                           // 重试计数
-	lastStatus           string                        // 最后状态
-	lastError            error                         // 最后一次错误
-	finalStatusCode      int                           // 最终状态码
-	modelUpdatedInDB     bool                          // 标记是否已在数据库中更新过模型
-	modelUpdateMu        sync.Mutex                    // 保护模型更新标记
-	firstTokenOnce       sync.Once                     // 确保首响耗时仅记录一次
-	firstTokenStartTime  time.Time                     // 首响计时起点，默认请求开始；账号链路可改为上游请求写完
-	firstTokenAt         time.Time                     // 首个有效响应到达时间
-	timingMu             sync.RWMutex                  // 保护首响计时字段
-	attemptCounter       int                           // 内部尝试计数器（语义修复：统一重试计数）
-	attemptMu            sync.Mutex                    // 保护尝试计数器的互斥锁
-	pendingErrorContext  *ErrorContext                 // 预先计算的错误上下文，仅对下一个HandleError有效
-	pendingErrorOriginal error                         // 预先计算上下文对应的原始错误，用于校验匹配
-	pendingErrorMu       sync.Mutex                    // 保护预先计算错误上下文的互斥锁
+	usageTracker          *tracking.UsageTracker        // 使用跟踪器
+	monitoringMiddleware  MonitoringMiddlewareInterface // 监控中间件
+	errorRecovery         *ErrorRecoveryManager         // 错误恢复管理器
+	eventBus              events.EventBus               // EventBus事件总线
+	endpointManager       *endpoint.Manager             // 端点管理器（用于失败追踪）
+	requestID             string                        // 请求唯一标识符
+	startTime             time.Time                     // 请求开始时间
+	modelMu               sync.RWMutex                  // 保护模型字段的读写锁
+	stateMu               sync.RWMutex                  // 保护生命周期状态字段
+	modelName             string                        // 模型名称
+	requestFamily         string                        // 请求类型 claude/codex/image/other
+	endpointName          string                        // 端点名称
+	endpointRevision      int64                         // AttemptPlan 配置 revision；0 表示非端点快照链路
+	upstreamType          string                        // 上游类型：endpoint/account
+	upstreamSourceName    string                        // 上游来源名（订阅源等）
+	upstreamName          string                        // 上游名称（账号或端点）
+	upstreamID            int64                         // 上游ID（账号ID，可空）
+	routeMode             string                        // 本请求最近一次端点路由模式
+	requestedEndpoint     string                        // 本请求手动指定端点
+	effectiveEndpoint     string                        // 本请求实际选中端点
+	fallbackReason        string                        // 本请求 fallback/阻塞原因
+	routeDecisionAt       time.Time                     // 本请求最近一次路由决策时间
+	retryCount            int                           // 重试计数
+	lastStatus            string                        // 最后状态
+	lastError             error                         // 最后一次错误
+	finalStatusCode       int                           // 最终状态码
+	modelUpdatedInDB      bool                          // 标记是否已在数据库中更新过模型
+	modelUpdateMu         sync.Mutex                    // 保护模型更新标记
+	firstTokenOnce        sync.Once                     // 确保首响耗时仅记录一次
+	firstTokenStartTime   time.Time                     // 首响计时起点，默认请求开始；账号链路可改为上游请求写完
+	firstTokenAt          time.Time                     // 首个有效响应到达时间
+	upstreamWriteRecorded bool                          // 是否已持久化首个成功的上游写完回调；不限制重试更新首响起点
+	timingMu              sync.RWMutex                  // 保护首响计时字段
+	attemptCounter        int                           // 内部尝试计数器（语义修复：统一重试计数）
+	attemptMu             sync.Mutex                    // 保护尝试计数器的互斥锁
+	pendingErrorContext   *ErrorContext                 // 预先计算的错误上下文，仅对下一个HandleError有效
+	pendingErrorOriginal  error                         // 预先计算上下文对应的原始错误，用于校验匹配
+	pendingErrorMu        sync.Mutex                    // 保护预先计算错误上下文的互斥锁
 }
 
 type lifecycleStateSnapshot struct {
@@ -85,6 +91,11 @@ type lifecycleStateSnapshot struct {
 	upstreamSourceName string
 	upstreamName       string
 	upstreamID         int64
+	routeMode          string
+	requestedEndpoint  string
+	effectiveEndpoint  string
+	fallbackReason     string
+	routeDecisionAt    time.Time
 	retryCount         int
 	lastStatus         string
 	lastError          error
@@ -103,6 +114,11 @@ func (rlm *RequestLifecycleManager) snapshotState() lifecycleStateSnapshot {
 		upstreamSourceName: rlm.upstreamSourceName,
 		upstreamName:       rlm.upstreamName,
 		upstreamID:         rlm.upstreamID,
+		routeMode:          rlm.routeMode,
+		requestedEndpoint:  rlm.requestedEndpoint,
+		effectiveEndpoint:  rlm.effectiveEndpoint,
+		fallbackReason:     rlm.fallbackReason,
+		routeDecisionAt:    rlm.routeDecisionAt,
 		retryCount:         rlm.retryCount,
 		lastStatus:         rlm.lastStatus,
 		lastError:          rlm.lastError,
@@ -216,7 +232,7 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 				HttpStatus:         &httpStatus,
 				ModelName:          &currentModel,
 			}
-			rlm.attachRouteDiagnostics(&opts, state.endpointName)
+			rlm.attachRouteDiagnostics(&opts, state)
 			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
 		} else {
 			// 正常状态更新（模型已更新过或尚未就绪）
@@ -231,7 +247,7 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 				RetryCount:         &actualRetryCount,
 				HttpStatus:         &httpStatus,
 			}
-			rlm.attachRouteDiagnostics(&opts, state.endpointName)
+			rlm.attachRouteDiagnostics(&opts, state)
 			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
 		}
 	}
@@ -523,6 +539,33 @@ func (rlm *RequestLifecycleManager) SetEndpointAttempt(endpointName string, revi
 	rlm.setEndpoint(endpointName, revision)
 }
 
+// SetRouteDecision 保存本请求自己的路由决策快照。
+// RouteOverride 的 LastDecisionAt 是进程级展示状态，必须在候选选定时复制进请求，
+// 后续状态/失败更新不得再次回查全局值，否则并发请求会互相串写时间。
+func (rlm *RequestLifecycleManager) SetRouteDecision(route endpoint.RouteOverrideState, effectiveEndpoint string) {
+	mode := endpoint.NormalizeRouteMode(route.Mode)
+	requestedEndpoint := ""
+	if mode != endpoint.RouteModeAuto {
+		requestedEndpoint = route.EndpointName
+	}
+	fallbackReason := route.FallbackReason
+	if mode == endpoint.RouteModeManualPreferred && requestedEndpoint != "" && effectiveEndpoint != "" && requestedEndpoint != effectiveEndpoint {
+		fallbackReason = "manual_preferred_fallback"
+	}
+	decisionAt := route.LastDecisionAt
+	if decisionAt.IsZero() {
+		decisionAt = time.Now()
+	}
+
+	rlm.stateMu.Lock()
+	rlm.routeMode = mode
+	rlm.requestedEndpoint = requestedEndpoint
+	rlm.effectiveEndpoint = effectiveEndpoint
+	rlm.fallbackReason = fallbackReason
+	rlm.routeDecisionAt = decisionAt
+	rlm.stateMu.Unlock()
+}
+
 func (rlm *RequestLifecycleManager) setEndpoint(endpointName string, revision int64) {
 	rlm.stateMu.Lock()
 	rlm.endpointName = endpointName
@@ -669,18 +712,35 @@ func (rlm *RequestLifecycleManager) GetDuration() time.Duration {
 	return time.Since(rlm.startTime)
 }
 
-// SetFirstTokenStartTime 设置首响计时起点。
-// 上游请求写完后会把起点更新到该时刻，使 first_token_ms 更接近服务端 FRT。
+// SetFirstTokenStartTime 接受成功的上游写完时刻。
+// upstream_write_ms 仅持久化第一次成功写完，保留此前失败尝试耗时；
+// 首响到达前允许后续重试更新计时起点，使 first_token_ms 仍接近最终尝试的服务端 FRT。
 func (rlm *RequestLifecycleManager) SetFirstTokenStartTime(start time.Time) {
 	if start.IsZero() {
 		return
 	}
 	rlm.timingMu.Lock()
-	defer rlm.timingMu.Unlock()
 	if !rlm.firstTokenAt.IsZero() {
+		rlm.timingMu.Unlock()
 		return
 	}
 	rlm.firstTokenStartTime = start
+	shouldPersistUpstreamWrite := !rlm.upstreamWriteRecorded
+	var upstreamWriteMs int64
+	if shouldPersistUpstreamWrite {
+		rlm.upstreamWriteRecorded = true
+		upstreamWriteMs = start.Sub(rlm.startTime).Milliseconds()
+		if upstreamWriteMs < 0 {
+			upstreamWriteMs = 0
+		}
+	}
+	rlm.timingMu.Unlock()
+
+	if shouldPersistUpstreamWrite && rlm.usageTracker != nil && rlm.requestID != "" {
+		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
+			UpstreamWriteMs: &upstreamWriteMs,
+		})
+	}
 }
 
 // RecordFirstToken 记录首个有效响应到达耗时（首响）。
@@ -930,7 +990,7 @@ func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail strin
 
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		opts := tracking.UpdateOptions{}
-		rlm.attachRouteDiagnostics(&opts, state.endpointName)
+		rlm.attachRouteDiagnostics(&opts, state)
 		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
 	}
 
@@ -950,34 +1010,16 @@ func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail strin
 	rlm.notifyStatusChange("failed", state.retryCount, httpStatus)
 }
 
-func (rlm *RequestLifecycleManager) attachRouteDiagnostics(opts *tracking.UpdateOptions, effectiveEndpoint string) {
-	if opts == nil || rlm.endpointManager == nil {
+func (rlm *RequestLifecycleManager) attachRouteDiagnostics(opts *tracking.UpdateOptions, state lifecycleStateSnapshot) {
+	if opts == nil || state.routeDecisionAt.IsZero() {
 		return
 	}
 
-	route := rlm.endpointManager.GetClaudeRoutingOverride()
-	mode := route.Mode
-	if mode == "" {
-		mode = endpoint.RouteModeAuto
-	}
-	requestedEndpoint := ""
-	if mode != endpoint.RouteModeAuto {
-		requestedEndpoint = route.EndpointName
-	}
-	fallbackReason := route.FallbackReason
-	if mode == endpoint.RouteModeManualPreferred && requestedEndpoint != "" && effectiveEndpoint != "" && requestedEndpoint != effectiveEndpoint {
-		fallbackReason = "manual_preferred_fallback"
-	}
-	decisionAt := route.LastDecisionAt
-	if decisionAt.IsZero() {
-		decisionAt = time.Now()
-	}
-
-	opts.RouteMode = &mode
-	opts.RequestedEndpoint = &requestedEndpoint
-	opts.EffectiveEndpoint = &effectiveEndpoint
-	opts.FallbackReason = &fallbackReason
-	opts.RouteDecisionAt = &decisionAt
+	opts.RouteMode = &state.routeMode
+	opts.RequestedEndpoint = &state.requestedEndpoint
+	opts.EffectiveEndpoint = &state.effectiveEndpoint
+	opts.FallbackReason = &state.fallbackReason
+	opts.RouteDecisionAt = &state.routeDecisionAt
 }
 
 // CancelRequest 标记请求被取消

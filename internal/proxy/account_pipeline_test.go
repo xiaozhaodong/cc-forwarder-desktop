@@ -85,6 +85,8 @@ type mockAccountPoolService struct {
 	previewCalls      []string
 	prepareCalls      []accountSchedulePrepareCall
 	completeCalls     []accountScheduleCompleteCall
+	completeSnapshots []*servicepkg.LatestAccountScheduleSnapshot
+	completeErrors    []error
 	completeCtxErrs   []error
 	quotaRefreshCalls []int64
 	successCalls      []int64
@@ -132,9 +134,10 @@ func (m *mockAccountPoolService) ListSchedulableAccounts(ctx context.Context) ([
 	return out, nil
 }
 
-func (m *mockAccountPoolService) CompleteLatestScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, outcome, finalError string) error {
+func (m *mockAccountPoolService) CompleteLatestScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, outcome, finalError string) (*servicepkg.LatestAccountScheduleSnapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	callIndex := len(m.completeCalls)
 	m.completeCtxErrs = append(m.completeCtxErrs, ctx.Err())
 	m.completeCalls = append(m.completeCalls, accountScheduleCompleteCall{
 		requestID:   requestID,
@@ -143,7 +146,15 @@ func (m *mockAccountPoolService) CompleteLatestScheduleSnapshot(ctx context.Cont
 		outcome:     outcome,
 		finalError:  finalError,
 	})
-	return nil
+	var snapshot *servicepkg.LatestAccountScheduleSnapshot
+	if callIndex < len(m.completeSnapshots) {
+		snapshot = m.completeSnapshots[callIndex]
+	}
+	var err error
+	if callIndex < len(m.completeErrors) {
+		err = m.completeErrors[callIndex]
+	}
+	return snapshot, err
 }
 
 func (m *mockAccountPoolService) TryEnqueueQuotaRefresh(id int64) bool {
@@ -388,6 +399,60 @@ func TestAccountPipeline_StandaloneSearchReturnsExplicitOAuthUnavailableError(t 
 	}
 	if len(service.completeCalls) != 1 || service.completeCalls[0].finalError != errObj["message"] {
 		t.Fatalf("expected OAuth-specific schedule completion, got %+v", service.completeCalls)
+	}
+}
+
+func TestFailAndFinalizeAccountScheduleSnapshot_PersistsOnlyFinalSnapshot(t *testing.T) {
+	tracker := newLifecyclePanelTestTracker(t)
+	const requestID = "req-account-snapshot-finalize"
+
+	service := &mockAccountPoolService{
+		completeSnapshots: []*servicepkg.LatestAccountScheduleSnapshot{
+			{
+				RequestID:    requestID,
+				CapturedAt:   time.Now(),
+				UpdatedAt:    time.Now(),
+				FinalOutcome: servicepkg.AccountScheduleOutcomeTransientFailure,
+				Summary:      "attempt snapshot",
+			},
+			{
+				RequestID:    requestID,
+				CapturedAt:   time.Now(),
+				UpdatedAt:    time.Now(),
+				FinalOutcome: servicepkg.AccountScheduleOutcomeTransientFailure,
+				Summary:      "final snapshot",
+			},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, "https://example.com", service)
+	handler.SetUsageTracker(tracker)
+
+	rlm := NewRequestLifecycleManager(tracker, nil, requestID, nil)
+	rlm.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/responses", true)
+	if err := handler.failAndFinalizeAccountScheduleSnapshot(context.Background(), requestID, 7, "acct-a", "write failed"); err != nil {
+		t.Fatalf("failAndFinalizeAccountScheduleSnapshot failed: %v", err)
+	}
+
+	if len(service.completeCalls) != 2 {
+		t.Fatalf("expected attempt plus terminal completion, got %+v", service.completeCalls)
+	}
+	if service.completeCalls[0].accountID != 7 || service.completeCalls[1].accountID != 0 {
+		t.Fatalf("unexpected completion order: %+v", service.completeCalls)
+	}
+
+	data, err := tracker.GetRequestLifecycleData(context.Background(), requestID)
+	if err != nil {
+		t.Fatalf("GetRequestLifecycleData failed: %v", err)
+	}
+	if data == nil || data.ScheduleSnapshotJSON == "" {
+		t.Fatalf("expected finalized schedule snapshot, got %+v", data)
+	}
+	var persisted map[string]interface{}
+	if err := json.Unmarshal([]byte(data.ScheduleSnapshotJSON), &persisted); err != nil {
+		t.Fatalf("unmarshal persisted schedule snapshot failed: %v", err)
+	}
+	if persisted["summary"] != "final snapshot" {
+		t.Fatalf("expected only final snapshot persisted, got %v", persisted["summary"])
 	}
 }
 

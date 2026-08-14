@@ -24,6 +24,7 @@ import (
 	"cc-forwarder/internal/proxy/handlers"
 	svc "cc-forwarder/internal/service"
 	"cc-forwarder/internal/store"
+	"cc-forwarder/internal/tracking"
 	"cc-forwarder/internal/transport"
 )
 
@@ -116,6 +117,16 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		lifecycleManager.FailRequest("account_pool_load_failed", err.Error(), http.StatusServiceUnavailable)
 		writeAccountPipelineError(w, http.StatusServiceUnavailable, "account_pool_unavailable", "failed to load schedulable accounts")
 		return
+	}
+	// B3：调度草稿持久化（白名单 DTO）。decisionAt 同笔补写 route_decision_at。
+	if snap := schedule.Snapshot; snap != nil && h.usageTracker != nil && requestID != "" {
+		if payload := marshalScheduleSnapshot(snap); payload != "" {
+			decisionAt := snap.CapturedAt
+			h.usageTracker.RecordRequestUpdate(requestID, tracking.UpdateOptions{
+				ScheduleSnapshotJSON: &payload,
+				RouteDecisionAt:      &decisionAt,
+			})
+		}
 	}
 	accounts := schedule.Accounts
 	if len(accounts) == 0 {
@@ -223,7 +234,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			if writeErr := h.writeRawResponse(w, resp); writeErr != nil {
 				releaseUpstream()
 				lifecycleManager.FailRequest("account_pipeline_response_write_error", writeErr.Error(), resp.StatusCode)
-				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, writeErr.Error())
+				_ = h.failAndFinalizeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, writeErr.Error())
 				return
 			}
 			releaseUpstream()
@@ -282,7 +293,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				releaseUpstream()
 				lifecycleManager.FailRequest("account_pipeline_response_write_error", writeErr.Error(), resp.StatusCode)
 				_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, writeErr.Error(), h.accountProcessingFailureCooldown())
-				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, writeErr.Error())
+				_ = h.failAndFinalizeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, writeErr.Error())
 				return
 			}
 			releaseUpstream()
@@ -331,7 +342,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			// 流式响应一旦开始输出，无法切换到下一个账号，直接终止
 			if isSSE {
-				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, processErr.Error())
+				_ = h.failAndFinalizeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, processErr.Error())
 				return
 			}
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, processErr.Error())
@@ -410,10 +421,40 @@ func logAccountPipelineAttemptFailure(requestID string, acc *store.UpstreamAccou
 }
 
 func (h *Handler) completeAccountScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, outcome, finalError string) error {
+	snapshot, err := h.updateAccountScheduleSnapshot(ctx, requestID, accountID, accountName, outcome, finalError)
+	if err != nil {
+		return err
+	}
+	h.persistAccountScheduleSnapshot(requestID, snapshot)
+	return nil
+}
+
+func (h *Handler) updateAccountScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, outcome, finalError string) (*svc.LatestAccountScheduleSnapshot, error) {
 	if h.accountPoolService == nil {
-		return nil
+		return nil, nil
 	}
 	return h.accountPoolService.CompleteLatestScheduleSnapshot(ctx, requestID, accountID, accountName, outcome, finalError)
+}
+
+func (h *Handler) persistAccountScheduleSnapshot(requestID string, snapshot *svc.LatestAccountScheduleSnapshot) {
+	// B3：complete 覆盖写。matched=false（他人快照/超 TTL）时返回 nil，绝不写入错误快照。
+	if snapshot != nil && h.usageTracker != nil && requestID != "" {
+		if payload := marshalScheduleSnapshot(snapshot); payload != "" {
+			h.usageTracker.RecordRequestUpdate(requestID, tracking.UpdateOptions{
+				ScheduleSnapshotJSON: &payload,
+			})
+		}
+	}
+}
+
+func (h *Handler) failAndFinalizeAccountScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, finalError string) error {
+	// 先记录当前候选的运行态结果，再用 accountID=0 收口请求终态；只持久化收口后的最终 JSON。
+	_, attemptErr := h.updateAccountScheduleSnapshot(ctx, requestID, accountID, accountName, svc.AccountScheduleOutcomeTransientFailure, finalError)
+	finalSnapshot, finalErr := h.updateAccountScheduleSnapshot(ctx, requestID, 0, "", svc.AccountScheduleOutcomeTransientFailure, finalError)
+	if finalErr == nil {
+		h.persistAccountScheduleSnapshot(requestID, finalSnapshot)
+	}
+	return errors.Join(attemptErr, finalErr)
 }
 
 func newFallbackAccountScheduleRequestID() string {

@@ -105,6 +105,13 @@ func TestImageGeneration_ForwardsConfiguredProviderAndTracksRequest(t *testing.T
 		if detail.TotalCostUSD != 0.25 {
 			t.Fatalf("expected tracked image cost 0.25, got %f", detail.TotalCostUSD)
 		}
+		lifecycleData, err := tracker.GetRequestLifecycleData(context.Background(), detail.RequestID)
+		if err != nil {
+			t.Fatalf("query image lifecycle data failed: %v", err)
+		}
+		if lifecycleData == nil || lifecycleData.UpstreamWriteMs == nil {
+			t.Fatalf("expected image request upstream_write_ms without first-token callback, got %+v", lifecycleData)
+		}
 		return
 	}
 	t.Fatal("expected image generation request in request tracking")

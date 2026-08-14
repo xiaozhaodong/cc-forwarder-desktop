@@ -5,7 +5,7 @@
 
 import { API_ENDPOINTS, ERROR_MESSAGES } from './constants.js';
 import * as WailsApi from './wailsApi.js';
-import { normalizeRequestSource } from '@pages/requests/utils/requestSource.js';
+import { normalizeRequest } from '@pages/requests/utils/normalizeRequest.js';
 import { formatTimestamp as formatConfiguredTimestamp } from './timezone.js';
 
 // 检测是否在 Wails 环境中运行
@@ -242,38 +242,6 @@ export const fetchRequests = async (params = {}) => {
     source_view: params.source_view || params.sourceView || 'all'
   };
 
-  // 标准化请求数据（提取到外部，Wails和HTTP环境共用）
-  const normalizeRequest = (request) => normalizeRequestSource({
-    ...request,
-    requestFamily: request.request_family || request.requestFamily || 'other',
-    upstreamType: request.upstream_type || request.upstreamType || 'endpoint',
-    upstreamName: request.upstream_name || request.upstreamName || '',
-    upstreamSourceName: request.upstream_source_name || request.upstreamSourceName || '',
-    upstreamId: request.upstream_id || request.upstreamId || null,
-    requestId: request.request_id || request.requestId || request.id,
-    id: request.request_id || request.requestId || request.id,
-    timestamp: request.start_time || request.timestamp,
-    model: request.model_name || request.model || 'unknown',
-    endpoint: request.upstream_name || request.upstreamName || request.endpoint_name || request.endpoint || 'unknown',
-    duration: request.duration_ms || request.duration || 0,
-    firstTokenMs: request.first_token_ms ?? request.firstTokenMs ?? null,
-    completionMs: request.completion_ms ?? request.completionMs ?? null,
-    inputTokens: request.input_tokens || request.inputTokens || 0,
-    outputTokens: request.output_tokens || request.outputTokens || 0,
-    cacheCreationTokens: request.cache_creation_tokens || request.cacheCreationTokens || 0,
-    cacheCreation5mTokens: request.cache_creation_5m_tokens || request.cacheCreation5mTokens || 0, // v5.0.1+
-    cacheCreation1hTokens: request.cache_creation_1h_tokens || request.cacheCreation1hTokens || 0, // v5.0.1+
-    cacheReadTokens: request.cache_read_tokens || request.cacheReadTokens || 0,
-    cost: request.total_cost_usd || request.cost || 0,
-    isStreaming: request.is_streaming || request.isStreaming || false,
-    statusCode: request.status_code || request.statusCode,
-    routeMode: request.route_mode || request.routeMode || 'auto',
-    requestedEndpoint: request.requested_endpoint || request.requestedEndpoint || '',
-    effectiveEndpoint: request.effective_endpoint || request.effectiveEndpoint || '',
-    fallbackReason: request.fallback_reason || request.fallbackReason || '',
-    routeDecisionAt: request.route_decision_at || request.routeDecisionAt || ''
-  });
-
   // Wails 环境使用绑定
   if (isWailsEnvironment()) {
     // 直接传递所有参数给 wailsApi
@@ -322,6 +290,38 @@ export const fetchRequests = async (params = {}) => {
     page: data.page || 1,
     pageSize: data.pageSize || data.limit || 50,
     totalPages: data.totalPages || Math.ceil((data.total || 0) / (data.pageSize || data.limit || 50))
+  };
+};
+
+/**
+ * 安全解析 JSON 字符串，失败返回 null。
+ */
+export const safeParseJson = (value) => {
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * 获取单请求生命周期详情（B5.2 权威接口，桌面专用）。
+ * 返回解析好的对象：found / request（已过 normalizeRequest）/ upstreamWriteMs / scheduleSnapshot / privacyScan。
+ */
+export const fetchRequestLifecycleDetail = async (requestId) => {
+  if (!isWailsEnvironment()) {
+    return { found: false, request: null, upstreamWriteMs: null, scheduleSnapshot: null, privacyScan: null };
+  }
+  const detail = await WailsApi.getRequestLifecycleDetail(requestId);
+  return {
+    found: detail?.found === true,
+    request: detail?.request ? normalizeRequest(detail.request) : null,
+    upstreamWriteMs: detail?.upstream_write_ms ?? null,
+    scheduleSnapshot: safeParseJson(detail?.schedule_snapshot_json),
+    privacyScan: safeParseJson(detail?.privacy_scan_json)
   };
 };
 

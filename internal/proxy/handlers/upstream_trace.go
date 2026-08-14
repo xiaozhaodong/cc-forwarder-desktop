@@ -88,7 +88,9 @@ func WithUpstreamTrace(ctx context.Context, onWroteRequest func(time.Time)) (con
 		},
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
 			state.markWroteRequest(info.Err)
-			if onWroteRequest != nil {
+			// 只有完整写出成功才形成有效 upstream_write_ms；写出阶段报错时
+			// 请求可能只发送了部分内容，不能伪造“上游写完”时间。
+			if info.Err == nil && onWroteRequest != nil {
 				onWroteRequest(time.Now())
 			}
 		},

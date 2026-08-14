@@ -55,8 +55,14 @@ type ActiveRequest struct {
 
 	RouteDecisionAt *time.Time `json:"route_decision_at,omitempty"`
 
+	// v6.2 生命周期面板新增字段（热池合并；归档 INSERT 时落库）
+	UpstreamWriteMs      *int64 `json:"upstream_write_ms,omitempty"`
+	ScheduleSnapshotJSON string `json:"schedule_snapshot_json,omitempty"`
+	PrivacyScanJSON      string `json:"privacy_scan_json,omitempty"`
+
 	// 内部字段
-	mu sync.RWMutex `json:"-"` // 保护单个请求的并发访问
+	mu               sync.RWMutex `json:"-"` // 保护单个请求的并发访问
+	archivePersisted bool         `json:"-"` // 归档事务已提交；后续更新必须回退到数据库 UPDATE
 }
 
 // HotPoolConfig 热池配置
@@ -188,18 +194,28 @@ func (hp *HotPool) Add(req *ActiveRequest) error {
 	return nil
 }
 
-// Update 更新请求状态（高频操作，纯内存）
+// Update 更新请求状态（高频操作，纯内存）。
+// 同时覆盖 requests 与 archiving 两个 map：CompleteAndArchive 后的终态快照写入
+// 必须命中归档中的副本，由后续批量 INSERT 携带落库，避免退化为与 INSERT 竞速的异步 UPDATE。
 func (hp *HotPool) Update(requestID string, updater func(*ActiveRequest)) error {
 	hp.mu.RLock()
 	req, exists := hp.requests[requestID]
+	if !exists {
+		req, exists = hp.archiving[requestID]
+	}
 	hp.mu.RUnlock()
 
 	if !exists {
 		return fmt.Errorf("request %s not found in hot pool", requestID)
 	}
 
-	// 使用请求级别的锁进行更新
+	// 使用请求级别的锁进行更新。归档事务提交后，内存副本不再是权威状态：
+	// 返回错误让调用方降级为数据库 UPDATE，避免“更新成功但未进入已提交 INSERT”。
 	req.mu.Lock()
+	if req.archivePersisted {
+		req.mu.Unlock()
+		return fmt.Errorf("request %s archive already persisted", requestID)
+	}
 	updater(req)
 	req.mu.Unlock()
 
@@ -213,6 +229,95 @@ func (hp *HotPool) Get(requestID string) (*ActiveRequest, bool) {
 
 	req, exists := hp.requests[requestID]
 	return req, exists
+}
+
+// cloneActiveRequest 逐字段构造副本（调用方必须已持 req.mu.RLock）。
+// 不整体拷贝结构体，避免复制 sync.RWMutex（copylocks）与并发 Update 的数据竞争。
+func cloneActiveRequest(req *ActiveRequest) *ActiveRequest {
+	clone := &ActiveRequest{
+		RequestID:             req.RequestID,
+		StartTime:             req.StartTime,
+		ClientIP:              req.ClientIP,
+		UserAgent:             req.UserAgent,
+		Method:                req.Method,
+		Path:                  req.Path,
+		RequestFamily:         req.RequestFamily,
+		IsStreaming:           req.IsStreaming,
+		Status:                req.Status,
+		EndpointName:          req.EndpointName,
+		UpstreamType:          req.UpstreamType,
+		UpstreamSourceName:    req.UpstreamSourceName,
+		UpstreamName:          req.UpstreamName,
+		UpstreamID:            req.UpstreamID,
+		RouteMode:             req.RouteMode,
+		RequestedEndpoint:     req.RequestedEndpoint,
+		EffectiveEndpoint:     req.EffectiveEndpoint,
+		FallbackReason:        req.FallbackReason,
+		RetryCount:            req.RetryCount,
+		HTTPStatus:            req.HTTPStatus,
+		ModelName:             req.ModelName,
+		FailureReason:         req.FailureReason,
+		CancelReason:          req.CancelReason,
+		InputTokens:           req.InputTokens,
+		OutputTokens:          req.OutputTokens,
+		CacheCreationTokens:   req.CacheCreationTokens,
+		CacheCreation5mTokens: req.CacheCreation5mTokens,
+		CacheCreation1hTokens: req.CacheCreation1hTokens,
+		CacheReadTokens:       req.CacheReadTokens,
+		DurationMs:            req.DurationMs,
+		TotalCostUSD:          req.TotalCostUSD,
+		ScheduleSnapshotJSON:  req.ScheduleSnapshotJSON,
+		PrivacyScanJSON:       req.PrivacyScanJSON,
+	}
+	if req.EndTime != nil {
+		value := *req.EndTime
+		clone.EndTime = &value
+	}
+	if req.FirstTokenMs != nil {
+		value := *req.FirstTokenMs
+		clone.FirstTokenMs = &value
+	}
+	if req.CompletionMs != nil {
+		value := *req.CompletionMs
+		clone.CompletionMs = &value
+	}
+	if req.CostOverrideUSD != nil {
+		value := *req.CostOverrideUSD
+		clone.CostOverrideUSD = &value
+	}
+	if req.RouteDecisionAt != nil {
+		value := *req.RouteDecisionAt
+		clone.RouteDecisionAt = &value
+	}
+	if req.UpstreamWriteMs != nil {
+		value := *req.UpstreamWriteMs
+		clone.UpstreamWriteMs = &value
+	}
+	return clone
+}
+
+// SnapshotRequest 同时查询 requests 与尚未提交的 archiving 请求，
+// 并在请求锁下逐字段构造新对象返回（不复制锁，规避 copylocks 与并发 Update 的数据竞争）。
+// 归档事务已提交的副本视为 miss，由上层读取数据库权威记录。
+func (hp *HotPool) SnapshotRequest(requestID string) (*ActiveRequest, bool) {
+	hp.mu.RLock()
+	req, exists := hp.requests[requestID]
+	if !exists {
+		req, exists = hp.archiving[requestID]
+	}
+	hp.mu.RUnlock()
+	if !exists {
+		return nil, false
+	}
+
+	req.mu.RLock()
+	defer req.mu.RUnlock()
+	// 事务已经提交但 ConfirmArchived 尚未移除 map 的极短窗口内，数据库才是权威来源。
+	// 无论查 map 时请求还在 active 还是已经进入 archiving，都以锁下的提交状态为准。
+	if req.archivePersisted {
+		return nil, false
+	}
+	return cloneActiveRequest(req), true
 }
 
 // Remove 从热池中移除请求（归档时调用）
