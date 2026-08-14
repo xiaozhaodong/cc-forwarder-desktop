@@ -21,22 +21,6 @@ import {
   toRemainingPercent
 } from '../utils.js';
 
-const buildQuotaDisplayText = (remaining, resetAt, formatQuotaResetTime) => {
-  const remainingText = Number.isFinite(remaining) ? `${remaining.toFixed(0)}%` : '';
-  const resetText = formatQuotaResetTime(resetAt);
-
-  if (remainingText && resetText) {
-    return `${remainingText} · ${resetText} 重置`;
-  }
-  if (remainingText) {
-    return remainingText;
-  }
-  if (resetText) {
-    return `${resetText} 重置`;
-  }
-  return '-';
-};
-
 const AccountRow = ({
   account,
   busyKey,
@@ -86,8 +70,6 @@ const AccountRow = ({
   const quotaWeeklyRemaining = toRemainingPercent(quotaWeeklyUsed);
   const quota5hResetAt = account.quota_5h_reset_at || account.quota5hResetAt;
   const quotaWeeklyResetAt = account.quota_weekly_reset_at || account.quotaWeeklyResetAt;
-  const quota5hDisplayText = buildQuotaDisplayText(quota5hRemaining, quota5hResetAt, formatQuotaResetTime);
-  const quotaWeeklyDisplayText = buildQuotaDisplayText(quotaWeeklyRemaining, quotaWeeklyResetAt, formatQuotaResetTime);
   const quota5hResetLabel = formatQuotaResetTime(quota5hResetAt);
   const quotaWeeklyResetLabel = formatQuotaResetTime(quotaWeeklyResetAt);
 

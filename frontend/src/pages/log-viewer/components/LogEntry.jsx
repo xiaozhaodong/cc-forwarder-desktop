@@ -1,5 +1,4 @@
 // LogEntry.jsx - 单条日志显示组件
-import React from 'react';
 import { LOG_LEVELS } from '../constants';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 

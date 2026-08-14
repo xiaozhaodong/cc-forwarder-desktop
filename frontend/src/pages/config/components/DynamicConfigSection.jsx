@@ -6,7 +6,6 @@
 
 import { Settings } from 'lucide-react';
 import ConfigSection from './ConfigSection.jsx';
-import ConfigItem from './ConfigItem.jsx';
 
 const DynamicConfigSection = ({ sectionName, sectionData }) => {
   // 格式化纳秒为可读时间格式

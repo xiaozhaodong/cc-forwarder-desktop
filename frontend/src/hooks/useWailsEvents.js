@@ -17,6 +17,16 @@ const WAILS_EVENTS = {
   NOTIFICATION: 'notification'
 };
 
+// 事件映射：前端事件名 -> Wails 事件名（模块级常量，避免每次渲染重建）
+const eventMapping = {
+  'status': WAILS_EVENTS.SYSTEM_STATUS,
+  'endpoint': WAILS_EVENTS.ENDPOINT_UPDATE,
+  'usage': WAILS_EVENTS.USAGE_UPDATE,
+  'config': WAILS_EVENTS.CONFIG_RELOADED,
+  'error': WAILS_EVENTS.ERROR,
+  'notification': WAILS_EVENTS.NOTIFICATION
+};
+
 // 连接状态
 export const WAILS_STATUS = {
   DISCONNECTED: 'disconnected',
@@ -46,16 +56,6 @@ const useWailsEvents = (onDataUpdate, options = {}) => {
   useEffect(() => {
     onDataUpdateRef.current = onDataUpdate;
   }, [onDataUpdate]);
-
-  // 事件映射：前端事件名 -> Wails 事件名
-  const eventMapping = {
-    'status': WAILS_EVENTS.SYSTEM_STATUS,
-    'endpoint': WAILS_EVENTS.ENDPOINT_UPDATE,
-    'usage': WAILS_EVENTS.USAGE_UPDATE,
-    'config': WAILS_EVENTS.CONFIG_RELOADED,
-    'error': WAILS_EVENTS.ERROR,
-    'notification': WAILS_EVENTS.NOTIFICATION
-  };
 
   // 订阅事件
   const subscribe = useCallback(async () => {

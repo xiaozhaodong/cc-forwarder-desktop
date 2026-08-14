@@ -102,7 +102,6 @@ const AccountInventoryTable = ({
   rows = [],
   busyKey = '',
   selectedRowIds = [],
-  selectedCount = 0,
   allVisibleSelected = false,
   onToggleAllRows,
   onToggleRow,

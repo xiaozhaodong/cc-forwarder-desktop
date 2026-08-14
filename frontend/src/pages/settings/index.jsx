@@ -64,7 +64,6 @@ const SettingsPage = () => {
   const [error, setError] = useState(null);
   const [changes, setChanges] = useState({}); // 跟踪变更: { "category.key": newValue }
   const [saveMessage, setSaveMessage] = useState(null);
-  const [expandedCategories, setExpandedCategories] = useState(new Set());
 
   const isWails = isWailsEnvironment();
 
@@ -95,11 +94,6 @@ const SettingsPage = () => {
       setSettings(settingsData || []);
       setPortInfo(portData);
       setChanges({});
-
-      // 默认展开所有分类
-      if (categoriesData && categoriesData.length > 0) {
-        setExpandedCategories(new Set(categoriesData.map(c => c.name)));
-      }
     } catch (err) {
       setError(err.message || '加载设置失败');
     } finally {

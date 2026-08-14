@@ -3,7 +3,7 @@
 // 2026-03-21
 // ============================================
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useCallback, useDeferredValue, useMemo, useState } from 'react';
 
 const ALL_FILTER_VALUE = 'all';
 
@@ -491,6 +491,8 @@ const useAccountPoolDashboardState = ({ inventory = {}, onBatchAction, externalV
   const [batchFeedback, setBatchFeedback] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_INVENTORY_PAGE_SIZES[0]);
+  // 已处理的外部 focus-group 请求 ID（渲染期一次性应用的去重标记）
+  const [handledExternalViewRequestId, setHandledExternalViewRequestId] = useState(null);
 
   const savedViews = useMemo(
     () => mergeSavedViews(inventory.savedViews || filters.savedViews),
@@ -531,19 +533,22 @@ const useAccountPoolDashboardState = ({ inventory = {}, onBatchAction, externalV
   );
   const visibleRows = paginationState.rows;
 
-  useEffect(() => {
-    if (paginationState.currentPage !== currentPage) {
-      setCurrentPage(paginationState.currentPage);
-      setSelectedRowIds([]);
-      setBatchFeedback(null);
-    }
-  }, [currentPage, paginationState.currentPage]);
+  // 渲染期状态校准（React 官方 adjust-state-during-render 模式，替代 effect 内同步 setState）：
+  // 过滤/删行导致当前页越界时，立即钳制页码并清空选择，本次渲染即被丢弃重渲。
+  if (paginationState.currentPage !== currentPage) {
+    setCurrentPage(paginationState.currentPage);
+    setSelectedRowIds([]);
+    setBatchFeedback(null);
+  }
 
-  useEffect(() => {
-    if (!externalViewRequest?.requestId || externalViewRequest?.type !== 'focus-group') {
-      return;
-    }
-
+  // 外部 focus-group 请求同样在渲染期处理：以 requestId 为一次性标记，
+  // 同一请求只应用一次（旧 effect 会在 searchTerm/defaultFilterValues 变化时误重放）。
+  if (
+    externalViewRequest?.requestId
+    && externalViewRequest?.type === 'focus-group'
+    && handledExternalViewRequestId !== externalViewRequest.requestId
+  ) {
+    setHandledExternalViewRequestId(externalViewRequest.requestId);
     setSearchTerm(filters.searchTerm || '');
     setFilterValues({
       ...defaultFilterValues,
@@ -553,7 +558,7 @@ const useAccountPoolDashboardState = ({ inventory = {}, onBatchAction, externalV
     setCurrentPage(1);
     setSelectedRowIds([]);
     setBatchFeedback(null);
-  }, [defaultFilterValues, externalViewRequest, filters.searchTerm]);
+  }
 
   const effectiveSelectedRowIds = useMemo(() => {
     const availableIds = new Set(rows.map((item) => String(item.id)));

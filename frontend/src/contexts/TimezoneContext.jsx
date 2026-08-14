@@ -25,6 +25,8 @@ export const TimezoneProvider = ({ children }) => {
   }, []);
 
   useEffect(() => {
+    // reload 为异步初始加载：setState 发生在 await 之后，非同步级联渲染，规则误报。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     reload();
     const unsubscribe = subscribeToEvent('config:reloaded', reload);
     return () => unsubscribe?.();
@@ -58,6 +60,8 @@ export const TimezoneProvider = ({ children }) => {
   return <TimezoneContext.Provider value={value}>{children}</TimezoneContext.Provider>;
 };
 
+// Context 配套 Hook 与 Provider 同文件是项目惯例；仅影响 HMR 精度，不影响构建。
+// eslint-disable-next-line react-refresh/only-export-components
 export const useTimezone = () => {
   const context = useContext(TimezoneContext);
   if (!context) throw new Error('useTimezone 必须在 TimezoneProvider 内使用');

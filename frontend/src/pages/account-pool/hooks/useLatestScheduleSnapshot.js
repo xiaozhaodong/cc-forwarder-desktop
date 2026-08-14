@@ -39,6 +39,8 @@ const useLatestScheduleSnapshot = ({ showNotice }) => {
   }, [showNotice]);
 
   useEffect(() => {
+    // 异步初始加载：setState 发生在 await 之后，非同步级联渲染，规则误报。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadLatestScheduleSnapshot({ silent: true });
   }, [loadLatestScheduleSnapshot]);
 

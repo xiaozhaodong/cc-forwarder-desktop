@@ -1,5 +1,4 @@
 // LogControls.jsx - 日志控制按钮组件
-import React from 'react';
 import {
   Pause,
   Play,

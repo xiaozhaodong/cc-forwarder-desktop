@@ -17,6 +17,8 @@ import {
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
 
+// 快照结果解析与抽屉组件同文件（被测试与页面共用）；仅影响 HMR 精度，不影响构建。
+// eslint-disable-next-line react-refresh/only-export-components
 export const resolveSnapshotOutcome = (snapshot = {}) => {
   const outcome = String(snapshot.finalOutcome || snapshot.final_outcome || '').trim().toLowerCase();
   const config = {

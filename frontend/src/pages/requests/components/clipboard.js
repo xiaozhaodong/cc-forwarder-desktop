@@ -17,7 +17,7 @@ function legacyCopyText(text) {
   let copied = false;
   try {
     copied = document.execCommand('copy');
-  } catch (error) {
+  } catch {
     copied = false;
   }
 
