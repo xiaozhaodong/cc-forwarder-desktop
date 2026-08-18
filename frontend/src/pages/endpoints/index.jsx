@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, Database, Info, Plus, RefreshCw, Route } from 'lucide-react';
+import { Activity, AlertTriangle, Boxes, Database, Info, Plus, RefreshCw, Route } from 'lucide-react';
 import { Button, ErrorMessage, LoadingSpinner } from '@components/ui';
 import useEndpointsData from '@hooks/useEndpointsData.js';
 import { DeleteConfirmDialog, EndpointCard, EndpointForm, EndpointRow, EndpointScheduleDrawer, ViewModeSwitcher, resolveSnapshotOutcome } from './components';
 import { fetchLatestEndpointScheduleSnapshot } from '@utils/endpointScheduleApi.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
+import ClaudeModelsPanel from './components/ClaudeModelsPanel.jsx';
 import {
   clearClaudeRoutingOverride,
   createEndpointRecord,
@@ -34,6 +35,7 @@ const EndpointsPage = () => {
   const [snapshot, setSnapshot] = useState({ hasSnapshot: false, decisions: [] });
   const [snapshotUnsupported, setSnapshotUnsupported] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [modelsOpen, setModelsOpen] = useState(false);
   const [editingEndpoint, setEditingEndpoint] = useState(undefined);
   const [formOpen, setFormOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -134,6 +136,7 @@ const EndpointsPage = () => {
           <Button variant="ghost" size="sm" icon={RefreshCw} onClick={() => run('refresh', refresh)} loading={busyKey === 'refresh'}>刷新</Button>
           <Button variant="secondary" icon={Activity} onClick={() => run('test:all', testAllEndpoints)} loading={busyKey === 'test:all'}>批量测试</Button>
           <Button variant="secondary" icon={Route} onClick={() => setDrawerOpen(true)}>调度快照</Button>
+          <Button variant="secondary" icon={Boxes} onClick={() => setModelsOpen(true)}>模型目录</Button>
           <Button icon={Plus} onClick={() => { setEditingEndpoint(undefined); setFormOpen(true); }}>新建端点</Button>
         </div>
       </div>
@@ -209,6 +212,7 @@ const EndpointsPage = () => {
       </div>
 
       <EndpointScheduleDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} snapshot={snapshot} unsupported={snapshotUnsupported} />
+      <ClaudeModelsPanel open={modelsOpen} onClose={() => setModelsOpen(false)} />
       {formOpen && <EndpointForm endpoint={editingEndpoint} onSave={saveEndpoint} onCancel={() => { setFormOpen(false); setEditingEndpoint(undefined); }} loading={busyKey.startsWith('save:')} />}
       {deleteTarget && <DeleteConfirmDialog endpoint={deleteTarget} loading={busyKey === `delete:${deleteTarget.name}`} onCancel={() => setDeleteTarget(null)} onConfirm={async () => { await run(`delete:${deleteTarget.name}`, () => deleteEndpointRecord(deleteTarget.name)); setDeleteTarget(null); }} />}
     </div>

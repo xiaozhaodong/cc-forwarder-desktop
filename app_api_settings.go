@@ -219,6 +219,9 @@ func (a *App) UpdateSetting(input UpdateSettingInput) error {
 			return err
 		}
 	}
+	if err := normalizeClaudeModelSetting(&input); err != nil {
+		return err
+	}
 	if input.Category == service.CategoryImageGeneration && input.Key == "api_key" && input.Value == "" {
 		return nil
 	}
@@ -250,6 +253,11 @@ func (a *App) BatchUpdateSettings(input BatchUpdateSettingsInput) error {
 	defer cancel()
 	if err := a.validateImageGenerationSettingUpdates(ctx, input.Settings); err != nil {
 		return err
+	}
+	for index := range input.Settings {
+		if err := normalizeClaudeModelSetting(&input.Settings[index]); err != nil {
+			return err
+		}
 	}
 
 	// 转换为 store.SettingRecord

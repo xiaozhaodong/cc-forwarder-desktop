@@ -32,6 +32,7 @@ type Handler struct {
 	usageTracker                  *tracking.UsageTracker
 	accountPoolService            AccountPoolService
 	codexModelsProvider           CodexModelListProvider
+	claudeModelsProvider          ClaudeModelListProvider
 	imageGenerationConfigProvider ImageGenerationConfigProvider
 	monitoringMiddleware          *middleware.MonitoringMiddleware
 	responseProcessor             *response.Processor
@@ -60,6 +61,10 @@ type Handler struct {
 
 type CodexModelListProvider interface {
 	GetCodexModelListResponse(ctx context.Context) ([]byte, bool, error)
+}
+
+type ClaudeModelListProvider interface {
+	GetClaudeModelListResponse(ctx context.Context) ([]byte, error)
 }
 
 // ImageGenerationConfigProvider 提供独立图像生成上游配置。
@@ -152,6 +157,11 @@ func (h *Handler) SetCodexModelListProvider(provider CodexModelListProvider) {
 	h.codexModelsProvider = provider
 }
 
+// SetClaudeModelListProvider 设置 Claude Code Gateway Discovery 的本地展示目录提供器。
+func (h *Handler) SetClaudeModelListProvider(provider ClaudeModelListProvider) {
+	h.claudeModelsProvider = provider
+}
+
 // SetImageGenerationConfigProvider 设置独立图像生成配置提供器。
 func (h *Handler) SetImageGenerationConfigProvider(provider ImageGenerationConfigProvider) {
 	h.imageGenerationConfigProvider = provider
@@ -188,6 +198,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	connID := ""
 	if connIDValue, ok := r.Context().Value("conn_id").(string); ok {
 		connID = connIDValue
+	}
+
+	if h.isClaudeModelsRequest(r) {
+		h.handleClaudeModelsRequest(ctx, w)
+		return
 	}
 
 	if h.isCodexModelsRequest(r) {
@@ -329,7 +344,43 @@ func writeRequestBodyError(w http.ResponseWriter, path string, bodyErr *requestB
 }
 
 func (h *Handler) isCodexModelsRequest(r *http.Request) bool {
-	return r != nil && r.Method == http.MethodGet && r.URL.Path == "/v1/models"
+	return r != nil && r.Method == http.MethodGet && r.URL.Path == "/v1/models" && !h.isClaudeModelsRequest(r)
+}
+
+func (h *Handler) isClaudeModelsRequest(r *http.Request) bool {
+	return r != nil && r.Method == http.MethodGet && r.URL.Path == "/v1/models" && strings.TrimSpace(r.Header.Get("anthropic-version")) != ""
+}
+
+func (h *Handler) handleClaudeModelsRequest(ctx context.Context, w http.ResponseWriter) {
+	if h == nil || h.claudeModelsProvider == nil {
+		writeClaudeModelsError(w, http.StatusServiceUnavailable, "claude_models_unavailable", "Claude model catalog is not available")
+		return
+	}
+
+	responseBytes, err := h.claudeModelsProvider.GetClaudeModelListResponse(ctx)
+	if err != nil {
+		writeClaudeModelsError(w, http.StatusInternalServerError, "claude_models_error", "failed to load Claude model catalog")
+		return
+	}
+	if len(responseBytes) == 0 {
+		responseBytes = []byte(`{"data":[]}`)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(responseBytes)
+}
+
+func writeClaudeModelsError(w http.ResponseWriter, statusCode int, errType, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"type": "error",
+		"error": map[string]string{
+			"type":    errType,
+			"message": message,
+		},
+	})
 }
 
 func (h *Handler) handleCodexModelsRequest(ctx context.Context, w http.ResponseWriter, r *http.Request) {

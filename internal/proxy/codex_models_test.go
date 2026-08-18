@@ -25,6 +25,104 @@ func (m mockCodexModelListProvider) GetCodexModelListResponse(context.Context) (
 	return m.response, m.handled, m.err
 }
 
+type mockClaudeModelListProvider struct {
+	response []byte
+	err      error
+}
+
+func (m mockClaudeModelListProvider) GetClaudeModelListResponse(context.Context) ([]byte, error) {
+	return m.response, m.err
+}
+
+func TestHandler_ClaudeGatewayModelsUsesAnthropicHeaderBeforeCodexRouting(t *testing.T) {
+	tracker := newCodexModelsTestTracker(t)
+	defer tracker.Close()
+
+	fallbackHits := 0
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		http.Error(w, "unexpected fallback", http.StatusBadGateway)
+	}))
+	defer fallbackServer.Close()
+
+	handler := newCodexModelsPassthroughTestHandler(t, config.EndpointConfig{
+		Name:     "claude-upstream",
+		URL:      fallbackServer.URL,
+		Priority: 1,
+		Timeout:  30 * time.Second,
+		Token:    "fallback-token",
+	})
+	handler.SetUsageTracker(tracker)
+	handler.SetCodexModelListProvider(mockCodexModelListProvider{
+		handled:  true,
+		response: []byte(`{"object":"list","data":[{"id":"gpt-5.3-codex"}]}`),
+	})
+	handler.SetClaudeModelListProvider(mockClaudeModelListProvider{
+		response: []byte(`{"data":[{"id":"deepseek-v4-flash[1m]","display_name":"DeepSeek V4 Flash"},{"id":"kimi-k3","display_name":"Kimi K3"},{"id":"glm-5.2[1m]","display_name":"GLM 5.2"}]}`),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models?limit=1000", nil)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req = req.WithContext(context.WithValue(req.Context(), "conn_id", "req-claude-models"))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if fallbackHits != 0 {
+		t.Fatalf("expected Claude catalog to avoid endpoint fallback, got %d hits", fallbackHits)
+	}
+	var payload struct {
+		Data []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if len(payload.Data) != 3 || payload.Data[0].ID != "deepseek-v4-flash[1m]" || payload.Data[2].ID != "glm-5.2[1m]" {
+		t.Fatalf("unexpected Claude discovery response: %+v", payload.Data)
+	}
+	assertNoTrackedRequest(t, tracker, "req-claude-models")
+}
+
+func TestHandler_ClaudeGatewayModelsWithoutProviderReturnsAnthropicError(t *testing.T) {
+	tracker := newCodexModelsTestTracker(t)
+	defer tracker.Close()
+
+	handler := newCodexModelsPassthroughTestHandler(t)
+	handler.SetUsageTracker(tracker)
+	handler.SetCodexModelListProvider(mockCodexModelListProvider{
+		handled:  true,
+		response: []byte(`{"object":"list","data":[{"id":"gpt-5.3-codex"}]}`),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req = req.WithContext(context.WithValue(req.Context(), "conn_id", "req-claude-models-unavailable"))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error response failed: %v", err)
+	}
+	if payload.Type != "error" || payload.Error.Type != "claude_models_unavailable" {
+		t.Fatalf("unexpected Anthropic error response: %+v", payload)
+	}
+	assertNoTrackedRequest(t, tracker, "req-claude-models-unavailable")
+}
+
 func TestHandler_LocalCodexModelsInterceptsModelsRequest(t *testing.T) {
 	tracker := newCodexModelsTestTracker(t)
 	defer tracker.Close()

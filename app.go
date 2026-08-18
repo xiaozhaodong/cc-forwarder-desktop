@@ -824,6 +824,7 @@ func (a *App) setupProxyHandler() {
 		a.proxyHandler.SetPrivacyFilter(a.privacyService)
 	}
 	a.proxyHandler.SetCodexModelListProvider(&codexModelListProvider{app: a})
+	a.proxyHandler.SetClaudeModelListProvider(&claudeModelListProvider{app: a})
 	a.proxyHandler.SetImageGenerationConfigProvider(&imageGenerationConfigProvider{app: a})
 }
 
