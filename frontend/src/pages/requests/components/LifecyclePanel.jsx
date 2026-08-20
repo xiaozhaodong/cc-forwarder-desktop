@@ -111,26 +111,32 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
             const pct = (segment.ms / totalMs) * 100;
             // 块宽按耗时比例伸展，但保证文字放得下（min-w-max）；
             // 占比过小的段只显示时间，名称见下方图例与 title。
+            // 终态段 label 为短标签，原始错误全文经 detail 走 tooltip。
             const showLabel = pct >= 10;
+            const tooltip = `${segment.label} ${formatSegmentMs(segment.ms)}${segment.detail ? `\n${segment.detail}` : ''}`;
             return (
               <div
                 key={segment.key}
                 className={`${lifecycleSegmentColors[segment.key] || 'bg-slate-200'} rounded-md flex items-center justify-center px-2 min-w-max transition-all`}
                 style={{ flexGrow: Math.max(segment.ms, 1), flexBasis: 0 }}
-                title={`${segment.label} ${formatSegmentMs(segment.ms)}`}
+                title={tooltip}
               >
-                <span className="text-[11px] font-mono font-medium text-slate-700/90 whitespace-nowrap">
+                <span className="text-[11px] font-mono font-medium text-slate-700/90 whitespace-nowrap max-w-[220px] overflow-hidden text-ellipsis">
                   {showLabel ? `${segment.label} ${formatSegmentMs(segment.ms)}` : formatSegmentMs(segment.ms)}
                 </span>
               </div>
             );
           })}
         </div>
-        <div className="flex items-center gap-4 mt-2 text-[11px] text-slate-500">
+        <div className="flex items-center flex-wrap gap-x-4 gap-y-1 mt-2 text-[11px] text-slate-500">
           {segments.map((segment) => (
-            <span key={segment.key} className="inline-flex items-center gap-1.5">
-              <span className={`w-2.5 h-2.5 rounded-sm ${lifecycleSegmentColors[segment.key] || 'bg-slate-200'}`} />
-              {segment.label}
+            <span
+              key={segment.key}
+              className="inline-flex items-center gap-1.5 min-w-0"
+              title={segment.detail || undefined}
+            >
+              <span className={`w-2.5 h-2.5 rounded-sm shrink-0 ${lifecycleSegmentColors[segment.key] || 'bg-slate-200'}`} />
+              <span className="truncate max-w-[220px]">{segment.label}</span>
             </span>
           ))}
         </div>

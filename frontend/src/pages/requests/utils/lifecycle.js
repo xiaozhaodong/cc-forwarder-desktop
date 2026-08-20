@@ -51,14 +51,61 @@ export const resolveConnectMs = (request = {}) => {
   return Math.max(0, upstreamWriteMs - (queueMs ?? 0));
 };
 
+// 终态短标签归类规则（按优先级匹配错误码；`connection` 须排在 `timeout` 后，
+// 保证 connection_timeout 归入「超时」；`privacy_scan` 须排在 `privacy` 前，区分
+// 扫描引擎故障与规则命中拦截；stream 只匹配码首或 `_` 后，避免误吞 upstream 系码）。
+const REASON_LABEL_RULES = [
+  [/rate_limit/, '限流'],
+  [/auth/, '鉴权失败'],
+  [/privacy_scan/, '隐私扫描失败'],
+  [/privacy/, '隐私拦截'],
+  [/timeout/, '超时'],
+  [/network|eof/, '网络错误'],
+  [/no_healthy|no_endpoints|no_available_providers|pool_exhausted|pool_not_ready|pool_load_failed|all_endpoints_failed/, '无可用上游'],
+  [/server_error/, '服务器错误'],
+  [/client_error/, '上游拒绝'],
+  [/invalid_upstream|upstream_error/, '上游错误'],
+  [/write_error|read_error/, '读写错误'],
+  [/parsing/, '解析错误'],
+  [/empty_response/, '空响应'],
+  [/(?:^|_)stream/, '流错误'],
+  [/http_error/, 'HTTP 错误'],
+  [/unknown/, '未知错误'],
+  [/connection/, '网络错误'],
+  [/rejected/, '冷却拦截'],
+  [/cancel|disconnect/, '已取消']
+];
+
+// summarizeTerminalReason 从原始终态串提取短标签。
+// 存储格式（tracker.RecordRequestFinalFailure）：`code: detail`，detail 常含 `status=NNN`。
+// 归类失败时：结构化码（`code: …` 或整串即码）原样显示；自由文本返回 null 由调用方回退。
+export const summarizeTerminalReason = (reason) => {
+  const text = String(reason || '').trim();
+  if (!text) return null;
+  const codeMatch = text.match(/^([a-z][a-z0-9_]*)(:|\s|$)/i);
+  if (!codeMatch) return null;
+  // 自由文本（首词后跟空格）首词不可信，须先回退，否则会撞规则表被误归类：
+  // 例如 cancelReason `stream processing cancelled` 首词命中 stream 规则会错标成「流错误」。
+  const isStructuredCode = codeMatch[2] === ':' || codeMatch[2] === '';
+  if (!isStructuredCode) return null;
+  const code = codeMatch[1].toLowerCase();
+  const statusMatch = text.match(/\b(?:upstream_)?status=(\d{3})\b/);
+  const statusSuffix = statusMatch ? ` ${statusMatch[1]}` : '';
+  const rule = REASON_LABEL_RULES.find(([pattern]) => pattern.test(code));
+  return `${rule ? rule[1] : code}${statusSuffix}`;
+};
+
 // terminalSegment 终态标注段：failed/cancelled 时返回，否则 null。
+// label 只放短标签，原始全文经 detail 供 tooltip 展示（完整错误另见详情页错误卡片）。
 const terminalSegment = (request = {}, ms = 0) => {
   const status = String(request.status || '').toLowerCase();
   if (status === 'failed' || status === 'error') {
-    return { key: 'failure', label: request.failureReason || '失败', ms };
+    const detail = request.failureReason || '';
+    return { key: 'failure', label: summarizeTerminalReason(detail) || '失败', ms, detail };
   }
   if (status === 'cancelled') {
-    return { key: 'cancelled', label: request.cancelReason || '已取消', ms };
+    const detail = request.cancelReason || '';
+    return { key: 'cancelled', label: summarizeTerminalReason(detail) || '已取消', ms, detail };
   }
   return null;
 };

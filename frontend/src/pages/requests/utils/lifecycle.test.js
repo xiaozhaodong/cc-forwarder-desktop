@@ -6,6 +6,7 @@ import {
   resolveConnectMs,
   resolveQueueMs,
   resolveRawQueueMs,
+  summarizeTerminalReason,
   TAIL_THRESHOLD_MS
 } from './lifecycle.js';
 
@@ -110,20 +111,98 @@ test('非流式：completion=0 不出流式段，first 段命名「响应」', (
   assert.equal(first.label, '响应');
 });
 
-test('failed/cancelled：已知段照画，末尾补标注段', () => {
+test('failed/cancelled：已知段照画，末尾补标注段（短标签 + detail 全文）', () => {
+  const rawReason = 'rate_limited: endpoint=xuanwulei status=429 content_type=text/event-stream body={"error":{"message":"Service Unavailable","type":"error"},"type":"error"}';
   const failed = buildLifecycleSegments({
     ...base,
     duration: 11000,
     status: 'failed',
-    failureReason: 'upstream_500'
+    failureReason: rawReason
   });
-  assert.equal(failed[failed.length - 1].key, 'failure');
-  assert.equal(failed[failed.length - 1].label, 'upstream_500');
+  const failureSeg = failed[failed.length - 1];
+  assert.equal(failureSeg.key, 'failure');
+  assert.equal(failureSeg.label, '限流 429');
+  assert.equal(failureSeg.detail, rawReason);
 
   const cancelled = buildLifecycleSegments({
     ...base,
     status: 'cancelled',
-    cancelReason: 'client disconnected'
+    cancelReason: 'client disconnected during streaming'
   });
-  assert.equal(cancelled[cancelled.length - 1].key, 'cancelled');
+  const cancelSeg = cancelled[cancelled.length - 1];
+  assert.equal(cancelSeg.key, 'cancelled');
+  assert.equal(cancelSeg.label, '已取消');
+  assert.equal(cancelSeg.detail, 'client disconnected during streaming');
+});
+
+test('summarizeTerminalReason：错误码归类 + status 提取', () => {
+  assert.equal(
+    summarizeTerminalReason('rate_limited: endpoint=x status=429 body={"error":"..."}'),
+    '限流 429'
+  );
+  assert.equal(summarizeTerminalReason('auth_error: token expired'), '鉴权失败');
+  assert.equal(summarizeTerminalReason('privacy_blocked: rule=id_card'), '隐私拦截');
+  assert.equal(summarizeTerminalReason('connection_timeout: dial tcp'), '超时');
+  assert.equal(summarizeTerminalReason('network_error'), '网络错误');
+  assert.equal(
+    summarizeTerminalReason('upstream_no_available_providers: status=503 no providers'),
+    '无可用上游 503'
+  );
+  assert.equal(summarizeTerminalReason('server_error: status=502'), '服务器错误 502');
+  assert.equal(summarizeTerminalReason('upstream_client_error: status=400'), '上游拒绝 400');
+  assert.equal(summarizeTerminalReason('incomplete_stream'), '流错误');
+  assert.equal(summarizeTerminalReason('rejected_by_failure_tracker: cooldown'), '冷却拦截');
+  assert.equal(summarizeTerminalReason('client_cancelled: closed'), '已取消');
+});
+
+test('summarizeTerminalReason：upstream 系码不被 stream 规则误吞', () => {
+  assert.equal(
+    summarizeTerminalReason('image_generation_upstream_error: upstream_status=502 reason=bad_gateway'),
+    '上游错误 502'
+  );
+  assert.equal(
+    summarizeTerminalReason('image_api_invalid_upstream_response: content_type=text/html'),
+    '上游错误'
+  );
+  // stream 规则仍覆盖码首与 `_` 后的 stream。
+  assert.equal(summarizeTerminalReason('stream_truncated'), '流错误');
+  assert.equal(summarizeTerminalReason('account_stream_error: broken pipe'), '流错误');
+});
+
+test('summarizeTerminalReason：未识别结构化码原样显示，自由文本与空值回退 null', () => {
+  // 结构化未识别码：显示码本身，避免整串全文。
+  assert.equal(summarizeTerminalReason('some_new_code: detail here'), 'some_new_code');
+  // 整串即码（无冒号无空格）视为结构化。
+  assert.equal(summarizeTerminalReason('weird_code_123'), 'weird_code_123');
+  // 自由英文句子：首词不可信，返回 null 由调用方回退「失败/已取消」。
+  assert.equal(summarizeTerminalReason('something went wrong badly'), null);
+  // 回归：自由文本首词即便撞上规则表也必须回退，不能被误归类。
+  // endpoint_pipeline.go 的 cancelReason `stream processing cancelled` 曾被错标成「流错误」。
+  assert.equal(summarizeTerminalReason('stream processing cancelled'), null);
+  assert.equal(summarizeTerminalReason('rate_limit hit while writing'), null);
+  assert.equal(summarizeTerminalReason(''), null);
+  assert.equal(summarizeTerminalReason(null), null);
+  assert.equal(summarizeTerminalReason(undefined), null);
+});
+
+test('summarizeTerminalReason：隐私扫描故障与规则命中拦截区分开', () => {
+  assert.equal(summarizeTerminalReason('privacy_scan_failed: engine panic'), '隐私扫描失败');
+  assert.equal(summarizeTerminalReason('privacy_blocked: rule=id_card'), '隐私拦截');
+});
+
+test('后端真实 cancelReason 均落到「已取消」段', () => {
+  // 取值来源：endpoint_pipeline.go / account_pipeline.go / lifecycle_manager.go 的 CancelRequest 调用点。
+  const reasons = [
+    'stream processing cancelled',
+    'account stream processing cancelled',
+    'client disconnected',
+    'context canceled'
+  ];
+  for (const cancelReason of reasons) {
+    const segments = buildLifecycleSegments({ ...base, status: 'cancelled', cancelReason });
+    const seg = segments[segments.length - 1];
+    assert.equal(seg.key, 'cancelled', `${cancelReason} 段类型应为 cancelled`);
+    assert.equal(seg.label, '已取消', `${cancelReason} 应标为「已取消」`);
+    assert.equal(seg.detail, cancelReason);
+  }
 });
