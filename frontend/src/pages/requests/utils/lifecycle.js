@@ -51,29 +51,49 @@ export const resolveConnectMs = (request = {}) => {
   return Math.max(0, upstreamWriteMs - (queueMs ?? 0));
 };
 
-// 终态短标签归类规则（按优先级匹配错误码；`connection` 须排在 `timeout` 后，
-// 保证 connection_timeout 归入「超时」；`privacy_scan` 须排在 `privacy` 前，区分
-// 扫描引擎故障与规则命中拦截；stream 只匹配码首或 `_` 后，避免误吞 upstream 系码）。
+// 终态短标签归类规则（按优先级匹配错误码）。顺序约束逐条注释，改动前先跑
+// lifecycle.test.js 的「后端真实 failureReason 全量归类」基线。
 const REASON_LABEL_RULES = [
   [/rate_limit/, '限流'],
+  // oauth_unavailable 须排在 auth 前：codex_search_oauth_unavailable 是「没有可用的 OAuth 账号」，
+  // 被 /auth/ 吞成「鉴权失败」会把排查引向凭据问题。
+  [/oauth_unavailable/, '无可用上游'],
   [/auth/, '鉴权失败'],
-  [/privacy_scan/, '隐私扫描失败'],
+  // privacy_scan / privacy_filter_error 是扫描引擎自身故障，须排在 privacy 前，
+  // 与 privacy_blocked 的规则命中拦截区分开。
+  [/privacy_scan|privacy_filter_error/, '隐私扫描失败'],
   [/privacy/, '隐私拦截'],
+  // timeout 须排在 connection 前，保证 connection_timeout 归入「超时」。
   [/timeout/, '超时'],
-  [/network|eof/, '网络错误'],
-  [/no_healthy|no_endpoints|no_available_providers|pool_exhausted|pool_not_ready|pool_load_failed|all_endpoints_failed/, '无可用上游'],
+  [/network|eof|transport_error/, '网络错误'],
+  [/no_healthy|no_endpoints|no_available_providers|pool_exhausted|pool_not_ready|pool_load_failed|pool_disabled|pool_empty|all_endpoints_failed|endpoint_missing|endpoint_disabled/, '无可用上游'],
+  // 端点负缓存命中（RouteBlock endpoint_capability_mismatch 的 FailureClass）。
+  // 这三条须写全码而非 `unsupported` 通配，否则会抢在 stream 规则前吞掉 stream_flusher_unsupported。
+  [/model_unsupported/, '模型不支持'],
+  [/schema_incompatible/, '协议不兼容'],
+  [/count_tokens_unsupported/, '不支持计数'],
+  [/payload_too_large|body_too_large|window_too_large/, '请求过大'],
+  [/unsupported_content_encoding/, '编码不支持'],
+  [/method_not_allowed/, '方法不支持'],
+  [/config_error|invalid_config|not_configured/, '配置错误'],
+  // invalid_request 须排在 request_error 前，否则 invalid_request_error 会被后者吞成「请求构造失败」。
+  [/invalid_zstd|invalid_request/, '请求无效'],
   [/server_error/, '服务器错误'],
   [/client_error/, '上游拒绝'],
-  [/invalid_upstream|upstream_error/, '上游错误'],
-  [/write_error|read_error/, '读写错误'],
+  [/invalid_upstream|upstream_error|ambiguous_failure/, '上游错误'],
+  [/request_error/, '请求构造失败'],
+  [/write_error|read_error|read_failed/, '读写错误'],
   [/parsing/, '解析错误'],
   [/empty_response/, '空响应'],
+  // stream 只匹配码首或 `_` 后，避免误吞 upstream 系码。
   [/(?:^|_)stream/, '流错误'],
   [/http_error/, 'HTTP 错误'],
   [/unknown/, '未知错误'],
   [/connection/, '网络错误'],
-  [/rejected/, '冷却拦截'],
-  [/cancel|disconnect/, '已取消']
+  [/rejected|cooldown/, '冷却拦截'],
+  [/cancel|disconnect/, '已取消'],
+  // endpoint_pipeline.go 流式失败的兜底 status 字面量，无附加语义，等同自由文本回退。
+  [/^error$/, '失败']
 ];
 
 // summarizeTerminalReason 从原始终态串提取短标签。

@@ -11,6 +11,24 @@ const MAX_MODELS = 1000;
 const MAX_TEXT_LENGTH = 256;
 const emptyCatalog = () => ({ enabled: true, models: [] });
 
+const utf8Encoder = new TextEncoder();
+
+// compareUtf8Bytes 复刻 Go 的 string `<`（UTF-8 字节序），与后端 NormalizeClaudeModelCatalog 对齐。
+// 两种更省事的写法都不正确：
+//   localeCompare —— 依赖运行时 locale，且大小写不敏感，与后端字节序无关；
+//   JS 的 `<`      —— 按 UTF-16 code unit 比较，补充平面字符的结果与 UTF-8 字节序相反
+//                    （U+10000 的首 code unit 是代理区 0xD800 < U+E000，但其 UTF-8 首字节
+//                     0xF0 > U+E000 的 0xEE）。
+// ID 校验只禁空白与控制字符，emoji 等补充平面字符可以通过，所以必须逐字节比较，
+// 否则保存后的界面顺序会与落库顺序、/v1/models 输出顺序不一致。
+const compareUtf8Bytes = (left, right) => {
+  const shared = Math.min(left.length, right.length);
+  for (let index = 0; index < shared; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return left.length - right.length;
+};
+
 // 行 key 必须与 model.id 解耦，否则输入 ID 时每个字符都会触发行重挂载导致失焦。
 let modelUidSeed = 0;
 const nextModelUid = () => {
@@ -48,11 +66,13 @@ const normalizeForSave = (value) => {
       enabled: Boolean(model.enabled)
     };
   });
-  models.sort((left, right) => {
-    if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
-    return left.id.localeCompare(right.id);
+  // 预编码一次再排序，避免比较函数里重复 encode（目录上限 1000 条）。
+  const keyed = models.map((model) => ({ model, idBytes: utf8Encoder.encode(model.id) }));
+  keyed.sort((left, right) => {
+    if (left.model.enabled !== right.model.enabled) return left.model.enabled ? -1 : 1;
+    return compareUtf8Bytes(left.idBytes, right.idBytes);
   });
-  return { enabled: Boolean(value.enabled), models };
+  return { enabled: Boolean(value.enabled), models: keyed.map((item) => item.model) };
 };
 
 const validateCatalog = (catalog) => {
