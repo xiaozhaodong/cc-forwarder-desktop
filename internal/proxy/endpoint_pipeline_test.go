@@ -611,3 +611,120 @@ func TestEndpointPipeline_NewEpochSettlementNormal(t *testing.T) {
 		t.Fatal("新 epoch trip 后应进入冷却(自愈保护不破坏)")
 	}
 }
+
+// runEndpointPipelineWithLifecycle 直接驱动管线并回收生命周期内部状态。
+// usageTracker 传 nil：落库调用被守卫跳过，但归属字段仍写入内部状态，
+// 从而在不起 SQLite 的前提下断言「追踪记录会拿到什么上游」。
+func runEndpointPipelineWithLifecycle(t *testing.T, handler *Handler) (*httptest.ResponseRecorder, lifecycleStateSnapshot) {
+	t.Helper()
+
+	body := `{"model":"claude-test","messages":[]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	lifecycleManager := NewRequestLifecycleManager(nil, nil, "req-endpoint-pipeline", nil)
+	handler.handleEndpointPipeline(req.Context(), recorder, req, []byte(body), lifecycleManager, false)
+	return recorder, lifecycleManager.snapshotState()
+}
+
+// 前置拒绝发生在候选循环外，SetEndpointAttempt 不会执行。
+// 不补归属则请求追踪落空上游，前端只能显示「未知上游」，看不出是哪个端点触发的阈值。
+// ShouldRejectRequest 的第一逻辑候选优先取 manual 目标，路由上下文同样不能丢。
+func TestEndpointPipeline_RejectMode_RecordsRejectedEndpointAsUpstream(t *testing.T) {
+	handler, manager := newEndpointPipelineTestHandlerWithAction(t, "reject",
+		endpointPipelineConfig("primary", endpointPipelineClosedURL(t), 1))
+	manager.SetClaudeRoutingOverride(endpoint.RouteOverrideState{
+		Mode:            endpoint.RouteModeManualPreferred,
+		EndpointName:    "primary",
+		FallbackEnabled: true,
+	})
+	manager.SetEndpointCooldown("primary", time.Minute,
+		endpoint.SoftFailureCooldownReason(endpoint.SoftFailureCategoryRateLimit))
+
+	recorder, state := runEndpointPipelineWithLifecycle(t, handler)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected reject-mode 503, got status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if state.endpointName != "primary" || state.upstreamName != "primary" {
+		t.Fatalf("被拒绝端点须落进上游归属: endpoint=%q upstream=%q", state.endpointName, state.upstreamName)
+	}
+	if state.routeMode != endpoint.RouteModeManualPreferred || state.requestedEndpoint != "primary" {
+		t.Fatalf("route_mode 须落真实值而非默认 auto: mode=%q requested=%q", state.routeMode, state.requestedEndpoint)
+	}
+	if state.fallbackReason != "rejected_by_failure_tracker" || state.routeDecisionAt.IsZero() {
+		t.Fatalf("路由诊断缺失: fallback=%q decisionAt=%v", state.fallbackReason, state.routeDecisionAt)
+	}
+}
+
+// manual_fixed 被 block 时端点是已知的，必须落进上游归属；
+// effectiveEndpoint 仍为空——本次并未真正打到上游，两者语义不同不可合并。
+func TestEndpointPipeline_ManualFixedBlock_RecordsBlockedEndpointAsUpstream(t *testing.T) {
+	handler, manager := newEndpointPipelineTestHandler(t,
+		endpointPipelineConfig("primary", endpointPipelineClosedURL(t), 1))
+	manager.SetClaudeRoutingOverride(endpoint.RouteOverrideState{
+		Mode:         endpoint.RouteModeManualFixed,
+		EndpointName: "primary",
+	})
+	manager.SetEndpointCooldown("primary", time.Minute,
+		endpoint.SoftFailureCooldownReason(endpoint.SoftFailureCategoryRateLimit))
+
+	_, state := runEndpointPipelineWithLifecycle(t, handler)
+	if state.endpointName != "primary" || state.upstreamName != "primary" {
+		t.Fatalf("被 block 端点须落进上游归属: endpoint=%q upstream=%q", state.endpointName, state.upstreamName)
+	}
+	if state.effectiveEndpoint != "" {
+		t.Fatalf("block 未真正打到上游，effectiveEndpoint 须留空, got=%q", state.effectiveEndpoint)
+	}
+	if state.routeMode != endpoint.RouteModeManualFixed || state.requestedEndpoint != "primary" {
+		t.Fatalf("路由上下文丢失: mode=%q requested=%q", state.routeMode, state.requestedEndpoint)
+	}
+}
+
+// 候选为空时确实没有端点可归属，但路由模式必须落真实值：
+// 不补则 route_mode 落库为默认 auto，manual_preferred 期间的失败会被误读成自动调度。
+func TestEndpointPipeline_NoCandidates_PreservesRouteContext(t *testing.T) {
+	handler, manager := newEndpointPipelineTestHandler(t,
+		endpointPipelineConfig("primary", endpointPipelineClosedURL(t), 1))
+	manager.SetClaudeRoutingOverride(endpoint.RouteOverrideState{
+		Mode:            endpoint.RouteModeManualPreferred,
+		EndpointName:    "primary",
+		FallbackEnabled: true,
+	})
+	manager.SetEndpointCooldown("primary", time.Minute,
+		endpoint.SoftFailureCooldownReason(endpoint.SoftFailureCategoryRateLimit))
+
+	recorder, state := runEndpointPipelineWithLifecycle(t, handler)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 without candidates, got status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if state.endpointName != "" || state.upstreamName != "" {
+		t.Fatalf("无候选时不得伪造上游归属: endpoint=%q upstream=%q", state.endpointName, state.upstreamName)
+	}
+	if state.routeMode != endpoint.RouteModeManualPreferred || state.requestedEndpoint != "primary" {
+		t.Fatalf("route_mode 须落真实值而非默认 auto: mode=%q requested=%q", state.routeMode, state.requestedEndpoint)
+	}
+	if state.fallbackReason != "no_routable_candidates" {
+		t.Fatalf("unexpected fallback reason: %q", state.fallbackReason)
+	}
+	if state.routeDecisionAt.IsZero() {
+		t.Fatal("routeDecisionAt 为零值时 attachRouteDiagnostics 会整体跳过，路由诊断仍会丢失")
+	}
+}
+
+// 无候选且路由为 auto 时不得污染全局 LastEffectiveEndpoint——
+// NoteRouteDecision 会把它清空并触发前端事件，本请求诊断不该有这种副作用。
+func TestEndpointPipeline_NoCandidates_DoesNotClearGlobalRouteDecision(t *testing.T) {
+	handler, manager := newEndpointPipelineTestHandler(t,
+		endpointPipelineConfig("primary", endpointPipelineClosedURL(t), 1))
+	manager.NoteRouteDecision("primary", "")
+	manager.SetEndpointCooldown("primary", time.Minute,
+		endpoint.SoftFailureCooldownReason(endpoint.SoftFailureCategoryRateLimit))
+
+	if _, state := runEndpointPipelineWithLifecycle(t, handler); state.routeMode != endpoint.RouteModeAuto {
+		t.Fatalf("expected auto route mode, got %q", state.routeMode)
+	}
+	if got := manager.GetClaudeRoutingOverride().LastEffectiveEndpoint; got != "primary" {
+		t.Fatalf("全局 LastEffectiveEndpoint 被本请求诊断改写: %q", got)
+	}
+}

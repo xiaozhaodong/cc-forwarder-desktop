@@ -77,3 +77,62 @@ test('同时存在时 start_time 保持为权威请求时间', () => {
   });
   assert.equal(result.timestamp, '2026-08-13T00:00:02.000000Z');
 });
+
+// 空上游归类必须穿过真实规范化入口才算数：normalizeRequest 会在 endpoint 位写
+// pick(..., 'unknown') 兜底，只有当两条链路都把空上游落成空串（而非省略字段）时，
+// 该兜底才不会抢在 failureReason 归类之前。任一侧改成省略空字段都会打断这条链路。
+test('Wails 链路空上游穿过规范化入口仍归类为「无可用上游」', () => {
+  // wailsApi.js getRequests 重映射：upstream_name / endpoint 均显式写 '' 而非省略
+  const result = normalizeRequest({
+    request_id: 'req-50067b2c',
+    timestamp: '2026-08-21T09:31:35.242112Z',
+    request_family: 'claude',
+    upstream_type: 'endpoint',
+    upstream_name: '',
+    upstream_source_name: '',
+    upstream_id: null,
+    endpoint_name: '',
+    endpoint: '',
+    model: 'claude-opus-5',
+    status: 'failed',
+    failure_reason: 'no_endpoints_available: no routable endpoint candidates'
+  });
+  assert.equal(result.upstreamName, '无可用上游');
+  assert.equal(result.endpoint, '', "endpoint 落 'unknown' 会抢在 failureReason 归类前");
+});
+
+test('HTTP 链路空上游穿过规范化入口仍归类为「无可用上游」', () => {
+  // queries.go 结构体无 omitempty，空串一定出现在 JSON 中
+  const result = normalizeRequest({
+    request_id: 'req-3256d654',
+    start_time: '2026-08-21T09:31:44.317779Z',
+    request_family: 'claude',
+    endpoint_name: '',
+    upstream_type: 'endpoint',
+    upstream_source_name: '',
+    upstream_name: '',
+    upstream_id: 0,
+    route_mode: 'manual_preferred',
+    requested_endpoint: 'xuanwulei',
+    effective_endpoint: '',
+    fallback_reason: 'no_routable_candidates',
+    model_name: 'claude-opus-5',
+    status: 'failed',
+    failure_reason: 'no_endpoints_available: no routable endpoint candidates'
+  });
+  assert.equal(result.upstreamName, '无可用上游');
+  assert.equal(result.routeMode, 'manual_preferred');
+  assert.equal(result.requestedEndpoint, 'xuanwulei');
+});
+
+test('真实上游存在时规范化入口不做归类改写', () => {
+  const result = normalizeRequest({
+    request_id: 'req-8e26f8f2',
+    upstream_name: 'xuanwulei',
+    endpoint_name: 'xuanwulei',
+    endpoint: 'xuanwulei',
+    status: 'failed',
+    failure_reason: 'rate_limited: endpoint=xuanwulei status=429'
+  });
+  assert.equal(result.upstreamName, 'xuanwulei');
+});

@@ -49,6 +49,12 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		h.endpointManager.BeginEndpointScheduleSnapshot(connID, r.URL.Path, nil)
 		slog.Warn(fmt.Sprintf("❌ [失败追踪] [%s] 端点 %s 达到失败阈值，拒绝请求（reject 模式）", connID, rejectedEndpoint))
 		message := fmt.Sprintf("Service temporarily unavailable: endpoint %s failure threshold reached", rejectedEndpoint)
+		// 拒绝前置发生在候选循环之外，SetEndpointAttempt 不会执行；
+		// 不补归属则追踪记录落空上游，排障时看不出是哪个端点触发的阈值。
+		// ShouldRejectRequest 的第一逻辑候选优先取 manual fixed/preferred 目标，
+		// 路由上下文同样要落库，否则手动路由期间的拒绝会被读成自动调度。
+		lifecycleManager.SetEndpoint(rejectedEndpoint)
+		h.noteRequestRouteContext(lifecycleManager, "rejected_by_failure_tracker")
 		lifecycleManager.FailRequest("rejected_by_failure_tracker",
 			fmt.Sprintf("Endpoint %s reached failure threshold, request rejected", rejectedEndpoint),
 			http.StatusServiceUnavailable)
@@ -71,6 +77,9 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 	if len(result.Candidates) == 0 {
 		if block := h.endpointManager.GetManualFixedRouteBlock(profile); block != nil {
 			routeDecision := h.endpointManager.NoteRouteDecision(block.Endpoint, block.Reason)
+			// 被 block 的端点是已知的，必须落进上游归属；effectiveEndpoint 仍传空——
+			// 本次并未真正打到上游，两者语义不同不可合并。
+			lifecycleManager.SetEndpoint(block.Endpoint)
 			lifecycleManager.SetRouteDecision(routeDecision, "")
 			lifecycleManager.FailRequest(block.Reason, block.Message, block.StatusCode)
 			h.endpointManager.CompleteEndpointScheduleSnapshot(connID, "", endpoint.EndpointScheduleOutcomeManualFixedBlocked, block.Message)
@@ -79,6 +88,9 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			return
 		}
 		retryAfter := h.endpointRetryAfterSeconds(result.Snapshot)
+		// 候选为空时没有端点可归属，但路由模式必须落真实值：
+		// 不补则 route_mode 落库为默认 auto，manual_preferred/manual_fixed 期间的失败会被误读成自动调度。
+		h.noteRequestRouteContext(lifecycleManager, "no_routable_candidates")
 		lifecycleManager.FailRequest("no_endpoints_available", "no routable endpoint candidates", http.StatusServiceUnavailable)
 		h.endpointManager.CompleteEndpointScheduleSnapshot(connID, "", endpoint.EndpointScheduleOutcomeNoCandidates, "no routable endpoint candidates")
 		h.writeEndpointPipelineError(w, isSSE, flusher, http.StatusServiceUnavailable,
@@ -364,6 +376,17 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 	h.endpointManager.CompleteEndpointScheduleSnapshot(connID, "", endpoint.EndpointScheduleOutcomeAllCandidatesFailed, reason)
 	h.writeEndpointPipelineError(w, isSSE, flusher, http.StatusServiceUnavailable,
 		"Service Unavailable: "+reason, retryAfter)
+}
+
+// noteRequestRouteContext 只写本请求的路由诊断快照，不触碰全局路由状态。
+// 前置短路分支（reject / 无候选）没有选中端点，effectiveEndpoint 恒为空；
+// 刻意不走 NoteRouteDecision——那会清空全局 LastEffectiveEndpoint 并 notify 前端，
+// 把一次请求的诊断升级成全局状态写。
+func (h *Handler) noteRequestRouteContext(lifecycleManager *RequestLifecycleManager, fallbackReason string) {
+	route := h.endpointManager.GetClaudeRoutingOverride()
+	route.FallbackReason = fallbackReason
+	route.LastDecisionAt = time.Now()
+	lifecycleManager.SetRouteDecision(route, "")
 }
 
 // markEndpointFailure 按决策标记端点状态（§9.1 状态处理列）。

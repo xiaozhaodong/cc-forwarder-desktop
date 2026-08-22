@@ -51,13 +51,17 @@ export const resolveConnectMs = (request = {}) => {
   return Math.max(0, upstreamWriteMs - (queueMs ?? 0));
 };
 
+// 无可用上游类终态的统一标签。requestSource.js 的空上游归属判定复用同一套规则
+// （经 isNoUpstreamReason），避免列表上游列与生命周期分段条出现两套分类。
+export const NO_UPSTREAM_LABEL = '无可用上游';
+
 // 终态短标签归类规则（按优先级匹配错误码）。顺序约束逐条注释，改动前先跑
 // lifecycle.test.js 的「后端真实 failureReason 全量归类」基线。
 const REASON_LABEL_RULES = [
   [/rate_limit/, '限流'],
   // oauth_unavailable 须排在 auth 前：codex_search_oauth_unavailable 是「没有可用的 OAuth 账号」，
   // 被 /auth/ 吞成「鉴权失败」会把排查引向凭据问题。
-  [/oauth_unavailable/, '无可用上游'],
+  [/oauth_unavailable/, NO_UPSTREAM_LABEL],
   [/auth/, '鉴权失败'],
   // privacy_scan / privacy_filter_error 是扫描引擎自身故障，须排在 privacy 前，
   // 与 privacy_blocked 的规则命中拦截区分开。
@@ -66,7 +70,7 @@ const REASON_LABEL_RULES = [
   // timeout 须排在 connection 前，保证 connection_timeout 归入「超时」。
   [/timeout/, '超时'],
   [/network|eof|transport_error/, '网络错误'],
-  [/no_healthy|no_endpoints|no_available_providers|pool_exhausted|pool_not_ready|pool_load_failed|pool_disabled|pool_empty|all_endpoints_failed|endpoint_missing|endpoint_disabled/, '无可用上游'],
+  [/no_healthy|no_endpoints|no_available_providers|pool_exhausted|pool_not_ready|pool_load_failed|pool_disabled|pool_empty|all_endpoints_failed|endpoint_missing|endpoint_disabled/, NO_UPSTREAM_LABEL],
   // 端点负缓存命中（RouteBlock endpoint_capability_mismatch 的 FailureClass）。
   // 这三条须写全码而非 `unsupported` 通配，否则会抢在 stream 规则前吞掉 stream_flusher_unsupported。
   [/model_unsupported/, '模型不支持'],
@@ -96,23 +100,35 @@ const REASON_LABEL_RULES = [
   [/^error$/, '失败']
 ];
 
-// summarizeTerminalReason 从原始终态串提取短标签。
-// 存储格式（tracker.RecordRequestFinalFailure）：`code: detail`，detail 常含 `status=NNN`。
-// 归类失败时：结构化码（`code: …` 或整串即码）原样显示；自由文本返回 null 由调用方回退。
-export const summarizeTerminalReason = (reason) => {
+// resolveTerminalReasonLabel 解析终态码并归类，返回不带 status 后缀的纯标签。
+// 存储格式（tracker.RecordRequestFinalFailure）：`code: detail`。只对 code 做规则匹配，
+// detail 文本不参与，避免 `rate_limited: endpoint=x status=429` 被 detail 里的词误归类。
+// 归类失败时返回码本身；自由文本（首词后跟空格）首词不可信，返回 null 由调用方回退。
+const resolveTerminalReasonLabel = (reason) => {
   const text = String(reason || '').trim();
   if (!text) return null;
   const codeMatch = text.match(/^([a-z][a-z0-9_]*)(:|\s|$)/i);
   if (!codeMatch) return null;
-  // 自由文本（首词后跟空格）首词不可信，须先回退，否则会撞规则表被误归类：
+  // 自由文本首词不可信，须先回退，否则会撞规则表被误归类：
   // 例如 cancelReason `stream processing cancelled` 首词命中 stream 规则会错标成「流错误」。
   const isStructuredCode = codeMatch[2] === ':' || codeMatch[2] === '';
   if (!isStructuredCode) return null;
   const code = codeMatch[1].toLowerCase();
-  const statusMatch = text.match(/\b(?:upstream_)?status=(\d{3})\b/);
-  const statusSuffix = statusMatch ? ` ${statusMatch[1]}` : '';
   const rule = REASON_LABEL_RULES.find(([pattern]) => pattern.test(code));
-  return `${rule ? rule[1] : code}${statusSuffix}`;
+  return rule ? rule[1] : code;
+};
+
+// isNoUpstreamReason 判定终态码是否属于「没有上游可用」类。
+// 供上游归属列在 upstream_name 为空时决定显示语义，与分段条标签共用规则表。
+export const isNoUpstreamReason = (reason) => resolveTerminalReasonLabel(reason) === NO_UPSTREAM_LABEL;
+
+// summarizeTerminalReason 从原始终态串提取短标签。
+// detail 常含 `status=NNN`，命中时作为后缀补在标签后。
+export const summarizeTerminalReason = (reason) => {
+  const label = resolveTerminalReasonLabel(reason);
+  if (label === null) return null;
+  const statusMatch = String(reason).match(/\b(?:upstream_)?status=(\d{3})\b/);
+  return `${label}${statusMatch ? ` ${statusMatch[1]}` : ''}`;
 };
 
 // terminalSegment 终态标注段：failed/cancelled 时返回，否则 null。
