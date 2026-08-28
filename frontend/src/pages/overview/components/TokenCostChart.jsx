@@ -16,6 +16,7 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import { fetchEndpointCostsData } from '@utils/api.js';
+import useChartTheme from '@hooks/useChartTheme.js';
 
 // 格式化 Token 数量
 const formatTokens = (value) => {
@@ -29,11 +30,11 @@ const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload || !payload.length) return null;
 
   return (
-    <div className="bg-white p-3 rounded-lg shadow-lg border border-slate-100 text-sm">
-      <p className="font-medium text-slate-900 mb-2">{label}</p>
+    <div className="bg-surface p-3 rounded-lg shadow-lg border border-line-soft text-sm">
+      <p className="font-medium text-fg mb-2">{label}</p>
       {payload.map((entry, index) => (
         <div key={index} className="flex items-center justify-between gap-4">
-          <span className="text-slate-500">{entry.name}:</span>
+          <span className="text-fg-muted">{entry.name}:</span>
           <span className="font-mono font-medium" style={{ color: entry.color }}>
             {entry.dataKey === 'tokens' ? formatTokens(entry.value) : `$${entry.value.toFixed(2)}`}
           </span>
@@ -44,6 +45,7 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 const TokenCostChart = () => {
+  const chart = useChartTheme();
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -117,51 +119,51 @@ const TokenCostChart = () => {
   };
 
   return (
-    <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-sm">
+    <div className="bg-surface p-6 rounded-2xl border border-line/60 shadow-sm">
       <div className="flex justify-between items-start mb-1">
         <div className="flex items-center space-x-2">
-          <div className="p-1.5 bg-rose-50 text-rose-500 rounded-md">
+          <div className="p-1.5 bg-danger-soft text-danger-solid rounded-md">
             <DollarSign size={16} />
           </div>
-          <h3 className="font-semibold text-slate-900">当日上游 Token 成本</h3>
+          <h3 className="font-semibold text-fg">当日上游 Token 成本</h3>
         </div>
         <button
           onClick={handleRefresh}
           disabled={isRefreshing}
-          className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors disabled:opacity-50"
+          className="p-1.5 text-fg-subtle hover:text-fg-muted hover:bg-surface-mut rounded-md transition-colors disabled:opacity-50"
           title="刷新数据"
         >
           <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
         </button>
       </div>
-      <p className="text-xs text-slate-500 mb-4">按请求类型与真实上游汇总 Token 使用量和预估成本</p>
+      <p className="text-xs text-fg-muted mb-4">按请求类型与真实上游汇总 Token 使用量和预估成本</p>
 
       <div className="h-[280px] w-full">
         {loading ? (
-          <div className="h-full flex items-center justify-center text-slate-400">
+          <div className="h-full flex items-center justify-center text-fg-subtle">
             <RefreshCw size={20} className="animate-spin mr-2" />
             加载中...
           </div>
         ) : chartData.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-slate-400 text-sm">
+          <div className="h-full flex items-center justify-center text-fg-subtle text-sm">
             暂无数据
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData} margin={{ top: 10, right: 50, left: 0, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chart.grid} />
               <XAxis
                 dataKey="name"
                 axisLine={false}
                 tickLine={false}
-                tick={{ fill: '#64748b', fontSize: 12 }}
+                tick={{ fill: chart.axisStrong, fontSize: 12 }}
                 interval={0}
               />
               <YAxis
                 yAxisId="left"
                 axisLine={false}
                 tickLine={false}
-                tick={{ fill: '#94a3b8', fontSize: 11 }}
+                tick={{ fill: chart.axis, fontSize: 11 }}
                 tickFormatter={formatTokens}
                 width={50}
               />
@@ -170,15 +172,15 @@ const TokenCostChart = () => {
                 orientation="right"
                 axisLine={false}
                 tickLine={false}
-                tick={{ fill: '#f43f5e', fontSize: 11 }}
+                tick={{ fill: chart.series.cost, fontSize: 11 }}
                 tickFormatter={(v) => `$${v.toFixed(2)}`}
                 width={55}
               />
-              <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f8fafc' }} />
+              <Tooltip content={<CustomTooltip />} cursor={{ fill: chart.cursor }} />
               <Bar
                 yAxisId="left"
                 dataKey="tokens"
-                fill="#818cf8"
+                fill={chart.series.tokens}
                 barSize={32}
                 radius={[4, 4, 0, 0]}
                 name="Token 量"
@@ -187,10 +189,10 @@ const TokenCostChart = () => {
                 yAxisId="right"
                 type="monotone"
                 dataKey="cost"
-                stroke="#f43f5e"
+                stroke={chart.series.cost}
                 strokeWidth={2}
-                dot={{ r: 4, fill: '#f43f5e', strokeWidth: 0 }}
-                activeDot={{ r: 6, fill: '#f43f5e', strokeWidth: 2, stroke: '#fff' }}
+                dot={{ r: 4, fill: chart.series.cost, strokeWidth: 0 }}
+                activeDot={{ r: 6, fill: chart.series.cost, strokeWidth: 2, stroke: chart.dotStroke }}
                 name="成本 (USD)"
               />
             </ComposedChart>
@@ -198,15 +200,15 @@ const TokenCostChart = () => {
         )}
       </div>
 
-      {/* 图例 */}
+      {/* 图例：色块用 inline style 引色板，保证与柱/线严格同色 */}
       {!loading && chartData.length > 0 && (
-        <div className="flex justify-center space-x-6 mt-4 pt-3 border-t border-slate-100">
-          <div className="flex items-center text-xs text-slate-500">
-            <span className="w-3 h-3 rounded bg-indigo-400 mr-2"></span>
+        <div className="flex justify-center space-x-6 mt-4 pt-3 border-t border-line-soft">
+          <div className="flex items-center text-xs text-fg-muted">
+            <span className="w-3 h-3 rounded mr-2" style={{ backgroundColor: chart.series.tokens }}></span>
             Token 使用量
           </div>
-          <div className="flex items-center text-xs text-slate-500">
-            <span className="w-3 h-3 rounded-full bg-rose-500 mr-2"></span>
+          <div className="flex items-center text-xs text-fg-muted">
+            <span className="w-3 h-3 rounded-full mr-2" style={{ backgroundColor: chart.series.cost }}></span>
             成本 (USD)
           </div>
         </div>

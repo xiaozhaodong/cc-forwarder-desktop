@@ -41,8 +41,8 @@ const OverviewPage = () => {
     <div className="animate-fade-in">
       {/* 页面标题 */}
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-        <p className="text-slate-500 text-sm mt-1">高性能 API 请求转发器监控面板</p>
+        <h1 className="text-2xl font-bold text-fg">Dashboard</h1>
+        <p className="text-fg-muted text-sm mt-1">高性能 API 请求转发器监控面板</p>
       </div>
 
       {/* KPI 卡片 */}
@@ -62,7 +62,7 @@ const OverviewPage = () => {
         {/* Token 成本 - 全宽 */}
         <TokenCostChart />
 
-        {/* 资源状- Token 分布 & 端点健康 */}
+        {/* 资源状态 - Token 分布 & 端点健康 */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <TokenDistributionChart />
           <EndpointHealthChart />

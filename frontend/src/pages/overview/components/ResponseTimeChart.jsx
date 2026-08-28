@@ -17,6 +17,7 @@ import {
 import { fetchResponseTimeData } from '@utils/api.js';
 import { CustomSelect } from '@components/ui';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
+import useChartTheme from '@hooks/useChartTheme.js';
 
 // 时间范围选项
 const TIME_RANGE_OPTIONS = [
@@ -30,11 +31,11 @@ const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload || !payload.length) return null;
 
   return (
-    <div className="bg-white p-3 rounded-lg shadow-lg border border-slate-100 text-sm">
-      <p className="font-medium text-slate-900 mb-2">{label}</p>
+    <div className="bg-surface p-3 rounded-lg shadow-lg border border-line-soft text-sm">
+      <p className="font-medium text-fg mb-2">{label}</p>
       {payload.map((entry, index) => (
         <div key={index} className="flex items-center justify-between gap-4">
-          <span className="text-slate-500">{entry.name}:</span>
+          <span className="text-fg-muted">{entry.name}:</span>
           <span className="font-mono font-medium" style={{ color: entry.color }}>
             {entry.value}ms
           </span>
@@ -46,6 +47,7 @@ const CustomTooltip = ({ active, payload, label }) => {
 
 const ResponseTimeChart = () => {
   const { formatTimeOnly } = useTimezone();
+  const chart = useChartTheme();
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -127,13 +129,14 @@ const ResponseTimeChart = () => {
     : 0;
 
   return (
-    <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-sm flex flex-col h-full">
+    <div className="bg-surface p-6 rounded-2xl border border-line/60 shadow-sm flex flex-col h-full">
       <div className="flex justify-between items-start mb-1">
         <div className="flex items-center space-x-2">
-          <div className="p-1.5 bg-cyan-50 text-cyan-500 rounded-md">
+          {/* tone-cyan 给底色，inline color 覆到 series 色（tone 在 components 层，inline 优先） */}
+          <div className="p-1.5 tone-cyan rounded-md" style={{ color: chart.series.avg }}>
             <Clock size={16} />
           </div>
-          <h3 className="font-semibold text-slate-900">响应时间</h3>
+          <h3 className="font-semibold text-fg">响应时间</h3>
         </div>
         <div className="flex items-center space-x-2">
           <CustomSelect
@@ -145,25 +148,25 @@ const ResponseTimeChart = () => {
           <button
             onClick={handleRefresh}
             disabled={isRefreshing}
-            className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors disabled:opacity-50"
+            className="p-1.5 text-fg-subtle hover:text-fg-muted hover:bg-surface-mut rounded-md transition-colors disabled:opacity-50"
             title="刷新数据"
           >
             <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
           </button>
         </div>
       </div>
-      <p className="text-xs text-slate-500 mb-4">
-        平均响应: <span className="font-mono font-medium text-cyan-600">{avgResponseTime}ms</span>
+      <p className="text-xs text-fg-muted mb-4">
+        平均响应: <span className="font-mono font-medium" style={{ color: chart.series.avg }}>{avgResponseTime}ms</span>
       </p>
 
       <div className="flex-1 min-h-[200px]">
         {loading ? (
-          <div className="h-full flex items-center justify-center text-slate-400">
+          <div className="h-full flex items-center justify-center text-fg-subtle">
             <RefreshCw size={20} className="animate-spin mr-2" />
-            ��载中...
+            加载中...
           </div>
         ) : chartData.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-slate-400 text-sm">
+          <div className="h-full flex items-center justify-center text-fg-subtle text-sm">
             暂无数据
           </div>
         ) : (
@@ -171,22 +174,22 @@ const ResponseTimeChart = () => {
             <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="colorAvg" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
+                  <stop offset="5%" stopColor={chart.series.avg} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={chart.series.avg} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chart.grid} />
               <XAxis
                 dataKey="time"
                 axisLine={false}
                 tickLine={false}
-                tick={{ fill: '#94a3b8', fontSize: 10 }}
+                tick={{ fill: chart.axis, fontSize: 10 }}
                 interval="preserveStartEnd"
               />
               <YAxis
                 axisLine={false}
                 tickLine={false}
-                tick={{ fill: '#94a3b8', fontSize: 10 }}
+                tick={{ fill: chart.axis, fontSize: 10 }}
                 tickFormatter={(v) => `${v}ms`}
                 width={45}
               />
@@ -194,7 +197,7 @@ const ResponseTimeChart = () => {
               <Area
                 type="monotone"
                 dataKey="max"
-                stroke="#f43f5e"
+                stroke={chart.series.max}
                 strokeWidth={1}
                 fill="none"
                 strokeDasharray="3 3"
@@ -203,7 +206,7 @@ const ResponseTimeChart = () => {
               <Area
                 type="monotone"
                 dataKey="avg"
-                stroke="#06b6d4"
+                stroke={chart.series.avg}
                 strokeWidth={2}
                 fill="url(#colorAvg)"
                 name="平均"
@@ -211,7 +214,7 @@ const ResponseTimeChart = () => {
               <Area
                 type="monotone"
                 dataKey="min"
-                stroke="#10b981"
+                stroke={chart.series.min}
                 strokeWidth={1}
                 fill="none"
                 strokeDasharray="3 3"
@@ -222,19 +225,19 @@ const ResponseTimeChart = () => {
         )}
       </div>
 
-      {/* 图例 */}
+      {/* 图例：色块用 inline style 引色板，保证与曲线严格同色 */}
       {!loading && chartData.length > 0 && (
-        <div className="flex justify-center space-x-6 mt-3 pt-3 border-t border-slate-100">
-          <div className="flex items-center text-xs text-slate-500">
-            <span className="w-3 h-0.5 bg-rose-500 mr-2" style={{ borderStyle: 'dashed' }} />
+        <div className="flex justify-center space-x-6 mt-3 pt-3 border-t border-line-soft">
+          <div className="flex items-center text-xs text-fg-muted">
+            <span className="w-3 h-0.5 mr-2" style={{ backgroundColor: chart.series.max, borderStyle: 'dashed' }} />
             最大
           </div>
-          <div className="flex items-center text-xs text-slate-500">
-            <span className="w-3 h-0.5 bg-cyan-500 mr-2" />
+          <div className="flex items-center text-xs text-fg-muted">
+            <span className="w-3 h-0.5 mr-2" style={{ backgroundColor: chart.series.avg }} />
             平均
           </div>
-          <div className="flex items-center text-xs text-slate-500">
-            <span className="w-3 h-0.5 bg-emerald-500 mr-2" style={{ borderStyle: 'dashed' }} />
+          <div className="flex items-center text-xs text-fg-muted">
+            <span className="w-3 h-0.5 mr-2" style={{ backgroundColor: chart.series.min, borderStyle: 'dashed' }} />
             最小
           </div>
         </div>

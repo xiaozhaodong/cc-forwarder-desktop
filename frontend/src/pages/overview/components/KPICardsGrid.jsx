@@ -45,50 +45,50 @@ const KPICardsGrid = ({ data }) => {
         title="今日成本"
         value={todayCost}
         icon={DollarSign}
-        statusColor="bg-emerald-50 text-emerald-600"
+        statusColor="tone-emerald"
       />
       <KPICard
         title="今日 Tokens"
         value={todayTokens}
         icon={Zap}
-        statusColor="bg-amber-50 text-amber-600"
+        statusColor="tone-amber"
       />
       <KPICard
         title="今日请求"
         value={connections.today_requests || 0}
         icon={Network}
-        statusColor="bg-cyan-50 text-cyan-600"
+        statusColor="tone-cyan"
       />
       <KPICard
         title="总成本"
         value={totalCost}
         icon={DollarSign}
-        statusColor="bg-blue-50 text-blue-600"
+        statusColor="tone-blue"
       />
       <KPICard
         title="总 Tokens"
         value={totalTokens}
         icon={Zap}
-        statusColor="bg-indigo-50 text-indigo-600"
+        statusColor="tone-indigo"
       />
       <KPICard
         title="总请求数"
         value={connections.all_time_total_requests || 0}
         icon={Network}
-        statusColor="bg-purple-50 text-purple-600"
+        statusColor="tone-purple"
       />
       <KPICard
         title="端点数量"
         value={endpoints.total || 0}
         icon={Server}
-        statusColor="bg-violet-50 text-violet-600"
+        statusColor="tone-violet"
       />
       <KPICard
         title="最近可达"
         value={endpointHealthText}
         tooltip="最近主动检测可达数 / Claude 端点总数"
         icon={Activity}
-        statusColor={(endpoints.healthy || 0) > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-50 text-slate-600'}
+        statusColor={(endpoints.healthy || 0) > 0 ? 'tone-emerald' : 'tone-slate'}
       />
     </div>
   );

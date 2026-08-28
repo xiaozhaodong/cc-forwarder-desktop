@@ -17,6 +17,7 @@ import {
 import { fetchRequestTrendData } from '@utils/api.js';
 import { CustomSelect } from '@components/ui';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
+import useChartTheme from '@hooks/useChartTheme.js';
 
 // 时间范围选项
 const TIME_RANGE_OPTIONS = [
@@ -30,6 +31,7 @@ const TIME_RANGE_OPTIONS = [
 
 const RequestTrendChart = () => {
   const { formatTimeOnly } = useTimezone();
+  const chart = useChartTheme();
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState(30);
@@ -104,13 +106,13 @@ const RequestTrendChart = () => {
   };
 
   return (
-    <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-sm">
+    <div className="bg-surface p-6 rounded-2xl border border-line/60 shadow-sm">
       <div className="flex justify-between items-center mb-6">
         <div className="flex items-center space-x-2">
-          <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-md">
+          <div className="p-1.5 bg-accent-soft text-accent rounded-md">
             <Activity size={18} />
           </div>
-          <h3 className="font-semibold text-slate-900">
+          <h3 className="font-semibold text-fg">
             请求趋势 (最近{TIME_RANGE_OPTIONS.find(o => o.value === timeRange)?.label || `${timeRange}分钟`})
           </h3>
         </div>
@@ -127,22 +129,22 @@ const RequestTrendChart = () => {
           <button
             onClick={handleRefresh}
             disabled={isRefreshing}
-            className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors disabled:opacity-50"
+            className="p-1.5 text-fg-subtle hover:text-fg-muted hover:bg-surface-mut rounded-md transition-colors disabled:opacity-50"
             title="刷新数据"
           >
             <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
           </button>
 
-          {/* 图例 */}
+          {/* 图例：色块用 inline style 引色板，保证与曲线严格同色 */}
           <div className="flex space-x-4 text-xs font-medium">
-            <div className="flex items-center text-indigo-600">
-              <span className="w-2 h-2 rounded-full bg-indigo-500 mr-2"></span>总请求
+            <div className="flex items-center text-accent">
+              <span className="w-2 h-2 rounded-full mr-2" style={{ backgroundColor: chart.series.total }}></span>总请求
             </div>
-            <div className="flex items-center text-emerald-600">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 mr-2"></span>成功
+            <div className="flex items-center text-success">
+              <span className="w-2 h-2 rounded-full mr-2" style={{ backgroundColor: chart.series.success }}></span>成功
             </div>
-            <div className="flex items-center text-rose-500">
-              <span className="w-2 h-2 rounded-full bg-rose-500 mr-2"></span>失败
+            <div className="flex items-center text-danger">
+              <span className="w-2 h-2 rounded-full mr-2" style={{ backgroundColor: chart.series.fail }}></span>失败
             </div>
           </div>
         </div>
@@ -150,12 +152,12 @@ const RequestTrendChart = () => {
 
       <div className="h-[280px] w-full">
         {loading ? (
-          <div className="h-full flex items-center justify-center text-slate-400">
+          <div className="h-full flex items-center justify-center text-fg-subtle">
             <RefreshCw size={24} className="animate-spin mr-2" />
             加载中...
           </div>
         ) : chartData.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-slate-400">
+          <div className="h-full flex items-center justify-center text-fg-subtle">
             暂无数据
           </div>
         ) : (
@@ -163,17 +165,17 @@ const RequestTrendChart = () => {
             <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
               <defs>
                 <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.1} />
-                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                  <stop offset="5%" stopColor={chart.series.total} stopOpacity={0.1} />
+                  <stop offset="95%" stopColor={chart.series.total} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-              <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} dy={10} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
-              <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
-              <Area type="monotone" dataKey="total" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorTotal)" name="总请求" />
-              <Area type="monotone" dataKey="success" stroke="#10b981" strokeWidth={2} fillOpacity={0} fill="transparent" name="成功" />
-              <Area type="monotone" dataKey="fail" stroke="#f43f5e" strokeWidth={2} fillOpacity={0} fill="transparent" name="失败" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chart.grid} />
+              <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fill: chart.axis, fontSize: 12 }} dy={10} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fill: chart.axis, fontSize: 12 }} />
+              <Tooltip {...chart.tooltip} />
+              <Area type="monotone" dataKey="total" stroke={chart.series.total} strokeWidth={2} fillOpacity={1} fill="url(#colorTotal)" name="总请求" />
+              <Area type="monotone" dataKey="success" stroke={chart.series.success} strokeWidth={2} fillOpacity={0} fill="transparent" name="成功" />
+              <Area type="monotone" dataKey="fail" stroke={chart.series.fail} strokeWidth={2} fillOpacity={0} fill="transparent" name="失败" />
             </AreaChart>
           </ResponsiveContainer>
         )}

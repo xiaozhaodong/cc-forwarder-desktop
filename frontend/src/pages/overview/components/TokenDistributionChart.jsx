@@ -13,13 +13,14 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import { fetchTokenUsageData } from '@utils/api.js';
+import useChartTheme from '@hooks/useChartTheme.js';
 
-// Token 类型配置
+// Token 类型配置（颜色来自 useChartTheme 的 series，随主题切换）
 const TOKEN_CONFIG = [
-  { key: 'input', name: '输入 Token', color: '#6366f1' },
-  { key: 'output', name: '输出 Token', color: '#10b981' },
-  { key: 'cacheCreation', name: '缓存创建', color: '#f59e0b' },
-  { key: 'cacheRead', name: '缓存读取', color: '#8b5cf6' }
+  { key: 'input', name: '输入 Token' },
+  { key: 'output', name: '输出 Token' },
+  { key: 'cacheCreation', name: '缓存创建' },
+  { key: 'cacheRead', name: '缓存读取' }
 ];
 
 // 格式化 Token 数量
@@ -35,23 +36,24 @@ const CustomTooltip = ({ active, payload }) => {
 
   const data = payload[0].payload;
   return (
-    <div className="bg-white p-3 rounded-lg shadow-lg border border-slate-100 text-sm">
+    <div className="bg-surface p-3 rounded-lg shadow-lg border border-line-soft text-sm">
       <div className="flex items-center gap-2 mb-1">
         <span
           className="w-3 h-3 rounded-full"
           style={{ backgroundColor: data.color }}
         />
-        <span className="font-medium text-slate-900">{data.name}</span>
+        <span className="font-medium text-fg">{data.name}</span>
       </div>
-      <div className="text-slate-600">
+      <div className="text-fg-body">
         <span className="font-mono">{formatTokens(data.value)}</span>
-        <span className="text-slate-400 ml-2">({data.percent.toFixed(1)}%)</span>
+        <span className="text-fg-subtle ml-2">({data.percent.toFixed(1)}%)</span>
       </div>
     </div>
   );
 };
 
 const TokenDistributionChart = () => {
+  const chart = useChartTheme();
   const [tokenData, setTokenData] = useState({ input: 0, output: 0, cacheCreation: 0, cacheRead: 0 });
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -125,6 +127,7 @@ const TokenDistributionChart = () => {
   // 转换为图表数据
   const chartData = TOKEN_CONFIG.map(config => ({
     ...config,
+    color: chart.series[config.key],
     value: tokenData[config.key] || 0,
     percent: total > 0 ? ((tokenData[config.key] || 0) / total) * 100 : 0
   })).filter(item => item.value > 0); // 过滤掉零值
@@ -133,33 +136,33 @@ const TokenDistributionChart = () => {
   const hasData = total > 0;
 
   return (
-    <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-sm flex flex-col h-full">
+    <div className="bg-surface p-6 rounded-2xl border border-line/60 shadow-sm flex flex-col h-full">
       <div className="flex justify-between items-start mb-1">
         <div className="flex items-center space-x-2">
-          <div className="p-1.5 bg-indigo-50 text-indigo-500 rounded-md">
+          <div className="p-1.5 bg-accent-soft text-accent-ring rounded-md">
             <PieChartIcon size={16} />
           </div>
-          <h3 className="font-semibold text-slate-900">Token 使用分布</h3>
+          <h3 className="font-semibold text-fg">Token 使用分布</h3>
         </div>
         <button
           onClick={handleRefresh}
           disabled={isRefreshing}
-          className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors disabled:opacity-50"
+          className="p-1.5 text-fg-subtle hover:text-fg-muted hover:bg-surface-mut rounded-md transition-colors disabled:opacity-50"
           title="刷新数据"
         >
           <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
         </button>
       </div>
-      <p className="text-xs text-slate-500 mb-4">各类 Token 消耗占比</p>
+      <p className="text-xs text-fg-muted mb-4">各类 Token 消耗占比</p>
 
       <div className="flex-1 min-h-[180px] flex items-center justify-center relative overflow-visible">
         {loading ? (
-          <div className="flex items-center text-slate-400">
+          <div className="flex items-center text-fg-subtle">
             <RefreshCw size={20} className="animate-spin mr-2" />
             加载中...
           </div>
         ) : !hasData ? (
-          <div className="text-slate-400 text-sm">暂无数据</div>
+          <div className="text-fg-subtle text-sm">暂无数据</div>
         ) : (
           <>
             <ResponsiveContainer width="100%" height="100%">
@@ -189,8 +192,8 @@ const TokenDistributionChart = () => {
               </PieChart>
             </ResponsiveContainer>
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-2xl font-bold text-slate-700">{formatTokens(total)}</span>
-              <span className="text-xs text-slate-400">总计</span>
+              <span className="text-2xl font-bold text-fg-body">{formatTokens(total)}</span>
+              <span className="text-xs text-fg-subtle">总计</span>
             </div>
           </>
         )}
@@ -198,20 +201,20 @@ const TokenDistributionChart = () => {
 
       {/* 图例 */}
       {!loading && hasData && (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-4 pt-3 border-t border-slate-100">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-4 pt-3 border-t border-line-soft">
           {TOKEN_CONFIG.map((config) => {
             const value = tokenData[config.key] || 0;
             const percent = total > 0 ? (value / total) * 100 : 0;
             return (
               <div key={config.key} className="flex items-center justify-between text-xs">
-                <div className="flex items-center text-slate-600">
+                <div className="flex items-center text-fg-body">
                   <span
                     className="w-2.5 h-2.5 rounded-full mr-2 flex-shrink-0"
-                    style={{ backgroundColor: config.color }}
+                    style={{ backgroundColor: chart.series[config.key] }}
                   />
                   <span className="truncate">{config.name}</span>
                 </div>
-                <span className="font-mono text-slate-500 ml-2">
+                <span className="font-mono text-fg-muted ml-2">
                   {percent > 0 ? `${percent.toFixed(0)}%` : '-'}
                 </span>
               </div>
