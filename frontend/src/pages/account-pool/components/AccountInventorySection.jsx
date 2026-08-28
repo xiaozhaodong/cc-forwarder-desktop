@@ -54,7 +54,7 @@ const AccountInventorySection = ({
   };
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-950/5">
+    <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-sm">
       <AccountInventoryFilters
         searchTerm={state.toolbar.searchTerm}
         onSearchTermChange={state.toolbar.setSearchTerm}
@@ -111,13 +111,13 @@ const AccountInventorySection = ({
       )}
 
       {state.pagination.totalCount > 0 ? (
-        <div className="flex flex-col gap-3 border-t border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-xs text-slate-500">
+        <div className="flex flex-col gap-3 border-t border-line-soft px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-xs text-fg-muted">
             第 {state.pagination.currentPage} / {state.pagination.totalPages} 页，共 {state.pagination.totalCount} 个账号
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-slate-400">每页</span>
+            <span className="text-xs text-fg-subtle">每页</span>
             <div className="w-28">
               <CustomSelect
                 size="md"

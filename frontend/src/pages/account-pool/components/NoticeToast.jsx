@@ -22,9 +22,9 @@ const NoticeToast = ({ notice, onClose }) => {
       `}</style>
       <div className={`
         pointer-events-auto flex items-center gap-2 px-4 py-3 rounded-lg text-sm border shadow-lg max-w-md
-        ${notice.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : ''}
-        ${notice.type === 'error' ? 'bg-rose-50 text-rose-700 border-rose-200' : ''}
-        ${notice.type === 'info' ? 'bg-slate-50 text-slate-600 border-slate-200' : ''}
+        ${notice.type === 'success' ? 'tone-emerald' : ''}
+        ${notice.type === 'error' ? 'tone-rose' : ''}
+        ${notice.type === 'info' ? 'tone-slate' : ''}
       `}>
         {notice.type === 'success'
           ? <CheckCircle2 size={16} className="shrink-0" />
@@ -35,7 +35,7 @@ const NoticeToast = ({ notice, onClose }) => {
         <button
           type="button"
           onClick={onClose}
-          className="ml-auto shrink-0 p-0.5 rounded hover:bg-black/5 transition-colors"
+          className="ml-auto shrink-0 p-0.5 rounded hover:bg-hairline transition-colors"
         >
           <span className="sr-only">关闭</span>
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7" /></svg>

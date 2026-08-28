@@ -42,7 +42,7 @@ const SchedulerDrawer = ({
       <button
         type="button"
         aria-label="关闭调度编排"
-        className="absolute inset-0 bg-slate-950/30 backdrop-blur-[2px]"
+        className="absolute inset-0 bg-overlay backdrop-blur-[2px]"
         onClick={onClose}
       />
 
@@ -50,17 +50,17 @@ const SchedulerDrawer = ({
         role="dialog"
         aria-modal="true"
         aria-label="调度编排"
-        className="relative z-10 flex h-full w-full max-w-[680px] flex-col border-l border-slate-200 bg-white shadow-2xl shadow-slate-950/20 animate-in slide-in-from-right duration-300"
+        className="relative z-10 flex h-full w-full max-w-[680px] flex-col border-l border-line bg-surface shadow-2xl animate-in slide-in-from-right duration-300"
       >
-        <div className="border-b border-slate-100 bg-gradient-to-r from-indigo-50/80 via-white to-white px-6 py-5">
+        <div className="border-b border-line-soft bg-gradient-to-r from-accent-soft via-surface to-surface px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600 shadow-sm">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-soft text-accent shadow-sm">
                 <GitBranch size={20} />
               </div>
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">调度编排</h2>
-                <p className="mt-0.5 text-sm text-slate-500">主组 / 备组 / 冷备的运行态与编排动作</p>
+                <h2 className="text-lg font-semibold text-fg">调度编排</h2>
+                <p className="mt-0.5 text-sm text-fg-muted">主组 / 备组 / 冷备的运行态与编排动作</p>
               </div>
             </div>
             <button
@@ -68,7 +68,7 @@ const SchedulerDrawer = ({
               ref={closeButtonRef}
               aria-label="关闭抽屉"
               onClick={onClose}
-              className="rounded-lg border border-slate-200 bg-white p-2 text-slate-400 transition-colors hover:text-slate-700 hover:border-slate-300"
+              className="rounded-lg border border-line bg-surface p-2 text-fg-subtle transition-colors hover:text-fg-body hover:border-line-strong"
             >
               <X size={16} />
             </button>
@@ -78,28 +78,28 @@ const SchedulerDrawer = ({
             <Badge
               text={summary?.selectionModeLabel || 'Auto 模式'}
               className={isManualMode
-                ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                : 'bg-slate-100 text-slate-600 border-slate-200'}
+                ? 'tone-indigo'
+                : 'tone-slate'}
             />
             {isManualMode && summary?.pinnedAccountName ? (
               <Badge
                 text={`全局手动：${summary.pinnedAccountName}`}
-                className="bg-white text-slate-700 border-slate-200"
+                className="bg-surface text-fg-body border-line"
               />
             ) : null}
             <Badge
               text={summary?.currentGroupLabel || '待确认'}
-              className="bg-white text-slate-700 border-slate-200"
+              className="bg-surface text-fg-body border-line"
             />
             <Badge
               text={`最近命中：${summary?.activeAccountName || '暂无'}`}
-              className="bg-indigo-50 text-indigo-700 border-indigo-200"
+              className="tone-indigo"
             />
             <Badge
               text={degraded ? '已降级' : '未降级'}
               className={degraded
-                ? 'bg-amber-50 text-amber-700 border-amber-200'
-                : 'bg-emerald-50 text-emerald-700 border-emerald-200'}
+                ? 'tone-amber'
+                : 'tone-emerald'}
             />
           </div>
 
@@ -113,7 +113,7 @@ const SchedulerDrawer = ({
             >
               启用编排
             </Button>
-            <div className="text-xs text-slate-400">
+            <div className="text-xs text-fg-subtle">
               {isManualMode
                 ? '当前为手动模式，可在下方账号行内重新指定手动账号，或切回按编排自动调度。'
                 : '当前为 Auto 模式，可在下方任一账号行内指定手动账号。'}
@@ -134,7 +134,7 @@ const SchedulerDrawer = ({
             />
           </div>
 
-          <div className="border-t border-slate-100 px-6 py-5">
+          <div className="border-t border-line-soft px-6 py-5">
             <LatestScheduleSnapshotCard
               snapshot={latestScheduleSnapshot}
               snapshotUnsupported={snapshotUnsupported}

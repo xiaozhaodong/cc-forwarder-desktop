@@ -61,23 +61,23 @@ const AccountPoolSchedulerSection = ({
 
   const summaryCards = (
     <div className="grid gap-3 sm:grid-cols-3">
-      <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3">
-        <div className="text-xs text-slate-400">当前运行组</div>
-        <div className="mt-1 text-sm font-semibold text-slate-900">{summary?.currentGroupLabel || '待确认'}</div>
+      <div className="rounded-xl border border-line bg-surface-sub px-4 py-3">
+        <div className="text-xs text-fg-subtle">当前运行组</div>
+        <div className="mt-1 text-sm font-semibold text-fg">{summary?.currentGroupLabel || '待确认'}</div>
       </div>
-      <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3">
-        <div className="text-xs text-slate-400">当前活跃账号</div>
-        <div className="mt-1 text-sm font-semibold text-slate-900">{summary?.activeAccountName || '暂无'}</div>
+      <div className="rounded-xl border border-line bg-surface-sub px-4 py-3">
+        <div className="text-xs text-fg-subtle">当前活跃账号</div>
+        <div className="mt-1 text-sm font-semibold text-fg">{summary?.activeAccountName || '暂无'}</div>
       </div>
-      <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3">
-        <div className="text-xs text-slate-400">最新结论</div>
-        <div className="mt-1 flex items-center gap-2 text-sm font-semibold text-slate-900">
+      <div className="rounded-xl border border-line bg-surface-sub px-4 py-3">
+        <div className="text-xs text-fg-subtle">最新结论</div>
+        <div className="mt-1 flex items-center gap-2 text-sm font-semibold text-fg">
           <span>{summary?.finalOutcomeLabel || '等待最近一次调度'}</span>
           <Badge
             text={degraded ? '已降级' : '未降级'}
             className={degraded
-              ? 'bg-amber-50 text-amber-700 border-amber-200'
-              : 'bg-emerald-50 text-emerald-700 border-emerald-200'}
+              ? 'tone-amber'
+              : 'tone-emerald'}
           />
         </div>
       </div>
@@ -110,12 +110,12 @@ const AccountPoolSchedulerSection = ({
   }
 
   return (
-    <section className="rounded-2xl border border-slate-200/70 bg-white shadow-sm overflow-hidden">
-      <div className="border-b border-slate-100 px-5 py-5">
+    <section className="rounded-2xl border border-line bg-surface shadow-sm overflow-hidden">
+      <div className="border-b border-line-soft px-5 py-5">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-slate-900">调度编排</h2>
-            <p className="mt-1 text-sm text-slate-500">
+            <h2 className="text-xl font-semibold text-fg">调度编排</h2>
+            <p className="mt-1 text-sm text-fg-muted">
               查看主组 / 备组 / 冷备的运行态与编排动作。
             </p>
           </div>
@@ -127,30 +127,30 @@ const AccountPoolSchedulerSection = ({
         {groupCards}
       </div>
 
-      <div className="border-t border-slate-100 bg-slate-50/60 px-5 py-5">
+      <div className="border-t border-line-soft bg-surface-sub px-5 py-5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-start gap-3">
-            <div className="rounded-xl bg-white p-2 text-indigo-600 shadow-sm ring-1 ring-slate-200">
+            <div className="rounded-xl bg-surface p-2 text-accent shadow-sm ring-1 ring-line">
               {latestSnapshot?.finalError ? <ShieldAlert size={18} /> : <GitBranch size={18} />}
             </div>
             <div>
-              <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">最新调度摘要</div>
-              <h3 className="mt-1 text-base font-semibold text-slate-900">最近一次调度</h3>
-              <p className="mt-1 text-sm text-slate-500">
+              <div className="text-xs font-semibold uppercase tracking-widest text-fg-subtle">最新调度摘要</div>
+              <h3 className="mt-1 text-base font-semibold text-fg">最近一次调度</h3>
+              <p className="mt-1 text-sm text-fg-muted">
                 {latestSnapshot?.summary || '把完整调度结果收敛在底部，保留可观测性同时减少主视图占位。'}
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Badge text={latestSnapshot?.requestPath || '/v1/responses'} className="bg-white text-slate-600 border-slate-200" />
+            <Badge text={latestSnapshot?.requestPath || '/v1/responses'} className="bg-surface text-fg-body border-line" />
             <Badge
               text={latestSnapshot?.selectedAccountName || '待命中账号'}
-              className="bg-indigo-50 text-indigo-700 border-indigo-200"
+              className="tone-indigo"
             />
             <Badge
               text={Number.isFinite(latestSnapshot?.selectedPriority) ? `组内顺序 ${latestSnapshot.selectedPriority}` : '组内顺序待定'}
-              className="bg-slate-100 text-slate-600 border-slate-200"
+              className="tone-slate"
             />
           </div>
         </div>

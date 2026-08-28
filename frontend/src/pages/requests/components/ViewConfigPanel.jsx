@@ -60,9 +60,7 @@ const ViewConfigPanel = ({
                   checked={isVisible}
                   disabled={col.alwaysVisible}
                   onChange={() => !col.alwaysVisible && onToggleColumn?.(col.id)}
-                  className={`rounded border-line-strong text-accent focus:ring-accent-ring w-4 h-4 ${
-                    col.alwaysVisible ? 'text-fg-subtle' : ''
-                  }`}
+                  className="app-checkbox"
                 />
                 <span className={`text-sm ${isVisible ? 'text-fg-body font-medium' : 'text-fg-subtle'}`}>
                   {col.label}

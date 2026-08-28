@@ -21,9 +21,9 @@ const stopEvent = (event) => {
 };
 
 const ERROR_TONE_CLASS = {
-  amber: 'border-amber-100 bg-amber-50 text-amber-700',
-  rose: 'border-rose-100 bg-rose-50 text-rose-700',
-  slate: 'border-slate-200 bg-slate-50 text-slate-600'
+  amber: 'border-warn-line bg-warn-soft text-warn',
+  rose: 'border-danger-line bg-danger-soft text-danger',
+  slate: 'tone-slate'
 };
 
 // 额度进度条(剩余口径):api_key 无限额 / free 无 5h / 百分比三种形态
@@ -35,21 +35,21 @@ const QuotaBar = ({ label, text, percent, resetAt }) => {
 
   return (
     <div className="flex items-center gap-2">
-      <span className="w-6 shrink-0 text-[11px] text-slate-400">{label}</span>
+      <span className="w-6 shrink-0 text-[11px] text-fg-subtle">{label}</span>
       {hasPercent ? (
         <>
-          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-mut">
             <div
-              className={`h-full rounded-full transition-all duration-500 ${percent > 50 ? 'bg-emerald-400' : percent > 20 ? 'bg-amber-400' : 'bg-rose-400'}`}
+              className={`h-full rounded-full transition-all duration-500 ${percent > 50 ? 'bg-success-solid' : percent > 20 ? 'bg-warn-solid' : 'bg-danger-solid'}`}
               style={{ width: `${Math.max(Math.min(percent, 100), 0)}%` }}
             />
           </div>
-          <span className="shrink-0 whitespace-nowrap text-right text-[11px] font-medium text-slate-600" title={resetTitle}>
+          <span className="shrink-0 whitespace-nowrap text-right text-[11px] font-medium text-fg-body" title={resetTitle}>
             {Math.round(percent)}%{resetLabel ? ` · ${resetLabel} 重置` : ''}
           </span>
         </>
       ) : (
-        <span className={`text-[11px] ${text === '无限额' ? 'text-slate-500' : 'text-slate-400'}`}>{text || '-'}</span>
+        <span className={`text-[11px] ${text === '无限额' ? 'text-fg-muted' : 'text-fg-subtle'}`}>{text || '-'}</span>
       )}
     </div>
   );
@@ -76,9 +76,9 @@ const AccountInventoryCard = ({
   return (
     <div
       onClick={() => onRowClick?.(row)}
-      className={`flex cursor-pointer flex-col rounded-2xl border p-4 shadow-sm transition hover:border-slate-300 ${
-        selected ? 'border-indigo-200 ring-2 ring-inset ring-indigo-100' : 'border-slate-200'
-      } ${row.enabled === false ? 'bg-slate-50/70' : 'bg-white'}`}
+      className={`flex cursor-pointer flex-col rounded-2xl border p-4 shadow-sm transition hover:border-line-strong ${
+        selected ? 'border-accent-line ring-2 ring-inset ring-accent-soft' : 'border-line'
+      } ${row.enabled === false ? 'bg-surface-sub' : 'bg-surface'}`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
@@ -88,11 +88,11 @@ const AccountInventoryCard = ({
               checked={selected}
               aria-label={`选择账号 ${row.name || row.id}`}
               onChange={() => onToggleRow?.(row.id)}
-              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              className="app-checkbox"
             />
           </span>
           <span className={`h-2 w-2 shrink-0 rounded-full ${toStateDotClass(row.stateTone)}`} />
-          <span className="truncate text-sm font-semibold text-slate-900" title={row.name}>{row.name || '-'}</span>
+          <span className="truncate text-sm font-semibold text-fg" title={row.name}>{row.name || '-'}</span>
         </div>
         <Badge text={row.stateLabel || '-'} className={toBadgeToneClass(row.stateTone)} />
       </div>
@@ -100,20 +100,20 @@ const AccountInventoryCard = ({
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
         <Badge
           text={row.authLabel || '-'}
-          className={AUTH_BADGE_CLASS[row.authLabel] || 'bg-slate-50 text-slate-600 border-slate-200'}
+          className={AUTH_BADGE_CLASS[row.authLabel] || 'tone-slate'}
         />
         {planText !== '-' && (
           <Badge
             text={planText}
-            className={PLAN_BADGE_CLASS[planText] || 'bg-slate-50 text-slate-600 border-slate-200'}
+            className={PLAN_BADGE_CLASS[planText] || 'tone-slate'}
           />
         )}
         <Badge
           text={row.groupLabel || '-'}
-          className={GROUP_BADGE_CLASS[row.groupLabel] || 'bg-slate-50 text-slate-600 border-slate-200'}
+          className={GROUP_BADGE_CLASS[row.groupLabel] || 'tone-slate'}
         />
         {Number.isFinite(row.priority) && (
-          <Badge text={`顺序 ${row.priority}`} className="bg-amber-50 text-amber-700 border-amber-100" />
+          <Badge text={`顺序 ${row.priority}`} className="bg-warn-soft text-warn border-warn-line" />
         )}
       </div>
 
@@ -136,7 +136,7 @@ const AccountInventoryCard = ({
         ) : null}
       </div>
 
-      <div className="mt-auto flex items-center justify-between gap-2 border-t border-slate-100 pt-3" onClick={stopEvent}>
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-line-soft pt-3" onClick={stopEvent}>
         <div className="flex min-w-0 flex-1 items-center gap-2.5">
           <button
             type="button"
@@ -145,11 +145,11 @@ const AccountInventoryCard = ({
             aria-label={row.enabled === false ? '启用账号' : '停用账号'}
             disabled={actionBusy}
             onClick={() => onToggleAccount?.(account)}
-            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${row.enabled === false ? 'bg-slate-300' : 'bg-emerald-500'}`}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${row.enabled === false ? 'bg-line-strong' : 'bg-success-solid'}`}
           >
-            <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${row.enabled === false ? 'translate-x-0' : 'translate-x-4'}`} />
+            <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-surface shadow-sm transition-transform ${row.enabled === false ? 'translate-x-0' : 'translate-x-4'}`} />
           </button>
-          <span className="min-w-0 truncate whitespace-nowrap text-[11px] text-slate-400" title={statusText}>
+          <span className="min-w-0 truncate whitespace-nowrap text-[11px] text-fg-subtle" title={statusText}>
             {statusText}
           </span>
         </div>
@@ -158,7 +158,7 @@ const AccountInventoryCard = ({
             type="button"
             disabled={actionBusy}
             onClick={() => onTestAccount?.(account)}
-            className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-sky-50 hover:text-sky-600"
+            className="rounded-md p-1.5 text-fg-subtle transition-colors hover:bg-info-soft hover:text-info"
             title="测试连通性"
           >
             <TestTube2 size={14} />
@@ -167,7 +167,7 @@ const AccountInventoryCard = ({
             type="button"
             disabled={actionBusy}
             onClick={() => onRefreshAccountProfile?.(account)}
-            className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-emerald-50 hover:text-emerald-600"
+            className="rounded-md p-1.5 text-fg-subtle transition-colors hover:bg-success-soft hover:text-success"
             title="刷新画像"
           >
             <RefreshCw size={14} />
@@ -176,7 +176,7 @@ const AccountInventoryCard = ({
             type="button"
             disabled={actionBusy}
             onClick={() => onEditAccount?.(account)}
-            className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-indigo-600"
+            className="rounded-md p-1.5 text-fg-subtle transition-colors hover:bg-surface-mut hover:text-accent"
             title="编辑"
           >
             <Pencil size={14} />
@@ -185,7 +185,7 @@ const AccountInventoryCard = ({
             type="button"
             disabled={actionBusy}
             onClick={() => onDeleteAccount?.(account)}
-            className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
+            className="rounded-md p-1.5 text-fg-subtle transition-colors hover:bg-danger-soft hover:text-danger"
             title="删除"
           >
             <Trash2 size={14} />
@@ -193,7 +193,7 @@ const AccountInventoryCard = ({
           <button
             type="button"
             onClick={() => onRowClick?.(row)}
-            className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+            className="rounded-md p-1.5 text-fg-subtle transition-colors hover:bg-surface-mut hover:text-fg-body"
             title="查看详情"
           >
             <ArrowRight size={14} />

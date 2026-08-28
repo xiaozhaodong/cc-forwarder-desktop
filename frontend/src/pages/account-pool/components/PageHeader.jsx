@@ -9,12 +9,12 @@ import { Button } from '@components/ui';
 const PageHeader = ({ loading = false, onCreate, onRefresh, onOpenScheduler, onOpenCodexModels }) => (
   <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
     <div className="flex items-center gap-3">
-      <div className="p-2 bg-slate-900 rounded-lg text-white shadow-lg">
+      <div className="p-2 bg-inverted rounded-lg text-fg-inverted shadow-lg">
         <ShieldCheck className="w-5 h-5" />
       </div>
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">账号管理</h1>
-        <p className="text-sm text-slate-500">管理上游账号池，支持 API Key 与 ChatGPT OAuth 两种授权方式</p>
+        <h1 className="text-2xl font-bold text-fg">账号管理</h1>
+        <p className="text-sm text-fg-muted">管理上游账号池，支持 API Key 与 ChatGPT OAuth 两种授权方式</p>
       </div>
     </div>
     <div className="flex flex-wrap items-center gap-2">
@@ -28,7 +28,7 @@ const PageHeader = ({ loading = false, onCreate, onRefresh, onOpenScheduler, onO
         Codex 模型
       </Button>
       <Button icon={GitBranch} variant="secondary" onClick={onOpenScheduler}
-        className="border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300"
+        className="tone-indigo hover:bg-accent-soft hover:border-accent-line"
       >
         调度编排
       </Button>

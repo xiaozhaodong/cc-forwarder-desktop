@@ -37,7 +37,7 @@ const AccountRow = ({
   const accountId = resolveAccountId(account) ?? account.account_name ?? account.accountName;
   const accountName = account.account_name || account.accountName || '-';
   const state = account.state || 'active';
-  const stateClass = ACCOUNT_STATE_STYLE[state] || 'bg-slate-100 text-slate-600 border-slate-200';
+  const stateClass = ACCOUNT_STATE_STYLE[state] || 'tone-slate';
   const quotaStatus = String(account.quota_status || account.quotaStatus || '').trim().toLowerCase() || 'pending';
   const quotaStatusClass = QUOTA_STATUS_STYLE[quotaStatus] || QUOTA_STATUS_STYLE.pending;
   const planType = account.plan_type || account.planType || '';
@@ -74,7 +74,7 @@ const AccountRow = ({
   const quotaWeeklyResetLabel = formatQuotaResetTime(quotaWeeklyResetAt);
 
   return (
-    <div className={`px-5 py-4 hover:bg-slate-50/60 transition-colors ${!account.enabled ? 'opacity-60' : ''}`}>
+    <div className={`px-5 py-4 hover:bg-surface-sub transition-colors ${!account.enabled ? 'opacity-60' : ''}`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <button
           type="button"
@@ -83,25 +83,25 @@ const AccountRow = ({
           onClick={() => onToggle(account)}
           disabled={rowBusy}
           title={account.enabled ? '停用' : '启用'}
-          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 ${
-            account.enabled ? 'bg-indigo-500' : 'bg-slate-300'
+          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring focus-visible:ring-offset-2 ${
+            account.enabled ? 'bg-indigo-500' : 'bg-line-strong'
           } ${rowBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
         >
           <span
             aria-hidden="true"
-            className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ${
+            className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-surface shadow-sm ring-0 transition duration-200 ${
               account.enabled ? 'translate-x-[18px]' : 'translate-x-[2px]'
             }`}
           />
         </button>
 
-        <span className="min-w-0 max-w-full truncate text-sm font-semibold text-slate-900 sm:max-w-[220px]" title={accountName}>
+        <span className="min-w-0 max-w-full truncate text-sm font-semibold text-fg sm:max-w-[220px]" title={accountName}>
           {accountName}
         </span>
 
         <Badge
           text={toAccountAuthLabel(account.provider_type || account.providerType || '')}
-          className="bg-indigo-50 text-indigo-600 border-indigo-100"
+          className="bg-accent-soft text-accent border-accent-line"
         />
 
         {tierMeta && (
@@ -114,25 +114,25 @@ const AccountRow = ({
 
         <Badge
           text={`组内顺序 ${Number.isFinite(priority) ? priority : '-'}`}
-          className="bg-amber-50 text-amber-700 border-amber-100"
+          className="bg-warn-soft text-warn border-warn-line"
         />
 
         {tierMeta?.count > 1 && (
           <Badge
             text={`同组 ${tierMeta.count} 个`}
-            className="bg-white text-slate-500 border-slate-200"
+            className="bg-surface text-fg-muted border-line"
             title="同组账号会先按组别命中，再在组内按顺序和健康度择优"
           />
         )}
 
         {planTypeLabel && (
-          <Badge text={planTypeLabel} className="bg-violet-50 text-violet-600 border-violet-100" />
+          <Badge text={planTypeLabel} className="tone-violet" />
         )}
 
         {isAPIKeyAccount && modelRewriteSettings.enabled && (
           <Badge
             text={modelRewriteBadgeText}
-            className="bg-cyan-50 text-cyan-700 border-cyan-100"
+            className="tone-cyan"
             title={modelRewriteRuleLabels.join(' / ')}
           />
         )}
@@ -142,12 +142,12 @@ const AccountRow = ({
           <Badge text={toAccountStateLabel(state)} className={stateClass} />
         </div>
 
-        <div className="hidden h-5 w-px shrink-0 bg-slate-200 md:block" />
+        <div className="hidden h-5 w-px shrink-0 bg-surface-emph md:block" />
 
         <div className="flex items-center gap-0.5 shrink-0">
           <button
             type="button"
-            className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 rounded-md transition-colors cursor-pointer"
+            className="p-1.5 text-fg-subtle hover:bg-accent-soft hover:text-accent rounded-md transition-colors cursor-pointer"
             onClick={() => onEdit(account)}
             disabled={rowBusy}
             title="编辑"
@@ -156,7 +156,7 @@ const AccountRow = ({
           </button>
           <button
             type="button"
-            className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 rounded-md transition-colors cursor-pointer"
+            className="p-1.5 text-fg-subtle hover:bg-accent-soft hover:text-accent rounded-md transition-colors cursor-pointer"
             onClick={() => onRefreshProfile(account)}
             disabled={rowBusy}
             title="刷新账号信息"
@@ -165,7 +165,7 @@ const AccountRow = ({
           </button>
           <button
             type="button"
-            className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 rounded-md transition-colors cursor-pointer"
+            className="p-1.5 text-fg-subtle hover:bg-accent-soft hover:text-accent rounded-md transition-colors cursor-pointer"
             onClick={() => onTest(account)}
             disabled={rowBusy}
             title="测试连通性"
@@ -174,7 +174,7 @@ const AccountRow = ({
           </button>
           <button
             type="button"
-            className="p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-500 rounded-md transition-colors cursor-pointer"
+            className="p-1.5 text-fg-subtle hover:bg-danger-soft hover:text-danger rounded-md transition-colors cursor-pointer"
             onClick={() => onDelete(account)}
             disabled={rowBusy}
             title="删除"
@@ -186,20 +186,20 @@ const AccountRow = ({
 
       <div className="mt-3 flex flex-col gap-3 md:ml-12 md:gap-4 lg:flex-row lg:items-center lg:gap-6">
         <div className="flex min-w-0 w-full items-center gap-2 lg:max-w-[360px]">
-          <span className="text-[11px] text-slate-400 shrink-0 w-10">5h</span>
+          <span className="text-[11px] text-fg-subtle shrink-0 w-10">5h</span>
           {isAPIKeyAccount ? (
-            <span className="text-[11px] text-slate-500">无限额</span>
+            <span className="text-[11px] text-fg-muted">无限额</span>
           ) : normalizedPlanType === 'free' ? (
-            <span className="text-[11px] text-slate-300">无额度</span>
+            <span className="text-[11px] text-fg-subtle">无额度</span>
           ) : (
             <>
-              <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              <div className="flex-1 h-1.5 bg-surface-mut rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all duration-500 ${toQuotaProgressClass(quota5hRemaining)}`}
                   style={{ width: `${Number.isFinite(quota5hRemaining) ? quota5hRemaining : 0}%` }}
                 />
               </div>
-              <span className="text-[11px] font-medium text-slate-600 shrink-0 text-right whitespace-nowrap" title={quota5hResetAt ? `重置 ${formatTimestamp(quota5hResetAt)}` : ''}>
+              <span className="text-[11px] font-medium text-fg-body shrink-0 text-right whitespace-nowrap" title={quota5hResetAt ? `重置 ${formatTimestamp(quota5hResetAt)}` : ''}>
                 {Number.isFinite(quota5hRemaining) ? `${quota5hRemaining.toFixed(0)}%` : '-'}
                 {quota5hResetLabel ? ` · ${quota5hResetLabel} 重置` : ''}
               </span>
@@ -208,18 +208,18 @@ const AccountRow = ({
         </div>
 
         <div className="flex min-w-0 w-full items-center gap-2 lg:max-w-[360px]">
-          <span className="text-[11px] text-slate-400 shrink-0 w-10">d7</span>
+          <span className="text-[11px] text-fg-subtle shrink-0 w-10">d7</span>
           {isAPIKeyAccount ? (
-            <span className="text-[11px] text-slate-500">无限额</span>
+            <span className="text-[11px] text-fg-muted">无限额</span>
           ) : (
             <>
-              <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              <div className="flex-1 h-1.5 bg-surface-mut rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all duration-500 ${toQuotaProgressClass(quotaWeeklyRemaining)}`}
                   style={{ width: `${Number.isFinite(quotaWeeklyRemaining) ? quotaWeeklyRemaining : 0}%` }}
                 />
               </div>
-              <span className="text-[11px] font-medium text-slate-600 shrink-0 text-right whitespace-nowrap" title={quotaWeeklyResetAt ? `重置 ${formatTimestamp(quotaWeeklyResetAt)}` : ''}>
+              <span className="text-[11px] font-medium text-fg-body shrink-0 text-right whitespace-nowrap" title={quotaWeeklyResetAt ? `重置 ${formatTimestamp(quotaWeeklyResetAt)}` : ''}>
                 {Number.isFinite(quotaWeeklyRemaining) ? `${quotaWeeklyRemaining.toFixed(0)}%` : '-'}
                 {quotaWeeklyResetLabel ? ` · ${quotaWeeklyResetLabel} 重置` : ''}
               </span>
@@ -229,11 +229,11 @@ const AccountRow = ({
 
         <div className="hidden flex-1 lg:block" />
 
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 lg:shrink-0">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-fg-subtle lg:shrink-0">
           <span>{multiplierSummary}</span>
           <span>刷新 {toDisplayTime(refreshedAt)}</span>
           {(account.last_success_at || account.lastSuccessAt) && (
-            <span className="text-emerald-500">
+            <span className="text-success">
               连通 {formatTimestamp(account.last_success_at || account.lastSuccessAt)}
             </span>
           )}

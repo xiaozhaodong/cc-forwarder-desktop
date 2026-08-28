@@ -46,7 +46,7 @@ const FilterField = ({ config, value, onChange, wide = false, showLabel = true }
       className="inline-flex shrink-0 items-center gap-1.5"
       title={`${config.label}${currentLabel ? `：${currentLabel}` : ''}`}
     >
-      <span className={showLabel ? 'whitespace-nowrap text-[11px] font-medium text-slate-400' : 'sr-only'}>
+      <span className={showLabel ? 'whitespace-nowrap text-[11px] font-medium text-fg-subtle' : 'sr-only'}>
         {FILTER_SHORT_LABELS[config.key] || config.label}
       </span>
       <CustomSelect
@@ -66,7 +66,7 @@ const BatchActionButton = ({ icon: Icon, label, onClick, disabled, title, classN
     onClick={onClick}
     disabled={disabled}
     title={title}
-    className={`inline-flex items-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
+    className={`inline-flex items-center rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-fg-body transition-colors hover:border-line-strong hover:bg-surface-sub disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
   >
     {Icon && <Icon size={13} className="mr-1.5" />}
     {label}
@@ -104,11 +104,11 @@ const AccountInventoryFilters = ({
   });
 
   return (
-    <div className="border-b border-slate-100 px-5 py-3">
+    <div className="border-b border-line-soft px-5 py-3">
       {/* 单行工具栏：查询条件与结果工具共用一条基线；窄屏时按组换行 */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <div className="relative w-full shrink-0 sm:w-48">
-          <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-subtle" />
           <input
             id="account-inventory-search"
             type="search"
@@ -116,10 +116,10 @@ const AccountInventoryFilters = ({
             value={searchTerm}
             placeholder="搜索账号名 / 备注 / 标签"
             onChange={(event) => onSearchTermChange?.(event.target.value)}
-            className="h-8 w-full rounded-lg border border-slate-200 bg-white pl-8 pr-11 text-xs text-slate-700 outline-none placeholder:text-slate-400 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+            className="h-8 w-full rounded-lg border border-line bg-surface pl-8 pr-11 text-xs text-fg-body outline-none placeholder:text-fg-subtle focus:border-accent-line focus:ring-2 focus:ring-accent-soft"
           />
           <span
-            className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-slate-500"
+            className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-surface-mut px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-fg-muted"
             title={`当前筛选结果：${resultCount} 个账号`}
           >
             {resultCount}
@@ -137,8 +137,8 @@ const AccountInventoryFilters = ({
           ))}
         </div>
 
-        <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-slate-400">
-          <span className="hidden h-5 w-px bg-slate-200 lg:block" />
+        <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-fg-subtle">
+          <span className="hidden h-5 w-px bg-surface-emph lg:block" />
           {sortConfig ? (
             <FilterField
               config={sortConfig}
@@ -148,7 +148,7 @@ const AccountInventoryFilters = ({
               showLabel={false}
             />
           ) : null}
-          <span className="hidden h-5 w-px bg-slate-200 sm:block" />
+          <span className="hidden h-5 w-px bg-surface-emph sm:block" />
           {viewSwitcher}
           <button
             type="button"
@@ -156,8 +156,8 @@ const AccountInventoryFilters = ({
             disabled={!hasActiveFilters}
             className={`inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs font-medium transition-colors ${
               hasActiveFilters
-                ? 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-                : 'cursor-default text-slate-300'
+                ? 'text-fg-muted hover:bg-surface-mut hover:text-fg-body'
+                : 'cursor-default text-fg-subtle'
             }`}
             title={hasActiveFilters ? '重置搜索、筛选与排序' : '当前没有需要重置的条件'}
             aria-label="重置搜索、筛选与排序"
@@ -169,11 +169,11 @@ const AccountInventoryFilters = ({
 
       {/* 批量操作 - 选中时显示 */}
       {selectedCount > 0 && (
-        <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50/40 px-3 py-2">
-          <span className="shrink-0 text-xs font-medium text-indigo-600">
+        <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-accent-line bg-accent-soft/40 px-3 py-2">
+          <span className="shrink-0 text-xs font-medium text-accent">
             {selectedCount} 个已选
           </span>
-          <span className="h-4 w-px bg-indigo-200" />
+          <span className="h-4 w-px bg-accent-line" />
           <div className="flex flex-wrap items-center gap-1.5">
             <BatchActionButton
               icon={TestTube2}
@@ -195,7 +195,7 @@ const AccountInventoryFilters = ({
               label={disableVariant?.label || BATCH_LABELS.disable}
               onClick={() => onBatchAction?.(toggleAction || { key: 'batch-toggle' }, disableVariant || { key: 'disable', label: BATCH_LABELS.disable })}
             />
-            <span className="h-4 w-px bg-slate-200" />
+            <span className="h-4 w-px bg-surface-emph" />
             <BatchActionButton
               label={primaryVariant?.label || BATCH_LABELS.primary}
               onClick={() => onBatchAction?.(moveAction || { key: 'batch-move-tier' }, primaryVariant || { key: 'primary', label: BATCH_LABELS.primary })}
@@ -212,7 +212,7 @@ const AccountInventoryFilters = ({
             />
           </div>
           {batchFeedback?.message && (
-            <span className="ml-auto shrink-0 text-xs text-slate-500">{batchFeedback.message}</span>
+            <span className="ml-auto shrink-0 text-xs text-fg-muted">{batchFeedback.message}</span>
           )}
         </div>
       )}

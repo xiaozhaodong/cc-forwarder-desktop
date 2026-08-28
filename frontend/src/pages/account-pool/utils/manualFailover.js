@@ -31,7 +31,7 @@ const buildManualFailoverTierSummary = (accounts = []) => {
         count,
         order: index + 1,
         label: preset?.label || `第 ${index + 1} 层`,
-        className: preset?.className || 'bg-slate-100 text-slate-700 border-slate-200',
+        className: preset?.className || 'tone-slate',
         description: preset?.description || '更低优先级的手动兜底层'
       };
     });

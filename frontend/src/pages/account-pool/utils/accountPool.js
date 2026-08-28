@@ -162,17 +162,19 @@ const toRemainingPercent = (usedPercent) => {
   return Math.max(0, Math.min(100, 100 - used));
 };
 
+// 三档实色在深浅两底上都成立；无数据态必须走 token，
+// 固定浅灰在暗色下会变成一根亮条，比有数据时还抢眼。
 const toQuotaProgressClass = (remainingPercent) => {
   if (!Number.isFinite(remainingPercent)) {
-    return 'bg-slate-200';
+    return 'bg-line-strong';
   }
   if (remainingPercent > 50) {
-    return 'bg-emerald-400';
+    return 'bg-success-solid';
   }
   if (remainingPercent > 20) {
-    return 'bg-amber-400';
+    return 'bg-warn-solid';
   }
-  return 'bg-rose-400';
+  return 'bg-danger-solid';
 };
 
 const toQuotaStatusLabel = (status = '') => {

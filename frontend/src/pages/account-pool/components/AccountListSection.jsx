@@ -22,18 +22,18 @@ const AccountListSection = ({
   onToggle,
   onMoveTier
 }) => (
-  <section className="bg-white rounded-2xl border border-slate-200/70 shadow-sm overflow-hidden">
-    <div className="px-5 py-4 border-b border-slate-100 space-y-3">
+  <section className="bg-surface rounded-2xl border border-line shadow-sm overflow-hidden">
+    <div className="px-5 py-4 border-b border-line-soft space-y-3">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0 flex-1 space-y-2">
           <div className="flex flex-wrap items-center gap-2.5">
-            <Users size={18} className="text-indigo-600" />
-            <h2 className="text-base font-semibold text-slate-900">账号列表</h2>
-            <Badge text="轻量调度" className="bg-sky-50 text-sky-700 border-sky-200" />
+            <Users size={18} className="text-accent" />
+            <h2 className="text-base font-semibold text-fg">账号列表</h2>
+            <Badge text="轻量调度" className="tone-sky" />
           </div>
 
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <Info size={13} className="shrink-0 text-sky-600" />
+          <div className="flex items-center gap-2 text-xs text-fg-muted">
+            <Info size={13} className="shrink-0 text-info" />
             <p
               className="min-w-0 truncate leading-5"
               title="系统先按组别（主组 -> 备组 -> 冷备）选择，再在组内按顺序、额度、状态与健康度自动择优。"
@@ -74,7 +74,7 @@ const AccountListSection = ({
         )}
       />
     ) : (
-      <div className="divide-y divide-slate-100">
+      <div className="divide-y divide-line-soft">
         {accounts.map((account) => (
           <AccountRow
             key={String(account.id ?? account.ID ?? account.account_id ?? account.account_name ?? account.accountName)}

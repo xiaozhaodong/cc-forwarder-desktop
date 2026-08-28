@@ -73,7 +73,7 @@ function LogFilters({
           type="checkbox"
           checked={autoScroll}
           onChange={(e) => onAutoScrollChange(e.target.checked)}
-          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+          className="app-checkbox"
         />
         自动滚动
       </label>

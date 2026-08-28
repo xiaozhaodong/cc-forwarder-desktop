@@ -59,7 +59,7 @@ const PasswordInput = ({ label, name, value, onChange, placeholder, help, disabl
 
 const Checkbox = ({ label, help, checked, onChange }) => (
   <label className="flex items-start gap-3 rounded-xl border border-line bg-surface-sub px-3 py-2.5">
-    <input type="checkbox" checked={checked} onChange={onChange} className="mt-1 h-4 w-4 rounded border-line-strong text-accent focus:ring-accent-ring" />
+    <input type="checkbox" checked={checked} onChange={onChange} className="mt-1 app-checkbox" />
     <span>
       <span className="block text-sm font-medium text-fg-body">{label}</span>
       <span className="block text-xs leading-5 text-fg-subtle">{help}</span>
@@ -234,7 +234,7 @@ const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) =>
                   <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-fg-subtle">模型改写</h3>
                   <p className="mt-1 text-xs text-fg-subtle">仅作用于 Claude Messages 与 count_tokens，按精确匹配执行。</p>
                 </div>
-                <input type="checkbox" checked={state.modelRewriteEnabled} onChange={(event) => setState((current) => ({ ...current, modelRewriteEnabled: event.target.checked }))} className="h-4 w-4 rounded border-line-strong text-accent" aria-label="启用模型改写" />
+                <input type="checkbox" checked={state.modelRewriteEnabled} onChange={(event) => setState((current) => ({ ...current, modelRewriteEnabled: event.target.checked }))} className="app-checkbox" aria-label="启用模型改写" />
               </div>
               {state.modelRewriteEnabled && (
                 <div className="space-y-2 rounded-xl border border-line bg-surface-sub p-3">

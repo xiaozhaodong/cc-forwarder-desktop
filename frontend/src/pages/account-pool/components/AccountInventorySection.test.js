@@ -133,7 +133,7 @@ test('inventory grid cards keep quick actions visible when account timestamps ar
   );
   assert.match(
     cardSource,
-    /className="min-w-0 truncate whitespace-nowrap text-\[11px\] text-slate-400"/,
+    /className="min-w-0 truncate whitespace-nowrap text-\[11px\] text-fg-subtle"/,
     'expected long connectivity and refresh timestamps to truncate inside the available width'
   );
   assert.match(

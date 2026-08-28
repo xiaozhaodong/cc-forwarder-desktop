@@ -10,34 +10,36 @@ import Badge from './Badge.jsx';
 
 const DEFAULT_VISIBLE = 10;
 
+// 三组的环与头部底纹用同色相透明度色，而非固定浅色阶：
+// 透明色让页面底透上来，深浅两主题都成立，无需成对维护 dark:。
 const GROUP_STYLE = {
   primary: {
     label: '主组',
-    badgeClassName: 'bg-indigo-50 text-indigo-700 border-indigo-200',
-    ringClassName: 'border-indigo-200/80',
-    headerBg: 'bg-indigo-50/50'
+    badgeClassName: 'tone-indigo',
+    ringClassName: 'border-indigo-400/40',
+    headerBg: 'bg-indigo-400/[0.07]'
   },
   backup: {
     label: '备组',
-    badgeClassName: 'bg-cyan-50 text-cyan-700 border-cyan-200',
-    ringClassName: 'border-cyan-200/80',
-    headerBg: 'bg-cyan-50/50'
+    badgeClassName: 'tone-cyan',
+    ringClassName: 'border-cyan-400/40',
+    headerBg: 'bg-cyan-400/[0.07]'
   },
   cold: {
     label: '冷备',
-    badgeClassName: 'bg-violet-50 text-violet-700 border-violet-200',
-    ringClassName: 'border-violet-200/80',
-    headerBg: 'bg-violet-50/50'
+    badgeClassName: 'tone-violet',
+    ringClassName: 'border-violet-400/40',
+    headerBg: 'bg-violet-400/[0.07]'
   }
 };
 
 const STATE_TONE_CLASS = {
-  rose: 'bg-rose-50 text-rose-700 border-rose-200',
-  red: 'bg-rose-50 text-rose-700 border-rose-200',
-  amber: 'bg-amber-50 text-amber-700 border-amber-200',
-  emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  green: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  slate: 'bg-slate-50 text-slate-600 border-slate-200'
+  rose: 'tone-rose',
+  red: 'tone-rose',
+  amber: 'tone-amber',
+  emerald: 'tone-emerald',
+  green: 'tone-emerald',
+  slate: 'tone-slate'
 };
 
 const normalizeGroupKey = (key = '') => {
@@ -71,12 +73,12 @@ const quotaStrokeColor = (text, percent) => {
 };
 
 const quotaTextColor = (text, percent) => {
-  if (!text || text === '-' || text === '无' || text === '未刷新') return 'text-slate-400';
-  if (text === '无限额') return 'text-slate-500';
-  if (!Number.isFinite(percent)) return 'text-slate-500';
-  if (percent > 50) return 'text-emerald-600';
-  if (percent > 20) return 'text-amber-600';
-  return 'text-rose-600';
+  if (!text || text === '-' || text === '无' || text === '未刷新') return 'text-fg-subtle';
+  if (text === '无限额') return 'text-fg-muted';
+  if (!Number.isFinite(percent)) return 'text-fg-muted';
+  if (percent > 50) return 'text-success';
+  if (percent > 20) return 'text-warn';
+  return 'text-danger';
 };
 
 const RING_SIZE = 20;
@@ -148,33 +150,33 @@ const GroupBoardCard = ({
   };
 
   return (
-    <article className={`rounded-xl border ${style.ringClassName} bg-white shadow-sm overflow-hidden`}>
+    <article className={`rounded-xl border ${style.ringClassName} bg-surface shadow-sm overflow-hidden`}>
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50/80 ${style.headerBg}`}
+        className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-sub ${style.headerBg}`}
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          {expanded ? <ChevronDown size={14} className="text-slate-400 shrink-0" /> : <ChevronRight size={14} className="text-slate-400 shrink-0" />}
+          {expanded ? <ChevronDown size={14} className="text-fg-subtle shrink-0" /> : <ChevronRight size={14} className="text-fg-subtle shrink-0" />}
           <Badge text={group?.label || style.label} className={style.badgeClassName} />
-          <span className="text-xs text-slate-500">{availableCount}/{accounts.length} 可用</span>
-          <span className="text-slate-300">·</span>
-          <span className="text-xs text-slate-700 font-medium truncate">
+          <span className="text-xs text-fg-muted">{availableCount}/{accounts.length} 可用</span>
+          <span className="text-fg-subtle">·</span>
+          <span className="text-xs text-fg-body font-medium truncate">
             {hasManualPinnedAccount ? '全局手动' : hasGroupPreferredAccount ? '本组首选' : '顺序首位'}: {activeAccountName}
           </span>
         </div>
-        <span className="text-xs text-slate-400 shrink-0">{group?.healthSummary || ''}</span>
+        <span className="text-xs text-fg-subtle shrink-0">{group?.healthSummary || ''}</span>
       </button>
 
       {expanded && (
-        <div className="border-t border-slate-100">
+        <div className="border-t border-line-soft">
           {accounts.length === 0 ? (
-            <div className="px-4 py-4 text-sm text-slate-500">该组暂无账号。</div>
+            <div className="px-4 py-4 text-sm text-fg-muted">该组暂无账号。</div>
           ) : (
             <>
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="bg-slate-50/60 text-left text-[11px] uppercase tracking-wider text-slate-400">
+                  <tr className="bg-surface-sub text-left text-[11px] uppercase tracking-wider text-fg-subtle">
                     <th className="px-4 py-2 font-medium">名称</th>
                     <th className="px-3 py-2 font-medium">状态</th>
                     <th className="px-3 py-2 font-medium">额度</th>
@@ -188,12 +190,12 @@ const GroupBoardCard = ({
                     const toneCls = STATE_TONE_CLASS[account.stateTone] || STATE_TONE_CLASS.slate;
 
                     return (
-                      <tr key={String(accountId ?? `${groupKey}-${index}`)} className="border-t border-slate-50 hover:bg-slate-50/50">
+                      <tr key={String(accountId ?? `${groupKey}-${index}`)} className="border-t border-line-soft hover:bg-surface-sub">
                         <td className="px-4 py-2 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
-                            <span className="font-medium text-slate-900">{account.name || `候选 ${index + 1}`}</span>
-                            {isActive && <Badge text="全局手动" className="bg-indigo-50 text-indigo-700 border-indigo-200" />}
-                            {!isActive && account?.isGroupPreferred && <Badge text="本组首选" className="bg-emerald-50 text-emerald-700 border-emerald-200" />}
+                            <span className="font-medium text-fg">{account.name || `候选 ${index + 1}`}</span>
+                            {isActive && <Badge text="全局手动" className="tone-indigo" />}
+                            {!isActive && account?.isGroupPreferred && <Badge text="本组首选" className="tone-emerald" />}
                           </div>
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">
@@ -213,7 +215,7 @@ const GroupBoardCard = ({
                                 title="设为本组首选"
                                 disabled={busyKey === `group-active-${groupKey}-${accountId}` || groupActionBusy}
                                 onClick={() => onSetActiveAccount?.(toActionAccount(account), group)}
-                                className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors disabled:opacity-40"
+                                className="p-1 text-fg-subtle hover:text-success hover:bg-success-soft rounded transition-colors disabled:opacity-40"
                               >
                                 <Target size={13} />
                               </button>
@@ -224,7 +226,7 @@ const GroupBoardCard = ({
                                 title="设为全局手动"
                                 disabled={Boolean(busyKey)}
                                 onClick={() => onPinAccountSelection?.(toActionAccount(account))}
-                                className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors disabled:opacity-40"
+                                className="p-1 text-fg-subtle hover:text-accent hover:bg-accent-soft rounded transition-colors disabled:opacity-40"
                               >
                                 <Pin size={13} />
                               </button>
@@ -238,11 +240,11 @@ const GroupBoardCard = ({
               </table>
 
               {hiddenCount > 0 && (
-                <div className="border-t border-slate-50 px-4 py-2 text-center">
+                <div className="border-t border-line-soft px-4 py-2 text-center">
                   <button
                     type="button"
                     onClick={() => setShowAll(true)}
-                    className="text-xs font-medium text-indigo-600 hover:text-indigo-700 transition-colors"
+                    className="text-xs font-medium text-accent hover:text-accent-fg transition-colors"
                   >
                     展开全部 {accounts.length} 个账号
                   </button>
@@ -250,11 +252,11 @@ const GroupBoardCard = ({
               )}
 
               {showAll && accounts.length > DEFAULT_VISIBLE && (
-                <div className="border-t border-slate-50 px-4 py-2 text-center">
+                <div className="border-t border-line-soft px-4 py-2 text-center">
                   <button
                     type="button"
                     onClick={() => setShowAll(false)}
-                    className="text-xs font-medium text-slate-500 hover:text-slate-700 transition-colors"
+                    className="text-xs font-medium text-fg-muted hover:text-fg-body transition-colors"
                   >
                     收起，只显示前 {DEFAULT_VISIBLE} 个
                   </button>
@@ -264,11 +266,11 @@ const GroupBoardCard = ({
           )}
 
           {actions.length > 0 && activeAccount ? (
-            <div className="border-t border-slate-100 px-4 py-3">
+            <div className="border-t border-line-soft px-4 py-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <div className="text-xs font-medium text-slate-600">当前组动作</div>
-                  <div className="mt-0.5 text-[11px] text-slate-400">与相邻组整组交换，不是单账号加入</div>
+                  <div className="text-xs font-medium text-fg-body">当前组动作</div>
+                  <div className="mt-0.5 text-[11px] text-fg-subtle">与相邻组整组交换，不是单账号加入</div>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
@@ -299,11 +301,11 @@ const GroupBoardCard = ({
           ) : null}
 
           {onViewInInventory && accounts.length > 0 && (
-            <div className="border-t border-slate-100 px-4 py-2">
+            <div className="border-t border-line-soft px-4 py-2">
               <button
                 type="button"
                 onClick={() => onViewInInventory?.(groupKey)}
-                className="flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-indigo-600 transition-colors"
+                className="flex items-center gap-1 text-xs font-medium text-fg-muted hover:text-accent transition-colors"
               >
                 <ExternalLink size={12} />
                 去账号资产查看本组全部账号

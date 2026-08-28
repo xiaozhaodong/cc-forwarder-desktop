@@ -25,15 +25,15 @@ const AccountInventoryGrid = ({
 
   return (
     <div>
-      <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-2.5">
+      <div className="flex items-center gap-2 border-b border-line-soft px-5 py-2.5">
         <input
           type="checkbox"
           checked={allVisibleSelected}
           aria-label="选择全部可见账号"
           onChange={() => onToggleAllRows?.()}
-          className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+          className="app-checkbox"
         />
-        <span className="text-xs text-slate-400">
+        <span className="text-xs text-fg-subtle">
           选择本页全部 {rows.length} 个账号{selectedCount > 0 ? `(已选 ${selectedCount} 个)` : ''}
         </span>
       </div>

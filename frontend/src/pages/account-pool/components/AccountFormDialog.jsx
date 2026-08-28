@@ -114,32 +114,32 @@ const AccountFormDialog = ({
           disabled={!isAPIKeyAccount}
           value={accountForm[key]}
           onChange={(event) => setAccountForm(prev => ({ ...prev, [key]: event.target.value }))}
-          className={`w-full rounded-lg border px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 ${
-            isAPIKeyAccount ? 'border-slate-200' : 'border-slate-100 bg-slate-50 text-slate-400'
+          className={`w-full rounded-lg border px-3 py-2 text-sm focus:border-accent-line focus:outline-none focus:ring-2 focus:ring-accent-soft ${
+            isAPIKeyAccount ? 'border-line' : 'border-line-soft bg-surface-sub text-fg-subtle'
           }`}
           placeholder="1.0"
         />
-        {help ? <div className="text-[11px] text-slate-400">{help}</div> : null}
+        {help ? <div className="text-[11px] text-fg-subtle">{help}</div> : null}
       </div>
     </FormField>
   );
 
   return createPortal(
     <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[15vh]">
-      <div className="absolute inset-0 bg-slate-900/40" />
+      <div className="absolute inset-0 bg-overlay" />
       <form
         onSubmit={onSubmit}
         role="dialog"
         aria-modal="true"
         aria-label={editingAccount ? '编辑账号' : '新增账号'}
-        className="relative flex w-full max-w-2xl max-h-[75vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+        className="relative flex w-full max-w-2xl max-h-[75vh] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl"
       >
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-          <h3 className="text-lg font-semibold text-slate-900">{editingAccount ? '编辑账号' : '新增账号'}</h3>
+        <div className="flex items-center justify-between border-b border-line-soft px-6 py-4">
+          <h3 className="text-lg font-semibold text-fg">{editingAccount ? '编辑账号' : '新增账号'}</h3>
           <button
             type="button"
             ref={closeButtonRef}
-            className="text-sm text-slate-400 hover:text-slate-600"
+            className="text-sm text-fg-subtle hover:text-fg-body"
             onClick={handleRequestClose}
             disabled={accountSubmitting}
           >
@@ -150,22 +150,22 @@ const AccountFormDialog = ({
         <div className="flex-1 overflow-y-auto px-6 py-5">
           <div className="space-y-6">
             <section className="space-y-4">
-              <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">基本信息</h4>
+              <h4 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">基本信息</h4>
 
               <FormField label="账号名称" required>
                 <input
                   type="text"
                   value={accountForm.account_name}
                   onChange={(event) => setAccountForm(prev => ({ ...prev, account_name: event.target.value }))}
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  className="w-full rounded-lg border border-line px-3 py-2 text-sm focus:border-accent-line focus:outline-none focus:ring-2 focus:ring-accent-soft"
                   placeholder="例如：openai-auth-main"
                 />
               </FormField>
 
               <div className="space-y-2">
-                <div className="text-xs font-medium text-slate-600">
+                <div className="text-xs font-medium text-fg-body">
                   授权方式
-                  <span className="ml-1 text-rose-500">*</span>
+                  <span className="ml-1 text-danger">*</span>
                 </div>
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                   {AUTH_METHOD_OPTIONS.map((option) => {
@@ -201,12 +201,12 @@ const AccountFormDialog = ({
                         }}
                         className={`rounded-lg border px-3 py-2 text-left transition-colors ${
                           active
-                            ? 'border-emerald-300 bg-emerald-50'
-                            : 'border-slate-200 hover:bg-slate-50'
+                            ? 'border-success-line bg-success-soft'
+                            : 'border-line hover:bg-surface-sub'
                         }`}
                       >
-                        <div className={`text-sm font-medium ${active ? 'text-emerald-700' : 'text-slate-700'}`}>{option.label}</div>
-                        <div className="text-xs text-slate-500">{option.description}</div>
+                        <div className={`text-sm font-medium ${active ? 'text-success' : 'text-fg-body'}`}>{option.label}</div>
+                        <div className="text-xs text-fg-muted">{option.description}</div>
                       </button>
                     );
                   })}
@@ -215,24 +215,24 @@ const AccountFormDialog = ({
             </section>
 
             <section className="space-y-3">
-              <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">请求压缩</h4>
-              <label className={`flex items-start gap-2 text-sm ${supportsRequestCompression ? 'text-slate-700' : 'text-slate-400'}`}>
+              <h4 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">请求压缩</h4>
+              <label className={`flex items-start gap-2 text-sm ${supportsRequestCompression ? 'text-fg-body' : 'text-fg-subtle'}`}>
                 <input
                   type="checkbox"
                   checked={Boolean(accountForm.enableRequestCompression)}
                   disabled={!supportsRequestCompression}
                   onChange={(event) => setAccountForm(prev => ({ ...prev, enableRequestCompression: event.target.checked }))}
-                  className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  className="mt-0.5 app-checkbox"
                 />
                 <span>向上游发送 zstd 压缩请求体</span>
               </label>
-              <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+              <div className="rounded-lg bg-surface-sub px-3 py-2 text-xs leading-5 text-fg-muted">
                 关闭时发送明文 JSON；API Key 和 ChatGPT OAuth 账号均可开启。第三方上游请先确认支持请求头 Content-Encoding: zstd。
               </div>
             </section>
 
             <section className="space-y-4">
-              <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">路由配置</h4>
+              <h4 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">路由配置</h4>
 
               <div className="grid grid-cols-[2fr_2fr_3fr] gap-4">
                 <FormField label="组别">
@@ -252,7 +252,7 @@ const AccountFormDialog = ({
                     step="10"
                     value={accountForm.priority}
                     onChange={(event) => setAccountForm(prev => ({ ...prev, priority: event.target.value }))}
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    className="w-full rounded-lg border border-line px-3 py-2 text-sm focus:border-accent-line focus:outline-none focus:ring-2 focus:ring-accent-soft"
                     placeholder="10"
                   />
                 </FormField>
@@ -262,31 +262,31 @@ const AccountFormDialog = ({
                     type="url"
                     value={accountForm.base_url}
                     onChange={(event) => setAccountForm(prev => ({ ...prev, base_url: event.target.value }))}
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    className="w-full rounded-lg border border-line px-3 py-2 text-sm focus:border-accent-line focus:outline-none focus:ring-2 focus:ring-accent-soft"
                     placeholder={DEFAULT_BASE_URL}
                   />
                 </FormField>
               </div>
 
-              <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+              <div className="rounded-lg bg-surface-sub px-3 py-2 text-xs leading-5 text-fg-muted">
                 调度优先级：主组 → 备组 → 冷备，组内按顺序、额度和健康度择优。顺序建议 10、20、30。
               </div>
 
-              <label className="inline-flex items-start gap-2 text-sm text-slate-700">
+              <label className="inline-flex items-start gap-2 text-sm text-fg-body">
                 <input
                   type="checkbox"
                   checked={accountForm.enabled}
                   onChange={(event) => setAccountForm(prev => ({ ...prev, enabled: event.target.checked }))}
-                  className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  className="mt-0.5 app-checkbox"
                 />
                 <span>{editingAccount ? '保持账号启用状态' : '创建后立即启用'}</span>
               </label>
             </section>
 
             <section className="space-y-4">
-              <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">模型兼容</h4>
+              <h4 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">模型兼容</h4>
 
-              <label className={`flex items-start gap-2 text-sm ${isAPIKeyAccount ? 'text-slate-700' : 'text-slate-400'}`}>
+              <label className={`flex items-start gap-2 text-sm ${isAPIKeyAccount ? 'text-fg-body' : 'text-fg-subtle'}`}>
                 <input
                   type="checkbox"
                   checked={Boolean(accountForm.modelRewriteEnabled)}
@@ -298,7 +298,7 @@ const AccountFormDialog = ({
                       ? prev.modelRewriteRules
                       : createDefaultModelRewriteRules()
                   }))}
-                  className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  className="mt-0.5 app-checkbox"
                 />
                 <span>启用模型兼容改写</span>
               </label>
@@ -314,7 +314,7 @@ const AccountFormDialog = ({
                           onChange={(event) => updateModelRewriteRules((rules) => rules.map((item, itemIndex) => (
                             itemIndex === index ? { ...item, source: event.target.value } : item
                           )))}
-                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                          className="w-full rounded-lg border border-line px-3 py-2 text-sm focus:border-accent-line focus:outline-none focus:ring-2 focus:ring-accent-soft"
                           placeholder={DEFAULT_MODEL_REWRITE_SOURCE}
                         />
                       </FormField>
@@ -325,7 +325,7 @@ const AccountFormDialog = ({
                           onChange={(event) => updateModelRewriteRules((rules) => rules.map((item, itemIndex) => (
                             itemIndex === index ? { ...item, target: event.target.value } : item
                           )))}
-                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                          className="w-full rounded-lg border border-line px-3 py-2 text-sm focus:border-accent-line focus:outline-none focus:ring-2 focus:ring-accent-soft"
                           placeholder={DEFAULT_MODEL_REWRITE_TARGET}
                         />
                       </FormField>
@@ -339,8 +339,8 @@ const AccountFormDialog = ({
                           onClick={() => updateModelRewriteRules((rules) => rules.filter((_, itemIndex) => itemIndex !== index))}
                           className={`inline-flex h-10 w-10 items-center justify-center rounded-lg border transition-colors ${
                             modelRewriteRules.length <= 1
-                              ? 'cursor-not-allowed border-slate-100 text-slate-300'
-                              : 'border-slate-200 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-500'
+                              ? 'cursor-not-allowed border-line-soft text-fg-subtle'
+                              : 'border-line text-fg-subtle hover:border-danger-line hover:bg-danger-soft hover:text-danger'
                           }`}
                         >
                           <Trash2 size={15} />
@@ -351,7 +351,7 @@ const AccountFormDialog = ({
                   <button
                     type="button"
                     onClick={() => updateModelRewriteRules((rules) => [...rules, { source: '', target: '' }])}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm font-medium text-fg-body transition-colors hover:border-accent-line hover:bg-accent-soft hover:text-accent"
                   >
                     <Plus size={15} />
                     添加规则
@@ -359,24 +359,24 @@ const AccountFormDialog = ({
                 </div>
               )}
 
-              <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+              <div className="rounded-lg bg-surface-sub px-3 py-2 text-xs leading-5 text-fg-muted">
                 仅在 Codex /v1/responses 与 /v1/responses/compact 转发前替换请求模型。
               </div>
             </section>
 
             <section className="space-y-4">
-              <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">认证信息</h4>
+              <h4 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">认证信息</h4>
 
               <FormField label={accountForm.auth_method === 'chatgpt_refresh_token' ? 'ChatGPT Refresh Token (rt)' : 'API Key'} required>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <div className="text-[11px] text-slate-400">
+                    <div className="text-[11px] text-fg-subtle">
                       {editingAccount ? '已改为按需读取完整凭据，默认隐藏' : '支持直接粘贴完整凭据'}
                     </div>
                     <button
                       type="button"
                       onClick={() => setShowCredential(prev => !prev)}
-                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700"
+                      className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-surface-sub hover:text-fg-body"
                       title={showCredential ? '隐藏凭据' : '显示凭据'}
                     >
                       {showCredential ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -393,10 +393,10 @@ const AccountFormDialog = ({
                       setAccountForm(prev => ({ ...prev, credential_raw: event.target.value }));
                     }}
                     readOnly={!showCredential || accountCredentialLoading}
-                    className={`min-h-[120px] w-full rounded-lg border px-3 py-2 text-sm font-mono focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 ${
+                    className={`min-h-[120px] w-full rounded-lg border px-3 py-2 text-sm font-mono focus:border-accent-line focus:outline-none focus:ring-2 focus:ring-accent-soft ${
                       !showCredential || accountCredentialLoading
-                        ? 'border-slate-100 bg-slate-50 text-slate-400'
-                        : 'border-slate-200'
+                        ? 'border-line-soft bg-surface-sub text-fg-subtle'
+                        : 'border-line'
                     }`}
                     placeholder={
                       accountCredentialLoading
@@ -427,8 +427,8 @@ const AccountFormDialog = ({
             </section>
 
             <section className="space-y-4">
-              <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">成本倍率配置</h4>
-              <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+              <h4 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">成本倍率配置</h4>
+              <div className="rounded-lg bg-surface-sub px-3 py-2 text-xs leading-5 text-fg-muted">
                 {isAPIKeyAccount
                   ? '仅 API Key 账号支持自定义成本倍率，默认为 1.0。'
                   : '当前账号类型固定使用默认倍率 1.0，不支持自定义。'}
@@ -445,7 +445,7 @@ const AccountFormDialog = ({
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-white px-6 py-4">
+        <div className="flex items-center justify-end gap-2 border-t border-line-soft bg-surface px-6 py-4">
           <Button type="button" variant="ghost" onClick={handleRequestClose} disabled={accountSubmitting}>
             取消
           </Button>

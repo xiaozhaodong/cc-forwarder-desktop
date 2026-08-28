@@ -315,7 +315,7 @@ const PricingForm = ({ pricing, onSave, onCancel, loading }) => {
                 type="checkbox"
                 checked={formData.isDefault}
                 onChange={(e) => handleChange('isDefault', e.target.checked)}
-                className="w-4 h-4 text-amber-600 border-amber-300 rounded focus:ring-amber-500"
+                className="app-checkbox"
               />
               <div className="flex items-center gap-2">
                 <Star size={16} className="text-amber-500" />

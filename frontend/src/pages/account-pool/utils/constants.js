@@ -37,35 +37,35 @@ const ACCOUNT_GROUP_OPTIONS = [
 ];
 
 const ACCOUNT_STATE_STYLE = {
-  active: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  cooldown: 'bg-amber-50 text-amber-700 border-amber-200',
-  disabled_auth: 'bg-rose-50 text-rose-700 border-rose-200',
-  disabled: 'bg-slate-100 text-slate-600 border-slate-200'
+  active: 'tone-emerald',
+  cooldown: 'tone-amber',
+  disabled_auth: 'tone-rose',
+  disabled: 'tone-slate'
 };
 
 const QUOTA_STATUS_STYLE = {
-  ok: 'bg-sky-50 text-sky-700 border-sky-200',
-  unavailable: 'bg-slate-100 text-slate-600 border-slate-200',
-  exhausted: 'bg-amber-50 text-amber-700 border-amber-200',
-  workspace_deactivated: 'bg-rose-50 text-rose-700 border-rose-200',
-  auth_invalid: 'bg-rose-50 text-rose-700 border-rose-200',
-  pending: 'bg-slate-100 text-slate-600 border-slate-200'
+  ok: 'tone-sky',
+  unavailable: 'tone-slate',
+  exhausted: 'tone-amber',
+  workspace_deactivated: 'tone-rose',
+  auth_invalid: 'tone-rose',
+  pending: 'tone-slate'
 };
 
 const SCHEDULE_OUTCOME_STYLE = {
-  pending: 'bg-slate-100 text-slate-600 border-slate-200',
-  success: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  auth_failed: 'bg-rose-50 text-rose-700 border-rose-200',
-  transient_failure: 'bg-amber-50 text-amber-700 border-amber-200',
-  passthrough_no_available_providers: 'bg-sky-50 text-sky-700 border-sky-200',
-  passthrough_other_4xx: 'bg-slate-100 text-slate-700 border-slate-200',
-  no_schedulable_accounts: 'bg-slate-100 text-slate-700 border-slate-200'
+  pending: 'tone-slate',
+  success: 'tone-emerald',
+  auth_failed: 'tone-rose',
+  transient_failure: 'tone-amber',
+  passthrough_no_available_providers: 'tone-sky',
+  passthrough_other_4xx: 'tone-slate',
+  no_schedulable_accounts: 'tone-slate'
 };
 
 const SCHEDULE_DECISION_STYLE = {
-  selected: 'bg-indigo-50 text-indigo-700 border-indigo-200',
-  eligible: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  skipped: 'bg-slate-100 text-slate-600 border-slate-200'
+  selected: 'tone-indigo',
+  eligible: 'tone-emerald',
+  skipped: 'tone-slate'
 };
 
 const PLAN_TYPE_LABELS = {
@@ -103,17 +103,17 @@ const EMPTY_ACCOUNT_FORM = {
 const MANUAL_FAILOVER_TIER_PRESETS = [
   {
     label: '主组',
-    className: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+    className: 'tone-indigo',
     description: '当前请求优先尝试这一层账号'
   },
   {
     label: '备组',
-    className: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+    className: 'tone-cyan',
     description: '主组全部失败后切到这一层'
   },
   {
     label: '冷备',
-    className: 'bg-violet-50 text-violet-700 border-violet-200',
+    className: 'tone-violet',
     description: '主组和备组都不可用时，再切到这一组'
   }
 ];

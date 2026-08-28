@@ -20,10 +20,10 @@ const DeleteAccountDialog = ({ deleteTarget, busyKey = '', onClose, onSubmit }) 
       onSubmit={onSubmit}
       submitting={submitting}
     >
-      <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+      <div className="rounded-lg border border-danger-line bg-danger-soft p-3 text-sm text-danger">
         此操作不可撤销。
       </div>
-      <p className="text-sm text-slate-700">
+      <p className="text-sm text-fg-body">
         确认删除账号
         <span className="font-semibold mx-1">
           {`「${deleteTarget?.account_name || deleteTarget?.accountName || '-'}」`}

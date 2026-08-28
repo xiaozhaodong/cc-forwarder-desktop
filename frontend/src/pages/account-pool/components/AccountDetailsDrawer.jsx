@@ -12,43 +12,43 @@ import Badge from './Badge.jsx';
 import { parseCodexModelRewriteSettings } from '../utils.js';
 
 const TONE_CLASS = {
-  rose: 'bg-rose-50 text-rose-700 border-rose-200',
-  red: 'bg-rose-50 text-rose-700 border-rose-200',
-  amber: 'bg-amber-50 text-amber-700 border-amber-200',
-  yellow: 'bg-amber-50 text-amber-700 border-amber-200',
-  emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  green: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  sky: 'bg-sky-50 text-sky-700 border-sky-200',
-  blue: 'bg-sky-50 text-sky-700 border-sky-200',
-  indigo: 'bg-indigo-50 text-indigo-700 border-indigo-200',
-  slate: 'bg-slate-50 text-slate-600 border-slate-200'
+  rose: 'tone-rose',
+  red: 'tone-rose',
+  amber: 'tone-amber',
+  yellow: 'tone-amber',
+  emerald: 'tone-emerald',
+  green: 'tone-emerald',
+  sky: 'tone-sky',
+  blue: 'tone-sky',
+  indigo: 'tone-indigo',
+  slate: 'tone-slate'
 };
 
 const ERROR_TONE_CLASS = {
-  amber: 'border-amber-200 bg-amber-50 text-amber-800',
-  rose: 'border-rose-200 bg-rose-50 text-rose-800',
-  slate: 'border-slate-200 bg-slate-50 text-slate-700'
+  amber: 'tone-amber',
+  rose: 'tone-rose',
+  slate: 'tone-slate'
 };
 
 const SECTION_THEME = {
-  '额度': { iconBg: 'bg-amber-50', iconColor: 'text-amber-600', border: 'border-amber-100' },
-  '健康': { iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600', border: 'border-emerald-100' },
-  '路由配置': { iconBg: 'bg-sky-50', iconColor: 'text-sky-600', border: 'border-sky-100' },
-  '动作': { iconBg: 'bg-indigo-50', iconColor: 'text-indigo-600', border: 'border-indigo-100' }
+  '额度': { iconBg: 'bg-warn-soft', iconColor: 'text-warn', border: 'border-warn-line' },
+  '健康': { iconBg: 'bg-success-soft', iconColor: 'text-success', border: 'border-success-line' },
+  '路由配置': { iconBg: 'bg-info-soft', iconColor: 'text-info', border: 'border-info-line' },
+  '动作': { iconBg: 'bg-accent-soft', iconColor: 'text-accent', border: 'border-accent-line' }
 };
 
 const quotaBarColor = (percent) => {
-  if (!Number.isFinite(percent)) return 'bg-slate-200';
-  if (percent > 50) return 'bg-emerald-400';
-  if (percent > 20) return 'bg-amber-400';
-  return 'bg-rose-400';
+  if (!Number.isFinite(percent)) return 'bg-line-strong';
+  if (percent > 50) return 'bg-success-solid';
+  if (percent > 20) return 'bg-warn-solid';
+  return 'bg-danger-solid';
 };
 
 const quotaTextColor = (percent) => {
-  if (!Number.isFinite(percent)) return 'text-slate-500';
-  if (percent > 50) return 'text-emerald-600';
-  if (percent > 20) return 'text-amber-600';
-  return 'text-rose-600';
+  if (!Number.isFinite(percent)) return 'text-fg-muted';
+  if (percent > 50) return 'text-success';
+  if (percent > 20) return 'text-warn';
+  return 'text-danger';
 };
 
 const QuotaBar = ({ label, text, percent }) => {
@@ -57,11 +57,11 @@ const QuotaBar = ({ label, text, percent }) => {
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between text-sm">
-        <span className="text-slate-400">{label}</span>
+        <span className="text-fg-subtle">{label}</span>
         <span className={`font-semibold ${quotaTextColor(percent)}`}>{text || '-'}</span>
       </div>
       {hasBar && (
-        <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+        <div className="h-2 w-full overflow-hidden rounded-full bg-surface-mut">
           <div
             className={`h-full rounded-full transition-all ${quotaBarColor(percent)}`}
             style={{ width: `${Math.max(Math.min(percent, 100), 0)}%` }}
@@ -73,15 +73,15 @@ const QuotaBar = ({ label, text, percent }) => {
 };
 
 const SectionCard = ({ icon: Icon, title, children }) => {
-  const theme = SECTION_THEME[title] || { iconBg: 'bg-slate-100', iconColor: 'text-slate-500', border: 'border-slate-200' };
+  const theme = SECTION_THEME[title] || { iconBg: 'bg-surface-mut', iconColor: 'text-fg-muted', border: 'border-line' };
 
   return (
-    <section className={`rounded-xl border ${theme.border} bg-white p-4 shadow-sm shadow-slate-950/5`}>
+    <section className={`rounded-xl border ${theme.border} bg-surface p-4 shadow-sm`}>
       <div className="mb-3 flex items-center gap-2">
         <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${theme.iconBg} ${theme.iconColor}`}>
           <Icon size={16} />
         </div>
-        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+        <h3 className="text-sm font-semibold text-fg">{title}</h3>
       </div>
       <div className="space-y-3">{children}</div>
     </section>
@@ -90,8 +90,8 @@ const SectionCard = ({ icon: Icon, title, children }) => {
 
 const DetailRow = ({ label, value }) => (
   <div className="flex items-start justify-between gap-4 text-sm">
-    <span className="text-slate-400">{label}</span>
-    <span className="min-w-0 max-w-[70%] break-words text-right font-medium text-slate-700">{value || '-'}</span>
+    <span className="text-fg-subtle">{label}</span>
+    <span className="min-w-0 max-w-[70%] break-words text-right font-medium text-fg-body">{value || '-'}</span>
   </div>
 );
 
@@ -118,12 +118,12 @@ const AccountErrorDetails = ({ display }) => {
       ) : null}
       <details className="mt-2 border-t border-current/10 pt-2 text-xs">
         <summary className="cursor-pointer select-none font-medium">查看原始响应</summary>
-        <div className="mt-2 rounded-md bg-white/70 p-2">
+        <div className="mt-2 rounded-md bg-surface/70 p-2">
           <div className="mb-1 flex justify-end">
             <button
               type="button"
               onClick={copyRawError}
-              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 font-medium opacity-70 transition hover:bg-white hover:opacity-100"
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 font-medium opacity-70 transition hover:bg-surface hover:opacity-100"
               title="复制原始响应"
             >
               <Copy size={12} aria-hidden="true" />复制
@@ -191,7 +191,7 @@ const AccountDetailsDrawer = ({
       <button
         type="button"
         aria-label="关闭账号详情"
-        className="absolute inset-0 bg-slate-950/20"
+        className="absolute inset-0 bg-overlay"
         onClick={onClose}
       />
 
@@ -199,16 +199,16 @@ const AccountDetailsDrawer = ({
         role="dialog"
         aria-modal="true"
         aria-label="账号详情"
-        className="relative z-10 flex h-full w-full max-w-[560px] flex-col border-l border-slate-200 bg-slate-50 shadow-2xl shadow-slate-950/20"
+        className="relative z-10 flex h-full w-full max-w-[560px] flex-col border-l border-line bg-surface-sub shadow-2xl"
       >
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
+        <div className="flex items-start justify-between gap-4 border-b border-line bg-surface px-5 py-4">
           <div className="min-w-0 space-y-2">
-            <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">账号详情</div>
-            <div className="text-xl font-semibold text-slate-900">{row.name || '-'}</div>
+            <div className="text-xs font-semibold uppercase tracking-widest text-fg-subtle">账号详情</div>
+            <div className="text-xl font-semibold text-fg">{row.name || '-'}</div>
             <div className="flex flex-wrap gap-2">
-              <Badge text={row.authLabel || '-'} className="bg-indigo-50 text-indigo-700 border-indigo-200" />
-              <Badge text={row.planLabel || '-'} className="bg-violet-50 text-violet-700 border-violet-200" />
-              <Badge text={row.groupLabel || '-'} className="bg-sky-50 text-sky-700 border-sky-200" />
+              <Badge text={row.authLabel || '-'} className="tone-indigo" />
+              <Badge text={row.planLabel || '-'} className="tone-violet" />
+              <Badge text={row.groupLabel || '-'} className="tone-sky" />
               <Badge text={row.stateLabel || '-'} className={TONE_CLASS[row.stateTone] || TONE_CLASS.slate} />
             </div>
           </div>
@@ -218,7 +218,7 @@ const AccountDetailsDrawer = ({
             ref={closeButtonRef}
             aria-label="关闭抽屉"
             onClick={onClose}
-            className="rounded-xl border border-slate-200 bg-white p-2 text-slate-400 transition-colors hover:text-slate-700"
+            className="rounded-xl border border-line bg-surface p-2 text-fg-subtle transition-colors hover:text-fg-body"
           >
             <X size={18} />
           </button>
@@ -300,7 +300,7 @@ const AccountDetailsDrawer = ({
                 );
               })}
             </div>
-            <div className="mt-3 border-t border-slate-100 pt-3">
+            <div className="mt-3 border-t border-line-soft pt-3">
               <Button variant="danger" size="sm" className="w-full" disabled={actionBusy} onClick={() => onDeleteAccount?.(account)}>
                 删除账号
               </Button>
