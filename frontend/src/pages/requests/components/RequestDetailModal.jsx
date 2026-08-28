@@ -419,7 +419,7 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
             </button>
             <button
               onClick={onClose}
-              className="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+              className="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 dark:hover:bg-indigo-500 transition-colors"
             >
               关闭
             </button>

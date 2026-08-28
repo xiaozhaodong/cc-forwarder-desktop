@@ -281,7 +281,7 @@ export const ErrorMessage = ({ title = '加载失败', message, onRetry }) => (
     {onRetry && (
       <button
         onClick={onRetry}
-        className="px-4 py-2 bg-rose-600 text-white rounded-lg text-sm font-medium hover:bg-rose-700 transition-colors"
+        className="px-4 py-2 bg-rose-600 text-white rounded-lg text-sm font-medium hover:bg-rose-700 dark:hover:bg-rose-500 transition-colors"
       >
         重试
       </button>
@@ -304,11 +304,13 @@ export const Button = ({
 }) => {
   // 实底彩色按钮不 token 化：饱和底 + 白字在深浅两种底色上对比度都够，
   // 反转反而破坏「主行动」的视觉权重。只有中性色按钮需要跟随主题。
+  // 但 hover 必须分主题：浅色下变深（向按下的方向），暗色下变亮 ——
+  // 深底上继续变深等于往页面里沉，会读成「按钮变灰」而不是被激活。
   const variants = {
-    primary: 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-md hover:shadow-lg',
+    primary: 'bg-indigo-600 text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 shadow-md hover:shadow-lg',
     secondary: 'bg-surface-mut text-fg-body hover:bg-surface-emph',
-    success: 'bg-emerald-600 text-white hover:bg-emerald-700',
-    danger: 'bg-rose-600 text-white hover:bg-rose-700',
+    success: 'bg-emerald-600 text-white hover:bg-emerald-700 dark:hover:bg-emerald-500',
+    danger: 'bg-rose-600 text-white hover:bg-rose-700 dark:hover:bg-rose-500',
     ghost: 'bg-transparent text-fg-body hover:bg-surface-mut'
   };
 
