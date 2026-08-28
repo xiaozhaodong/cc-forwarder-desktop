@@ -20,14 +20,14 @@ const DialogFrame = ({ title, loading, onClose, children }) => {
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[20vh]">
-      <div className="absolute inset-0 bg-slate-900/45" onClick={handleRequestClose} />
+      <div className="absolute inset-0 bg-overlay" onClick={handleRequestClose} />
       <div
         ref={dialogRef}
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl focus:outline-none"
+        className="relative w-full max-w-md rounded-2xl border border-line bg-surface p-6 shadow-2xl focus:outline-none"
       >
         {children}
       </div>
@@ -39,16 +39,16 @@ const DialogFrame = ({ title, loading, onClose, children }) => {
 export const DeleteExactSecretDialog = ({ secret, loading, onConfirm, onClose }) => (
   <DialogFrame title="确认删除本地敏感值" loading={loading} onClose={onClose}>
     <div className="mb-4 flex items-center gap-3">
-      <div className="rounded-full bg-rose-100 p-3">
-        <AlertTriangle className="text-rose-600" size={24} />
+      <div className="rounded-full bg-danger-soft p-3">
+        <AlertTriangle className="text-danger" size={24} />
       </div>
       <div>
-        <h3 className="text-lg font-semibold text-slate-900">确认删除</h3>
-        <p className="text-sm text-slate-500">删除后将立即停止匹配，且无法恢复</p>
+        <h3 className="text-lg font-semibold text-fg">确认删除</h3>
+        <p className="text-sm text-fg-muted">删除后将立即停止匹配，且无法恢复</p>
       </div>
     </div>
 
-    <p className="mb-6 text-sm text-slate-700">
+    <p className="mb-6 text-sm text-fg-body">
       确定删除本地敏感值
       <span className="mx-1 font-semibold">「{secret?.name || '-'}」</span>
       吗？
@@ -78,24 +78,24 @@ export const ClearExactSecretsDialog = ({ loading, onConfirm, onClose }) => {
     <DialogFrame title="确认清空本地敏感值" loading={loading} onClose={onClose}>
       <form onSubmit={handleSubmit}>
         <div className="mb-4 flex items-center gap-3">
-          <div className="rounded-full bg-rose-100 p-3">
-            <AlertTriangle className="text-rose-600" size={24} />
+          <div className="rounded-full bg-danger-soft p-3">
+            <AlertTriangle className="text-danger" size={24} />
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-slate-900">确认清空</h3>
-            <p className="text-sm text-slate-500">所有本地敏感值都将被永久删除</p>
+            <h3 className="text-lg font-semibold text-fg">确认清空</h3>
+            <p className="text-sm text-fg-muted">所有本地敏感值都将被永久删除</p>
           </div>
         </div>
 
-        <label className="mb-6 block text-sm text-slate-700">
-          输入 <span className="font-semibold text-rose-600">{CLEAR_CONFIRM_TEXT}</span> 以确认：
+        <label className="mb-6 block text-sm text-fg-body">
+          输入 <span className="font-semibold text-danger">{CLEAR_CONFIRM_TEXT}</span> 以确认：
           <input
             autoFocus
             autoComplete="off"
             spellCheck={false}
             value={confirmText}
             onChange={(event) => setConfirmText(event.target.value)}
-            className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-rose-400 focus:outline-none focus:ring-2 focus:ring-rose-200"
+            className="mt-2 w-full rounded-lg border border-line px-3 py-2 text-sm focus:border-danger-line focus:outline-none focus:ring-2 focus:ring-danger-line"
           />
         </label>
 

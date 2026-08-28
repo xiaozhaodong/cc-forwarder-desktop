@@ -7,14 +7,14 @@ import { sourceLabel } from '../utils/privacyRules.js';
 
 const PrivacyHitList = ({ hits = [] }) => {
   if (!hits.length) {
-    return <p className="text-xs text-slate-400">无命中规则</p>;
+    return <p className="text-xs text-fg-subtle">无命中规则</p>;
   }
 
   return (
-    <div className="border border-slate-200 rounded-lg overflow-hidden">
+    <div className="border border-line rounded-lg overflow-hidden">
       <table className="w-full text-xs">
         <thead>
-          <tr className="bg-slate-50 text-left text-slate-500">
+          <tr className="bg-surface-sub text-left text-fg-muted">
             <th className="px-3 py-1.5 font-medium">规则</th>
             <th className="px-3 py-1.5 font-medium w-20">来源</th>
             <th className="px-3 py-1.5 font-medium w-16">动作</th>
@@ -23,11 +23,11 @@ const PrivacyHitList = ({ hits = [] }) => {
         </thead>
         <tbody>
           {hits.map((hit) => (
-            <tr key={hit.rule_id} className="border-t border-slate-100">
-              <td className="px-3 py-1.5 text-slate-700 break-all">{hit.rule_name}</td>
-              <td className="px-3 py-1.5 text-slate-500">{sourceLabel(hit.source)}</td>
-              <td className="px-3 py-1.5 text-slate-500">{hit.action === 'detect' ? '仅检测' : '脱敏'}</td>
-              <td className="px-3 py-1.5 text-right tabular-nums text-slate-700">{hit.count}</td>
+            <tr key={hit.rule_id} className="border-t border-line-soft">
+              <td className="px-3 py-1.5 text-fg-body break-all">{hit.rule_name}</td>
+              <td className="px-3 py-1.5 text-fg-muted">{sourceLabel(hit.source)}</td>
+              <td className="px-3 py-1.5 text-fg-muted">{hit.action === 'detect' ? '仅检测' : '脱敏'}</td>
+              <td className="px-3 py-1.5 text-right tabular-nums text-fg-body">{hit.count}</td>
             </tr>
           ))}
         </tbody>

@@ -48,7 +48,7 @@ const DynamicConfigSection = ({ sectionName, sectionData }) => {
   // 渲染嵌套对象
   const renderValue = (key, value) => {
     if (value === null || value === undefined) {
-      return <span className="text-slate-400">-</span>;
+      return <span className="text-fg-subtle">-</span>;
     }
 
     if (typeof value === 'object' && !Array.isArray(value)) {
@@ -56,8 +56,8 @@ const DynamicConfigSection = ({ sectionName, sectionData }) => {
       return (
         <div className="mt-2 space-y-2">
           {Object.entries(value).map(([nestedKey, val]) => (
-            <div key={nestedKey} className="ml-4 flex justify-between items-start py-2 border-l-2 border-slate-200 pl-3">
-              <span className="text-xs text-slate-500">{nestedKey}</span>
+            <div key={nestedKey} className="ml-4 flex justify-between items-start py-2 border-l-2 border-line pl-3">
+              <span className="text-xs text-fg-muted">{nestedKey}</span>
               {renderValue(nestedKey, val)}
             </div>
           ))}
@@ -67,7 +67,7 @@ const DynamicConfigSection = ({ sectionName, sectionData }) => {
 
     if (Array.isArray(value)) {
       return (
-        <span className="text-xs text-slate-600 bg-slate-100 px-2 py-1 rounded">
+        <span className="text-xs text-fg-body bg-surface-mut px-2 py-1 rounded">
           Array ({value.length} items)
         </span>
       );
@@ -77,7 +77,7 @@ const DynamicConfigSection = ({ sectionName, sectionData }) => {
     if (type === 'boolean') {
       return (
         <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-          value ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
+          value ? 'bg-success-soft text-success' : 'bg-surface-mut text-fg-body'
         }`}>
           {value ? '启用' : '禁用'}
         </span>
@@ -86,14 +86,14 @@ const DynamicConfigSection = ({ sectionName, sectionData }) => {
 
     if (type === 'duration') {
       const displayValue = typeof value === 'number' ? formatDuration(value) : value;
-      return <span className="font-mono text-xs text-indigo-600">{displayValue}</span>;
+      return <span className="font-mono text-xs text-accent">{displayValue}</span>;
     }
 
     if (type === 'number') {
-      return <span className="font-mono text-xs text-slate-700">{value}</span>;
+      return <span className="font-mono text-xs text-fg-body">{value}</span>;
     }
 
-    return <span className="font-mono text-xs text-slate-700 break-all">{String(value)}</span>;
+    return <span className="font-mono text-xs text-fg-body break-all">{String(value)}</span>;
   };
 
   if (!sectionData || typeof sectionData !== 'object') {
@@ -104,9 +104,9 @@ const DynamicConfigSection = ({ sectionName, sectionData }) => {
     <ConfigSection title={formatTitle(sectionName)} icon={Settings}>
       <div className="space-y-1">
         {Object.entries(sectionData).map(([key, value]) => (
-          <div key={key} className="py-2 border-b border-slate-100 last:border-0">
+          <div key={key} className="py-2 border-b border-line-soft last:border-0">
             <div className="flex justify-between items-start">
-              <span className="text-sm text-slate-600">{key}</span>
+              <span className="text-sm text-fg-body">{key}</span>
               {renderValue(key, value)}
             </div>
           </div>

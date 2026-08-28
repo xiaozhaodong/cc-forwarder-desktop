@@ -39,7 +39,7 @@ import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
 // 模式分段控件（修改后立即保存热生效）
 const ModeSegmentedControl = ({ mode, busy, onChange }) => (
-  <div className="inline-flex rounded-lg border border-slate-200 p-0.5 bg-white shadow-sm">
+  <div className="inline-flex rounded-lg border border-line p-0.5 bg-surface shadow-sm">
     {PRIVACY_MODE_OPTIONS.map((opt) => (
       <button
         key={opt.value}
@@ -49,11 +49,11 @@ const ModeSegmentedControl = ({ mode, busy, onChange }) => (
         className={`px-3.5 py-1.5 rounded-md text-sm font-medium transition-colors ${
           mode === opt.value
             ? opt.value === 'disabled'
-              ? 'bg-slate-700 text-white shadow-sm'
+              ? 'bg-inverted text-fg-inverted shadow-sm'
               : opt.value === 'detect'
-                ? 'bg-amber-500 text-white shadow-sm'
+                ? 'bg-warn-solid text-white shadow-sm'
                 : 'bg-indigo-600 text-white shadow-sm'
-            : 'text-slate-500 hover:text-slate-800'
+            : 'text-fg-muted hover:text-fg'
         } ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}
       >
         {opt.label}
@@ -66,7 +66,7 @@ const ModeSegmentedControl = ({ mode, busy, onChange }) => (
 // 注意：调用方通过 key 在 settings 变化时重挂载本组件，初始 state 直接取自 settings
 const ScanSettingField = ({ label, className = '', children }) => (
   <div className={`space-y-1.5 ${className}`}>
-    <label className="block h-5 text-sm font-semibold leading-5 text-slate-700">{label}</label>
+    <label className="block h-5 text-sm font-semibold leading-5 text-fg-body">{label}</label>
     <div className="h-10">{children}</div>
   </div>
 );
@@ -88,7 +88,7 @@ const ScanSettingsBar = ({ settings, busy, onSave }) => {
           min="1024"
           value={scanMaxBytes}
           onChange={(e) => setScanMaxBytes(e.target.value)}
-          className="h-10 font-semibold tabular-nums text-slate-800"
+          className="h-10 font-semibold tabular-nums text-fg"
         />
       </ScanSettingField>
       <ScanSettingField label="超限策略">
@@ -153,22 +153,22 @@ const StatusBand = ({ settings, stats }) => {
   }
 
   const valueClassName = (tone) => {
-    if (tone === 'warning') return 'text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-md';
-    if (tone === 'danger') return 'text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded-md';
-    return 'text-slate-700';
+    if (tone === 'warning') return 'text-warn bg-warn-soft px-1.5 py-0.5 rounded-md';
+    if (tone === 'danger') return 'text-danger bg-danger-soft px-1.5 py-0.5 rounded-md';
+    return 'text-fg-body';
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 bg-white border border-slate-200 rounded-xl">
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 bg-surface border border-line rounded-xl">
       {items.map((item) => (
         <div key={item.label} className="flex items-baseline gap-1.5">
-          <span className="text-xs text-slate-400">{item.label}</span>
+          <span className="text-xs text-fg-subtle">{item.label}</span>
           <span className={`text-sm font-medium tabular-nums ${valueClassName(item.tone)}`}>{item.value}</span>
         </div>
       ))}
       {settings.status === 'degraded' && (
         <span
-          className="flex items-center gap-1 text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-lg"
+          className="flex items-center gap-1 text-xs text-warn bg-warn-soft px-2 py-1 rounded-lg"
           title={settings.compile_error}
         >
           <AlertTriangle size={13} />
@@ -186,7 +186,7 @@ const PRIVACY_TABS = [
 ];
 
 const PrivacyTabs = ({ activeTab, onChange }) => (
-  <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm">
+  <div className="inline-flex rounded-lg border border-line bg-surface p-0.5 shadow-sm">
     {PRIVACY_TABS.map((tab) => (
       <button
         key={tab.id}
@@ -194,8 +194,8 @@ const PrivacyTabs = ({ activeTab, onChange }) => (
         onClick={() => onChange(tab.id)}
         className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
           activeTab === tab.id
-            ? 'bg-slate-800 text-white shadow-sm'
-            : 'text-slate-500 hover:text-slate-800'
+            ? 'bg-inverted text-fg-inverted shadow-sm'
+            : 'text-fg-muted hover:text-fg'
         }`}
       >
         {tab.label}
@@ -319,11 +319,11 @@ const PrivacyProtectionPage = () => {
     <div className="space-y-4 animate-fade-in">
       {/* 顶部工具条 */}
       <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-          <Shield size={20} className="text-indigo-500" />
+        <h2 className="text-xl font-bold text-fg flex items-center gap-2">
+          <Shield size={20} className="text-accent" />
           隐私保护
         </h2>
-        <span className="text-xs text-slate-400">出站请求保护：转发前按规则检测/脱敏请求内容</span>
+        <span className="text-xs text-fg-subtle">出站请求保护：转发前按规则检测/脱敏请求内容</span>
         <div className="ml-auto flex items-center gap-2">
           <ModeSegmentedControl mode={settings.mode} busy={busy} onChange={handleModeChange} />
           <Button size="sm" variant="secondary" icon={FlaskConical} onClick={() => setTestDrawerOpen(true)}>
@@ -349,7 +349,7 @@ const PrivacyProtectionPage = () => {
       <StatusBand settings={settings} stats={stats} />
 
       {/* 扫描参数 */}
-      <div className="px-4 py-3 bg-white border border-slate-200 rounded-xl">
+      <div className="px-4 py-3 bg-surface border border-line rounded-xl">
         <ScanSettingsBar
           key={`${settings.scan_max_bytes}|${settings.over_limit_action}|${settings.on_error}|${settings.version}`}
           settings={settings}
@@ -359,7 +359,7 @@ const PrivacyProtectionPage = () => {
       </div>
 
       {actionError && (
-        <p className="text-sm text-rose-500 break-all">{actionError}</p>
+        <p className="text-sm text-danger break-all">{actionError}</p>
       )}
 
       {/* 主体：规则配置与管理 */}
@@ -397,7 +397,7 @@ const PrivacyProtectionPage = () => {
         )}
         {activeTab === 'advanced' && (
           <>
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
+            <div className="rounded-lg border border-warn-line bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
               这些规则可能误伤代码、日志、测试数据和工具输出。建议先使用“仅检测”，确认命中质量后再开启“脱敏转发”。
             </div>
             <PrivacyRulesToolbar

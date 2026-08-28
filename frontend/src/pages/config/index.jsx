@@ -98,13 +98,13 @@ const ConfigPage = () => {
       {/* 页面标题 */}
       <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-3">
-            <div className="p-2 bg-slate-900 rounded-lg text-white shadow-lg">
+          <h1 className="text-2xl font-bold text-fg flex items-center gap-3">
+            <div className="p-2 bg-inverted rounded-lg text-fg-inverted shadow-lg">
               <Settings size={20} />
             </div>
             <div>
               <div>系统配置</div>
-              <p className="text-sm text-slate-500 font-normal mt-1">
+              <p className="text-sm text-fg-muted font-normal mt-1">
                 查看当前系统配置参数（只读）
               </p>
             </div>
@@ -226,7 +226,7 @@ const ConfigPage = () => {
 
       {/* ========== 原始配置 JSON ========== */}
       <ConfigSection title="原始配置 (JSON)" icon={Settings}>
-        <pre className="bg-slate-900 text-slate-100 p-4 rounded-lg overflow-auto text-xs font-mono max-h-96">
+        <pre className="bg-slate-900 dark:bg-slate-950 text-slate-100 p-4 rounded-lg overflow-auto text-xs font-mono max-h-96">
           {JSON.stringify(config, null, 2)}
         </pre>
       </ConfigSection>

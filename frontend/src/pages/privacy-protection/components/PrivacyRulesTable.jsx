@@ -17,11 +17,11 @@ const Toggle = ({ checked, onChange, disabled }) => (
     disabled={disabled}
     onClick={() => onChange(!checked)}
     className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-      checked ? 'bg-indigo-600' : 'bg-slate-200'
+      checked ? 'bg-indigo-600' : 'bg-line-strong'
     } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
   >
     <span
-      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-surface shadow transition-transform ${
         checked ? 'translate-x-[18px]' : 'translate-x-[3px]'
       }`}
     />
@@ -32,7 +32,7 @@ const CompileStatusDot = ({ compileError }) => (
   <span className="inline-flex items-center" title={compileError || '编译正常'}>
     <span
       className={`inline-block w-2 h-2 rounded-full ${
-        compileError ? 'bg-rose-500' : 'bg-emerald-500'
+        compileError ? 'bg-danger-solid' : 'bg-success-solid'
       }`}
     />
   </span>
@@ -59,10 +59,10 @@ const PrivacyRulesTable = ({
   }
 
   return (
-    <div className="overflow-x-auto border border-slate-200 rounded-xl bg-white">
+    <div className="overflow-x-auto border border-line rounded-xl bg-surface">
       <table className="w-full text-sm">
         <thead>
-          <tr className="bg-slate-50 text-left text-xs text-slate-500">
+          <tr className="bg-surface-sub text-left text-xs text-fg-muted">
             <th className="px-3 py-2 font-medium w-12">启用</th>
             <th className="px-3 py-2 font-medium w-20">优先级</th>
             <th className="px-3 py-2 font-medium">规则名</th>
@@ -76,7 +76,7 @@ const PrivacyRulesTable = ({
         </thead>
         <tbody>
           {rules.map((rule, index) => (
-            <tr key={rule.id} className="border-t border-slate-100 hover:bg-slate-50/60">
+            <tr key={rule.id} className="border-t border-line-soft hover:bg-surface-sub">
               <td className="px-3 py-2">
                 <Toggle
                   checked={rule.enabled}
@@ -86,14 +86,14 @@ const PrivacyRulesTable = ({
               </td>
               <td className="px-3 py-2">
                 <div className="flex items-center gap-1">
-                  <span className="tabular-nums text-slate-600">{rule.priority}</span>
+                  <span className="tabular-nums text-fg-body">{rule.priority}</span>
                   {reorderEnabled && (
                     <span className="flex flex-col">
                       <button
                         type="button"
                         disabled={busy || index === 0}
                         onClick={() => onMove(rule, -1)}
-                        className="text-slate-300 hover:text-slate-600 disabled:opacity-30"
+                        className="text-fg-subtle hover:text-fg-body disabled:opacity-30"
                         title="上移"
                       >
                         <ArrowUp size={12} />
@@ -102,7 +102,7 @@ const PrivacyRulesTable = ({
                         type="button"
                         disabled={busy || index === rules.length - 1}
                         onClick={() => onMove(rule, 1)}
-                        className="text-slate-300 hover:text-slate-600 disabled:opacity-30"
+                        className="text-fg-subtle hover:text-fg-body disabled:opacity-30"
                         title="下移"
                       >
                         <ArrowDown size={12} />
@@ -112,25 +112,25 @@ const PrivacyRulesTable = ({
                 </div>
               </td>
               <td className="px-3 py-2">
-                <div className="font-medium text-slate-800 break-all">{rule.name}</div>
+                <div className="font-medium text-fg break-all">{rule.name}</div>
                 {rule.description && (
-                  <div className="text-xs text-slate-400 break-all line-clamp-1">{rule.description}</div>
+                  <div className="text-xs text-fg-subtle break-all line-clamp-1">{rule.description}</div>
                 )}
               </td>
-              <td className="px-3 py-2 text-slate-600">{matchTypeLabel(rule.match_type)}</td>
+              <td className="px-3 py-2 text-fg-body">{matchTypeLabel(rule.match_type)}</td>
               <td className="px-3 py-2">
                 <span
                   className={`px-1.5 py-0.5 rounded text-xs ${
                     rule.action === 'detect'
-                      ? 'bg-amber-50 text-amber-600'
-                      : 'bg-indigo-50 text-indigo-600'
+                      ? 'bg-warn-soft text-warn'
+                      : 'bg-accent-soft text-accent'
                   }`}
                 >
                   {actionLabel(rule.action)}
                 </span>
               </td>
-              <td className="px-3 py-2 text-slate-600 break-all">{rule.action === 'redact' ? rule.placeholder : '-'}</td>
-              <td className="px-3 py-2 text-xs text-slate-500">{summarizeScope(rule.scope)}</td>
+              <td className="px-3 py-2 text-fg-body break-all">{rule.action === 'redact' ? rule.placeholder : '-'}</td>
+              <td className="px-3 py-2 text-xs text-fg-muted">{summarizeScope(rule.scope)}</td>
               <td className="px-3 py-2">
                 <CompileStatusDot compileError={rule.compile_error} />
               </td>
@@ -140,7 +140,7 @@ const PrivacyRulesTable = ({
                     type="button"
                     disabled={busy}
                     onClick={() => onEdit(rule)}
-                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"
+                    className="p-1.5 text-fg-subtle hover:text-accent hover:bg-accent-soft rounded-lg"
                     title="编辑"
                   >
                     <Pencil size={14} />
@@ -149,7 +149,7 @@ const PrivacyRulesTable = ({
                     type="button"
                     disabled={busy}
                     onClick={() => onDuplicate(rule)}
-                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"
+                    className="p-1.5 text-fg-subtle hover:text-accent hover:bg-accent-soft rounded-lg"
                     title="复制"
                   >
                     <Copy size={14} />
@@ -158,7 +158,7 @@ const PrivacyRulesTable = ({
                     type="button"
                     disabled={busy}
                     onClick={() => onDelete(rule)}
-                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
+                    className="p-1.5 text-fg-subtle hover:text-danger hover:bg-danger-soft rounded-lg"
                     title="删除"
                   >
                     <Trash2 size={14} />

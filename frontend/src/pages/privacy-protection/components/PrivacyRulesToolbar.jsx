@@ -28,12 +28,12 @@ const PrivacyRulesToolbar = ({ filters, onChange, total, filtered }) => {
   return (
     <div className="flex flex-wrap items-center gap-2 mb-3">
       <div className="relative flex-1 min-w-[180px]">
-        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-subtle" />
         <input
           value={filters.keyword || ''}
           onChange={(e) => update({ keyword: e.target.value })}
           placeholder="搜索规则名 / 描述 / pattern"
-          className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className="w-full pl-8 pr-3 py-1.5 border border-line rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-accent-ring"
         />
       </div>
       <CustomSelect
@@ -60,7 +60,7 @@ const PrivacyRulesToolbar = ({ filters, onChange, total, filtered }) => {
         onChange={(value) => update({ source: value })}
         className="w-28"
       />
-      <span className="text-xs text-slate-400 ml-auto">
+      <span className="text-xs text-fg-subtle ml-auto">
         {filtered} / {total} 条
       </span>
     </div>

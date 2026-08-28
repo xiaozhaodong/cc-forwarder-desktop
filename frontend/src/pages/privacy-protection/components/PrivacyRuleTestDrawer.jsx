@@ -24,7 +24,7 @@ const PrivacyRuleTestDrawer = ({ open, onClose, onTest }) => {
       <button
         type="button"
         aria-label="关闭规则测试"
-        className="absolute inset-0 bg-slate-950/30 backdrop-blur-[2px] animate-fade-in"
+        className="absolute inset-0 bg-overlay backdrop-blur-[2px] animate-fade-in"
         onClick={onClose}
       />
 
@@ -32,17 +32,17 @@ const PrivacyRuleTestDrawer = ({ open, onClose, onTest }) => {
         role="dialog"
         aria-modal="true"
         aria-label="规则测试"
-        className="relative z-10 flex h-full w-full max-w-[620px] flex-col border-l border-slate-200 bg-white shadow-2xl shadow-slate-950/20 animate-slide-in-right"
+        className="relative z-10 flex h-full w-full max-w-[620px] flex-col border-l border-line bg-surface shadow-2xl animate-slide-in-right"
       >
-        <div className="border-b border-slate-100 bg-gradient-to-r from-indigo-50/80 via-white to-white px-6 py-5">
+        <div className="border-b border-line-soft bg-gradient-to-r from-accent-soft via-surface to-surface px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600 shadow-sm">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-soft text-accent shadow-sm">
                 <FlaskConical size={20} />
               </div>
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">规则测试</h2>
-                <p className="mt-0.5 text-sm text-slate-500">测试文本不会被记录</p>
+                <h2 className="text-lg font-semibold text-fg">规则测试</h2>
+                <p className="mt-0.5 text-sm text-fg-muted">测试文本不会被记录</p>
               </div>
             </div>
             <button
@@ -50,7 +50,7 @@ const PrivacyRuleTestDrawer = ({ open, onClose, onTest }) => {
               ref={closeButtonRef}
               aria-label="关闭抽屉"
               onClick={onClose}
-              className="rounded-lg border border-slate-200 bg-white p-2 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-700"
+              className="rounded-lg border border-line bg-surface p-2 text-fg-subtle transition-colors hover:border-line-strong hover:text-fg-body"
             >
               <X size={16} />
             </button>

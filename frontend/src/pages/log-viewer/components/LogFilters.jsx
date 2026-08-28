@@ -36,7 +36,7 @@ function LogFilters({
               className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${
                 levelFilter === level
                   ? `${config.bg} ${config.color} ring-2 ring-offset-1 ring-${config.color.split('-')[1]}-400`
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  : 'bg-surface-mut text-fg-body hover:bg-surface-emph'
               }`}
             >
               {level} ({count})
@@ -46,7 +46,7 @@ function LogFilters({
         {levelFilter !== 'ALL' && (
           <button
             onClick={() => onLevelFilterChange('ALL')}
-            className="px-3 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 hover:bg-slate-200"
+            className="px-3 py-1 rounded-lg text-xs font-medium bg-surface-mut text-fg-body hover:bg-surface-emph"
           >
             全部 ({totalLogs})
           </button>
@@ -56,19 +56,19 @@ function LogFilters({
       {/* 搜索框 */}
       <div className="flex-1 max-w-md">
         <div className="relative">
-          <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-fg-subtle pointer-events-none" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="搜索日志内容..."
-            className="w-full pl-11 pr-4 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-lg placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 shadow-sm"
+            className="w-full pl-11 pr-4 py-2.5 text-sm text-fg bg-surface border border-line-strong rounded-lg placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-accent-ring focus:border-accent-line shadow-sm"
           />
         </div>
       </div>
 
       {/* 自动滚动开关 */}
-      <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+      <label className="flex items-center gap-2 text-sm text-fg-body cursor-pointer">
         <input
           type="checkbox"
           checked={autoScroll}

@@ -13,18 +13,18 @@ const SettingsSection = ({
   onReset,
   resetDisabled = false
 }) => (
-  <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm overflow-hidden">
-    <div className="px-6 py-4 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between">
+  <div className="bg-surface rounded-2xl border border-line shadow-sm overflow-hidden">
+    <div className="px-6 py-4 bg-surface-sub border-b border-line-soft flex items-center justify-between">
       <div className="flex items-center">
         {Icon && (
-          <div className="p-1.5 bg-indigo-100 rounded-lg mr-3">
-            <Icon size={16} className="text-indigo-600" />
+          <div className="p-1.5 bg-accent-soft rounded-lg mr-3">
+            <Icon size={16} className="text-accent" />
           </div>
         )}
         <div>
-          <h3 className="font-semibold text-slate-900">{title}</h3>
+          <h3 className="font-semibold text-fg">{title}</h3>
           {description && (
-            <p className="text-xs text-slate-400 mt-0.5">{description}</p>
+            <p className="text-xs text-fg-subtle mt-0.5">{description}</p>
           )}
         </div>
       </div>
@@ -34,7 +34,7 @@ const SettingsSection = ({
           disabled={resetDisabled}
           className={`
             inline-flex items-center px-2.5 py-1.5 text-xs font-medium
-            text-slate-500 hover:text-slate-700 hover:bg-slate-100
+            text-fg-muted hover:text-fg-body hover:bg-surface-mut
             rounded-lg transition-colors
             ${resetDisabled ? 'opacity-50 cursor-not-allowed' : ''}
           `}

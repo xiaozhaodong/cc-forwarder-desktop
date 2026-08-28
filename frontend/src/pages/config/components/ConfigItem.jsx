@@ -15,13 +15,13 @@ const ConfigItem = ({ label, value, type = 'text' }) => {
 
   const renderValue = () => {
     if (value === undefined || value === null) {
-      return <span className="text-slate-400">-</span>;
+      return <span className="text-fg-subtle">-</span>;
     }
 
     if (type === 'boolean') {
       return (
         <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-          value ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
+          value ? 'bg-success-soft text-success' : 'bg-surface-mut text-fg-body'
         }`}>
           {value ? '启用' : '禁用'}
         </span>
@@ -31,19 +31,19 @@ const ConfigItem = ({ label, value, type = 'text' }) => {
     if (type === 'duration') {
       // 如果是数字，认为是纳秒数，需要格式化
       const displayValue = typeof value === 'number' ? formatDuration(value) : value;
-      return <span className="font-mono text-indigo-600">{displayValue}</span>;
+      return <span className="font-mono text-accent">{displayValue}</span>;
     }
 
     if (type === 'number') {
-      return <span className="font-mono text-slate-700">{value}</span>;
+      return <span className="font-mono text-fg-body">{value}</span>;
     }
 
-    return <span className="font-mono text-slate-700 break-all">{String(value)}</span>;
+    return <span className="font-mono text-fg-body break-all">{String(value)}</span>;
   };
 
   return (
-    <div className="flex justify-between items-center py-3 border-b border-slate-100 last:border-0">
-      <span className="text-sm text-slate-600">{label}</span>
+    <div className="flex justify-between items-center py-3 border-b border-line-soft last:border-0">
+      <span className="text-sm text-fg-body">{label}</span>
       {renderValue()}
     </div>
   );

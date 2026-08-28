@@ -71,19 +71,19 @@ const SettingItem = ({
   if (valueType === 'bool') {
     const isChecked = localValue === 'true' || localValue === true;
     return (
-      <div className="flex justify-between items-center py-3 border-b border-slate-100 last:border-0">
+      <div className="flex justify-between items-center py-3 border-b border-line-soft last:border-0">
         <div className="flex-1 min-w-0 pr-4">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-slate-700">{displayLabel}</span>
+            <span className="text-sm font-medium text-fg-body">{displayLabel}</span>
             {setting.requires_restart && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warn-soft text-warn">
                 <AlertTriangle size={10} className="mr-0.5" />
                 重启生效
               </span>
             )}
           </div>
           {setting.description && (
-            <p className="text-xs text-slate-400 mt-0.5">{setting.description}</p>
+            <p className="text-xs text-fg-subtle mt-0.5">{setting.description}</p>
           )}
         </div>
         <label className="relative inline-flex items-center cursor-pointer">
@@ -95,11 +95,11 @@ const SettingItem = ({
             className="sr-only peer"
           />
           <div className={`
-            w-11 h-6 bg-slate-200 rounded-full peer
+            w-11 h-6 bg-surface-emph rounded-full peer
             peer-checked:bg-indigo-600
-            peer-focus:ring-2 peer-focus:ring-indigo-300
+            peer-focus:ring-2 peer-focus:ring-accent-soft
             after:content-[''] after:absolute after:top-0.5 after:left-[2px]
-            after:bg-white after:rounded-full after:h-5 after:w-5
+            after:bg-surface after:rounded-full after:h-5 after:w-5
             after:transition-all after:shadow-sm
             peer-checked:after:translate-x-full
             ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
@@ -117,19 +117,19 @@ const SettingItem = ({
     };
 
     return (
-      <div className="flex justify-between items-center py-3 border-b border-slate-100 last:border-0">
+      <div className="flex justify-between items-center py-3 border-b border-line-soft last:border-0">
         <div className="flex-1 min-w-0 pr-4">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-slate-700">{displayLabel}</span>
+            <span className="text-sm font-medium text-fg-body">{displayLabel}</span>
             {setting.requires_restart && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warn-soft text-warn">
                 <AlertTriangle size={10} className="mr-0.5" />
                 重启生效
               </span>
             )}
           </div>
           {setting.description && (
-            <p className="text-xs text-slate-400 mt-0.5">{setting.description}</p>
+            <p className="text-xs text-fg-subtle mt-0.5">{setting.description}</p>
           )}
         </div>
         <CustomSelect
@@ -151,19 +151,19 @@ const SettingItem = ({
     };
 
     return (
-      <div className="flex justify-between items-center py-3 border-b border-slate-100 last:border-0">
+      <div className="flex justify-between items-center py-3 border-b border-line-soft last:border-0">
         <div className="flex-1 min-w-0 pr-4">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-slate-700">{displayLabel}</span>
+            <span className="text-sm font-medium text-fg-body">{displayLabel}</span>
             {setting.requires_restart && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warn-soft text-warn">
                 <AlertTriangle size={10} className="mr-0.5" />
                 重启生效
               </span>
             )}
           </div>
           {setting.description && (
-            <p className="text-xs text-slate-400 mt-0.5">{setting.description}</p>
+            <p className="text-xs text-fg-subtle mt-0.5">{setting.description}</p>
           )}
         </div>
         <CustomSelect
@@ -179,19 +179,19 @@ const SettingItem = ({
 
   // 其他类型使用文本/数字输入框
   return (
-    <div className="flex justify-between items-center py-3 border-b border-slate-100 last:border-0">
+    <div className="flex justify-between items-center py-3 border-b border-line-soft last:border-0">
       <div className="flex-1 min-w-0 pr-4">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-slate-700">{displayLabel}</span>
+          <span className="text-sm font-medium text-fg-body">{displayLabel}</span>
           {setting.requires_restart && (
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warn-soft text-warn">
               <AlertTriangle size={10} className="mr-0.5" />
               重启生效
             </span>
           )}
         </div>
         {setting.description && (
-          <p className="text-xs text-slate-400 mt-0.5">{setting.description}</p>
+          <p className="text-xs text-fg-subtle mt-0.5">{setting.description}</p>
         )}
       </div>
       <input
@@ -203,9 +203,9 @@ const SettingItem = ({
         step={setting.key === 'fixed_price_usd' ? 0.001 : config.step}
         placeholder={inputPlaceholder}
         className={`
-          w-32 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700
+          w-32 px-3 py-1.5 bg-surface-sub border border-line rounded-lg text-sm text-fg-body
           font-mono text-right
-          focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500
+          focus:outline-none focus:ring-2 focus:ring-accent-ring focus:border-accent-line
           ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
           ${setting.key === 'token' ? 'w-48' : ''}
           ${setting.key === 'endpoint_url' ? 'w-72 max-w-[58%]' : ''}

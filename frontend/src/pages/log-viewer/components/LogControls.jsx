@@ -29,9 +29,9 @@ function LogControls({
   return (
     <div className="flex items-center gap-2">
       {/* 实时状态指示器 */}
-      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-700">
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-mut text-fg-body">
         <span className={`w-2 h-2 rounded-full ${
-          isStreaming ? 'bg-emerald-400 animate-pulse' : 'bg-slate-300'
+          isStreaming ? 'bg-success-solid animate-pulse' : 'bg-surface-emph'
         }`} />
         {isStreaming ? '实时' : '已暂停'}
       </div>
@@ -41,8 +41,8 @@ function LogControls({
         onClick={onToggleStream}
         className={`p-2 rounded-lg transition-all ${
           isStreaming
-            ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
-            : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+            ? 'bg-warn-soft text-warn hover:bg-warn-soft'
+            : 'bg-success-soft text-success hover:bg-success-soft'
         }`}
         title={isStreaming ? '暂停' : '开始'}
       >
@@ -53,7 +53,7 @@ function LogControls({
       <button
         onClick={onRefresh}
         disabled={loading}
-        className="p-2 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition-all disabled:opacity-50"
+        className="p-2 rounded-lg bg-surface-mut text-fg-body hover:bg-surface-emph transition-all disabled:opacity-50"
         title="刷新"
       >
         <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
@@ -62,7 +62,7 @@ function LogControls({
       {/* 清空按钮 */}
       <button
         onClick={onClear}
-        className="p-2 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition-all"
+        className="p-2 rounded-lg bg-surface-mut text-fg-body hover:bg-surface-emph transition-all"
         title="清空"
       >
         <Trash2 size={16} />
@@ -72,7 +72,7 @@ function LogControls({
       <button
         onClick={onExport}
         disabled={logsCount === 0}
-        className="p-2 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition-all disabled:opacity-50"
+        className="p-2 rounded-lg bg-surface-mut text-fg-body hover:bg-surface-emph transition-all disabled:opacity-50"
         title="导出"
       >
         <Download size={16} />

@@ -231,13 +231,13 @@ const SettingsPage = () => {
       {/* 页面标题 */}
       <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-3">
-            <div className="p-2 bg-slate-900 rounded-lg text-white shadow-lg">
+          <h1 className="text-2xl font-bold text-fg flex items-center gap-3">
+            <div className="p-2 bg-inverted rounded-lg text-fg-inverted shadow-lg">
               <Settings size={20} />
             </div>
             <div>
               <div>系统设置</div>
-              <p className="text-sm text-slate-500 font-normal mt-1">
+              <p className="text-sm text-fg-muted font-normal mt-1">
                 配置系统运行参数，大部分设置即时生效
               </p>
             </div>
@@ -268,9 +268,9 @@ const SettingsPage = () => {
       {saveMessage && (
         <div className={`
           flex items-center gap-2 px-4 py-3 rounded-lg text-sm
-          ${saveMessage.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : ''}
-          ${saveMessage.type === 'error' ? 'bg-rose-50 text-rose-700 border border-rose-200' : ''}
-          ${saveMessage.type === 'info' ? 'bg-slate-50 text-slate-600 border border-slate-200' : ''}
+          ${saveMessage.type === 'success' ? 'bg-success-soft text-success border border-success-line' : ''}
+          ${saveMessage.type === 'error' ? 'bg-danger-soft text-danger border border-danger-line' : ''}
+          ${saveMessage.type === 'info' ? 'bg-surface-sub text-fg-body border border-line' : ''}
         `}>
           {saveMessage.type === 'success' && <CheckCircle2 size={16} />}
           {saveMessage.type === 'error' && <AlertCircle size={16} />}
@@ -280,7 +280,7 @@ const SettingsPage = () => {
 
       {/* 未保存变更提示 */}
       {hasChanges && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg text-sm bg-amber-50 text-amber-700 border border-amber-200">
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg text-sm bg-warn-soft text-warn border border-warn-line">
           <AlertCircle size={16} />
           您有 {Object.keys(changes).length} 项未保存的变更
         </div>
@@ -296,7 +296,7 @@ const SettingsPage = () => {
           resetDisabled={saving}
         >
           <PortInfo portInfo={portInfo} loading={loading} />
-          <div className="mt-4 pt-4 border-t border-slate-100">
+          <div className="mt-4 pt-4 border-t border-line-soft">
             {settingsByCategory['server']?.map(setting => (
               <SettingItem
                 key={`${setting.category}.${setting.key}`}
@@ -333,7 +333,7 @@ const SettingsPage = () => {
                 />
               ))}
               {(!settingsByCategory[category.name] || settingsByCategory[category.name].length === 0) && (
-                <div className="text-sm text-slate-400 text-center py-4">
+                <div className="text-sm text-fg-subtle text-center py-4">
                   暂无设置项
                 </div>
               )}

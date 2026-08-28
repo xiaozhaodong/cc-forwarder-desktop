@@ -9,23 +9,23 @@ import {
 // 日志级别配置
 export const LOG_LEVELS = {
   DEBUG: {
-    color: 'text-slate-500',
-    bg: 'bg-slate-50',
+    color: 'text-fg-muted',
+    bg: 'bg-surface-sub',
     icon: Info
   },
   INFO: {
-    color: 'text-blue-600',
-    bg: 'bg-blue-50',
+    color: 'text-info',
+    bg: 'bg-info-soft',
     icon: CheckCircle
   },
   WARN: {
-    color: 'text-amber-600',
-    bg: 'bg-amber-50',
+    color: 'text-warn',
+    bg: 'bg-warn-soft',
     icon: AlertTriangle
   },
   ERROR: {
-    color: 'text-red-600',
-    bg: 'bg-red-50',
+    color: 'text-danger',
+    bg: 'bg-danger-soft',
     icon: XCircle
   },
 };

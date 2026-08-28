@@ -109,19 +109,19 @@ function LogsPage() {
 
   return (
     <div
-      className="flex flex-col bg-white rounded-lg overflow-hidden border border-slate-200 shadow-sm"
+      className="flex flex-col bg-surface rounded-lg overflow-hidden border border-line shadow-sm"
       style={{ height: 'calc(100vh - 150px)' }}
     >
       {/* 页面头部 - 固定 */}
-      <div className="flex-shrink-0 border-b border-slate-200 px-6 py-4">
+      <div className="flex-shrink-0 border-b border-line px-6 py-4">
         {/* 标题栏 */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-              <FileText size={28} className="text-indigo-600" />
+            <h1 className="text-2xl font-bold text-fg flex items-center gap-2">
+              <FileText size={28} className="text-accent" />
               系统日志
             </h1>
-            <p className="text-slate-500 text-sm mt-1">
+            <p className="text-fg-muted text-sm mt-1">
               实时查看系统运行日志 · 共 {logs.length} 条
               {filteredLogs.length !== logs.length && ` · 筛选后 ${filteredLogs.length} 条`}
             </p>
@@ -152,19 +152,19 @@ function LogsPage() {
       </div>
 
       {/* 日志内容区域 - 可滚动 */}
-      <div className="flex-1 overflow-y-auto bg-white">
+      <div className="flex-1 overflow-y-auto bg-surface">
         {loading && logs.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-slate-400">
+          <div className="flex items-center justify-center h-full text-fg-subtle">
             <RefreshCw size={24} className="animate-spin mr-2" />
             加载中...
           </div>
         ) : error ? (
-          <div className="flex items-center justify-center h-full text-red-500">
+          <div className="flex items-center justify-center h-full text-danger">
             <AlertCircle size={24} className="mr-2" />
             {error}
           </div>
         ) : filteredLogs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-slate-400">
+          <div className="flex flex-col items-center justify-center h-full text-fg-subtle">
             <FileText size={48} className="mb-2 opacity-50" />
             <p className="text-lg">暂无日志</p>
             {searchQuery || levelFilter !== 'ALL' ? (
