@@ -64,15 +64,15 @@ const Pagination = ({
   ];
 
   return (
-    <div className="flex flex-col sm:flex-row items-center justify-between px-4 py-4 border-t border-gray-200 bg-gray-50/30 gap-4 sm:gap-0">
+    <div className="flex flex-col sm:flex-row items-center justify-between px-4 py-4 border-t border-line bg-surface-sub gap-4 sm:gap-0">
       {/* 左侧信息 */}
-      <div className="flex items-center gap-4 text-sm text-gray-600">
+      <div className="flex items-center gap-4 text-sm text-fg-body">
         <span>
           显示第 <span className="font-medium">{startItem}</span> 到 <span className="font-medium">{endItem}</span> 条，
           共 <span className="font-medium">{total}</span> 条记录
         </span>
         <div className="flex items-center gap-2">
-          <span className="text-gray-400">|</span>
+          <span className="text-fg-subtle">|</span>
           <CustomSelect
             options={pageSizeOptions}
             value={pageSize}
@@ -89,7 +89,7 @@ const Pagination = ({
         <button
           onClick={() => onPageChange?.(currentPage - 1)}
           disabled={currentPage <= 1}
-          className="p-1.5 rounded-md border border-gray-200 bg-white text-gray-400 hover:text-indigo-600 hover:border-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          className="p-1.5 rounded-md border border-line bg-surface text-fg-subtle hover:text-accent hover:border-accent-line disabled:opacity-50 disabled:cursor-not-allowed transition-all"
         >
           <ChevronLeft className="w-4 h-4" />
         </button>
@@ -99,7 +99,7 @@ const Pagination = ({
           {pageNumbers.map((page, index) => {
             if (page === '...') {
               return (
-                <span key={`ellipsis-${index}`} className="flex items-center justify-center w-8 h-8 text-gray-400">
+                <span key={`ellipsis-${index}`} className="flex items-center justify-center w-8 h-8 text-fg-subtle">
                   ...
                 </span>
               );
@@ -113,7 +113,7 @@ const Pagination = ({
                 className={`min-w-[32px] h-8 flex items-center justify-center rounded-md text-sm font-medium transition-colors ${
                   isActive
                     ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-indigo-600'
+                    : 'bg-surface border border-line text-fg-body hover:bg-surface-sub hover:text-accent'
                 }`}
               >
                 {page}
@@ -126,7 +126,7 @@ const Pagination = ({
         <button
           onClick={() => onPageChange?.(currentPage + 1)}
           disabled={currentPage >= totalPages}
-          className="p-1.5 rounded-md border border-gray-200 bg-white text-gray-600 hover:text-indigo-600 hover:border-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          className="p-1.5 rounded-md border border-line bg-surface text-fg-body hover:text-accent hover:border-accent-line disabled:opacity-50 disabled:cursor-not-allowed transition-all"
         >
           <ChevronRight className="w-4 h-4" />
         </button>

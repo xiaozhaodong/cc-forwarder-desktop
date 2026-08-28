@@ -81,18 +81,18 @@ const Toolbar = ({
         loading={accountSwitching}
       />
 
-      <div className="h-6 w-px bg-gray-300 mx-1 hidden xl:block"></div>
+      <div className="h-6 w-px bg-line-strong mx-1 hidden xl:block"></div>
 
       {/* 快捷时间范围选择 */}
-      <div className="hidden sm:flex shrink-0 items-center bg-white border border-gray-200 rounded-lg p-1 shadow-sm">
+      <div className="hidden sm:flex shrink-0 items-center bg-surface border border-line rounded-lg p-1 shadow-sm">
         {TIME_RANGE_OPTIONS.map((range) => (
           <button
             key={range.value}
             onClick={() => onTimeRangeChange?.(range.value)}
             className={`px-2 xl:px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
               activeTimeRange === range.value
-                ? 'bg-indigo-50 text-indigo-700 shadow-sm'
-                : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+                ? 'bg-accent-soft text-accent-fg shadow-sm'
+                : 'text-fg-muted hover:text-fg hover:bg-surface-sub'
             }`}
           >
             {range.label}
@@ -100,15 +100,15 @@ const Toolbar = ({
         ))}
       </div>
 
-      <div className="h-6 w-px bg-gray-300 mx-1 hidden xl:block"></div>
+      <div className="h-6 w-px bg-line-strong mx-1 hidden xl:block"></div>
 
       {/* 筛选按钮 */}
       <button
         onClick={onFilterToggle}
         className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all shadow-sm border ${
           isFilterOpen
-            ? 'bg-indigo-50 text-indigo-700 border-indigo-200 ring-2 ring-indigo-100'
-            : 'bg-white text-gray-700 border-gray-200 hover:border-indigo-300 hover:text-indigo-600'
+            ? 'bg-accent-soft text-accent-fg border-accent-line ring-2 ring-accent-soft'
+            : 'bg-surface text-fg-body border-line hover:border-accent-line hover:text-accent'
         }`}
       >
         <Filter className="w-4 h-4" /> <span className="hidden xl:inline">筛选</span><span className="xl:hidden">筛</span>
@@ -117,7 +117,7 @@ const Toolbar = ({
         />
       </button>
 
-      <div className="h-6 w-px bg-gray-300 mx-1 hidden xl:block"></div>
+      <div className="h-6 w-px bg-line-strong mx-1 hidden xl:block"></div>
 
       {/* 列配置按钮 */}
       <div className="relative">
@@ -125,8 +125,8 @@ const Toolbar = ({
           onClick={onViewConfigToggle}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all shadow-sm border ${
             isViewConfigOpen
-              ? 'bg-indigo-50 text-indigo-700 border-indigo-200 ring-2 ring-indigo-100'
-              : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:text-indigo-600 hover:border-indigo-200'
+              ? 'bg-accent-soft text-accent-fg border-accent-line ring-2 ring-accent-soft'
+              : 'bg-surface text-fg-body border-line hover:bg-surface-sub hover:text-accent hover:border-accent-line'
           }`}
           title="自定义显示列"
         >

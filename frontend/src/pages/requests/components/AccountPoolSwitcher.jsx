@@ -50,17 +50,17 @@ const inferGroupKey = (account = {}) => {
 const GROUP_META = {
   primary: {
     label: '主组',
-    badgeClass: 'bg-indigo-50 text-indigo-600',
+    badgeClass: 'tone-indigo',
     rank: 0
   },
   backup: {
     label: '备组',
-    badgeClass: 'bg-cyan-50 text-cyan-600',
+    badgeClass: 'tone-cyan',
     rank: 1
   },
   cold: {
     label: '冷备',
-    badgeClass: 'bg-violet-50 text-violet-600',
+    badgeClass: 'tone-violet',
     rank: 2
   }
 };
@@ -103,9 +103,9 @@ const compareAccountsByGroupOrder = (left = {}, right = {}) => {
 
 const getIndicatorClass = (account = {}) => {
   const state = String(account.state || '').trim().toLowerCase();
-  if (account.enabled === false || state === 'disabled_auth') return 'bg-rose-400';
-  if (state === 'cooldown') return 'bg-amber-400';
-  return 'bg-emerald-400';
+  if (account.enabled === false || state === 'disabled_auth') return 'bg-danger-solid';
+  if (state === 'cooldown') return 'bg-warn-solid';
+  return 'bg-success-solid';
 };
 
 const AccountPoolSwitcher = ({
@@ -211,7 +211,7 @@ const AccountPoolSwitcher = ({
 
   if (!sortedAccounts.length) {
     return (
-      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-gray-400 bg-gray-50 border border-gray-200">
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-fg-subtle bg-surface-sub border border-line">
         <AlertCircle className="w-3.5 h-3.5" />
         <span>无可用 Codex 账号</span>
       </div>
@@ -237,10 +237,10 @@ const AccountPoolSwitcher = ({
           setIsOpen(true);
         }}
         disabled={loading}
-        className={`group flex items-center justify-between gap-2 w-[170px] lg:w-[190px] xl:w-[220px] px-3 py-1.5 bg-white border rounded-lg text-sm font-medium transition-all shadow-sm ${
+        className={`group flex items-center justify-between gap-2 w-[170px] lg:w-[190px] xl:w-[220px] px-3 py-1.5 bg-surface border rounded-lg text-sm font-medium transition-all shadow-sm ${
           isOpen
-            ? 'border-indigo-300 ring-2 ring-indigo-100 text-indigo-700'
-            : 'border-gray-200 text-gray-700 hover:border-indigo-300 hover:text-indigo-600'
+            ? 'border-accent-line ring-2 ring-accent-soft text-accent-fg'
+            : 'border-line text-fg-body hover:border-accent-line hover:text-accent'
         } ${loading ? 'opacity-60 cursor-wait' : ''}`}
         title={currentTitle}
       >
@@ -250,8 +250,8 @@ const AccountPoolSwitcher = ({
         </span>
 
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
-          <UserRound className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-          <span className="hidden xl:inline font-semibold text-xs text-gray-500 shrink-0">Codex:</span>
+          <UserRound className="w-3.5 h-3.5 text-fg-subtle shrink-0" />
+          <span className="hidden xl:inline font-semibold text-xs text-fg-muted shrink-0">Codex:</span>
           <span className="font-bold truncate">{currentLabel}</span>
           {activeGroupMeta?.label && (
             <span className={`hidden xl:inline text-[10px] px-1.5 py-0.5 rounded shrink-0 ${activeGroupMeta.badgeClass}`}>
@@ -260,25 +260,25 @@ const AccountPoolSwitcher = ({
           )}
         </div>
 
-        <ArrowLeftRight className={`w-3.5 h-3.5 ml-1 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        <ArrowLeftRight className={`w-3.5 h-3.5 ml-1 text-fg-subtle transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-2 w-[360px] bg-white rounded-xl shadow-xl border border-gray-100 ring-1 ring-black/5 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
-            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Codex 模式</div>
-            <div className="text-[10px] text-gray-400 mt-0.5">可固定具体账号，也可切回 Auto 按编排调度</div>
+        <div className="absolute top-full left-0 mt-2 w-[360px] bg-surface rounded-xl shadow-xl border border-line ring-1 ring-hairline z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="px-4 py-3 bg-surface-sub border-b border-line-soft">
+            <div className="text-xs font-semibold text-fg-muted uppercase tracking-wider">Codex 模式</div>
+            <div className="text-[10px] text-fg-subtle mt-0.5">可固定具体账号，也可切回 Auto 按编排调度</div>
           </div>
 
-          <div className="px-3 py-2 border-b border-gray-100">
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
-              <Search className="w-3.5 h-3.5 text-gray-400" />
+          <div className="px-3 py-2 border-b border-line-soft">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-line bg-surface focus-within:border-accent-line focus-within:ring-2 focus-within:ring-accent-soft transition-all">
+              <Search className="w-3.5 h-3.5 text-fg-subtle" />
               <input
                 type="text"
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
                 placeholder="搜索账号名称 / 认证方式 / 套餐"
-                className="w-full bg-transparent text-sm text-gray-700 placeholder:text-gray-400 outline-none"
+                className="w-full bg-transparent text-sm text-fg-body placeholder:text-fg-subtle outline-none"
               />
             </div>
           </div>
@@ -290,31 +290,31 @@ const AccountPoolSwitcher = ({
               disabled={loading}
               className={`mb-2 w-full flex items-start justify-between gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
                 isAutoMode
-                  ? 'bg-indigo-50 text-indigo-700'
-                  : 'hover:bg-gray-50 text-gray-700'
+                  ? 'bg-accent-soft text-accent-fg'
+                  : 'hover:bg-surface-sub text-fg-body'
               } ${loading ? 'opacity-60 cursor-not-allowed' : ''}`}
             >
               <div className="flex items-start gap-3 min-w-0 flex-1">
                 <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${isAutoMode ? 'bg-sky-500' : 'bg-sky-300'}`} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`font-medium truncate ${isAutoMode ? 'text-indigo-700' : 'text-gray-800'}`}>
+                    <span className={`font-medium truncate ${isAutoMode ? 'text-accent-fg' : 'text-fg'}`}>
                       Auto / 按编排
                     </span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">全局模式</span>
+                    <span className="tone-slate text-[10px] px-1.5 py-0.5 rounded">全局模式</span>
                   </div>
-                  <div className="mt-1 text-[10px] text-gray-500">
+                  <div className="mt-1 text-[10px] text-fg-muted">
                     清除固定账号，恢复按当前编排规则自动选择
                   </div>
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0 pt-0.5">
-                {isAutoMode && <Check className="w-4 h-4 text-indigo-600" />}
+                {isAutoMode && <Check className="w-4 h-4 text-accent" />}
               </div>
             </button>
 
             {filteredAccounts.length === 0 ? (
-              <div className="px-3 py-8 text-center text-sm text-gray-400">没有匹配的账号</div>
+              <div className="px-3 py-8 text-center text-sm text-fg-subtle">没有匹配的账号</div>
             ) : (
               filteredAccounts.map((account) => {
                 const accountId = resolveAccountId(account);
@@ -337,8 +337,8 @@ const AccountPoolSwitcher = ({
                     disabled={loading || !switchable}
                     className={`w-full flex items-start justify-between gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
                       isActive
-                        ? 'bg-indigo-50 text-indigo-700'
-                        : 'hover:bg-gray-50 text-gray-700'
+                        ? 'bg-accent-soft text-accent-fg'
+                        : 'hover:bg-surface-sub text-fg-body'
                     } ${(!switchable || loading) ? 'opacity-60 cursor-not-allowed' : ''}`}
                   >
                     <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -346,35 +346,35 @@ const AccountPoolSwitcher = ({
 
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`font-medium truncate ${isActive ? 'text-indigo-700' : 'text-gray-800'}`} title={accountName}>
+                          <span className={`font-medium truncate ${isActive ? 'text-accent-fg' : 'text-fg'}`} title={accountName}>
                             {accountName}
                           </span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{authLabel}</span>
+                          <span className="tone-slate text-[10px] px-1.5 py-0.5 rounded">{authLabel}</span>
                           {planLabel && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-50 text-violet-600">{planLabel}</span>
+                            <span className="tone-violet text-[10px] px-1.5 py-0.5 rounded">{planLabel}</span>
                           )}
                         </div>
 
-                        <div className="mt-1 flex items-center gap-2 flex-wrap text-[10px] text-gray-500">
+                        <div className="mt-1 flex items-center gap-2 flex-wrap text-[10px] text-fg-muted">
                           {groupMeta?.label && (
                             <span className={`px-1.5 py-0.5 rounded ${groupMeta.badgeClass}`}>{groupMeta.label}</span>
                           )}
                           {Number.isFinite(priority) && <span>组内顺序 {priority}</span>}
                           <span>{quotaLabel}</span>
-                          {account.enabled === false && <span className="text-slate-400">已停用</span>}
-                          {String(account.state || '').trim().toLowerCase() === 'disabled_auth' && <span className="text-rose-500">鉴权失效</span>}
+                          {account.enabled === false && <span className="text-fg-subtle">已停用</span>}
+                          {String(account.state || '').trim().toLowerCase() === 'disabled_auth' && <span className="text-danger">鉴权失效</span>}
                         </div>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0 pt-0.5">
                       {isRecentSelected && !isActive && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600">最近命中</span>
+                        <span className="tone-emerald text-[10px] px-1.5 py-0.5 rounded">最近命中</span>
                       )}
                       {!switchable && !isActive && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">不可切</span>
+                        <span className="tone-slate text-[10px] px-1.5 py-0.5 rounded">不可切</span>
                       )}
-                      {isActive && <Check className="w-4 h-4 text-indigo-600" />}
+                      {isActive && <Check className="w-4 h-4 text-accent" />}
                     </div>
                   </button>
                 );

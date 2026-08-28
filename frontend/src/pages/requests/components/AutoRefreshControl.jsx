@@ -20,20 +20,20 @@ const AutoRefreshControl = ({
         label: '实时',
         title: '请求变化将主动推送并自动更新',
         icon: <Radio className="w-4 h-4" />,
-        className: 'bg-emerald-50 border-emerald-200 text-emerald-700'
+        className: 'tone-emerald'
       }
     : mode === 'fallback'
       ? {
           label: `降级 ${fallbackInterval}s`,
           title: `实时事件不可用或连续刷新失败，当前每 ${fallbackInterval} 秒自动校准一次`,
           icon: <WifiOff className="w-4 h-4" />,
-          className: 'bg-amber-50 border-amber-200 text-amber-700'
+          className: 'tone-amber'
         }
       : {
           label: '连接中',
           title: '正在建立请求实时事件订阅',
           icon: <LoaderCircle className="w-4 h-4 animate-spin" />,
-          className: 'bg-indigo-50 border-indigo-200 text-indigo-700'
+          className: 'tone-indigo'
         };
 
   return (
@@ -48,7 +48,7 @@ const AutoRefreshControl = ({
 
       <button
         onClick={onManualRefresh}
-        className="h-9 w-9 flex items-center justify-center border rounded-r-lg border-gray-200 bg-white text-gray-500 hover:text-indigo-600 hover:bg-gray-50 -ml-px transition-colors"
+        className="h-9 w-9 flex items-center justify-center border rounded-r-lg border-line bg-surface text-fg-muted hover:text-accent hover:bg-surface-sub -ml-px transition-colors"
         title="立即刷新"
       >
         <RotateCcw className="w-4 h-4" />

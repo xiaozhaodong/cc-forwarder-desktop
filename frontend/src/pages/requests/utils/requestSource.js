@@ -1,10 +1,10 @@
 import { NO_UPSTREAM_LABEL, isNoUpstreamReason } from './lifecycle.js';
 
 export const REQUEST_FAMILY_META = {
-  claude: { label: 'Claude', className: 'border-violet-200 bg-violet-50 text-violet-700' },
-  codex: { label: 'Codex', className: 'border-sky-200 bg-sky-50 text-sky-700' },
-  image: { label: 'Image', className: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700' },
-  other: { label: 'Other', className: 'border-slate-200 bg-slate-50 text-slate-600' }
+  claude: { label: 'Claude', className: 'tone-violet' },
+  codex: { label: 'Codex', className: 'tone-sky' },
+  image: { label: 'Image', className: 'tone-fuchsia' },
+  other: { label: 'Other', className: 'tone-slate' }
 };
 
 export const normalizeRequestFamily = (value) => {

@@ -65,12 +65,10 @@ export const getTimingPillClassName = (type, ms) => {
     : TIMING_THRESHOLDS_MS.duration;
 
   if (value > thresholds.critical) {
-    return 'bg-rose-50 text-rose-600 border-rose-100';
+    return 'tone-rose';
   }
   if (value > thresholds.warning) {
-    return type === 'first'
-      ? 'bg-amber-50 text-amber-600 border-amber-100'
-      : 'bg-orange-50 text-orange-600 border-orange-100';
+    return type === 'first' ? 'tone-amber' : 'tone-orange';
   }
-  return 'bg-emerald-50 text-emerald-600 border-emerald-100';
+  return 'tone-emerald';
 };

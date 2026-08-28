@@ -22,7 +22,7 @@ const ModelTooltip = ({ anchorRect, children, tooltipId }) => {
     <span
       id={tooltipId}
       role="tooltip"
-      className="pointer-events-none fixed z-[10001] max-w-[360px] -translate-x-1/2 break-all rounded-lg border border-slate-200 bg-slate-900 px-3 py-2 text-xs font-mono leading-5 whitespace-normal text-white shadow-lg shadow-slate-900/20"
+      className="pointer-events-none fixed z-[10001] max-w-[360px] -translate-x-1/2 break-all rounded-lg border border-line bg-inverted px-3 py-2 text-xs font-mono leading-5 whitespace-normal text-fg-inverted shadow-lg"
       style={{ left: `${centerX}px`, top: `${anchorRect.bottom + 6}px` }}
     >
       {children}
@@ -84,7 +84,7 @@ const ModelTag = ({ model, compact = false }) => {
   return (
     <>
       <span
-        className={`inline-flex min-w-0 items-center rounded border px-2 py-1 align-middle text-xs font-mono transition-all ${compact ? 'max-w-[160px] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-cyan-200' : ''} ${colorClasses}`}
+        className={`inline-flex min-w-0 items-center rounded border px-2 py-1 align-middle text-xs font-mono transition-all ${compact ? 'max-w-[160px] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-accent-soft' : ''} ${colorClasses}`}
         tabIndex={hasTooltip ? 0 : undefined}
         aria-describedby={tooltipAnchor ? tooltipId : undefined}
         onMouseEnter={showTooltip}

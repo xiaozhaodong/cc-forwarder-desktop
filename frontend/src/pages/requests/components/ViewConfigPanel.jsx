@@ -26,18 +26,18 @@ const ViewConfigPanel = ({
   if (!isOpen) return null;
 
   return (
-    <div className="absolute top-12 right-0 z-30 w-64 bg-white rounded-xl shadow-xl border border-gray-100 ring-1 ring-black/5 animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200 origin-top-right">
+    <div className="absolute top-12 right-0 z-30 w-64 bg-surface rounded-xl shadow-xl border border-line ring-1 ring-hairline animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200 origin-top-right">
       {/* 头部 */}
-      <div className="px-4 py-3 border-b border-gray-50 flex justify-between items-center bg-gray-50/50 rounded-t-xl">
-        <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
-          <Columns className="w-3.5 h-3.5 text-indigo-500" />
+      <div className="px-4 py-3 border-b border-line-soft flex justify-between items-center bg-surface-sub rounded-t-xl">
+        <div className="flex items-center gap-2 text-sm font-semibold text-fg">
+          <Columns className="w-3.5 h-3.5 text-accent" />
           <span>显示列配置</span>
         </div>
         <button
           onClick={onClose}
-          className="p-1 hover:bg-gray-200 rounded-md transition-colors"
+          className="p-1 hover:bg-surface-mut rounded-md transition-colors"
         >
-          <X className="w-3.5 h-3.5 text-gray-400" />
+          <X className="w-3.5 h-3.5 text-fg-subtle" />
         </button>
       </div>
 
@@ -50,8 +50,8 @@ const ViewConfigPanel = ({
               key={col.id}
               className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-all ${
                 col.alwaysVisible
-                  ? 'opacity-50 cursor-not-allowed bg-gray-50'
-                  : 'hover:bg-gray-50 active:scale-[0.98]'
+                  ? 'opacity-50 cursor-not-allowed bg-surface-sub'
+                  : 'hover:bg-surface-sub active:scale-[0.98]'
               }`}
             >
               <div className="flex items-center gap-3">
@@ -60,18 +60,18 @@ const ViewConfigPanel = ({
                   checked={isVisible}
                   disabled={col.alwaysVisible}
                   onChange={() => !col.alwaysVisible && onToggleColumn?.(col.id)}
-                  className={`rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 ${
-                    col.alwaysVisible ? 'text-gray-400' : ''
+                  className={`rounded border-line-strong text-accent focus:ring-accent-ring w-4 h-4 ${
+                    col.alwaysVisible ? 'text-fg-subtle' : ''
                   }`}
                 />
-                <span className={`text-sm ${isVisible ? 'text-gray-700 font-medium' : 'text-gray-400'}`}>
+                <span className={`text-sm ${isVisible ? 'text-fg-body font-medium' : 'text-fg-subtle'}`}>
                   {col.label}
                 </span>
               </div>
               {isVisible ? (
-                <Eye className="w-3.5 h-3.5 text-gray-400" />
+                <Eye className="w-3.5 h-3.5 text-fg-subtle" />
               ) : (
-                <EyeOff className="w-3.5 h-3.5 text-gray-300" />
+                <EyeOff className="w-3.5 h-3.5 text-fg-subtle/60" />
               )}
             </label>
           );
@@ -79,17 +79,17 @@ const ViewConfigPanel = ({
       </div>
 
       {/* 底部重置按钮 */}
-      <div className="p-3 border-t border-gray-50 bg-gray-50/30 rounded-b-xl flex justify-center">
+      <div className="p-3 border-t border-line-soft bg-surface-sub rounded-b-xl flex justify-center">
         <button
           onClick={onReset}
-          className="text-xs text-indigo-600 font-medium hover:text-indigo-800 hover:underline transition-colors"
+          className="text-xs text-accent font-medium hover:text-accent-fg hover:underline transition-colors"
         >
           恢复默认设置
         </button>
       </div>
 
       {/* 装饰箭头 */}
-      <div className="absolute -top-1.5 right-11 w-3 h-3 bg-white border-l border-t border-gray-100 transform rotate-45"></div>
+      <div className="absolute -top-1.5 right-11 w-3 h-3 bg-surface border-l border-t border-line transform rotate-45"></div>
     </div>
   );
 };

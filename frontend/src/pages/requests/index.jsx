@@ -462,10 +462,10 @@ const RequestsPage = () => {
       <div className="flex items-center gap-2 xl:gap-3 relative z-30">
         {/* 页面标题 */}
         <div className="flex items-center gap-2 shrink-0">
-          <div className="p-1.5 bg-indigo-600 rounded-lg text-white shadow-lg shadow-indigo-200/50">
+          <div className="p-1.5 bg-indigo-600 rounded-lg text-white shadow-lg">
             <BarChart3 className="w-5 h-5" />
           </div>
-          <h1 className="text-lg xl:text-xl font-bold text-gray-900 tracking-tight whitespace-nowrap">请求追踪</h1>
+          <h1 className="text-lg xl:text-xl font-bold text-fg tracking-tight whitespace-nowrap">请求追踪</h1>
         </div>
 
         {/* 工具栏 */}

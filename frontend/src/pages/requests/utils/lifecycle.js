@@ -217,15 +217,16 @@ export const buildLifecycleSegments = (request = {}) => {
   return segments;
 };
 
-// lifecycleSegmentColors 分段配色（白底弹窗，沿用现有浅色语系）。
+// lifecycleSegmentColors 分段配色（实心色块，深浅主题各给一套）。
+// 不走 tone-*：色块只需要底色，且暗色下要压深到能承载浅色标签文字。
 export const lifecycleSegmentColors = {
-  queue: 'bg-slate-200',
-  connect: 'bg-indigo-200',
-  pre: 'bg-slate-200',
-  first: 'bg-violet-300',
-  stream: 'bg-emerald-300',
-  tail: 'bg-slate-200',
-  total: 'bg-slate-200',
-  failure: 'bg-rose-300',
-  cancelled: 'bg-slate-300'
+  queue: 'bg-slate-200 dark:bg-slate-600',
+  connect: 'bg-indigo-200 dark:bg-indigo-800',
+  pre: 'bg-slate-200 dark:bg-slate-600',
+  first: 'bg-violet-300 dark:bg-violet-700',
+  stream: 'bg-emerald-300 dark:bg-emerald-700',
+  tail: 'bg-slate-200 dark:bg-slate-600',
+  total: 'bg-slate-200 dark:bg-slate-600',
+  failure: 'bg-rose-300 dark:bg-rose-800',
+  cancelled: 'bg-slate-300 dark:bg-slate-500'
 };

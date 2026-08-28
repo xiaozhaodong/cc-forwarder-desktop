@@ -1,59 +1,60 @@
 // 请求追踪模型标签颜色规则
+// tone-* 一个类给齐底 / 字 / 边，深浅双主题由 index.css 统一维护。
 
-const DEFAULT_MODEL_CLASSES = 'bg-slate-50 text-slate-600 border-slate-200';
+const DEFAULT_MODEL_CLASSES = 'tone-slate';
 
 const MODEL_COLOR_RULES = [
   {
     matches: (modelName) => modelName.includes('deepseek'),
-    classes: 'bg-cyan-50 text-cyan-700 border-cyan-200'
+    classes: 'tone-cyan'
   },
   {
     matches: (modelName) => modelName.includes('kimi') || modelName.includes('moonshot'),
-    classes: 'bg-pink-50 text-pink-700 border-pink-200'
+    classes: 'tone-pink'
   },
   {
     matches: (modelName) => modelName.includes('glm-5.2') || modelName.startsWith('glm'),
-    classes: 'bg-teal-50 text-teal-700 border-teal-200'
+    classes: 'tone-teal'
   },
   {
     matches: (modelName) => modelName.includes('fable-5') || modelName.includes('claude-fable-5'),
-    classes: 'bg-rose-50 text-rose-700 border-rose-200'
+    classes: 'tone-rose'
   },
   {
     matches: (modelName) => modelName.includes('sonnet-5') || modelName.includes('claude-sonnet-5'),
-    classes: 'bg-amber-50 text-amber-700 border-amber-200'
+    classes: 'tone-amber'
   },
   {
     matches: (modelName) => modelName.includes('sonnet-4') || modelName.includes('claude-sonnet-4'),
-    classes: 'bg-orange-50 text-orange-700 border-orange-200'
+    classes: 'tone-orange'
   },
   {
     matches: (modelName) => modelName.includes('3-5-haiku') || modelName.includes('haiku'),
-    classes: 'bg-green-50 text-green-800 border-green-200'
+    classes: 'tone-green'
   },
   {
     matches: (modelName) => modelName.includes('3-5-sonnet') || (modelName.includes('sonnet') && modelName.includes('3.5')),
-    classes: 'bg-blue-50 text-blue-700 border-blue-100'
+    classes: 'tone-blue'
   },
   {
     matches: (modelName) => modelName.includes('opus'),
-    classes: 'bg-purple-50 text-purple-700 border-purple-200'
+    classes: 'tone-purple'
   },
   {
     matches: (modelName) => modelName === 'gpt-5.6' || modelName.startsWith('gpt-5.6-sol'),
-    classes: 'bg-yellow-50 text-yellow-800 border-yellow-200'
+    classes: 'tone-yellow'
   },
   {
     matches: (modelName) => modelName.startsWith('gpt-5.6-terra'),
-    classes: 'bg-lime-50 text-lime-800 border-lime-200'
+    classes: 'tone-lime'
   },
   {
     matches: (modelName) => modelName.startsWith('gpt-5.6-luna'),
-    classes: 'bg-sky-50 text-sky-700 border-sky-200'
+    classes: 'tone-sky'
   },
   {
     matches: (modelName) => modelName.includes('gpt-'),
-    classes: 'bg-indigo-50 text-indigo-700 border-indigo-200'
+    classes: 'tone-indigo'
   }
 ];
 

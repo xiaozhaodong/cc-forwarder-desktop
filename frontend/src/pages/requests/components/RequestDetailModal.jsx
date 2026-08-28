@@ -66,25 +66,25 @@ const InfoRow = ({ icon: Icon, label, value, copyable = false }) => {
   };
 
   return (
-    <div className="flex items-start justify-between py-3 border-b border-slate-100 last:border-b-0 group">
-      <div className="flex items-center gap-2 text-slate-500 min-w-[120px]">
+    <div className="flex items-start justify-between py-3 border-b border-line-soft last:border-b-0 group">
+      <div className="flex items-center gap-2 text-fg-muted min-w-[120px]">
         <Icon className="w-4 h-4 flex-shrink-0" />
         <span className="text-sm font-medium">{label}</span>
       </div>
       <div className="flex items-center gap-2 flex-1 justify-end">
-        <span className="text-sm font-mono text-slate-900 text-right">
+        <span className="text-sm font-mono text-fg text-right">
           {value || '-'}
         </span>
         {copyable && (
           <button
             onClick={handleCopy}
-            className="p-1 opacity-0 group-hover:opacity-100 hover:bg-slate-100 rounded transition-all"
+            className="p-1 opacity-0 group-hover:opacity-100 hover:bg-surface-mut rounded transition-all"
             title="复制"
           >
             {copied ? (
-              <Check className="w-3.5 h-3.5 text-emerald-600" />
+              <Check className="w-3.5 h-3.5 text-success" />
             ) : (
-              <Copy className="w-3.5 h-3.5 text-slate-400" />
+              <Copy className="w-3.5 h-3.5 text-fg-subtle" />
             )}
           </button>
         )}
@@ -96,15 +96,15 @@ const InfoRow = ({ icon: Icon, label, value, copyable = false }) => {
 /**
  * Token 指标卡片
  */
-const TokenCard = ({ icon: Icon, label, value, colorClass }) => (
-  <div className={`rounded-lg p-4 border ${colorClass.border} ${colorClass.bg}`}>
+const TokenCard = ({ icon: Icon, label, value, tone }) => (
+  <div className={`${tone} rounded-lg p-4 border`}>
     <div className="flex items-center justify-between mb-2">
-      <Icon className={`w-4 h-4 ${colorClass.icon}`} />
+      <Icon className="w-4 h-4" />
     </div>
-    <div className={`text-2xl font-bold font-mono ${colorClass.text}`}>
+    <div className="text-2xl font-bold font-mono">
       {(value || 0).toLocaleString()}
     </div>
-    <div className="text-xs text-slate-500 mt-1">{label}</div>
+    <div className="text-xs opacity-80 mt-1">{label}</div>
   </div>
 );
 
@@ -145,14 +145,14 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
   // 请求类型
   const StreamIcon = request.isStreaming ? Waves : RefreshCw;
   const streamLabel = request.isStreaming ? '流式请求' : '常规请求';
-  const streamColor = request.isStreaming ? 'text-blue-600 bg-blue-50' : 'text-slate-600 bg-slate-50';
+  const streamColor = request.isStreaming ? 'tone-blue' : 'tone-slate';
   const family = getRequestFamilyMeta(request.requestFamily);
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-start justify-center pt-[15vh] px-4">
       {/* 背景遮罩 */}
       <div
-        className="fixed inset-0 bg-slate-900/20 backdrop-blur-sm animate-in fade-in duration-200"
+        className="fixed inset-0 bg-overlay backdrop-blur-sm animate-in fade-in duration-200"
         onClick={onClose}
       />
 
@@ -161,18 +161,18 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
         role="dialog"
         aria-modal="true"
         aria-label="请求详情"
-        className="relative w-full max-w-3xl max-h-[80vh] bg-white rounded-2xl shadow-2xl ring-1 ring-black/5 animate-in zoom-in-95 fade-in duration-200 flex flex-col overflow-hidden"
+        className="relative w-full max-w-3xl max-h-[80vh] bg-surface rounded-2xl shadow-2xl ring-1 ring-hairline animate-in zoom-in-95 fade-in duration-200 flex flex-col overflow-hidden"
       >
         {/* 头部 - 固定不滚动 */}
-        <div className="flex-shrink-0 px-6 py-4 border-b border-slate-100 bg-white rounded-t-2xl flex items-center justify-between">
+        <div className="flex-shrink-0 px-6 py-4 border-b border-line-soft bg-surface rounded-t-2xl flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-indigo-50 rounded-lg">
-              <FileText className="w-5 h-5 text-indigo-600" />
+            <div className="tone-indigo p-2 rounded-lg">
+              <FileText className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-slate-900">请求详情</h2>
+              <h2 className="text-lg font-bold text-fg">请求详情</h2>
               <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-xs text-slate-400 font-mono">{request.requestId}</span>
+                <span className="text-xs text-fg-subtle font-mono">{request.requestId}</span>
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium ${streamColor}`}>
                   <StreamIcon className="w-3 h-3" />
                   {streamLabel}
@@ -181,15 +181,15 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <kbd className="hidden sm:inline-block px-2 py-1 bg-slate-100 border border-slate-200 rounded text-xs text-slate-500">ESC</kbd>
-            <button ref={closeButtonRef} aria-label="关闭详情" onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-400 hover:text-slate-600">
+            <kbd className="hidden sm:inline-block px-2 py-1 bg-surface-mut border border-line rounded text-xs text-fg-muted">ESC</kbd>
+            <button ref={closeButtonRef} aria-label="关闭详情" onClick={onClose} className="p-2 hover:bg-surface-mut rounded-lg transition-colors text-fg-subtle hover:text-fg-muted">
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
         {/* Tab 导航 - 固定不滚动 */}
-        <div className="flex-shrink-0 px-6 pt-4 border-b border-slate-100 bg-slate-50/50">
+        <div className="flex-shrink-0 px-6 pt-4 border-b border-line-soft bg-surface-sub">
           <div className="flex gap-1">
             {[
               { id: 'overview', label: '概览', icon: Activity },
@@ -201,8 +201,8 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium transition-all ${
                   activeTab === tab.id
-                    ? 'bg-white text-indigo-600 shadow-sm border-t border-x border-slate-200'
-                    : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100/50'
+                    ? 'bg-surface text-accent shadow-sm border-t border-x border-line'
+                    : 'text-fg-muted hover:text-fg-body hover:bg-surface-mut'
                 }`}
               >
                 <tab.icon className="w-4 h-4" />
@@ -213,7 +213,7 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
         </div>
 
         {/* 内容区域 - 自动填充剩余空间并滚动 */}
-        <div className="flex-1 p-6 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 min-h-0">
+        <div className="flex-1 p-6 overflow-y-auto custom-scrollbar min-h-0">
           {/* 概览 Tab */}
           {activeTab === 'overview' && (
             <div className="space-y-6">
@@ -226,29 +226,29 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
 
               {/* 状态 & 成本卡片 */}
               <div className="grid grid-cols-2 gap-4">
-                <div className="bg-gradient-to-br from-indigo-50 to-blue-50 rounded-xl p-4 border border-indigo-100">
+                <div className="tone-indigo rounded-xl p-4 border">
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-sm font-medium text-slate-600">请求状态</span>
-                    <Activity className="w-4 h-4 text-indigo-500" />
+                    <span className="text-sm font-medium">请求状态</span>
+                    <Activity className="w-4 h-4" />
                   </div>
                   <RequestStatusBadge status={request.status} />
                 </div>
 
-                <div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-4 border border-orange-100">
+                <div className="tone-orange rounded-xl p-4 border">
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-sm font-medium text-slate-600">总成本</span>
-                    <DollarSign className="w-4 h-4 text-orange-500" />
+                    <span className="text-sm font-medium">总成本</span>
+                    <DollarSign className="w-4 h-4" />
                   </div>
-                  <div className="text-2xl font-bold text-orange-600 font-mono">
+                  <div className="text-2xl font-bold font-mono">
                     {formatCost(request.cost)}
                   </div>
                 </div>
               </div>
 
               {/* 基本信息 */}
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                <div className="px-4 py-3 bg-slate-50 border-b border-slate-100">
-                  <h3 className="text-sm font-semibold text-slate-900">基本信息</h3>
+              <div className="bg-surface rounded-xl border border-line overflow-hidden">
+                <div className="px-4 py-3 bg-surface-sub border-b border-line-soft">
+                  <h3 className="text-sm font-semibold text-fg">基本信息</h3>
                 </div>
                 <div className="p-4">
                   <InfoRow icon={FileText} label="请求 ID" value={request.requestId} copyable />
@@ -269,13 +269,13 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
               </div>
 
               {/* 模型信息 */}
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                <div className="px-4 py-3 bg-slate-50 border-b border-slate-100">
-                  <h3 className="text-sm font-semibold text-slate-900">模型信息</h3>
+              <div className="bg-surface rounded-xl border border-line overflow-hidden">
+                <div className="px-4 py-3 bg-surface-sub border-b border-line-soft">
+                  <h3 className="text-sm font-semibold text-fg">模型信息</h3>
                 </div>
                 <div className="p-4">
                   <div className="flex items-center justify-between py-3">
-                    <span className="text-sm font-medium text-slate-500">模型名称</span>
+                    <span className="text-sm font-medium text-fg-muted">模型名称</span>
                     <ModelTag model={request.model} />
                   </div>
                 </div>
@@ -284,9 +284,9 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
               {/* 错误信息（如果有） */}
               {(['failed', 'error', 'cancelled', 'timeout'].includes(request.status) ||
                 request.failure_reason || request.cancel_reason) && (
-                <div className="bg-rose-50 rounded-xl border border-rose-200 overflow-hidden">
-                  <div className="px-4 py-3 bg-rose-100/50 border-b border-rose-200">
-                    <h3 className="text-sm font-semibold text-rose-900 flex items-center gap-2">
+                <div className="bg-danger-soft rounded-xl border border-danger-line overflow-hidden">
+                  <div className="px-4 py-3 bg-danger-line/30 border-b border-danger-line">
+                    <h3 className="text-sm font-semibold text-danger flex items-center gap-2">
                       <AlertCircle className="w-4 h-4" />
                       错误信息
                     </h3>
@@ -294,14 +294,14 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
                   <div className="p-4 space-y-2">
                     {request.failure_reason && (
                       <div className="text-sm">
-                        <span className="font-medium text-slate-600">失败原因：</span>
-                        <span className="text-rose-700">{request.failure_reason}</span>
+                        <span className="font-medium text-fg-muted">失败原因：</span>
+                        <span className="text-danger">{request.failure_reason}</span>
                       </div>
                     )}
                     {request.cancel_reason && (
                       <div className="text-sm">
-                        <span className="font-medium text-slate-600">取消原因：</span>
-                        <span className="text-rose-700">{request.cancel_reason}</span>
+                        <span className="font-medium text-fg-muted">取消原因：</span>
+                        <span className="text-danger">{request.cancel_reason}</span>
                       </div>
                     )}
                   </div>
@@ -319,13 +319,13 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
                   icon={TrendingUp}
                   label="输入 Token"
                   value={request.inputTokens || 0}
-                  colorClass={{ bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-600', icon: 'text-blue-600' }}
+                  tone="tone-blue"
                 />
                 <TokenCard
                   icon={TrendingDown}
                   label="输出 Token"
                   value={request.outputTokens || 0}
-                  colorClass={{ bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-600', icon: 'text-emerald-600' }}
+                  tone="tone-emerald"
                 />
               </div>
 
@@ -335,54 +335,54 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
                   icon={Database}
                   label="缓存创建 (5分钟)"
                   value={request.cacheCreation5mTokens || 0}
-                  colorClass={{ bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-600', icon: 'text-purple-600' }}
+                  tone="tone-purple"
                 />
                 <TokenCard
                   icon={Database}
                   label="缓存创建 (1小时)"
                   value={request.cacheCreation1hTokens || 0}
-                  colorClass={{ bg: 'bg-violet-50', border: 'border-violet-200', text: 'text-violet-600', icon: 'text-violet-600' }}
+                  tone="tone-violet"
                 />
                 <TokenCard
                   icon={Zap}
                   label="缓存读取"
                   value={request.cacheReadTokens || 0}
-                  colorClass={{ bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-600', icon: 'text-amber-600' }}
+                  tone="tone-amber"
                 />
                 <TokenCard
                   icon={Database}
                   label="缓存创建 (总计)"
                   value={request.cacheCreationTokens || 0}
-                  colorClass={{ bg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-600', icon: 'text-slate-500' }}
+                  tone="tone-slate"
                 />
               </div>
 
               {/* Token 总计 */}
-              <div className="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-xl p-6 border border-indigo-100">
+              <div className="tone-indigo rounded-xl p-6 border">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white rounded-lg shadow-sm">
-                      <FileText className="w-5 h-5 text-indigo-600" />
+                    <div className="p-2 bg-surface rounded-lg shadow-sm">
+                      <FileText className="w-5 h-5 text-accent" />
                     </div>
                     <div>
-                      <div className="text-sm font-medium text-slate-600">总 Token 消耗</div>
-                      <div className="text-xs text-slate-400">Input + Output</div>
+                      <div className="text-sm font-medium">总 Token 消耗</div>
+                      <div className="text-xs opacity-80">Input + Output</div>
                     </div>
                   </div>
-                  <div className="text-3xl font-bold text-indigo-600 font-mono">
+                  <div className="text-3xl font-bold font-mono">
                     {totalTokens.toLocaleString()}
                   </div>
                 </div>
 
                 {/* 分布条 */}
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs text-slate-600">
+                  <div className="flex items-center justify-between text-xs">
                     <span>输入 {inputPercent}%</span>
                     <span>输出 {outputPercent}%</span>
                   </div>
-                  <div className="h-2 bg-slate-200 rounded-full overflow-hidden flex">
+                  <div className="h-2 bg-surface-emph rounded-full overflow-hidden flex">
                     <div className="bg-blue-500" style={{ width: `${inputPercent}%` }} />
-                    <div className="bg-emerald-500" style={{ width: `${outputPercent}%` }} />
+                    <div className="bg-success-solid" style={{ width: `${outputPercent}%` }} />
                   </div>
                 </div>
               </div>
@@ -391,9 +391,9 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
 
           {/* 网络信息 Tab */}
           {activeTab === 'network' && (
-            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-              <div className="px-4 py-3 bg-slate-50 border-b border-slate-100">
-                <h3 className="text-sm font-semibold text-slate-900">网络详情</h3>
+            <div className="bg-surface rounded-xl border border-line overflow-hidden">
+              <div className="px-4 py-3 bg-surface-sub border-b border-line-soft">
+                <h3 className="text-sm font-semibold text-fg">网络详情</h3>
               </div>
               <div className="p-4">
                 <InfoRow icon={Server} label="HTTP 状态码" value={request.http_status_code || request.httpStatusCode || '-'} />
@@ -406,14 +406,14 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
         </div>
 
         {/* 底部操作栏 - 固定不滚动 */}
-        <div className="flex-shrink-0 px-6 py-4 border-t border-slate-100 bg-slate-50/80 backdrop-blur-sm rounded-b-2xl flex justify-between items-center">
-          <div className="text-xs text-slate-500">
-            Request ID: <span className="font-mono text-slate-700">{request.requestId}</span>
+        <div className="flex-shrink-0 px-6 py-4 border-t border-line-soft bg-surface-sub backdrop-blur-sm rounded-b-2xl flex justify-between items-center">
+          <div className="text-xs text-fg-muted">
+            Request ID: <span className="font-mono text-fg-body">{request.requestId}</span>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => copyTextToClipboard(request.requestId, '请求 ID')}
-              className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors flex items-center gap-1.5"
+              className="px-3 py-1.5 text-xs font-medium text-fg-body bg-surface border border-line rounded-lg hover:bg-surface-sub transition-colors flex items-center gap-1.5"
             >
               <Copy className="w-3.5 h-3.5" /> 复制 ID
             </button>

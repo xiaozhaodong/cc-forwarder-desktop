@@ -63,27 +63,27 @@ const StatsOverview = ({ stats, total = 0, isBlurred = false }) => {
   const failedRequests = stats.failed_requests || 0;
 
   const kpis = [
-    { label: '总请求数', value: totalRequests, unit: '', icon: Zap, color: 'text-orange-500', bg: 'bg-orange-50' },
-    { label: '成功率', value: successRate, unit: '', icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-50' },
-    { label: '平均耗时', value: avgDuration, unit: '', icon: Clock, color: 'text-amber-500', bg: 'bg-amber-50' },
-    { label: '总成本', value: totalCost, unit: '', icon: DollarSign, color: 'text-blue-500', bg: 'bg-blue-50' },
-    { label: '总Token数 (M)', value: totalTokens, unit: '', icon: FileText, color: 'text-indigo-500', bg: 'bg-indigo-50' },
-    { label: '失败请求', value: failedRequests, unit: '', icon: XCircle, color: 'text-rose-500', bg: 'bg-rose-50' }
+    { label: '总请求数', value: totalRequests, unit: '', icon: Zap, tone: 'tone-orange' },
+    { label: '成功率', value: successRate, unit: '', icon: CheckCircle2, tone: 'tone-emerald' },
+    { label: '平均耗时', value: avgDuration, unit: '', icon: Clock, tone: 'tone-amber' },
+    { label: '总成本', value: totalCost, unit: '', icon: DollarSign, tone: 'tone-blue' },
+    { label: '总Token数 (M)', value: totalTokens, unit: '', icon: FileText, tone: 'tone-indigo' },
+    { label: '失败请求', value: failedRequests, unit: '', icon: XCircle, tone: 'tone-rose' }
   ];
 
   return (
     <div className={`grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 transition-all duration-300 ${isBlurred ? 'opacity-40 pointer-events-none blur-[1px]' : ''}`}>
       {kpis.map((kpi, idx) => (
-        <div key={idx} className="bg-white p-4 rounded-xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-gray-100/50 hover:border-indigo-100 transition-all group">
+        <div key={idx} className="bg-surface p-4 rounded-xl shadow-sm border border-line/60 hover:border-accent-line transition-all group">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-medium text-gray-500">{kpi.label}</span>
-            <div className={`p-1.5 rounded-md ${kpi.bg} bg-opacity-50`}>
-              <kpi.icon className={`w-3.5 h-3.5 ${kpi.color}`} />
+            <span className="text-xs font-medium text-fg-muted">{kpi.label}</span>
+            <div className={`p-1.5 rounded-md ${kpi.tone}`}>
+              <kpi.icon className="w-3.5 h-3.5" />
             </div>
           </div>
           <div className="flex items-baseline gap-1">
-            <span className="text-xl font-bold text-gray-900 tracking-tight">{kpi.value}</span>
-            {kpi.unit && <span className="text-xs text-gray-400 font-medium">{kpi.unit}</span>}
+            <span className="text-xl font-bold text-fg tracking-tight">{kpi.value}</span>
+            {kpi.unit && <span className="text-xs text-fg-subtle font-medium">{kpi.unit}</span>}
           </div>
         </div>
       ))}

@@ -27,20 +27,20 @@ const FiltersPanel = ({ isOpen, onClose, filters, updateFilter, onApply, onReset
 
   if (!isOpen) return null;
   return (
-    <div className="absolute left-0 right-0 z-20 mt-3 rounded-xl border border-gray-200 bg-white p-5 shadow-xl ring-1 ring-black/5">
+    <div className="absolute left-0 right-0 z-20 mt-3 rounded-xl border border-line bg-surface p-5 shadow-xl ring-1 ring-hairline">
       <div className="mb-5 flex items-start justify-between">
-        <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Filter className="h-4 w-4 text-indigo-500" />高级筛选</h3>
-        <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="关闭筛选"><X className="h-4 w-4" /></button>
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-fg"><Filter className="h-4 w-4 text-accent" />高级筛选</h3>
+        <button type="button" onClick={onClose} className="text-fg-subtle hover:text-fg-muted" aria-label="关闭筛选"><X className="h-4 w-4" /></button>
       </div>
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
-          <label className="min-w-[80px] text-sm font-medium text-gray-700">时间范围:</label>
+          <label className="min-w-[80px] text-sm font-medium text-fg-body">时间范围:</label>
           {['startDate', 'endDate'].map((field, index) => (
             <div key={field} className="flex items-center gap-2">
-              {index === 1 && <span className="text-sm text-gray-400">至</span>}
+              {index === 1 && <span className="text-sm text-fg-subtle">至</span>}
               <div className="relative">
-                <Calendar className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                <input type="datetime-local" value={filters[field]} onChange={(event) => updateFilter(field, event.target.value)} className="w-[200px] rounded-lg border border-gray-200 py-1.5 pl-9 pr-2 text-sm text-gray-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" />
+                <Calendar className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
+                <input type="datetime-local" value={filters[field]} onChange={(event) => updateFilter(field, event.target.value)} className="w-[200px] rounded-lg border border-line bg-surface py-1.5 pl-9 pr-2 text-sm text-fg-body focus:border-accent-ring focus:ring-2 focus:ring-accent-ring/20" />
               </div>
             </div>
           ))}
@@ -52,9 +52,9 @@ const FiltersPanel = ({ isOpen, onClose, filters, updateFilter, onApply, onReset
           <CustomSelect options={upstreamOptions} value={filters.upstreamName === 'all' ? '' : filters.upstreamName} onChange={(value) => updateFilter('upstreamName', value || 'all')} size="sm" placeholder="上游" />
         </div>
       </div>
-      <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-4">
-        <button type="button" onClick={onReset} className="text-sm text-gray-500 hover:text-gray-800">重置所有条件</button>
-        <div className="flex gap-2"><button type="button" onClick={onClose} className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">取消</button><button type="button" onClick={() => { onApply?.(); onClose?.(); }} className="flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-md hover:bg-slate-800"><Check className="h-3.5 w-3.5" />应用筛选</button></div>
+      <div className="mt-4 flex items-center justify-between border-t border-line-soft pt-4">
+        <button type="button" onClick={onReset} className="text-sm text-fg-muted hover:text-fg">重置所有条件</button>
+        <div className="flex gap-2"><button type="button" onClick={onClose} className="rounded-lg border border-line bg-surface px-4 py-2 text-sm text-fg-body hover:bg-surface-sub">取消</button><button type="button" onClick={() => { onApply?.(); onClose?.(); }} className="flex items-center gap-2 rounded-lg bg-inverted px-4 py-2 text-sm text-fg-inverted shadow-md hover:opacity-90"><Check className="h-3.5 w-3.5" />应用筛选</button></div>
       </div>
     </div>
   );
