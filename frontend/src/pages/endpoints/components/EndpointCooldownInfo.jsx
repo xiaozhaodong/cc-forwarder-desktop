@@ -10,20 +10,20 @@ const EndpointCooldownInfo = ({ endpoint, busy = false, onClearCooldown, emptyFa
 
   if (compact) {
     return (
-      <div className={`flex items-center gap-1.5 truncate text-xs text-amber-700 ${className}`} title={endpoint.cooldownReason}>
+      <div className={`flex items-center gap-1.5 truncate text-xs text-warn ${className}`} title={endpoint.cooldownReason}>
         {endpoint.inCooldown ? (
           <>
             <span className="inline-flex shrink-0 items-center gap-1 font-medium"><Snowflake size={13} />冷却中</span>
-            <span className="truncate text-[11px] text-amber-600">{endpoint.cooldownUntil ? formatMonthDayTime(endpoint.cooldownUntil) : (endpoint.cooldownReason || '-')}</span>
+            <span className="truncate text-[11px] text-warn/80">{endpoint.cooldownUntil ? formatMonthDayTime(endpoint.cooldownUntil) : (endpoint.cooldownReason || '-')}</span>
           </>
         ) : (
-          <span className="inline-flex shrink-0 items-center gap-1 font-medium text-amber-600">解除未完全持久化</span>
+          <span className="inline-flex shrink-0 items-center gap-1 font-medium text-warn/80">解除未完全持久化</span>
         )}
         <button
           type="button"
           disabled={busy}
           onClick={() => onClearCooldown?.(endpoint.name)}
-          className="inline-flex shrink-0 items-center rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+          className="tone-amber inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 text-[11px] font-medium hover:bg-warn-line/40 disabled:opacity-50"
           title={endpoint.inCooldown
             ? '确认端点已恢复:解除冷却阻断并重置失败计数(是否参与调度仍取决于硬启用与调度资格)'
             : '上次解除未完成持久化,点击重试(否则重启后冷却可能恢复)'}
@@ -33,20 +33,20 @@ const EndpointCooldownInfo = ({ endpoint, busy = false, onClearCooldown, emptyFa
   }
 
   return (
-    <div className={`text-xs text-amber-700 ${className}`} title={endpoint.cooldownReason}>
+    <div className={`text-xs text-warn ${className}`} title={endpoint.cooldownReason}>
       {endpoint.inCooldown ? (
         <>
           <span className="inline-flex items-center gap-1 font-medium"><Snowflake size={13} />冷却中</span>
-          <div className="mt-1 truncate text-[11px] text-amber-600">{endpoint.cooldownUntil ? formatTimestamp(endpoint.cooldownUntil) : (endpoint.cooldownReason || '-')}</div>
+          <div className="mt-1 truncate text-[11px] text-warn/80">{endpoint.cooldownUntil ? formatTimestamp(endpoint.cooldownUntil) : (endpoint.cooldownReason || '-')}</div>
         </>
       ) : (
-        <span className="inline-flex items-center gap-1 font-medium text-amber-600">解除未完全持久化</span>
+        <span className="inline-flex items-center gap-1 font-medium text-warn/80">解除未完全持久化</span>
       )}
       <button
         type="button"
         disabled={busy}
         onClick={() => onClearCooldown?.(endpoint.name)}
-        className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+        className="tone-amber mt-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium hover:bg-warn-line/40 disabled:opacity-50"
         title={endpoint.inCooldown
           ? '确认端点已恢复:解除冷却阻断并重置失败计数(是否参与调度仍取决于硬启用与调度资格)'
           : '上次解除未完成持久化,点击重试(否则重启后冷却可能恢复)'}

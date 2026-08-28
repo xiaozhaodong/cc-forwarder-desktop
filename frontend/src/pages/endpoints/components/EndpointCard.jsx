@@ -11,9 +11,9 @@ import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
 // 头部名称前的状态点:冷却 > 不可达 > 可达 > 未检测
 const statusDotClass = (endpoint) => {
-  if (endpoint.inCooldown || endpoint.cooldownPersistPending) return 'bg-amber-400';
-  if (endpoint.neverChecked || !endpoint.lastCheck) return 'bg-slate-300';
-  return endpoint.healthy ? 'bg-emerald-500' : 'bg-rose-500';
+  if (endpoint.inCooldown || endpoint.cooldownPersistPending) return 'bg-warn-solid';
+  if (endpoint.neverChecked || !endpoint.lastCheck) return 'bg-fg-subtle/60';
+  return endpoint.healthy ? 'bg-success-solid' : 'bg-danger-solid';
 };
 
 const EndpointCard = ({ endpoint, routingState, busy, onEdit, onDelete, onTest, onAvailabilityChange, onAutoScheduleChange, onSetRouting, onClearCooldown }) => {
@@ -32,47 +32,47 @@ const EndpointCard = ({ endpoint, routingState, busy, onEdit, onDelete, onTest, 
     <div
       className={`flex flex-col rounded-2xl border p-4 shadow-sm transition ${
         disabled
-          ? 'border-slate-200 bg-slate-50/70 text-slate-400'
+          ? 'border-line bg-surface-sub text-fg-subtle'
           : routingSelected
-            ? 'border-indigo-300 bg-white ring-1 ring-indigo-200'
-            : 'border-slate-200 bg-white hover:border-slate-300'
+            ? 'border-accent-line bg-surface ring-1 ring-accent-line'
+            : 'border-line bg-surface hover:border-line-strong'
       }`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className={`h-2 w-2 shrink-0 rounded-full ${statusDotClass(endpoint)}`} />
-          <span className="truncate font-semibold text-slate-900" title={endpoint.name}>{endpoint.name}</span>
+          <span className="truncate font-semibold text-fg" title={endpoint.name}>{endpoint.name}</span>
         </div>
         <ActionButtons endpointName={endpoint.name} routingState={routingState} onSetRouting={onSetRouting} disabled={busy || disabled} />
       </div>
-      <div className="mt-1 truncate font-mono text-[11px] text-slate-400" title={endpoint.url}>{endpoint.url}</div>
+      <div className="mt-1 truncate font-mono text-[11px] text-fg-subtle" title={endpoint.url}>{endpoint.url}</div>
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600"><ShieldCheck size={13} className="text-amber-500" />{summarizeEndpointAuthentication(endpoint)}</span>
-        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-1 font-mono text-xs font-semibold text-slate-700">P{endpoint.priority ?? 1}</span>
-        {rewrite && <span className="max-w-[160px] truncate rounded-md border border-cyan-100 bg-cyan-50 px-2 py-1 text-[11px] text-cyan-700" title={rewrite.title}>{rewrite.label}</span>}
+        <span className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-sub px-2 py-1 text-xs text-fg-body"><ShieldCheck size={13} className="text-warn-solid" />{summarizeEndpointAuthentication(endpoint)}</span>
+        <span className="inline-flex items-center rounded-full bg-surface-mut px-2 py-1 font-mono text-xs font-semibold text-fg-body">P{endpoint.priority ?? 1}</span>
+        {rewrite && <span className="tone-cyan max-w-[160px] truncate rounded-md border px-2 py-1 text-[11px]" title={rewrite.title}>{rewrite.label}</span>}
       </div>
 
       <div className="mt-3 space-y-1.5 text-xs">
         <div className="flex h-5 flex-wrap items-center gap-x-2 gap-y-1">
           <EndpointHealthBadge endpoint={endpoint} />
-          <span className="text-[11px] text-slate-400">{lastCheck || '-'}</span>
-          {endpoint.responseTimeMs > 0 && <span className="font-mono text-[11px] text-slate-400">{Math.round(endpoint.responseTimeMs)}ms</span>}
+          <span className="text-[11px] text-fg-subtle">{lastCheck || '-'}</span>
+          {endpoint.responseTimeMs > 0 && <span className="font-mono text-[11px] text-fg-subtle">{Math.round(endpoint.responseTimeMs)}ms</span>}
         </div>
         <div className="flex h-5 items-center">
           <EndpointCooldownInfo endpoint={endpoint} busy={busy} onClearCooldown={onClearCooldown} compact />
         </div>
       </div>
 
-      <div className="mt-4 flex items-center justify-between gap-2 border-t border-slate-100 pt-3">
+      <div className="mt-4 flex items-center justify-between gap-2 border-t border-line-soft pt-3">
         <div className="flex items-center gap-4">
           <label className="flex items-center gap-1.5" title="硬启用">
             <ToggleSwitch enabled={endpoint.availabilityEnabled} disabled={busy} onChange={() => onAvailabilityChange?.(endpoint.name, !endpoint.availabilityEnabled)} title="硬启用" />
-            <span className="text-xs text-slate-500">启用</span>
+            <span className="text-xs text-fg-muted">启用</span>
           </label>
           <label className="flex items-center gap-1.5" title="参与自动调度">
             <ToggleSwitch enabled={endpoint.failoverEnabled} disabled={busy} onChange={() => onAutoScheduleChange?.(endpoint.name, !endpoint.failoverEnabled)} title="参与自动调度" />
-            <span className="text-xs text-slate-500">调度</span>
+            <span className="text-xs text-fg-muted">调度</span>
           </label>
         </div>
         <EndpointQuickActions endpoint={endpoint} busy={busy} onEdit={onEdit} onDelete={onDelete} onTest={onTest} />

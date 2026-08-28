@@ -60,13 +60,13 @@ const ToggleSwitch = ({
       className={`
         relative inline-flex items-center shrink-0 rounded-full
         transition-colors duration-200 ease-in-out
-        focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-success-solid focus-visible:ring-offset-2
         ${s.track}
         ${disabled
-          ? 'bg-slate-200 cursor-not-allowed'
+          ? 'bg-surface-mut cursor-not-allowed'
           : enabled
-            ? 'bg-emerald-500'
-            : 'bg-slate-300 hover:bg-slate-400'}
+            ? 'bg-success-solid'
+            : 'bg-surface-emph hover:bg-line-strong'}
         ${loading ? 'opacity-70' : ''}
       `}
       role="switch"

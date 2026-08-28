@@ -108,9 +108,9 @@ const validateCatalog = (catalog) => {
 const inputClass = (invalid, enabled) => [
   'w-full rounded-lg border px-3 py-2 text-sm outline-none transition focus:ring-2',
   invalid
-    ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-100'
-    : 'border-slate-200 focus:border-indigo-400 focus:ring-indigo-100',
-  enabled ? 'text-slate-800' : 'bg-slate-50 text-slate-400'
+    ? 'border-danger-line focus:border-danger-solid focus:ring-danger-soft'
+    : 'border-line focus:border-accent-ring focus:ring-accent-soft',
+  enabled ? 'bg-surface text-fg' : 'bg-surface-sub text-fg-subtle'
 ].join(' ');
 
 const ROW_GRID = 'grid grid-cols-[2.75rem_1fr_1fr_2.25rem] items-center gap-3';
@@ -122,7 +122,7 @@ const Toggle = ({ checked, onChange, label }) => (
     aria-checked={checked}
     aria-label={label}
     onClick={() => onChange(!checked)}
-    className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${checked ? 'bg-indigo-600' : 'bg-slate-300'}`}
+    className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${checked ? 'bg-indigo-600' : 'bg-surface-emph'}`}
   >
     <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
   </button>
@@ -243,65 +243,65 @@ const ClaudeModelsPanel = ({ open = false, onClose }) => {
 
   return createPortal(
     <div className="fixed inset-0 z-[46] flex justify-end" style={{ top: topOffset }}>
-      <button type="button" aria-label="关闭 Claude 模型目录" className="absolute inset-0 bg-slate-950/30 backdrop-blur-[2px]" onClick={requestClose} />
-      <aside role="dialog" aria-modal="true" aria-label="Claude Gateway 模型目录" className="relative z-10 flex h-full w-full max-w-[760px] flex-col border-l border-slate-200 bg-white shadow-2xl shadow-slate-950/20 animate-in slide-in-from-right duration-300">
-        <div className="border-b border-slate-100 bg-gradient-to-r from-indigo-50/80 via-white to-white px-6 py-5">
+      <button type="button" aria-label="关闭 Claude 模型目录" className="absolute inset-0 bg-overlay backdrop-blur-[2px]" onClick={requestClose} />
+      <aside role="dialog" aria-modal="true" aria-label="Claude Gateway 模型目录" className="relative z-10 flex h-full w-full max-w-[760px] flex-col border-l border-line bg-surface shadow-2xl animate-in slide-in-from-right duration-300">
+        <div className="border-b border-line-soft bg-gradient-to-r from-accent-soft/60 via-surface to-surface px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600 shadow-sm"><Boxes size={20} /></div>
+              <div className="tone-indigo flex h-10 w-10 items-center justify-center rounded-xl shadow-sm"><Boxes size={20} /></div>
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Claude Gateway 模型目录</h2>
-                <p className="mt-0.5 text-sm text-slate-500">维护 Claude Code `/model` 中的展示项，模型 ID 不限于 Anthropic 官方模型。</p>
+                <h2 className="text-lg font-semibold text-fg">Claude Gateway 模型目录</h2>
+                <p className="mt-0.5 text-sm text-fg-muted">维护 Claude Code `/model` 中的展示项，模型 ID 不限于 Anthropic 官方模型。</p>
               </div>
             </div>
-            <button type="button" ref={closeButtonRef} aria-label="关闭抽屉" onClick={requestClose} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-700"><X size={16} /></button>
+            <button type="button" ref={closeButtonRef} aria-label="关闭抽屉" onClick={requestClose} className="rounded-lg border border-line bg-surface p-2 text-fg-subtle transition-colors hover:border-line-strong hover:text-fg-body"><X size={16} /></button>
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+          <div className="tone-amber rounded-xl border px-4 py-3 text-xs leading-5">
             <div>这是独立的展示目录，不检测端点是否支持模型，也不改变模型改写、端点绑定或调度。</div>
             <details className="mt-1">
-              <summary className="cursor-pointer select-none font-medium text-amber-700 transition-colors hover:text-amber-900">Gateway Discovery 补丁说明</summary>
-              <p className="mt-1">客户端需应用完整的 Gateway Discovery 补丁；补丁会在配置 Base URL 与认证后自动发现模型，并仅让 <code className="rounded bg-amber-100 px-1">/v1/models</code> 绕过非必要流量限制，无需再设置 discovery 环境变量。</p>
+              <summary className="cursor-pointer select-none font-medium transition-colors hover:text-fg">Gateway Discovery 补丁说明</summary>
+              <p className="mt-1">客户端需应用完整的 Gateway Discovery 补丁；补丁会在配置 Base URL 与认证后自动发现模型，并仅让 <code className="rounded bg-warn-line/40 px-1">/v1/models</code> 绕过非必要流量限制，无需再设置 discovery 环境变量。</p>
             </details>
           </div>
 
-          <div className="mt-4 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3">
+          <div className="mt-4 flex items-center justify-between rounded-xl border border-line bg-surface-sub px-4 py-3">
             <div>
-              <div className="text-sm font-medium text-slate-800">启用本地模型目录</div>
-              <div className="mt-0.5 text-xs text-slate-500">关闭时 Claude `/v1/models` 返回空列表。</div>
+              <div className="text-sm font-medium text-fg">启用本地模型目录</div>
+              <div className="mt-0.5 text-xs text-fg-muted">关闭时 Claude `/v1/models` 返回空列表。</div>
             </div>
             <Toggle checked={catalog.enabled} label="启用本地 Claude 模型目录" onChange={(enabled) => { setSaved(false); setCatalog((current) => ({ ...current, enabled })); }} />
           </div>
 
           <div className="mt-5 flex items-center justify-between gap-3">
             <div>
-              <h3 className="text-sm font-semibold text-slate-800">展示模型</h3>
-              <p className="mt-0.5 text-xs text-slate-400">共 {catalog.models.length} 项，启用 {enabledCount} 项；保存后按启用状态和 ID 排序。</p>
+              <h3 className="text-sm font-semibold text-fg">展示模型</h3>
+              <p className="mt-0.5 text-xs text-fg-subtle">共 {catalog.models.length} 项，启用 {enabledCount} 项；保存后按启用状态和 ID 排序。</p>
             </div>
             <Button variant="secondary" size="sm" icon={Plus} onClick={addModel} disabled={loading || saving || catalog.models.length >= MAX_MODELS}>添加模型</Button>
           </div>
 
           {loading ? (
-            <div className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 py-12 text-sm text-slate-400"><RefreshCw size={16} className="animate-spin" />加载目录...</div>
+            <div className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-dashed border-line py-12 text-sm text-fg-subtle"><RefreshCw size={16} className="animate-spin" />加载目录...</div>
           ) : catalog.models.length === 0 ? (
-            <button type="button" onClick={addModel} className="mt-4 w-full rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-10 text-center transition-colors hover:border-indigo-300 hover:bg-indigo-50/40">
-              <Boxes size={28} className="mx-auto text-slate-300" />
-              <div className="mt-2 text-sm font-medium text-slate-600">目录还是空的</div>
-              <div className="mt-1 text-xs text-slate-400">添加 Gateway 返回给 Claude Code 的模型 ID。</div>
+            <button type="button" onClick={addModel} className="mt-4 w-full rounded-xl border border-dashed border-line bg-surface-sub px-4 py-10 text-center transition-colors hover:border-accent-line hover:bg-accent-soft/40">
+              <Boxes size={28} className="mx-auto text-fg-subtle/60" />
+              <div className="mt-2 text-sm font-medium text-fg-body">目录还是空的</div>
+              <div className="mt-1 text-xs text-fg-subtle">添加 Gateway 返回给 Claude Code 的模型 ID。</div>
             </button>
           ) : (
-            <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-              <div className={`${ROW_GRID} border-b border-slate-100 bg-slate-50/70 px-4 py-2.5 text-xs font-medium text-slate-500`}>
+            <div className="mt-4 overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
+              <div className={`${ROW_GRID} border-b border-line-soft bg-surface-sub px-4 py-2.5 text-xs font-medium text-fg-muted`}>
                 <span>启用</span>
                 <span>模型 ID</span>
                 <span>显示名称</span>
                 <span aria-hidden="true" />
               </div>
-              <div className="divide-y divide-slate-100">
+              <div className="divide-y divide-line-soft">
                 {catalog.models.map((model, index) => (
-                  <div key={model.uid} className={`${ROW_GRID} px-4 py-2.5 transition-colors ${model.enabled ? '' : 'bg-slate-50/40'}`}>
+                  <div key={model.uid} className={`${ROW_GRID} px-4 py-2.5 transition-colors ${model.enabled ? '' : 'bg-surface-sub'}`}>
                     <Toggle checked={model.enabled} label={`启用模型 ${model.id || index + 1}`} onChange={(enabled) => updateModel(index, { enabled })} />
                     <input
                       ref={(node) => focusNewRowInput(node, model.uid)}
@@ -321,26 +321,26 @@ const ClaudeModelsPanel = ({ open = false, onClose }) => {
                       onChange={(event) => updateModel(index, { display_name: event.target.value })}
                       className={inputClass(validation.rows[index]?.name, model.enabled)}
                     />
-                    <button type="button" aria-label={`删除模型 ${model.id || index + 1}`} onClick={() => removeModel(index)} className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"><Trash2 size={16} /></button>
+                    <button type="button" aria-label={`删除模型 ${model.id || index + 1}`} onClick={() => removeModel(index)} className="rounded-lg p-2 text-fg-subtle transition-colors hover:bg-danger-soft hover:text-danger"><Trash2 size={16} /></button>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {(error || validationError) && <div className="mt-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700"><AlertTriangle size={16} className="mt-0.5 shrink-0" /><span>{error || validationError}</span></div>}
-          {saved && !dirty && <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-700">模型目录已保存，新请求会立即读取最新目录。</div>}
+          {(error || validationError) && <div className="tone-rose mt-4 flex items-start gap-2 rounded-xl border px-3 py-2.5 text-sm"><AlertTriangle size={16} className="mt-0.5 shrink-0" /><span>{error || validationError}</span></div>}
+          {saved && !dirty && <div className="tone-emerald mt-4 rounded-xl border px-3 py-2.5 text-sm">模型目录已保存，新请求会立即读取最新目录。</div>}
         </div>
 
-        <div className="border-t border-slate-100 bg-white px-6 py-4">
+        <div className="border-t border-line-soft bg-surface px-6 py-4">
           {confirmDiscard ? (
-            <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-2 text-sm text-amber-800"><AlertTriangle size={16} className="mt-0.5 shrink-0" /><span>有尚未保存的目录修改，确定放弃吗？</span></div>
+            <div className="tone-amber flex flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-2 text-sm"><AlertTriangle size={16} className="mt-0.5 shrink-0" /><span>有尚未保存的目录修改，确定放弃吗？</span></div>
               <div className="flex gap-2"><Button variant="ghost" size="sm" onClick={() => setConfirmDiscard(false)}>继续编辑</Button><Button variant="danger" size="sm" onClick={() => onClose?.()}>放弃修改</Button></div>
             </div>
           ) : (
             <div className="flex items-center justify-between gap-3">
-              <div className="text-xs text-slate-400">{dirty ? '有未保存修改' : '目录已与本地设置同步'}</div>
+              <div className="text-xs text-fg-subtle">{dirty ? '有未保存修改' : '目录已与本地设置同步'}</div>
               <div className="flex gap-2"><Button variant="ghost" onClick={requestClose}>关闭</Button><Button icon={Save} onClick={saveCatalog} loading={saving} disabled={loading || !dirty || Boolean(validationError)}>保存目录</Button></div>
             </div>
           )}

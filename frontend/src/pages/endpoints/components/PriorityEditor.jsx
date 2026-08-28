@@ -85,8 +85,8 @@ const PriorityEditor = forwardRef(({ priority = 1, endpointName, onUpdate }, ref
         className={`
           p-1 rounded transition-colors
           ${value <= 1 || isUpdating
-            ? 'text-slate-300 cursor-not-allowed'
-            : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'}
+            ? 'text-fg-subtle/60 cursor-not-allowed'
+            : 'text-fg-subtle hover:text-fg-body hover:bg-surface-mut'}
         `}
         title="降低优先级"
       >
@@ -108,10 +108,10 @@ const PriorityEditor = forwardRef(({ priority = 1, endpointName, onUpdate }, ref
         className={`
           w-10 h-7 text-center text-xs font-semibold rounded border transition-all
           ${hasChanged
-            ? 'border-amber-300 bg-amber-50 text-amber-700'
-            : 'border-slate-200 bg-slate-50 text-slate-600'}
+            ? 'tone-amber border-warn-line'
+            : 'border-line bg-surface-sub text-fg-body'}
           ${isUpdating ? 'opacity-50' : ''}
-          focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400
+          focus:outline-none focus:ring-2 focus:ring-accent-soft focus:border-accent-ring
         `}
         title={hasChanged ? '有未保存的更改' : '当前优先级'}
       />
@@ -123,8 +123,8 @@ const PriorityEditor = forwardRef(({ priority = 1, endpointName, onUpdate }, ref
         className={`
           p-1 rounded transition-colors
           ${isUpdating
-            ? 'text-slate-300 cursor-not-allowed'
-            : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'}
+            ? 'text-fg-subtle/60 cursor-not-allowed'
+            : 'text-fg-subtle hover:text-fg-body hover:bg-surface-mut'}
         `}
         title="提高优先级"
       >
@@ -133,7 +133,7 @@ const PriorityEditor = forwardRef(({ priority = 1, endpointName, onUpdate }, ref
 
       {/* 更新指示器 */}
       {hasChanged && !isUpdating && (
-        <span className="ml-1 w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" title="有未保存的更改" />
+        <span className="ml-1 w-1.5 h-1.5 rounded-full bg-warn-solid animate-pulse" title="有未保存的更改" />
       )}
     </div>
   );

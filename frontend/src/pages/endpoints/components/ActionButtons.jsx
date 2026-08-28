@@ -6,10 +6,8 @@ const ActionButtons = ({ endpointName, routingState = {}, onSetRouting, disabled
   const selected = target === endpointName;
 
   const buttonClass = (active, tone = 'indigo') => {
-    const activeClass = tone === 'rose'
-      ? 'border-rose-200 bg-rose-50 text-rose-700'
-      : 'border-indigo-200 bg-indigo-50 text-indigo-700';
-    return `inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${active ? activeClass : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700'}`;
+    const activeClass = tone === 'rose' ? 'tone-rose' : 'tone-indigo';
+    return `inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${active ? activeClass : 'border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg-body'}`;
   };
 
   return (

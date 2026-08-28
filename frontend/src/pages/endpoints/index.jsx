@@ -114,11 +114,11 @@ const EndpointsPage = () => {
   const effectiveEndpoint = routingState.lastEffectiveEndpoint || routingState.last_effective_endpoint || '';
   const snapshotOutcome = resolveSnapshotOutcome(snapshot);
   const statsCards = useMemo(() => [
-    ['端点总数', stats.total, 'text-slate-900'],
-    ['最近可达', stats.healthy, 'text-emerald-600'],
-    ['最近不可达', stats.unhealthy, 'text-rose-600'],
-    ['未检测', stats.unchecked, 'text-slate-400'],
-    ['冷却中', stats.cooldown, 'text-amber-600']
+    ['端点总数', stats.total, 'text-fg'],
+    ['最近可达', stats.healthy, 'text-success'],
+    ['最近不可达', stats.unhealthy, 'text-danger'],
+    ['未检测', stats.unchecked, 'text-fg-subtle'],
+    ['冷却中', stats.cooldown, 'text-warn']
   ], [stats]);
 
   if (loading && endpoints.length === 0) return <LoadingSpinner text="加载 Claude 端点..." />;
@@ -128,9 +128,9 @@ const EndpointsPage = () => {
     <div className="animate-fade-in space-y-6">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-indigo-500"><Database size={14} />SQLite 权威源</div>
-          <h1 className="mt-1 text-2xl font-bold text-slate-900">Claude 端点</h1>
-          <p className="mt-1 text-sm text-slate-500">扁平管理固定认证、调度资格、健康状态与模型兼容规则。{lastUpdate && <span className="text-slate-400"> · 更新于 {lastUpdate}</span>}</p>
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-accent"><Database size={14} />SQLite 权威源</div>
+          <h1 className="mt-1 text-2xl font-bold text-fg">Claude 端点</h1>
+          <p className="mt-1 text-sm text-fg-muted">扁平管理固定认证、调度资格、健康状态与模型兼容规则。{lastUpdate && <span className="text-fg-subtle"> · 更新于 {lastUpdate}</span>}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="ghost" size="sm" icon={RefreshCw} onClick={() => run('refresh', refresh)} loading={busyKey === 'refresh'}>刷新</Button>
@@ -142,34 +142,34 @@ const EndpointsPage = () => {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 sm:col-span-2 xl:col-span-1">
-          <div className="text-xs text-indigo-500">Claude 路由</div>
-          <div className="mt-1 truncate font-semibold text-indigo-900">{routeMode === 'auto' ? '自动调度' : routeMode === 'manual_fixed' ? '手动固定' : '手动优选'}</div>
-          <div className="mt-1 truncate text-xs text-indigo-600" title={routeTarget || effectiveEndpoint}>{routeTarget || effectiveEndpoint || '等待请求命中'}</div>
+        <div className="rounded-xl border border-accent-line bg-accent-soft/60 p-4 sm:col-span-2 xl:col-span-1">
+          <div className="text-xs text-accent">Claude 路由</div>
+          <div className="mt-1 truncate font-semibold text-accent-fg">{routeMode === 'auto' ? '自动调度' : routeMode === 'manual_fixed' ? '手动固定' : '手动优选'}</div>
+          <div className="mt-1 truncate text-xs text-accent" title={routeTarget || effectiveEndpoint}>{routeTarget || effectiveEndpoint || '等待请求命中'}</div>
         </div>
         {statsCards.map(([label, value, color]) => (
-          <div key={label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className={`text-2xl font-bold ${color}`}>{value}</div><div className="mt-1 text-xs text-slate-500">{label}</div></div>
+          <div key={label} className="rounded-xl border border-line bg-surface p-4 shadow-sm"><div className={`text-2xl font-bold ${color}`}>{value}</div><div className="mt-1 text-xs text-fg-muted">{label}</div></div>
         ))}
       </div>
 
-      <div className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2.5 text-xs leading-5 text-slate-500"><Info size={15} className="mt-0.5 shrink-0" /><span>“可达 / 不可达”只表示最近一次主动检测；真实请求仍根据硬启用、自动调度资格、请求级失败与冷却状态选择候选。</span></div>
-      {actionError && <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"><AlertTriangle size={16} />{actionError}</div>}
-      {snapshot.hasSnapshot && snapshotOutcome.isAbnormal && <button type="button" onClick={() => setDrawerOpen(true)} className="flex w-full items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs text-amber-800"><span>最近调度异常：{snapshotOutcome.label}{(snapshot.updatedAt || snapshot.capturedAt) ? ` · ${formatTimestamp(snapshot.updatedAt || snapshot.capturedAt)}` : ''}</span><span className="font-medium">查看明细</span></button>}
+      <div className="flex items-start gap-2 rounded-xl border border-line bg-surface-sub px-3 py-2.5 text-xs leading-5 text-fg-muted"><Info size={15} className="mt-0.5 shrink-0" /><span>“可达 / 不可达”只表示最近一次主动检测；真实请求仍根据硬启用、自动调度资格、请求级失败与冷却状态选择候选。</span></div>
+      {actionError && <div className="tone-rose flex items-center gap-2 rounded-xl border px-3 py-2 text-sm"><AlertTriangle size={16} />{actionError}</div>}
+      {snapshot.hasSnapshot && snapshotOutcome.isAbnormal && <button type="button" onClick={() => setDrawerOpen(true)} className="tone-amber flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left text-xs"><span>最近调度异常：{snapshotOutcome.label}{(snapshot.updatedAt || snapshot.capturedAt) ? ` · ${formatTimestamp(snapshot.updatedAt || snapshot.capturedAt)}` : ''}</span><span className="font-medium">查看明细</span></button>}
 
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-sm">
         {endpoints.length === 0 ? (
-          <div className="px-6 py-16 text-center"><Database size={38} className="mx-auto text-slate-300" /><div className="mt-3 font-medium text-slate-700">尚未配置 Claude 端点</div><div className="mt-1 text-sm text-slate-400">创建端点后即可参与自动调度或手动路由。</div></div>
+          <div className="px-6 py-16 text-center"><Database size={38} className="mx-auto text-fg-subtle/60" /><div className="mt-3 font-medium text-fg-body">尚未配置 Claude 端点</div><div className="mt-1 text-sm text-fg-subtle">创建端点后即可参与自动调度或手动路由。</div></div>
         ) : (
           <>
-            <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
-              <span className="text-xs text-slate-400">共 {endpoints.length} 个端点</span>
+            <div className="flex items-center justify-between gap-2 border-b border-line-soft px-3 py-2">
+              <span className="text-xs text-fg-subtle">共 {endpoints.length} 个端点</span>
               <ViewModeSwitcher value={viewMode} onChange={changeViewMode} />
             </div>
             {viewMode === 'table' ? (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[1120px] text-left">
-                  <thead className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-400"><tr>{['名称 / URL', '认证', '优先级', '硬启用', '自动调度', '连通性', '冷却', '模型改写', '操作'].map((label) => <th key={label} className="px-3 py-3">{label}</th>)}</tr></thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <thead className="border-b border-line bg-surface-sub text-[11px] font-semibold uppercase tracking-wider text-fg-subtle"><tr>{['名称 / URL', '认证', '优先级', '硬启用', '自动调度', '连通性', '冷却', '模型改写', '操作'].map((label) => <th key={label} className="px-3 py-3">{label}</th>)}</tr></thead>
+                  <tbody className="divide-y divide-line-soft">
                     {endpoints.map((endpoint) => (
                       <EndpointRow
                         key={endpoint.id || endpoint.name}
