@@ -10,6 +10,7 @@ import { LoadingSpinner } from '@components/ui';
 import useSSE from '@hooks/useSSE.js';
 import useGlobalToasts from '@hooks/useGlobalToasts.js';
 import { getMigrationStatus } from '@utils/wailsApi.js';
+import { ThemeProvider } from '@contexts/ThemeContext.jsx';
 import { TimezoneProvider } from '@/contexts/TimezoneContext.jsx';
 
 // 懒加载页面组件
@@ -33,7 +34,7 @@ const MigrationRecoveryPage = lazy(() => import('@pages/migration-recovery/index
 // App 组件
 // ============================================
 
-function App() {
+const AppRoutes = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [migrationStatus, setMigrationStatus] = useState({ state: 'initializing' });
   const { toasts, pendingCount, showToast, dismissToast } = useGlobalToasts();
@@ -121,12 +122,12 @@ function App() {
 
   return (
     <TimezoneProvider>
-      <div className="h-screen overflow-hidden bg-[#FAFAFA] font-sans text-slate-900 flex flex-col">
+      <div className="h-screen overflow-hidden bg-canvas font-sans text-fg flex flex-col">
       {/* 背景纹理 */}
       <div
         className="fixed inset-0 pointer-events-none opacity-[0.4]"
         style={{
-          backgroundImage: 'radial-gradient(#cbd5e1 1px, transparent 1px)',
+          backgroundImage: 'radial-gradient(var(--app-texture-dot) 1px, transparent 1px)',
           backgroundSize: '24px 24px'
         }}
       />
@@ -152,6 +153,17 @@ function App() {
       </main>
       </div>
     </TimezoneProvider>
+  );
+};
+
+// ThemeProvider 必须在 AppRoutes 的 migration early return 之外：
+// 迁移恢复页与 TimezoneProvider 的 loading / error 分支都在那之前返回，
+// 包在内层它们就拿不到主题。
+function App() {
+  return (
+    <ThemeProvider>
+      <AppRoutes />
+    </ThemeProvider>
   );
 }
 

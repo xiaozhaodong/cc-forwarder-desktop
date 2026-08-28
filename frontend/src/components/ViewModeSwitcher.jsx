@@ -11,7 +11,7 @@ const ViewModeSwitcher = ({ value = 'table', onChange, compact = false }) => {
     { key: 'grid', label: '网格', icon: LayoutGrid }
   ];
   return (
-    <div role="group" aria-label="视图切换" className="inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-slate-100/80 p-0.5">
+    <div role="group" aria-label="视图切换" className="inline-flex items-center gap-0.5 rounded-lg border border-line bg-surface-mut/80 p-0.5">
       {options.map(({ key, label, icon: Icon }) => (
         <button
           key={key}
@@ -22,7 +22,7 @@ const ViewModeSwitcher = ({ value = 'table', onChange, compact = false }) => {
           className={`inline-flex items-center rounded-md text-xs font-medium transition ${
             compact ? 'h-7 w-7 justify-center' : 'gap-1 px-2.5 py-1'
           } ${
-            value === key ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            value === key ? 'bg-surface text-accent shadow-sm' : 'text-fg-muted hover:text-fg-body'
           }`}
         >
           <Icon size={13} />

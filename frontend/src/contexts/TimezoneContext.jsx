@@ -46,12 +46,12 @@ export const TimezoneProvider = ({ children }) => {
   }, [reload, state.timezone]);
 
   if (state.loading) {
-    return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">正在加载活动时区…</div>;
+    return <div className="flex min-h-screen items-center justify-center text-sm text-fg-muted">正在加载活动时区…</div>;
   }
   if (state.error || !value) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 px-6">
-        <div role="alert" className="max-w-lg rounded-xl border border-rose-200 bg-white px-5 py-4 text-sm text-rose-700 shadow-sm">
+      <div className="flex min-h-screen items-center justify-center bg-surface-sub px-6">
+        <div role="alert" className="max-w-lg rounded-xl border border-danger-line bg-surface px-5 py-4 text-sm text-danger shadow-sm">
           时区配置不可用：{state.error || '未知错误'}
         </div>
       </div>

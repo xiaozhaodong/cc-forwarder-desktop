@@ -8,29 +8,31 @@ import {
   X
 } from 'lucide-react';
 
+// shell 的 text-fg 是 text-current/xx 派生色的来源：
+// 浅色下等同原先的 *-950 深字，暗色下自动翻成浅字。
 const VARIANT_STYLES = {
   info: {
-    shell: 'border-slate-200/80 bg-white/95 text-slate-900',
-    accent: 'bg-slate-500',
-    iconShell: 'bg-slate-100 text-slate-600',
+    shell: 'border-line/80 bg-surface/95 text-fg',
+    accent: 'bg-fg-muted',
+    iconShell: 'tone-slate',
     Icon: Info
   },
   success: {
-    shell: 'border-emerald-200/80 bg-emerald-50/95 text-emerald-950',
-    accent: 'bg-emerald-500',
-    iconShell: 'bg-emerald-100 text-emerald-700',
+    shell: 'border-success-line/80 bg-success-soft/95 text-fg',
+    accent: 'bg-success-solid',
+    iconShell: 'tone-emerald',
     Icon: CheckCircle2
   },
   warning: {
-    shell: 'border-amber-200/90 bg-amber-50/95 text-amber-950',
-    accent: 'bg-amber-500',
-    iconShell: 'bg-amber-100 text-amber-700',
+    shell: 'border-warn-line/90 bg-warn-soft/95 text-fg',
+    accent: 'bg-warn-solid',
+    iconShell: 'tone-amber',
     Icon: AlertTriangle
   },
   error: {
-    shell: 'border-rose-200/90 bg-rose-50/95 text-rose-950',
-    accent: 'bg-rose-500',
-    iconShell: 'bg-rose-100 text-rose-700',
+    shell: 'border-danger-line/90 bg-danger-soft/95 text-fg',
+    accent: 'bg-danger-solid',
+    iconShell: 'tone-rose',
     Icon: ShieldAlert
   }
 };
@@ -63,7 +65,7 @@ const ToastHost = ({ toasts = [], pendingCount = 0, onDismiss }) => {
             key={toast.id}
             data-testid="global-toast"
             role={toast.level === 'error' || toast.kind === 'failover' ? 'alert' : 'status'}
-            className={`switchboard-toast-motion pointer-events-auto relative overflow-hidden rounded-2xl border shadow-[0_18px_50px_rgba(15,23,42,0.16)] backdrop-blur-xl ${variant.shell}`}
+            className={`switchboard-toast-motion pointer-events-auto relative overflow-hidden rounded-2xl border shadow-[0_18px_50px_var(--app-shadow-strong)] backdrop-blur-xl ${variant.shell}`}
             style={{ animation: 'switchboard-toast-in 280ms cubic-bezier(.22,1,.36,1)' }}
           >
             <div className={`absolute inset-y-0 left-0 w-1 ${variant.accent}`} />
@@ -76,7 +78,7 @@ const ToastHost = ({ toasts = [], pendingCount = 0, onDismiss }) => {
                   <p className="min-w-0 flex-1 text-sm font-semibold leading-5">{toast.title}</p>
                   <button
                     type="button"
-                    className="-mr-1 -mt-1 rounded-lg p-1 text-current/45 transition-colors hover:bg-black/5 hover:text-current/80"
+                    className="-mr-1 -mt-1 rounded-lg p-1 text-current/45 transition-colors hover:bg-hairline hover:text-current/80"
                     onClick={() => onDismiss?.(toast.id)}
                     aria-label="关闭通知"
                   >
@@ -85,7 +87,7 @@ const ToastHost = ({ toasts = [], pendingCount = 0, onDismiss }) => {
                 </div>
                 {toast.kind === 'failover' && toast.from && toast.to && (
                   <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-current/60">
-                    <span className="shrink-0 rounded-md bg-black/5 px-1.5 py-0.5 normal-case tracking-normal">
+                    <span className="shrink-0 rounded-md bg-hairline px-1.5 py-0.5 normal-case tracking-normal">
                       {laneLabel(toast.lane)}
                     </span>
                     <span className="min-w-0 truncate" title={toast.from}>{toast.from}</span>
@@ -101,7 +103,7 @@ const ToastHost = ({ toasts = [], pendingCount = 0, onDismiss }) => {
       })}
       {pendingCount > 0 && (
         <div
-          className="pointer-events-auto self-end rounded-full border border-slate-200/80 bg-white/90 px-3 py-1.5 text-[11px] font-medium text-slate-600 shadow-sm backdrop-blur-xl"
+          className="pointer-events-auto self-end rounded-full border border-line/80 bg-surface/90 px-3 py-1.5 text-[11px] font-medium text-fg-body shadow-sm backdrop-blur-xl"
           role="status"
         >
           还有 {pendingCount} 条通知排队，将按发生顺序显示

@@ -102,8 +102,10 @@ func main() {
 			Assets: assets,
 		},
 
-		// 背景色 (加载时显示)
-		BackgroundColour: &options.RGBA{R: 26, G: 26, B: 46, A: 1},
+		// 背景色 (窗口创建到 webview 首帧之间可见，数十 ms)
+		// Go 侧静态值，读不到 localStorage，无法随主题切换。
+		// 取中性深灰 #111827：暗色下贴近 canvas #0b1120，浅色下也比脚手架默认深蓝突兀感更低。
+		BackgroundColour: &options.RGBA{R: 17, G: 24, B: 39, A: 1},
 
 		// 生命周期回调
 		OnStartup:     app.startup,

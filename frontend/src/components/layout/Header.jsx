@@ -3,8 +3,9 @@
 // 2025-11-28 (Updated 2025-12-12 for proxy status display)
 // ============================================
 
-import { Command } from 'lucide-react';
+import { Command, Moon, Sun } from 'lucide-react';
 import { isWailsEnvironment } from '@utils/wailsApi.js';
+import { useTheme } from '@contexts/ThemeContext.jsx';
 
 // 导航标签项
 const NavItem = ({ label, active, onClick }) => (
@@ -12,8 +13,8 @@ const NavItem = ({ label, active, onClick }) => (
     onClick={onClick}
     className={`shrink-0 whitespace-nowrap px-3 xl:px-4 py-2 text-sm font-medium rounded-full transition-all duration-200 ${
       active
-        ? 'bg-slate-900 text-white shadow-md'
-        : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+        ? 'bg-inverted text-fg-inverted shadow-md'
+        : 'text-fg-muted hover:text-fg hover:bg-surface-mut'
     }`}
   >
     {label}
@@ -21,6 +22,7 @@ const NavItem = ({ label, active, onClick }) => (
 );
 
 const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyStatus = {} }) => {
+  const { resolved, toggle } = useTheme();
   const tabs = [
     { name: 'overview', label: '概览' },
     { name: 'endpoints', label: 'Claude 端点' },
@@ -43,7 +45,7 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
     // 如果 Wails 事件通道未连接
     if (connectionStatus !== 'connected') {
       return {
-        color: 'bg-amber-500',
+        color: 'bg-warn-solid',
         text: connectionStatus === 'connecting' ? '连接中...' : '事件通道断开',
         ping: connectionStatus === 'connecting'
       };
@@ -51,14 +53,14 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
     // Wails 事件通道已连接，检查代理网关状态
     if (proxyRunning && proxyPort > 0) {
       return {
-        color: 'bg-emerald-500',
+        color: 'bg-success-solid',
         text: `代理端口 :${proxyPort}`,
         ping: true
       };
     }
     // 代理网关未运行或端口未知
     return {
-      color: 'bg-rose-500',
+      color: 'bg-danger-solid',
       text: '代理未运行',
       ping: false
     };
@@ -71,7 +73,7 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
   const titlebarPadding = isWails ? 'pt-7' : '';
 
   return (
-    <nav className={`sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-slate-200/60 supports-[backdrop-filter]:bg-white/60 ${titlebarPadding}`}
+    <nav className={`sticky top-0 z-50 bg-surface/80 backdrop-blur-xl border-b border-line/60 supports-[backdrop-filter]:bg-surface/60 ${titlebarPadding}`}
          style={isWails ? { WebkitAppRegion: 'drag' } : {}}>
       <div className="max-w-7xl mx-auto px-4 xl:px-6 h-16 flex items-center gap-4 xl:gap-6"
            style={isWails ? { WebkitAppRegion: 'no-drag' } : {}}>
@@ -81,17 +83,17 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
             className="flex items-center space-x-2.5 group cursor-pointer"
             onClick={() => onTabChange('overview')}
           >
-            <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center text-white shadow-lg">
+            <div className="w-8 h-8 bg-inverted rounded-lg flex items-center justify-center text-fg-inverted shadow-lg">
               <Command size={16} strokeWidth={3} />
             </div>
-            <span className="font-bold text-base xl:text-lg tracking-tight text-slate-900 whitespace-nowrap">
+            <span className="font-bold text-base xl:text-lg tracking-tight text-fg whitespace-nowrap">
               AI Switchboard
             </span>
           </div>
         </div>
 
         {/* 中间：导航标签 */}
-        <div className="hidden md:flex min-w-0 items-center overflow-x-auto xl:overflow-visible bg-slate-100/50 p-1 rounded-full border border-slate-200/60 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="hidden md:flex min-w-0 items-center overflow-x-auto xl:overflow-visible bg-surface-mut/50 p-1 rounded-full border border-line/60 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {tabs.map(tab => (
             <NavItem
               key={tab.name}
@@ -102,10 +104,10 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
           ))}
         </div>
 
-        {/* 右侧：状态指示器 + 头像 */}
+        {/* 右侧：状态指示器 + 主题开关 + 头像 */}
         <div className="flex flex-1 items-center justify-end space-x-3 lg:space-x-4">
           {/* 连接状态 */}
-          <div className="hidden sm:flex items-center px-3 py-1.5 bg-white border border-slate-200 rounded-md shadow-sm text-xs text-slate-500">
+          <div className="hidden sm:flex items-center px-3 py-1.5 bg-surface border border-line rounded-md shadow-sm text-xs text-fg-muted">
             <span className="relative flex h-2 w-2 mr-2">
               {status.ping && (
                 <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${status.color} opacity-75`}></span>
@@ -115,8 +117,19 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
             {status.text}
           </div>
 
+          {/* 主题开关：位于 no-drag 内层容器，Wails 下可正常点击 */}
+          <button
+            type="button"
+            onClick={toggle}
+            title={resolved === 'dark' ? '切换到浅色' : '切换到深色'}
+            aria-label="切换主题"
+            className="p-2 rounded-lg text-fg-muted hover:text-fg hover:bg-surface-mut transition-colors"
+          >
+            {resolved === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+
           {/* 用户头像 */}
-          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 border-2 border-white shadow-md cursor-pointer hover:ring-2 ring-indigo-200 transition-all"></div>
+          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 border-2 border-surface shadow-md cursor-pointer hover:ring-2 ring-accent-line transition-all"></div>
         </div>
       </div>
 

@@ -1,5 +1,261 @@
 @import "tailwindcss";
 
+/* ============================================================
+ * 暗黑模式：class 驱动的 dark 变体
+ * 覆盖 Tailwind v4 默认的 prefers-color-scheme 实现。
+ * &:where(.dark, .dark *) 同时匹配 html.dark 自身与全部后代，
+ * 因此 createPortal 挂到 document.body 的抽屉 / 弹窗也能生效。
+ * ============================================================ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============================================================
+ * L1 语义色 —— 浅色（默认）
+ * --app-* 为原始变量，供内联 style 与本文件直接 var() 引用；
+ * 下方 @theme inline 再把它们暴露成 Tailwind utility。
+ * ============================================================ */
+:root {
+  color-scheme: light;
+
+  /* 表面 */
+  --app-canvas: #fafafa;
+  --app-surface: #ffffff;
+  --app-surface-sub: #f8fafc;
+  --app-surface-mut: #f1f5f9;
+  --app-surface-emph: #e2e8f0;
+  --app-inverted: #0f172a;
+
+  /* 前景 */
+  --app-fg: #0f172a;
+  --app-fg-body: #334155;
+  --app-fg-muted: #64748b;
+  --app-fg-subtle: #94a3b8;
+  --app-fg-inverted: #ffffff;
+
+  /* 描边 */
+  --app-line: #e2e8f0;
+  --app-line-soft: #f1f5f9;
+  --app-line-strong: #cbd5e1;
+
+  /* 品牌主色 */
+  --app-accent: #4f46e5;
+  --app-accent-fg: #4338ca;
+  --app-accent-soft: #eef2ff;
+  --app-accent-line: #c7d2fe;
+  --app-accent-ring: #6366f1;
+
+  /* 状态：成功 */
+  --app-success: #047857;
+  --app-success-soft: #ecfdf5;
+  --app-success-line: #a7f3d0;
+  --app-success-solid: #10b981;
+
+  /* 状态：警告 */
+  --app-warn: #b45309;
+  --app-warn-soft: #fffbeb;
+  --app-warn-line: #fde68a;
+  --app-warn-solid: #f59e0b;
+
+  /* 状态：危险 */
+  --app-danger: #be123c;
+  --app-danger-soft: #fff1f2;
+  --app-danger-line: #fecdd3;
+  --app-danger-solid: #f43f5e;
+
+  /* 状态：信息 */
+  --app-info: #0369a1;
+  --app-info-soft: #f0f9ff;
+  --app-info-line: #bae6fd;
+
+  /* 不随主题反转：暗色需更深 / 换白色微透（方案 §4.3） */
+  --app-overlay: rgb(15 23 42 / 0.4);
+  --app-hairline: rgb(0 0 0 / 0.05);
+  --app-texture-dot: #cbd5e1;
+  --app-scrollbar-track: #f1f5f9;
+  --app-scrollbar-thumb: #cbd5e1;
+  --app-scrollbar-thumb-hover: #94a3b8;
+
+  /* 投影强度：供下方 @theme inline 参数化 Tailwind --shadow-* 阶梯 */
+  --app-shadow-weak: rgb(0 0 0 / 0.05);
+  --app-shadow: rgb(0 0 0 / 0.1);
+  --app-shadow-strong: rgb(0 0 0 / 0.25);
+}
+
+/* ============================================================
+ * L1 语义色 —— 暗色覆盖
+ * 只覆盖需要变化的项；*-solid 系列双主题同值（方案 §7.2）。
+ * ============================================================ */
+.dark {
+  color-scheme: dark;
+
+  --app-canvas: #0b1120;
+  --app-surface: #0f172a;
+  --app-surface-sub: #172033;
+  --app-surface-mut: #1e293b;
+  --app-surface-emph: #283548;
+  --app-inverted: #e2e8f0;
+
+  --app-fg: #e2e8f0;
+  --app-fg-body: #cbd5e1;
+  --app-fg-muted: #94a3b8;
+  --app-fg-subtle: #64748b;
+  --app-fg-inverted: #0f172a;
+
+  --app-line: #2c3a4f;
+  --app-line-soft: #1e293b;
+  --app-line-strong: #3f4d63;
+
+  --app-accent: #818cf8;
+  --app-accent-fg: #a5b4fc;
+  --app-accent-soft: #232045;
+  --app-accent-line: #3730a3;
+  --app-accent-ring: #818cf8;
+
+  --app-success: #6ee7b7;
+  --app-success-soft: #052e23;
+  --app-success-line: #065f46;
+
+  --app-warn: #fcd34d;
+  --app-warn-soft: #3a2a06;
+  --app-warn-line: #92400e;
+
+  --app-danger: #fda4af;
+  --app-danger-soft: #4c0519;
+  --app-danger-line: #9f1239;
+
+  --app-info: #7dd3fc;
+  --app-info-soft: #082f49;
+  --app-info-line: #075985;
+
+  --app-overlay: rgb(2 6 23 / 0.66);
+  --app-hairline: rgb(255 255 255 / 0.08);
+  --app-texture-dot: #1e293b;
+  --app-scrollbar-track: #172033;
+  --app-scrollbar-thumb: #3f4d63;
+  --app-scrollbar-thumb-hover: #55657f;
+
+  --app-shadow-weak: rgb(0 0 0 / 0.2);
+  --app-shadow: rgb(0 0 0 / 0.45);
+  --app-shadow-strong: rgb(0 0 0 / 0.7);
+}
+
+/* ============================================================
+ * 暴露为 Tailwind utility
+ * inline 是硬性要求：不带 inline 时 Tailwind 会把值快照进 :root，
+ * .dark 的覆盖将完全失效（方案 §3.1，官方 theme.mdx 明确说明）。
+ * ============================================================ */
+@theme inline {
+  --color-canvas: var(--app-canvas);
+  --color-surface: var(--app-surface);
+  --color-surface-sub: var(--app-surface-sub);
+  --color-surface-mut: var(--app-surface-mut);
+  --color-surface-emph: var(--app-surface-emph);
+  --color-inverted: var(--app-inverted);
+
+  --color-fg: var(--app-fg);
+  --color-fg-body: var(--app-fg-body);
+  --color-fg-muted: var(--app-fg-muted);
+  --color-fg-subtle: var(--app-fg-subtle);
+  --color-fg-inverted: var(--app-fg-inverted);
+
+  --color-line: var(--app-line);
+  --color-line-soft: var(--app-line-soft);
+  --color-line-strong: var(--app-line-strong);
+
+  --color-accent: var(--app-accent);
+  --color-accent-fg: var(--app-accent-fg);
+  --color-accent-soft: var(--app-accent-soft);
+  --color-accent-line: var(--app-accent-line);
+  --color-accent-ring: var(--app-accent-ring);
+
+  --color-success: var(--app-success);
+  --color-success-soft: var(--app-success-soft);
+  --color-success-line: var(--app-success-line);
+  --color-success-solid: var(--app-success-solid);
+
+  --color-warn: var(--app-warn);
+  --color-warn-soft: var(--app-warn-soft);
+  --color-warn-line: var(--app-warn-line);
+  --color-warn-solid: var(--app-warn-solid);
+
+  --color-danger: var(--app-danger);
+  --color-danger-soft: var(--app-danger-soft);
+  --color-danger-line: var(--app-danger-line);
+  --color-danger-solid: var(--app-danger-solid);
+
+  --color-info: var(--app-info);
+  --color-info-soft: var(--app-info-soft);
+  --color-info-line: var(--app-info-line);
+
+  --color-overlay: var(--app-overlay);
+  --color-hairline: var(--app-hairline);
+  --color-texture-dot: var(--app-texture-dot);
+
+  /* 覆写内置阴影阶梯：暗色下 rgb(0 0 0 / .1) 几乎不可见。
+     参数化后全站现有 shadow-sm/md/lg 自动增强，无需逐处改 className。 */
+  --shadow-2xs: 0 1px var(--app-shadow-weak);
+  --shadow-xs: 0 1px 2px 0 var(--app-shadow-weak);
+  --shadow-sm: 0 1px 3px 0 var(--app-shadow), 0 1px 2px -1px var(--app-shadow);
+  --shadow-md: 0 4px 6px -1px var(--app-shadow), 0 2px 4px -2px var(--app-shadow);
+  --shadow-lg: 0 10px 15px -3px var(--app-shadow), 0 4px 6px -4px var(--app-shadow);
+  --shadow-xl: 0 20px 25px -5px var(--app-shadow), 0 8px 10px -6px var(--app-shadow);
+  --shadow-2xl: 0 25px 50px -12px var(--app-shadow-strong);
+}
+
+/* ============================================================
+ * L2 徽章 tone：一个类给齐底 / 字 / 边三件套
+ * 承接 inventoryBadgeStyles.js 等集中式配色表的「浅底 + 深字 + 描边」定式。
+ * 置于 components 层，保证 utility（如 bg-surface）仍可就地覆盖。
+ * 不含 border-width / border-style —— 需与 border utility 搭配使用。
+ * ============================================================ */
+@layer components {
+  .tone-slate, .tone-indigo, .tone-emerald, .tone-amber, .tone-rose, .tone-sky,
+  .tone-blue, .tone-cyan, .tone-violet, .tone-purple, .tone-teal, .tone-fuchsia,
+  .tone-orange, .tone-pink, .tone-green, .tone-yellow, .tone-lime {
+    background-color: var(--tone-bg);
+    color: var(--tone-fg);
+    border-color: var(--tone-line);
+  }
+
+  .tone-slate   { --tone-bg: #f8fafc; --tone-fg: #475569; --tone-line: #e2e8f0; }
+  .tone-indigo  { --tone-bg: #eef2ff; --tone-fg: #4338ca; --tone-line: #c7d2fe; }
+  .tone-emerald { --tone-bg: #ecfdf5; --tone-fg: #047857; --tone-line: #a7f3d0; }
+  .tone-amber   { --tone-bg: #fffbeb; --tone-fg: #b45309; --tone-line: #fde68a; }
+  .tone-rose    { --tone-bg: #fff1f2; --tone-fg: #be123c; --tone-line: #fecdd3; }
+  .tone-sky     { --tone-bg: #f0f9ff; --tone-fg: #0369a1; --tone-line: #bae6fd; }
+  .tone-blue    { --tone-bg: #eff6ff; --tone-fg: #1d4ed8; --tone-line: #bfdbfe; }
+  .tone-cyan    { --tone-bg: #ecfeff; --tone-fg: #0e7490; --tone-line: #a5f3fc; }
+  .tone-violet  { --tone-bg: #f5f3ff; --tone-fg: #6d28d9; --tone-line: #ddd6fe; }
+  .tone-purple  { --tone-bg: #faf5ff; --tone-fg: #7e22ce; --tone-line: #e9d5ff; }
+  .tone-teal    { --tone-bg: #f0fdfa; --tone-fg: #0f766e; --tone-line: #99f6e4; }
+  .tone-fuchsia { --tone-bg: #fdf4ff; --tone-fg: #a21caf; --tone-line: #f5d0fe; }
+  .tone-orange  { --tone-bg: #fff7ed; --tone-fg: #c2410c; --tone-line: #fed7aa; }
+  .tone-pink    { --tone-bg: #fdf2f8; --tone-fg: #be185d; --tone-line: #fbcfe8; }
+  .tone-green   { --tone-bg: #f0fdf4; --tone-fg: #15803d; --tone-line: #bbf7d0; }
+  .tone-yellow  { --tone-bg: #fefce8; --tone-fg: #a16207; --tone-line: #fef08a; }
+  .tone-lime    { --tone-bg: #f7fee7; --tone-fg: #4d7c0f; --tone-line: #d9f99d; }
+
+  /* 暗色底改用同色相半透明水洗，而非不透明深色块：
+     不透明深色与页面底（#0f172a）色相距离过大，徽章会读成「贴上去的贴纸」。
+     水洗让页面底色透上来，色相自然过渡；行 hover 换底时徽章也跟着变。 */
+  .dark .tone-slate   { --tone-bg: rgb(203 213 225 / .10); --tone-fg: #cbd5e1; --tone-line: rgb(203 213 225 / .20); }
+  .dark .tone-indigo  { --tone-bg: rgb(165 180 252 / .12); --tone-fg: #a5b4fc; --tone-line: rgb(165 180 252 / .24); }
+  .dark .tone-emerald { --tone-bg: rgb(110 231 183 / .12); --tone-fg: #6ee7b7; --tone-line: rgb(110 231 183 / .24); }
+  .dark .tone-amber   { --tone-bg: rgb(252 211  77 / .12); --tone-fg: #fcd34d; --tone-line: rgb(252 211  77 / .24); }
+  .dark .tone-rose    { --tone-bg: rgb(253 164 175 / .12); --tone-fg: #fda4af; --tone-line: rgb(253 164 175 / .24); }
+  .dark .tone-sky     { --tone-bg: rgb(125 211 252 / .12); --tone-fg: #7dd3fc; --tone-line: rgb(125 211 252 / .24); }
+  .dark .tone-blue    { --tone-bg: rgb(147 197 253 / .12); --tone-fg: #93c5fd; --tone-line: rgb(147 197 253 / .24); }
+  .dark .tone-cyan    { --tone-bg: rgb(103 232 249 / .12); --tone-fg: #67e8f9; --tone-line: rgb(103 232 249 / .24); }
+  .dark .tone-violet  { --tone-bg: rgb(196 181 253 / .12); --tone-fg: #c4b5fd; --tone-line: rgb(196 181 253 / .24); }
+  .dark .tone-purple  { --tone-bg: rgb(216 180 254 / .12); --tone-fg: #d8b4fe; --tone-line: rgb(216 180 254 / .24); }
+  .dark .tone-teal    { --tone-bg: rgb( 94 234 212 / .12); --tone-fg: #5eead4; --tone-line: rgb( 94 234 212 / .24); }
+  .dark .tone-fuchsia { --tone-bg: rgb(240 171 252 / .12); --tone-fg: #f0abfc; --tone-line: rgb(240 171 252 / .24); }
+  .dark .tone-orange  { --tone-bg: rgb(253 186 116 / .12); --tone-fg: #fdba74; --tone-line: rgb(253 186 116 / .24); }
+  .dark .tone-pink    { --tone-bg: rgb(249 168 212 / .12); --tone-fg: #f9a8d4; --tone-line: rgb(249 168 212 / .24); }
+  .dark .tone-green   { --tone-bg: rgb(134 239 172 / .12); --tone-fg: #86efac; --tone-line: rgb(134 239 172 / .24); }
+  .dark .tone-yellow  { --tone-bg: rgb(253 224  71 / .12); --tone-fg: #fde047; --tone-line: rgb(253 224  71 / .24); }
+  .dark .tone-lime    { --tone-bg: rgb(190 242 100 / .12); --tone-fg: #bef264; --tone-line: rgb(190 242 100 / .24); }
+}
+
 /* 自定义动画 */
 @keyframes fade-in {
   from { opacity: 0; }
@@ -45,17 +301,27 @@
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  background: var(--app-scrollbar-track);
   border-radius: 3px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--app-scrollbar-thumb);
   border-radius: 3px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: var(--app-scrollbar-thumb-hover);
+}
+
+/* Firefox 无 ::-webkit-scrollbar 伪元素。必须用 @supports 隔离：
+   Chromium 121+ / Safari 18.2+ 一旦看到 scrollbar-color 就切标准渲染，
+   会忽略上面的伪元素规则，6px 宽度失效。 */
+@supports not selector(::-webkit-scrollbar) {
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: var(--app-scrollbar-thumb) var(--app-scrollbar-track);
+  }
 }
 
 html,
@@ -63,7 +329,7 @@ body {
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
-  background: #fafafa;
+  background: var(--app-canvas);
 }
 
 /* 确保 root 元素填满视口并禁止根层滚动回弹 */
@@ -72,4 +338,13 @@ body {
   width: 100%;
   overflow: hidden;
   overscroll-behavior: none;
+}
+
+/* 主题切换瞬间抑制过渡：全站大量 transition-colors / transition-all，
+   不抑制会出现半秒渐变拖影。ThemeContext 在 rAF 后移除该类。 */
+.theme-switching,
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
 }

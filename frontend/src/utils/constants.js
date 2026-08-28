@@ -44,52 +44,52 @@ export const STATUS_CONFIG = {
   [REQUEST_STATUS.PENDING]: {
     label: '等待中',
     icon: 'Clock',
-    color: 'bg-blue-100 text-blue-700 border-blue-200'
+    color: 'tone-blue'
   },
   [REQUEST_STATUS.FORWARDING]: {
     label: '转发中',
     icon: 'ArrowRightCircle',
-    color: 'bg-blue-100 text-blue-700 border-blue-200'
+    color: 'tone-blue'
   },
   [REQUEST_STATUS.PROCESSING]: {
     label: '处理中',
     icon: 'Settings',
-    color: 'bg-orange-100 text-orange-700 border-orange-200'
+    color: 'tone-orange'
   },
   [REQUEST_STATUS.RETRY]: {
     label: '重试中',
     icon: 'RotateCw',
-    color: 'bg-amber-100 text-amber-700 border-amber-200'
+    color: 'tone-amber'
   },
   [REQUEST_STATUS.SUSPENDED]: {
     label: '已挂起',
     icon: 'Pause',
-    color: 'bg-slate-100 text-slate-700 border-slate-200'
+    color: 'tone-slate'
   },
   [REQUEST_STATUS.COMPLETED]: {
     label: '已完成',
     icon: 'CheckCircle2',
-    color: 'bg-emerald-100 text-emerald-700 border-emerald-200'
+    color: 'tone-emerald'
   },
   [REQUEST_STATUS.FAILED]: {
     label: '已失败',
     icon: 'XCircle',
-    color: 'bg-rose-100 text-rose-700 border-rose-200'
+    color: 'tone-rose'
   },
   [REQUEST_STATUS.ERROR]: {
     label: '已失败',
     icon: 'XCircle',
-    color: 'bg-rose-100 text-rose-700 border-rose-200'
+    color: 'tone-rose'
   },
   [REQUEST_STATUS.CANCELLED]: {
     label: '已取消',
     icon: 'Ban',
-    color: 'bg-slate-100 text-slate-700 border-slate-200'
+    color: 'tone-slate'
   },
   [REQUEST_STATUS.TIMEOUT]: {
     label: '已超时',
     icon: 'Timer',
-    color: 'bg-slate-100 text-slate-700 border-slate-200'
+    color: 'tone-slate'
   }
 };
 
@@ -125,6 +125,6 @@ export const getStatusConfig = (status) => {
   return STATUS_CONFIG[status] || {
     label: status || '未知',
     icon: '❓',
-    color: 'bg-slate-100 text-slate-700 border-slate-200'
+    color: 'tone-slate'
   };
 };

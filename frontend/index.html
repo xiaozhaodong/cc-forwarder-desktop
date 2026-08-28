@@ -7,13 +7,28 @@
     <title>AI Switchboard</title>
     <meta name="description" content="Claude/OpenAI API 本地代理转发服务" />
     <style>
-      /* 防止加载时的闪烁 */
+      /* 防止加载时的闪烁；两个值须与 index.css 的 --app-canvas 保持一致 */
       html, body {
         margin: 0;
         padding: 0;
-        background-color: #FAFAFA;
+        background-color: #fafafa;
+      }
+      html.dark, html.dark body {
+        background-color: #0b1120;
       }
     </style>
+    <script>
+      // 必须同步执行且位于 body 之前：React 挂载前定妥 <html class>，否则首屏闪白。
+      // 判定口径与 src/contexts/ThemeContext.jsx 一致。
+      (function () {
+        try {
+          var stored = localStorage.getItem('ai-switchboard-theme') || 'system';
+          var dark = stored === 'dark' || (stored === 'system' &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (dark) document.documentElement.classList.add('dark');
+        } catch (e) { /* localStorage 不可用时留在浅色 */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
