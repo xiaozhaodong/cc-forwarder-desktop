@@ -31,11 +31,13 @@ const ICON_MAP = {
 
 // 进行中状态的图标动效：让「这条还在跑」在徽章上也读得出来。
 // 终态（completed / failed / cancelled / timeout）一律静止。
+// motion-reduce 逐条附带：这里是 Tailwind utilities，不受 index.css 里
+// 那个只覆盖自定义 class 的 @media 块管辖。
 const ICON_MOTION_CLASS = {
-  pending: 'animate-pulse',
-  forwarding: 'animate-pulse',
-  processing: 'animate-spin [animation-duration:2.6s]',
-  retry: 'animate-spin'
+  pending: 'animate-pulse motion-reduce:animate-none',
+  forwarding: 'animate-pulse motion-reduce:animate-none',
+  processing: 'animate-spin [animation-duration:2.6s] motion-reduce:animate-none',
+  retry: 'animate-spin motion-reduce:animate-none'
 };
 
 /**

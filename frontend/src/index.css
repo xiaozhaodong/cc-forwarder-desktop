@@ -406,14 +406,14 @@
 }
 
 /* stagger 延迟走 --enter-delay 变量，不能用行内 animation-delay：
-   下面复合规则里有两条动画，行内 delay 会同时套到扫光上，把它的 1100ms 起跑点冲掉。
-   backwards 是必需的：没有它，delay 期间行按基础样式（不透明、无位移）显示，
-   等轮到自己时才跳回第一帧的 opacity:0，会先闪一下再入场。 */
-/* 行级时长 800ms：1100ms 会让高亮"赖着不走"。
-   缓动也不用 cubic-bezier(.22,1,.36,1)——那是强 ease-out，适合位移（冲出去再柔和停住），
-   用在 opacity / background 上会让后 70% 的时间几乎看不出变化，观感发黏。
-   backwards 是必需的：没有它，delay 期间行按基础样式显示，等轮到自己时才跳回第一帧，
-   会先闪一下再入场。 */
+   下面复合规则里有两条动画，行内 delay 会同时套到扫光上，把它的起跑点冲掉。
+
+   行级时长 800ms：1100ms 会让高亮"赖着不走"。
+   缓动不用 cubic-bezier(.22,1,.36,1)——那是强 ease-out，适合位移（冲出去再柔和
+   停住），用在 opacity / background 上会让后 70% 的时间几乎看不出变化，观感发黏。
+
+   backwards 是必需的：没有它，delay 期间行按基础样式显示，等轮到自己时才跳回
+   动画第一帧（-flat 是 opacity:0，-cascade 是高亮底），会先闪一下再入场。 */
 .request-row-enter-cascade,
 .request-row-enter-flat {
   animation-duration: 800ms;
@@ -433,7 +433,8 @@
 /* 单元格时长必须远小于列间隔的总跨度，否则整行会长期糊在中间态。
    140ms / 间隔 28ms / 封顶 4 档 => 最后一列 112ms 起跑、252ms 到实心，
    整道接力像一次扫过，而不是一格一格蹦。
-   封顶同时防住列数：可见列最多 15 列，不封顶最后一列要等 630ms 才轮到。 */
+   封顶同时防住列数：可见列共 12 列，不封顶最后一列要等 308ms 才轮到。
+   ⚠️ 封顶值 4 与 RequestsTable.jsx 的 COL_INDEX_CAP 绑定，改一处要改两处。 */
 .request-row-enter-cascade td {
   animation: request-cell-enter 140ms ease-out backwards;
   animation-delay: calc(var(--enter-delay, 0ms) + min(var(--col-index, 0), 4) * 28ms);

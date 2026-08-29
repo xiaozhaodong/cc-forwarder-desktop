@@ -54,7 +54,7 @@ const AutoRefreshControl = ({
         className="h-9 w-9 flex items-center justify-center border rounded-r-lg border-line bg-surface text-fg-muted hover:text-accent hover:bg-surface-sub -ml-px transition-colors disabled:cursor-not-allowed disabled:hover:text-fg-muted disabled:hover:bg-surface"
         title={refreshing ? '正在刷新…' : '立即刷新'}
       >
-        <RotateCcw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+        <RotateCcw className={`w-4 h-4 ${refreshing ? 'animate-spin motion-reduce:animate-none' : ''}`} />
       </button>
     </div>
   );

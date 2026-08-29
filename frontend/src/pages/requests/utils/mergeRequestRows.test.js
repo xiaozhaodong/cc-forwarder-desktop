@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
-import { mergeRequestRows, RENDER_FIELDS } from './mergeRequestRows.js';
+import { mergeRequestRows, COMPARED_FIELDS } from './mergeRequestRows.js';
 import { TABLE_COLUMNS } from './constants.js';
 
 const row = (overrides = {}) => ({
@@ -58,14 +59,26 @@ test('进行中的请求推进状态时必须换新引用', () => {
   assert.equal(merged[0].status, 'processing');
 });
 
-test('每个渲染字段单独变化都能被检出', () => {
+test('每个比对字段单独变化都能被检出', () => {
   const prev = row({ requestId: 'req-f' });
-  for (const field of RENDER_FIELDS) {
+  for (const field of COMPARED_FIELDS) {
     if (field === 'requestId') continue;
     const mutated = row({ requestId: 'req-f', [field]: '__changed__' });
     const merged = mergeRequestRows([prev], [mutated]);
     assert.equal(merged[0], mutated, `字段 ${field} 变化未被检出`);
   }
+});
+
+test('连续重试时详情字段推进必须换新引用', () => {
+  // status / tokens / duration 全都没动，只有重试链路在推进 —— 表格看不出区别，
+  // 但详情弹窗的首帧读的就是这个对象。这是引用复用最容易吃掉数据的场景。
+  const prev = row({ requestId: 'req-r', status: 'retry', retryCount: 1, httpStatusCode: 429 });
+  const next = row({ requestId: 'req-r', status: 'retry', retryCount: 2, httpStatusCode: 500 });
+
+  const merged = mergeRequestRows([prev], [next]);
+
+  assert.equal(merged[0], next, '重试次数与状态码推进了，不能复用旧引用');
+  assert.equal(merged[0].retryCount, 2);
 });
 
 test('空的上一页或非数组输入不会抛错', () => {
@@ -81,10 +94,33 @@ test('缺少 requestId 的行按原样透传', () => {
   assert.equal(merged[0], broken);
 });
 
-test('RENDER_FIELDS 覆盖所有可见列所依赖的字段', () => {
-  // 列 id 与行字段名一一对应的列，必须出现在 RENDER_FIELDS 中。
+test('COMPARED_FIELDS 覆盖所有可见列所依赖的字段', () => {
+  // 列 id 与行字段名一一对应的列，必须出现在 COMPARED_FIELDS 中。
   // duration 列额外依赖 firstTokenMs / completionMs / isStreaming（见 RequestTimingCell）。
   const columnBackedFields = TABLE_COLUMNS.map((column) => column.id);
-  const missing = columnBackedFields.filter((field) => !RENDER_FIELDS.includes(field));
-  assert.deepEqual(missing, [], `新增列后忘记同步 RENDER_FIELDS：${missing.join(', ')}`);
+  const missing = columnBackedFields.filter((field) => !COMPARED_FIELDS.includes(field));
+  assert.deepEqual(missing, [], `新增列后忘记同步 COMPARED_FIELDS：${missing.join(', ')}`);
+});
+
+test('COMPARED_FIELDS 覆盖详情弹窗与生命周期面板读到的字段', () => {
+  // 行对象不只喂给表格：双击后它是详情弹窗的先行渲染数据源。
+  // 静态扫描这两个消费方源码里的 request.xxx，任何一个漏进比对表，
+  // 都会让该字段的变化被引用复用吃掉。
+  const consumers = [
+    '../components/RequestDetailModal.jsx',
+    '../components/LifecyclePanel.jsx'
+  ];
+
+  const readFields = new Set();
+  for (const relativePath of consumers) {
+    const source = readFileSync(new URL(relativePath, import.meta.url), 'utf8');
+    for (const match of source.matchAll(/\brequest\.([a-zA-Z_][a-zA-Z0-9_]*)/g)) {
+      readFields.add(match[1]);
+    }
+  }
+
+  assert.ok(readFields.size > 0, '没扫到任何字段，正则或路径失效了');
+
+  const missing = [...readFields].filter((field) => !COMPARED_FIELDS.includes(field)).sort();
+  assert.deepEqual(missing, [], `详情侧读了但未参与比对的字段：${missing.join(', ')}`);
 });

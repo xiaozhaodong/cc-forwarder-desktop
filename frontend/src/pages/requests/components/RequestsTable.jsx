@@ -16,6 +16,7 @@ import ModelTag from './ModelTag.jsx';
 import Pagination from './Pagination.jsx';
 import { copyTextToClipboard } from './clipboard.js';
 import { getRequestFamilyMeta } from '../utils/requestSource.js';
+import { NO_ROW_ANIMATIONS } from '../utils/rowEnterAnimation.js';
 import {
   calculateTokensPerSecond,
   formatOptionalTimingBadge,
@@ -30,14 +31,31 @@ import {
 // suspended（已挂起）不算进行中：它在等人工干预，动效会造成误导。
 const IN_FLIGHT_STATUSES = new Set(['pending', 'forwarding', 'processing', 'retry']);
 
-// 默认值提到模块级，避免每次渲染新建 Map 破坏子组件的 memo。
-const EMPTY_ENTER_ANIMATIONS = new Map();
-
 // 列序号走 CSS 变量驱动逐列接力的 animation-delay。
-// 预生成并冻结，避免每个单元格每次渲染都新建 style 对象。
-const COL_INDEX_STYLES = Array.from({ length: 32 }, (_, index) =>
+// 长度与 index.css 里 min(var(--col-index), 4) 的封顶值绑定：超过封顶的列
+// delay 完全等价，多生成的项只是重复对象。改封顶值时两处一起改。
+const COL_INDEX_CAP = 4;
+const COL_INDEX_STYLES = Array.from({ length: COL_INDEX_CAP + 1 }, (_, index) =>
   Object.freeze({ '--col-index': index })
 );
+const cappedColIndexStyle = (colIndex) => COL_INDEX_STYLES[Math.min(colIndex, COL_INDEX_CAP)];
+
+/**
+ * TotalCountBadge - 总条数徽章
+ *
+ * count-up 的 rAF 每帧 setState。挂在 RequestsTable 顶层会连带重建整个 tbody
+ * 的 element 树（20 行 element + 20 次 memo 比较，约 15 帧），而 total 变化的
+ * 时刻正是新行入场动画在跑的时刻 —— 那是主线程最不该被占的时候。抽成叶子隔离。
+ */
+const TotalCountBadge = ({ total }) => {
+  const animatedTotal = useCountUp(total);
+
+  return (
+    <span className="px-2 py-0.5 bg-surface-mut text-fg-muted text-xs rounded-full font-medium tabular-nums">
+      共 {Math.round(animatedTotal).toLocaleString()} 条
+    </span>
+  );
+};
 
 const RequestStreamIcon = ({ request }) => {
   const StreamIcon = request.isStreaming ? Waves : RefreshCw;
@@ -236,7 +254,7 @@ const RequestRow = ({ request, visibleColumns, onCopyId, onDoubleClick, formatTi
         <td
           key={colId}
           className={`px-3 py-3 ${colId === 'cost' || colId.includes('Tokens') ? 'text-right' : ''}`}
-          style={COL_INDEX_STYLES[colIndex] ?? COL_INDEX_STYLES[COL_INDEX_STYLES.length - 1]}
+          style={cappedColIndexStyle(colIndex)}
         >
           {renderCell(colId, request, formatTimestamp)}
         </td>
@@ -273,7 +291,7 @@ const RequestsTable = ({
   requests = [],
   loading = false,
   refreshing = false,
-  enterAnimations = EMPTY_ENTER_ANIMATIONS,
+  enterAnimations = NO_ROW_ANIMATIONS,
   pagination = { page: 1, pageSize: 10, total: 0 },
   onPageChange,
   onPageSizeChange,
@@ -282,7 +300,6 @@ const RequestsTable = ({
   onRowDoubleClick
 }) => {
   const { formatTimestamp } = useTimezone();
-  const animatedTotal = useCountUp(pagination.total);
 
   // 引用必须稳定，否则 MemoizedRequestRow 的比较恒为 false。
   const handleCopyId = React.useCallback(async (id) => {
@@ -305,9 +322,7 @@ const RequestsTable = ({
       <div className="px-4 py-4 border-b border-line-soft flex justify-between items-center bg-surface-sub">
         <div className="flex items-center gap-2">
           <h3 className="font-semibold text-fg">请求明细</h3>
-          <span className="px-2 py-0.5 bg-surface-mut text-fg-muted text-xs rounded-full font-medium tabular-nums">
-            共 {Math.round(animatedTotal).toLocaleString()} 条
-          </span>
+          <TotalCountBadge total={pagination.total} />
         </div>
         <span className="text-xs text-fg-subtle">单击复制 ID · 双击查看详情</span>
       </div>

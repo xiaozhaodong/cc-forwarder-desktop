@@ -37,11 +37,9 @@ import { PAGINATION_CONFIG } from './utils/constants.js';
 import { isRuntimeActiveSelection, isSamePinnedAccount } from './utils/accountSwitcherState.js';
 import { buildTimeRangeSelectionState } from './utils/timeRangeSelection.js';
 import { mergeRequestRows } from './utils/mergeRequestRows.js';
-import { buildRowEnterAnimations, collectRequestIds } from './utils/rowEnterAnimation.js';
+import { buildRowEnterAnimations, collectRequestIds, NO_ROW_ANIMATIONS } from './utils/rowEnterAnimation.js';
 import { filterUpstreamOptionsByFamily } from './utils/requestSource.js';
-
-// 模块级常量：避免每次渲染新建 Map 破坏 RequestsTable 的 memo 语义。
-const EMPTY_ENTER_ANIMATIONS = new Map();
+import { prefersReducedMotion } from '@utils/motion.js';
 
 // ============================================
 // Requests 页面
@@ -68,7 +66,7 @@ const RequestsPage = () => {
   // 本批次新增行的入场编排（stagger 延迟 + 是否位移）。
   // 只有实时事件驱动的刷新才非空：首次加载、翻页、改筛选、手动刷新都会整页换数据，
   // 那时播动画会变成满屏闪。
-  const [rowEnterAnimations, setRowEnterAnimations] = useState(EMPTY_ENTER_ANIMATIONS);
+  const [rowEnterAnimations, setRowEnterAnimations] = useState(NO_ROW_ANIMATIONS);
   const [error, setError] = useState(null);
   const loadRequestIdRef = useRef(0);
   const loadDataIdRef = useRef(0);
@@ -180,7 +178,14 @@ const RequestsPage = () => {
     // 新旧两批在这里都在手上，diff 一次算出谁是新到达的、各自延迟多少。
     // 放在 callback 里而不是 RequestsTable 的 render 期，是因为 render 期读 ref
     // 在 StrictMode 下会被跑两次，第二次 diff 必然落空。
-    setRowEnterAnimations(buildRowEnterAnimations(nextRequests, prevRequestIdsRef.current, live));
+    //
+    // 入场动画只在第 1 页成立：停在第 2 页时，本页「新出现的 requestId」多半是
+    // 被上一页挤下来的旧请求 —— 每来一条新请求就误报一次，动效会持续说谎。
+    // reduced-motion 也在这里拦掉，而不是只靠 CSS 的 animation:none：
+    // 后者会让 animationend 永不触发，行上的 class 与 --enter-delay 内联变量
+    // 就再也摘不掉了。
+    const canAnimateEnter = live && pagination.page === 1 && !prefersReducedMotion();
+    setRowEnterAnimations(buildRowEnterAnimations(nextRequests, prevRequestIdsRef.current, canAnimateEnter));
     prevRequestIdsRef.current = collectRequestIds(nextRequests);
     // 未变化的行复用旧引用，让 RequestRow 的 memo 生效。
     setRequests(prev => mergeRequestRows(prev, nextRequests));

@@ -7,10 +7,9 @@
 // 使「新到一条请求」只重渲染真正变化的那 1~2 行。
 // ============================================
 
-// 参与比对的字段 = 表格实际渲染用到的字段。
+// 表格实际渲染用到的字段。
 // ⚠️ 新增可见列时必须同步这里，否则该列的数据变化不会触发行重渲染。
-// constants.js 的 TABLE_COLUMNS 与本表由 mergeRequestRows.test.js 的覆盖用例锁定。
-export const RENDER_FIELDS = Object.freeze([
+const TABLE_FIELDS = [
   'requestId',
   'timestamp',
   'status',
@@ -26,10 +25,39 @@ export const RENDER_FIELDS = Object.freeze([
   'cacheCreationTokens',
   'cacheReadTokens',
   'cost'
-]);
+];
 
-// hasSameRenderData 只做渲染字段的浅比较；NaN 不参与（后端不会下发 NaN 数值）。
-const hasSameRenderData = (left, right) => RENDER_FIELDS.every((field) => left[field] === right[field]);
+// 表格不渲染、但详情弹窗会读的字段。
+// 行对象是「弹窗打开瞬间的先行渲染」数据源（RequestDetailModal.jsx:129），
+// 详情接口返回后会被权威数据覆盖 —— 但若这里不比对，行引用会一直停在旧快照，
+// 弹窗首帧就会闪一个过期值（连续重试时 retryCount 尤其明显），
+// 且详情接口失败降级时（lifecycleDetailController 的 found:false 分支）
+// 会持久显示错误数据。
+// 后端同时下发 camelCase 与 snake_case 两套命名，弹窗也两套都读，故都要比。
+const DETAIL_ONLY_FIELDS = [
+  'cacheCreation5mTokens',
+  'cacheCreation1hTokens',
+  'effectiveEndpoint',
+  'requestedEndpoint',
+  'routeMode',
+  'upstreamType',
+  'fallbackReason',
+  'failure_reason',
+  'cancel_reason',
+  'httpStatusCode',
+  'http_status_code',
+  'retryCount',
+  'retry_count',
+  'method',
+  'path'
+];
+
+// 参与比对的字段 = 行对象在 UI 任何位置被读到的字段，而不只是被渲染的字段。
+// 两张表与实际消费方的一致性由 mergeRequestRows.test.js 的静态扫描用例锁定。
+export const COMPARED_FIELDS = Object.freeze([...TABLE_FIELDS, ...DETAIL_ONLY_FIELDS]);
+
+// hasSameData 只做浅比较；NaN 不参与（后端不会下发 NaN 数值）。
+const hasSameData = (left, right) => COMPARED_FIELDS.every((field) => left[field] === right[field]);
 
 /**
  * 合并新旧两页请求行，未变化的行沿用旧引用。
@@ -53,7 +81,7 @@ export const mergeRequestRows = (prevRows, nextRows) => {
   return nextRows.map((row) => {
     if (!row || !row.requestId) return row;
     const prev = prevById.get(row.requestId);
-    return prev && hasSameRenderData(prev, row) ? prev : row;
+    return prev && hasSameData(prev, row) ? prev : row;
   });
 };
 
