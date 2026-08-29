@@ -32,7 +32,12 @@ test('requests page uses Wails request events instead of permanent polling', asy
     readFile(autoRefreshControlPath, 'utf8')
   ]);
 
-  assert.match(source, /useAutoRefresh\(refreshRequestData\)/);
+  // 实时事件只刷新请求明细与统计。refreshLiveRequestData 是 refreshRequestData 的
+  // live 包装（live 仅用于决定新行是否播入场动画），不能换成整页 loadData —
+  // 那会让每个 request:update 都连带重拉端点、账号池与调度快照。
+  assert.match(source, /const refreshLiveRequestData = useCallback\(\(\) => refreshRequestData\(\{ live: true \}\)/);
+  assert.match(source, /useAutoRefresh\(refreshLiveRequestData\)/);
+  assert.doesNotMatch(source, /useAutoRefresh\(loadData\)/);
   assert.match(source, /const loadDataIdRef = useRef\(0\)/);
   assert.match(source, /loadDataIdRef\.current !== loadId/);
   assert.doesNotMatch(source, /refreshRequestData\(true\)/);

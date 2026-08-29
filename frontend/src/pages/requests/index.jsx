@@ -36,7 +36,12 @@ import { FiltersPanel, StatsOverview, RequestsTable, Toolbar, RequestDetailModal
 import { PAGINATION_CONFIG } from './utils/constants.js';
 import { isRuntimeActiveSelection, isSamePinnedAccount } from './utils/accountSwitcherState.js';
 import { buildTimeRangeSelectionState } from './utils/timeRangeSelection.js';
+import { mergeRequestRows } from './utils/mergeRequestRows.js';
+import { buildRowEnterAnimations, collectRequestIds } from './utils/rowEnterAnimation.js';
 import { filterUpstreamOptionsByFamily } from './utils/requestSource.js';
+
+// 模块级常量：避免每次渲染新建 Map 破坏 RequestsTable 的 memo 语义。
+const EMPTY_ENTER_ANIMATIONS = new Map();
 
 // ============================================
 // Requests 页面
@@ -57,9 +62,20 @@ const RequestsPage = () => {
   const [routeSwitching, setRouteSwitching] = useState(false);
   const [accountSwitching, setAccountSwitching] = useState(false);
   const [loading, setLoading] = useState(true);
+  // refreshing 与 loading 分离：首次加载才允许整表换成骨架，
+  // 之后的刷新保持表格在位，只在顶部走一条进度条，避免整表闪一下。
+  const [refreshing, setRefreshing] = useState(false);
+  // 本批次新增行的入场编排（stagger 延迟 + 是否位移）。
+  // 只有实时事件驱动的刷新才非空：首次加载、翻页、改筛选、手动刷新都会整页换数据，
+  // 那时播动画会变成满屏闪。
+  const [rowEnterAnimations, setRowEnterAnimations] = useState(EMPTY_ENTER_ANIMATIONS);
   const [error, setError] = useState(null);
   const loadRequestIdRef = useRef(0);
   const loadDataIdRef = useRef(0);
+  const hasLoadedOnceRef = useRef(false);
+  // 上一批的 requestId 集合，用于 diff 出「哪些行是新到达的、各自排第几」。
+  // 只在 refreshRequestData 这个 callback 里读写，不碰 render 期。
+  const prevRequestIdsRef = useRef(null);
 
   // 面板状态
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -135,7 +151,8 @@ const RequestsPage = () => {
 
   // ==================== 数据加载 ====================
 
-  const refreshRequestData = useCallback(async () => {
+  // live=true 表示本次刷新由 request:update 事件触发，此时新增的行才播入场动画。
+  const refreshRequestData = useCallback(async ({ live = false } = {}) => {
     const requestId = ++loadRequestIdRef.current;
     const requestsQueryParams = {
       ...appliedQueryParams,
@@ -159,7 +176,14 @@ const RequestsPage = () => {
       return;
     }
 
-    setRequests(requestsData.requests);
+    const nextRequests = requestsData.requests;
+    // 新旧两批在这里都在手上，diff 一次算出谁是新到达的、各自延迟多少。
+    // 放在 callback 里而不是 RequestsTable 的 render 期，是因为 render 期读 ref
+    // 在 StrictMode 下会被跑两次，第二次 diff 必然落空。
+    setRowEnterAnimations(buildRowEnterAnimations(nextRequests, prevRequestIdsRef.current, live));
+    prevRequestIdsRef.current = collectRequestIds(nextRequests);
+    // 未变化的行复用旧引用，让 RequestRow 的 memo 生效。
+    setRequests(prev => mergeRequestRows(prev, nextRequests));
     setPagination(prev => ({
       ...prev,
       total: requestsData.total,
@@ -170,10 +194,13 @@ const RequestsPage = () => {
 
   const loadData = useCallback(async (silent = false) => {
     const loadId = ++loadDataIdRef.current;
+    const isFirstLoad = !hasLoadedOnceRef.current;
     try {
-      // 静默刷新时不改变 loading 状态，避免闪屏
-      if (!silent) {
+      // 只有首次加载才把整表换成骨架；后续刷新走顶部进度条，表格保持在位。
+      if (isFirstLoad) {
         setLoading(true);
+      } else if (!silent) {
+        setRefreshing(true);
       }
       setError(null);
 
@@ -227,13 +254,20 @@ const RequestsPage = () => {
       setError(err.message);
     } finally {
       if (loadDataIdRef.current === loadId) {
+        hasLoadedOnceRef.current = true;
         setLoading(false);
+        setRefreshing(false);
       }
     }
   }, [refreshRequestData, showNotice]);
 
   // 请求变化由 Wails 事件触发，只刷新明细与统计；事件不可用时低频降级。
-  const autoRefresh = useAutoRefresh(refreshRequestData);
+  // 包一层标记 live，使事件驱动的新行才播入场动画。
+  const refreshLiveRequestData = useCallback(() => refreshRequestData({ live: true }), [refreshRequestData]);
+  const autoRefresh = useAutoRefresh(refreshLiveRequestData);
+
+  // 手动刷新：显式不传参，避免 onClick 的 event 对象被当成 silent 实参。
+  const handleManualRefresh = useCallback(() => loadData(), [loadData]);
 
   // ==================== 事件处理 ====================
 
@@ -277,10 +311,12 @@ const RequestsPage = () => {
   };
 
   // 双击行打开详情
-  const handleRowDoubleClick = (request) => {
+  // 必须 useCallback：作为 prop 传给 memo 化的 RequestRow，
+  // 每次渲染换新引用会让整页行的 memo 全部失效。
+  const handleRowDoubleClick = useCallback((request) => {
     setSelectedRequest(request);
     setIsDetailModalOpen(true);
-  };
+  }, []);
 
   // 关闭详情模态框
   const handleCloseDetailModal = () => {
@@ -449,13 +485,13 @@ const RequestsPage = () => {
       <ErrorMessage
         title="请求数据加载失败"
         message={error}
-        onRetry={loadData}
+        onRetry={handleManualRefresh}
       />
     );
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500 relative">
+    <div className="space-y-6 animate-fade-in relative">
       <NoticeToast notice={notice} onClose={closeNotice} />
 
       {/* 页面标题 & 工具栏（单行） */}
@@ -477,7 +513,8 @@ const RequestsPage = () => {
             onFilterToggle={handleFilterToggle}
             isViewConfigOpen={isViewConfigOpen}
             onViewConfigToggle={handleViewConfigToggle}
-            onRefresh={loadData}
+            onRefresh={handleManualRefresh}
+            refreshing={refreshing}
             columns={columnConfigs}
             visibleColumns={visibleColumns}
             onToggleColumn={toggleColumn}
@@ -525,6 +562,8 @@ const RequestsPage = () => {
         <RequestsTable
           requests={requests}
           loading={loading}
+          refreshing={refreshing}
+          enterAnimations={rowEnterAnimations}
           pagination={pagination}
           onPageChange={handlePageChange}
           onPageSizeChange={handlePageSizeChange}

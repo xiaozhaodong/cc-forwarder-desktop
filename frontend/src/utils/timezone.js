@@ -1,13 +1,23 @@
 const DEFAULT_LOCALE = 'zh-CN';
 
+// new Intl.DateTimeFormat 是 ECMA-402 里最贵的构造之一（解析 locale + 加载时区数据）。
+// 请求列表一次刷新要渲染上百个时间单元格，不缓存会直接吃掉整帧预算，
+// 表现为新请求到达时列表卡顿。下面两层缓存都按时区字符串命中，进程内长期有效。
+const validatedTimezones = new Set();
+const invalidTimezones = new Set();
+
 export const validateTimezone = (timezone) => {
   const value = String(timezone || '').trim();
   if (!value) throw new Error('后端未返回活动时区');
+  if (validatedTimezones.has(value)) return value;
+  if (invalidTimezones.has(value)) throw new Error(`后端返回了无效时区：${value}`);
   try {
     new Intl.DateTimeFormat(DEFAULT_LOCALE, { timeZone: value }).format(new Date(0));
   } catch {
+    invalidTimezones.add(value);
     throw new Error(`后端返回了无效时区：${value}`);
   }
+  validatedTimezones.add(value);
   return value;
 };
 
@@ -29,14 +39,41 @@ export const parseTimestamp = (value) => {
   return parsed;
 };
 
-const partsMap = (date, timezone, options = {}) => Object.fromEntries(
-  new Intl.DateTimeFormat('en-CA', {
-    timeZone: validateTimezone(timezone),
-    hourCycle: 'h23',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
+// 分段解析统一使用 en-CA + h23，保证 year/month/day/hour/minute/second 六个 part 恒定可取。
+const BASE_PARTS_OPTIONS = {
+  hourCycle: 'h23',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit'
+};
+
+const formatterCache = new Map();
+
+// 键排序后参与 cache key，保证同一组选项无论书写顺序都只构造一次 formatter。
+const formatterCacheKey = (timezone, options) => {
+  const keys = Object.keys(options);
+  if (keys.length === 0) return timezone;
+  return `${timezone}|${keys.sort().map((key) => `${key}:${options[key]}`).join(',')}`;
+};
+
+const getPartsFormatter = (timezone, options) => {
+  const key = formatterCacheKey(timezone, options);
+  const cached = formatterCache.get(key);
+  if (cached) return cached;
+  // timeZone 置于 options 之前，沿用调用方可用 options.timeZone 覆盖的既有语义。
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    ...BASE_PARTS_OPTIONS,
     ...options
-  }).formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value])
+  });
+  formatterCache.set(key, formatter);
+  return formatter;
+};
+
+const partsMap = (date, timezone, options = {}) => Object.fromEntries(
+  getPartsFormatter(validateTimezone(timezone), options)
+    .formatToParts(date)
+    .filter((part) => part.type !== 'literal')
+    .map((part) => [part.type, part.value])
 );
 
 export const formatTimestamp = (value, timezone) => {

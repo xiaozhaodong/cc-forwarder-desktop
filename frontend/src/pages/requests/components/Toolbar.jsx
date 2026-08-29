@@ -20,6 +20,7 @@ import AccountPoolSwitcher from './AccountPoolSwitcher.jsx';
  * @param {boolean} props.isViewConfigOpen - 列配置面板是否打开
  * @param {Function} props.onViewConfigToggle - 列配置面板切换回调
  * @param {Function} props.onRefresh - 刷新回调
+ * @param {boolean} props.refreshing - 是否正在刷新（手动刷新期间按钮转圈）
  * @param {Array} props.columns - 所有列配置
  * @param {Array} props.visibleColumns - 当前可见的列ID数组
  * @param {Function} props.onToggleColumn - 切换列显示回调
@@ -42,6 +43,7 @@ const Toolbar = ({
   isViewConfigOpen = false,
   onViewConfigToggle,
   onRefresh,
+  refreshing = false,
   columns = [],
   visibleColumns = [],
   onToggleColumn,
@@ -151,6 +153,7 @@ const Toolbar = ({
           mode={autoRefresh.mode}
           fallbackInterval={autoRefresh.fallbackInterval}
           onManualRefresh={onRefresh}
+          refreshing={refreshing}
         />
       )}
     </div>
