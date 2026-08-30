@@ -343,135 +343,279 @@
 
 /* ============================================================
  * 请求追踪 —— 实时列表动效
- * 只动 opacity / background-*，不碰 layout 属性：
- * 动 width/height/padding 会让整表 reflow，正是「新请求到达时掉帧」要避免的事。
- * 也刻意不用 transform 做入场：<tr> 横移会被 overflow-x 容器裁掉首列文字、
- * 右缘露出底色；clip-path 揭示虽在 <tr> 上生效，却会把行背景与分隔线一起切成
- * 硬边方块（暗色下像没渲染完）。两种都实测过，观感都不如逐列接力。
+ *
+ * 分工：新行入场表达「刚到」，轨道表达「在跑 / 跑完了」，别的一概不动。
+ * 同一条信息不叠两个动画 —— 轨道在动时，状态图标一律静止。
+ *
+ * 动区收敛是这轮的主线：进行中的标识从「整行扫光」收到 74px 轨道。
+ * 整行呼吸/扫光在多行并发时会同时刷亮每一行，噪音远大于信息量；
+ * 轨道只占一列，十几行同时在跑也不会糊成一片。
+ *
  * 缓动统一 cubic-bezier(.22,1,.36,1)，与 ToastHost 保持一致。
  * ============================================================ */
 
-/* 新到达的请求行：整行高亮底先落位，单元格内容再按列从左往右依次浮现。
-   行本身不做 opacity —— 内容的淡入交给 td，两层 opacity 相乘会让右侧列偏暗。 */
-@keyframes request-row-enter-cascade {
-  from {
-    background-color: var(--app-accent-soft);
-  }
-  45% {
-    background-color: var(--app-accent-soft);
-  }
-  to {
-    background-color: transparent;
-  }
+/* ------------------------------------------------------------
+ * 新行入场：200ms 位移 + 淡入
+ *
+ * 位移挂在 `> td > *`（单元格内容的根元素）上，不挂 <tr> 也不挂 <td>：
+ *   - <tr> 横移会被 overflow-x 容器裁掉首列文字、右缘露出底色；
+ *   - <td> 是 table-cell，transform 对它无效。
+ * 因此 renderCell 的每个分支都必须返回单一根元素，返回 Fragment 会静默失效
+ * —— 这条由 RequestsTable 的静态扫描用例锁定。
+ *
+ * 不再做逐列接力：位移本身已有方向感（自下而上），再叠一个从左到右的
+ * 接力就是第三个方向维度，反而读不出主次。
+ * ------------------------------------------------------------ */
+@keyframes request-row-rise {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-/* 单元格接力：只动 opacity，且**起点是 0.35 而不是 0**。
-   这条是整个动效的关键，别"优化"回 0：animation-fill-mode 为 backwards 时，
-   还没轮到的列会停在 from 值上。起点写 0 就意味着新行右侧会有一片真空白，
-   实测 10 列表格在前 120ms 有 7 列全空——那正是「数据没加载出来」的样子，
-   用户会直接读成卡顿。从 0.35 起步，内容始终在场，只是从淡到实。
-   另：<td> 是 table-cell，transform 对它无效；给子元素做 transform 又必须
-   强制 display:inline-block，会毁掉 RequestTimingCell 的 inline-flex。 */
-@keyframes request-cell-enter {
-  from { opacity: .35; }
-  to { opacity: 1; }
-}
-
-/* 批量到达时的降级版：整行一次性淡入 + 高亮，不做列接力。
-   一次涌入十几条时，N 行 × M 列的接力只会变成一片乱闪。 */
-@keyframes request-row-enter-flat {
-  from {
-    opacity: 0;
-    background-color: var(--app-accent-soft);
-  }
-  28% {
-    opacity: 1;
-    background-color: var(--app-accent-soft);
-  }
-  to {
-    opacity: 1;
-    background-color: transparent;
-  }
-}
-
-/* 进行中的请求行：一道淡光从左扫到右，表达「数据正在流过」。
-   动 background-position 而非 background-color：光带只覆盖行宽的 55%，
-   不会像整行呼吸那样把每一行同时刷亮，多行并发时噪音小得多。
-   位置区间按 px = p × (容器宽 − 光带宽) = p × 0.45W 反推：
-   起点须 ≤ −122% 才能让光带完整停在左侧屏外，终点须 ≥ 222% 才能完整扫出右侧，
-   否则光带会凭空出现在行中间、又在扫完前消失。 */
-@keyframes request-row-inflight {
-  from { background-position: -130% 0; }
-  to { background-position: 230% 0; }
-}
-
-/* stagger 延迟走 --enter-delay 变量，不能用行内 animation-delay：
-   下面复合规则里有两条动画，行内 delay 会同时套到扫光上，把它的起跑点冲掉。
-
-   行级时长 800ms：1100ms 会让高亮"赖着不走"。
-   缓动不用 cubic-bezier(.22,1,.36,1)——那是强 ease-out，适合位移（冲出去再柔和
-   停住），用在 opacity / background 上会让后 70% 的时间几乎看不出变化，观感发黏。
-
-   backwards 是必需的：没有它，delay 期间行按基础样式显示，等轮到自己时才跳回
-   动画第一帧（-flat 是 opacity:0，-cascade 是高亮底），会先闪一下再入场。 */
-.request-row-enter-cascade,
-.request-row-enter-flat {
-  animation-duration: 800ms;
-  animation-timing-function: ease-out;
+.request-row-enter > td > * {
+  animation: request-row-rise 200ms cubic-bezier(.22,1,.36,1) backwards;
   animation-delay: var(--enter-delay, 0ms);
-  animation-fill-mode: backwards;
 }
 
-.request-row-enter-cascade {
-  animation-name: request-row-enter-cascade;
+/* 左缘一道细亮线亮一次再退去，代替旧版铺满整行的高亮底。
+   它是整套入场里收尾最晚的一条（620ms），摘 class 必须等它 —— 见
+   RequestsTable 的 handleAnimationEnd。 */
+@keyframes request-row-edge-tick {
+  from { opacity: 1; }
+  55%  { opacity: 1; }
+  to   { opacity: 0; }
 }
 
-.request-row-enter-flat {
-  animation-name: request-row-enter-flat;
+.request-row-enter > td:first-child { position: relative; }
+
+.request-row-enter > td:first-child::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--app-accent-ring);
+  animation: request-row-edge-tick 620ms ease-out backwards;
+  animation-delay: var(--enter-delay, 0ms);
 }
 
-/* 单元格时长必须远小于列间隔的总跨度，否则整行会长期糊在中间态。
-   140ms / 间隔 28ms / 封顶 4 档 => 最后一列 112ms 起跑、252ms 到实心，
-   整道接力像一次扫过，而不是一格一格蹦。
-   封顶同时防住列数：可见列共 12 列，不封顶最后一列要等 308ms 才轮到。
-   ⚠️ 封顶值 4 与 RequestsTable.jsx 的 COL_INDEX_CAP 绑定，改一处要改两处。 */
-.request-row-enter-cascade td {
-  animation: request-cell-enter 140ms ease-out backwards;
-  animation-delay: calc(var(--enter-delay, 0ms) + min(var(--col-index, 0), 4) * 28ms);
+/* ------------------------------------------------------------
+ * TraceRail：74px 的独立轨道
+ *
+ * 做在行内 <span> 里，不受 <tr>/<td> 的 table 布局限制，
+ * transform / scaleX / 伪元素全部可用 —— 上面那两个坑在这里都不存在。
+ * ------------------------------------------------------------ */
+.trace-rail {
+  /* 「进行中」的活跃色，与 lifecycle.js 里 railSegmentColors.first 的
+     bg-violet-400 是同一个色 —— 处理中的流光与终态的「首字」段必须同色，
+     它们是同一条时间线的两个阶段。改一处要改两处。
+     不写 var(--color-violet-400)：Tailwind v4 的 theme 变量只在被 utility
+     引用时才保证输出，直接 var() 可能拿到空值。 */
+  --rail-active: #a78bfa;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: 74px;
+  flex: none;
 }
 
-.request-row-inflight {
-  background-image: linear-gradient(
-    90deg,
-    transparent 0%,
-    color-mix(in srgb, var(--app-accent-soft) 85%, transparent) 50%,
-    transparent 100%
-  );
-  background-size: 55% 100%;
-  background-repeat: no-repeat;
-  animation: request-row-inflight 2.4s ease-in-out infinite;
+.trace-rail__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex: none;
+  background: var(--app-fg-subtle);
 }
 
-/* 新到达且仍在进行中：入场高亮跑完再起扫光。
-   两者本可共存（一个动 background-color、一个动 background-image），
-   但淡光叠在入场高亮底上几乎看不出来，延后起扫更清楚。
-   扫光的起跑点要跟着 stagger 一起后移，否则排在后面的行会「还没入场，光先扫了」。 */
-.request-row-enter-cascade.request-row-inflight,
-.request-row-enter-flat.request-row-inflight {
-  animation-name: request-row-enter-cascade, request-row-inflight;
-  animation-duration: 800ms, 2.4s;
-  animation-timing-function: ease-out, ease-in-out;
-  animation-delay: var(--enter-delay, 0ms), calc(800ms + var(--enter-delay, 0ms));
-  animation-iteration-count: 1, infinite;
-  animation-fill-mode: backwards, none;
+.trace-rail__track {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: transparent;
 }
 
-.request-row-enter-flat.request-row-inflight {
-  animation-name: request-row-enter-flat, request-row-inflight;
+/* indeterminate 流光。进行中才可见 —— 终态的 fill 已经画了真实分段，
+   再叠一条流光会把「已完成」看成「还在跑」。 */
+.trace-rail__flow {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 40%;
+  border-radius: 999px;
+  opacity: 0;
 }
 
-/* 扫光动的是 background-image，hover 的 bg-surface-sub 动的是 background-color，
-   两者叠加不冲突，因此进行中的行不需要为 hover 让路。 */
+/* 终态分段容器。补满走 scaleX 而非 width：scaleX 在合成层上跑，
+   不触发 reflow，而这一列有十几行会同时落位。 */
+.trace-rail__fill {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+
+.trace-rail__fill > i { display: block; height: 100%; }
+.trace-rail__fill > i:first-child { border-radius: 999px 0 0 999px; }
+.trace-rail__fill > i:last-child { border-radius: 0 999px 999px 0; }
+
+.trace-rail__cap {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: transparent;
+}
+
+/* 位置区间按 px = p × (轨道宽 − 光带宽) 反推：起点须 ≤ −100% 才能让光带
+   完整停在左侧外，终点须 ≥ 260% 才能完整扫出右侧，否则光带会凭空出现在
+   轨道中间、又在扫完前消失。 */
+@keyframes trace-rail-shoot {
+  from { transform: translateX(-105%); }
+  to   { transform: translateX(265%); }
+}
+
+@keyframes trace-rail-rewind {
+  from { transform: translateX(265%); }
+  to   { transform: translateX(-105%); }
+}
+
+@keyframes trace-rail-dot-breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .3; }
+}
+
+@keyframes trace-rail-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .45; transform: scale(.72); }
+}
+
+/* 等待中：虚线轨道 + 呼吸点。轨道空着 —— 它真的还没开始跑。 */
+.trace-rail--pending .trace-rail__dot {
+  background: var(--app-accent-ring);
+  animation: trace-rail-dot-breathe 1900ms ease-in-out infinite;
+}
+
+.trace-rail--pending .trace-rail__track {
+  background-image: repeating-linear-gradient(90deg, var(--app-fg-subtle) 0 2px, transparent 2px 6px);
+  opacity: .5;
+}
+
+/* 转发中：一颗光点向右飞过，表达「请求正在离开本地」。 */
+.trace-rail--forwarding .trace-rail__dot { background: var(--app-accent-ring); }
+.trace-rail--forwarding .trace-rail__track { background: color-mix(in srgb, var(--app-accent-ring) 30%, transparent); }
+
+.trace-rail--forwarding .trace-rail__flow {
+  opacity: 1;
+  width: 36%;
+  background: linear-gradient(90deg, transparent, var(--app-accent-ring), transparent);
+  animation: trace-rail-shoot 1150ms cubic-bezier(.45,0,.35,1) infinite;
+}
+
+/* 处理中：更慢更宽的连续流光，色相推进到 violet —— 与终态里「首字 / 生成」
+   两段同色系，视觉上是同一条时间线在往前走。 */
+.trace-rail--processing .trace-rail__dot { background: var(--rail-active); }
+.trace-rail--processing .trace-rail__track { background: color-mix(in srgb, var(--rail-active) 30%, transparent); }
+
+.trace-rail--processing .trace-rail__flow {
+  opacity: 1;
+  width: 52%;
+  background: linear-gradient(90deg, transparent, var(--rail-active), transparent);
+  animation: trace-rail-shoot 1750ms ease-in-out infinite;
+}
+
+/* 重试中：amber 点脉冲 + 光点反向回跑。不用 spin —— 旋转读不出方向，
+   而「退回重来」的方向感正是这个状态唯一要传达的信息。 */
+.trace-rail--retry .trace-rail__dot {
+  background: var(--app-warn-solid);
+  animation: trace-rail-dot-pulse 900ms ease-in-out infinite;
+}
+
+.trace-rail--retry .trace-rail__track { background: color-mix(in srgb, var(--app-warn-solid) 24%, transparent); }
+
+.trace-rail--retry .trace-rail__flow {
+  opacity: 1;
+  width: 36%;
+  background: linear-gradient(90deg, transparent, var(--app-warn-solid), transparent);
+  animation: trace-rail-rewind 950ms cubic-bezier(.4,0,.6,1) infinite;
+}
+
+/* 终态：轨道填满，末端出符号，全部静止 */
+.trace-rail--completed .trace-rail__dot { background: var(--app-success-solid); }
+.trace-rail--completed .trace-rail__track { background: color-mix(in srgb, var(--app-fg-subtle) 16%, transparent); }
+.trace-rail--completed .trace-rail__fill { transform: scaleX(1); }
+.trace-rail--completed .trace-rail__cap { color: var(--app-success-solid); }
+
+.trace-rail--failed .trace-rail__dot { background: var(--app-danger-solid); }
+.trace-rail--failed .trace-rail__track { background: color-mix(in srgb, var(--app-danger-solid) 16%, transparent); }
+.trace-rail--failed .trace-rail__fill { transform: scaleX(1); }
+.trace-rail--failed .trace-rail__cap { color: var(--app-danger-solid); }
+
+.trace-rail--cancelled .trace-rail__dot { background: var(--app-fg-subtle); }
+.trace-rail--cancelled .trace-rail__track { background: color-mix(in srgb, var(--app-fg-subtle) 16%, transparent); }
+.trace-rail--cancelled .trace-rail__fill { transform: scaleX(1); opacity: .75; }
+.trace-rail--cancelled .trace-rail__cap { color: var(--app-fg-subtle); }
+
+/* 已挂起：停在半程且完全静止。它在等人工干预，任何动效都会误导成「在跑」。
+   半程条走 flow 而非 fill —— 请求并没有结束，fill 里那份按真实耗时算的分段
+   还不存在，这里只是一个「卡在中途」的静态记号。 */
+.trace-rail--suspended .trace-rail__dot { background: var(--app-fg-subtle); }
+.trace-rail--suspended .trace-rail__track { background: color-mix(in srgb, var(--app-fg-subtle) 16%, transparent); }
+.trace-rail--suspended .trace-rail__cap { color: var(--app-fg-subtle); }
+
+.trace-rail--suspended .trace-rail__flow {
+  opacity: .55;
+  width: 45%;
+  background: var(--app-fg-subtle);
+}
+
+/* ------------------------------------------------------------
+ * 终态落位：一次性反馈，播完即静止
+ *
+ * 与旧版扫光的关键区别 —— 那条是 infinite，只能靠摘 class 硬停；
+ * 这里全部是有限次动画，播完表格回到完全安静。
+ *
+ * cancelled 刻意不在此列：取消是用户自己发起的，不需要被通知。
+ * 它直接落位，这个「没有反馈」本身就是与 completed / failed 的区分。
+ * ------------------------------------------------------------ */
+@keyframes trace-rail-fill { from { transform: scaleX(0); } }
+
+@keyframes trace-rail-cap-pop {
+  from { opacity: 0; transform: scale(.35); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes trace-rail-settle-flash {
+  from { opacity: .9; }
+  to   { opacity: 0; }
+}
+
+.trace-rail.is-settling .trace-rail__fill {
+  animation: trace-rail-fill 360ms cubic-bezier(.22,1,.36,1);
+}
+
+.trace-rail.is-settling .trace-rail__cap {
+  animation: trace-rail-cap-pop 300ms cubic-bezier(.22,1,.36,1) backwards;
+  animation-delay: 170ms;
+}
+
+/* 整条轨道被终态色盖满一次再退去。460ms 给出「确认感」而不拖沓。 */
+.trace-rail--completed.is-settling .trace-rail__track::after,
+.trace-rail--failed.is-settling .trace-rail__track::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  animation: trace-rail-settle-flash 460ms ease-out forwards;
+}
+
+.trace-rail--completed.is-settling .trace-rail__track::after { background: var(--app-success-solid); }
+.trace-rail--failed.is-settling .trace-rail__track::after { background: var(--app-danger-solid); }
 
 /* 刷新进度条：表格保持在位，只在顶部走一条 indeterminate 条 */
 @keyframes indeterminate-slide {
@@ -494,24 +638,28 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .request-row-enter-cascade,
-  .request-row-enter-flat,
-  .request-row-enter-cascade.request-row-inflight,
-  .request-row-enter-flat.request-row-inflight,
-  .request-row-enter-cascade td,
+  .request-row-enter > td > *,
+  .request-row-enter > td:first-child::before,
+  .trace-rail__dot,
+  .trace-rail__flow,
+  .trace-rail.is-settling .trace-rail__fill,
+  .trace-rail.is-settling .trace-rail__cap,
   .kpi-value-flash {
     animation: none;
   }
 
-  /* 扫光关掉后光带会停在屏外，等于没有任何「进行中」标识。
-     改用一条静态竖条兜底，保证减弱动效下仍读得出哪些行在跑。 */
-  .request-row-inflight {
-    animation: none;
-    background-image: none;
-  }
+  .trace-rail.is-settling .trace-rail__track::after { display: none; }
 
-  .request-row-inflight td:first-child {
-    box-shadow: inset 3px 0 0 var(--app-accent-ring);
+  /* 流光停下后会留在轨道外，等于没有任何「进行中」标识。
+     改用一条静止色带兜底，保证减弱动效下仍读得出哪些行在跑。
+     只给进行中 —— 终态的 fill 已经画了真实分段，再叠色带会读成「还在跑」。 */
+  .trace-rail--pending .trace-rail__flow,
+  .trace-rail--forwarding .trace-rail__flow,
+  .trace-rail--processing .trace-rail__flow,
+  .trace-rail--retry .trace-rail__flow {
+    opacity: 1;
+    width: 55%;
+    transform: translateX(0);
   }
 
   /* 关掉滑动后留一条静止满宽条，仍能表达「正在刷新」 */

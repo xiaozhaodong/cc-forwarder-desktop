@@ -1,0 +1,128 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+import { IN_FLIGHT_STATUSES } from './constants.js';
+import { TIMING_THRESHOLDS_MS, getTimingPillClassName, getRunningPillClassName } from './timing.js';
+import {
+  subscribeElapsedTick,
+  resolveElapsedMs,
+  __getTickerState,
+  TICK_INTERVAL_MS
+} from './elapsedTicker.js';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const readSource = (relativePath) => readFileSync(join(HERE, relativePath), 'utf8');
+
+const PILL_SOURCE = readSource('../components/LiveElapsedPill.jsx');
+const TABLE_SOURCE = readSource('../components/RequestsTable.jsx');
+
+test('订阅者归零时定时器被清掉 —— 没有进行中的请求，整张表零定时器', async () => {
+  assert.deepEqual(__getTickerState(), { subscriberCount: 0, running: false });
+
+  const unsubA = subscribeElapsedTick(() => {});
+  assert.deepEqual(__getTickerState(), { subscriberCount: 1, running: true });
+
+  const unsubB = subscribeElapsedTick(() => {});
+  assert.deepEqual(__getTickerState(), { subscriberCount: 2, running: true },
+    '第二个订阅者不该再起一个定时器');
+
+  unsubA();
+  assert.equal(__getTickerState().running, true, '还有订阅者时不能停');
+
+  unsubB();
+  assert.deepEqual(__getTickerState(), { subscriberCount: 0, running: false },
+    '最后一个订阅者退订后必须清掉定时器，否则表格永远醒着');
+});
+
+test('一个订阅者抛错不会让其余的时钟停摆', async () => {
+  const seen = [];
+  const originalError = console.error;
+  console.error = () => {};
+
+  const unsubBad = subscribeElapsedTick(() => { throw new Error('boom'); });
+  const unsubGood = subscribeElapsedTick(() => seen.push(1));
+
+  await new Promise((resolve) => setTimeout(resolve, TICK_INTERVAL_MS * 2.5));
+
+  unsubBad();
+  unsubGood();
+  console.error = originalError;
+
+  assert.ok(seen.length >= 1, '正常订阅者应该照常收到 tick');
+  assert.equal(__getTickerState().running, false);
+});
+
+test('跑秒精度必须细于显示精度，否则数字会跳格', () => {
+  // formatTimingBadge 显示到 0.1s；刷新慢于 100ms 就会一次跳过多个刻度。
+  assert.ok(TICK_INTERVAL_MS <= 100, `刷新间隔 ${TICK_INTERVAL_MS}ms 粗于 0.1s 显示精度`);
+});
+
+test('已耗时钳到非负 —— 时间戳异常时不显示负数', () => {
+  assert.equal(resolveElapsedMs(1000, 0, 3500), 2500);
+  assert.equal(resolveElapsedMs(1000, 400, 3500), 2100, 'baseMs 应从已耗时里扣掉');
+  assert.equal(resolveElapsedMs(5000, 0, 3500), 0, '起点晚于当前时刻时钳到 0');
+  assert.equal(resolveElapsedMs(1000, 9999, 3500), 0, 'baseMs 大于已耗时时钳到 0');
+});
+
+test('跑秒走 DOM 直写，不进 React 渲染状态', () => {
+  // 每 100ms 一次 setState 会推全表 diff，而那正是新行入场动画在跑的时刻。
+  assert.match(PILL_SOURCE, /node\.textContent = /, '应直接写 textContent');
+  assert.doesNotMatch(PILL_SOURCE, /useState/, '跑秒不能持有 React state');
+});
+
+test('色阶跟着跑秒一起走 —— 卡住的请求会自己变黄变红', () => {
+  assert.match(PILL_SOURCE, /node\.className = /,
+    '只更新文本不更新 className 的话，等首字等到 30s 也还是绿的');
+
+  // 首响位与生成位用不同阈值：等首字 8s 就该警示，生成 8s 完全正常。
+  assert.ok(TIMING_THRESHOLDS_MS.first.warning < TIMING_THRESHOLDS_MS.duration.warning);
+  assert.equal(getTimingPillClassName('first', TIMING_THRESHOLDS_MS.first.warning + 1), 'tone-amber');
+  assert.equal(getTimingPillClassName('first', TIMING_THRESHOLDS_MS.first.critical + 1), 'tone-rose');
+  assert.equal(getTimingPillClassName('duration', TIMING_THRESHOLDS_MS.first.critical + 1), 'tone-emerald',
+    '生成位不该套用首响的阈值');
+});
+
+test('跑秒落在当前正在进行的那一段上', () => {
+  // 首字未到 -> 首响位在跑（threshold="first"，无 baseMs）
+  assert.match(TABLE_SOURCE, /<LiveElapsedPill timestamp=\{request\.timestamp\} threshold="first" \/>/);
+  // 首字已到 -> 生成位接过跑秒，扣掉首响那一段
+  assert.match(TABLE_SOURCE, /baseMs=\{firstResponseMs\}[\s\S]{0,40}threshold="duration"/);
+});
+
+test('进行中不吃 resolveFirstResponseMs 的非流式降级', () => {
+  // 那条降级拿 duration 兜底首响，前提是「请求已结束」。
+  // 进行中 duration 恒为 0，兜底会让每条非流式请求先显示一个假的 0.0s。
+  assert.match(TABLE_SOURCE, /running\s*\?\s*\(Number\.isFinite\(request\.firstTokenMs\)/,
+    '进行中必须只认后端真实写入的 firstTokenMs');
+});
+
+test('suspended 不跑秒 —— 与轨道对同一份集合判定', () => {
+  assert.equal(IN_FLIGHT_STATUSES.has('suspended'), false,
+    '挂起的请求已经停了，跑秒会暗示它还在工作');
+  for (const status of ['pending', 'forwarding', 'processing', 'retry']) {
+    assert.equal(IN_FLIGHT_STATUSES.has(status), true, `${status} 必须跑秒`);
+  }
+});
+
+test('跑秒正常区间是中性灰 —— 给完成瞬间留出「灰→彩」', () => {
+  // 收敛成一条规则：灰 = 这一段还在跑，彩 = 这一段定了。
+  // 不这么分的话，进行中和已完成都是两枚绿 pill，秒表停下来根本看不出来。
+  assert.equal(getRunningPillClassName('first', 1000), 'tone-slate');
+  assert.equal(getRunningPillClassName('duration', 1000), 'tone-slate');
+  assert.equal(getTimingPillClassName('duration', 1000), 'tone-emerald',
+    '定稿的同一个数字必须是绿的，完成瞬间就靠这个差别被看见');
+});
+
+test('跑秒的示警区间不受中性化影响 —— 卡住比未定稿更该被看见', () => {
+  const { first, duration } = TIMING_THRESHOLDS_MS;
+  assert.equal(getRunningPillClassName('first', first.warning + 1), 'tone-amber');
+  assert.equal(getRunningPillClassName('first', first.critical + 1), 'tone-rose');
+  assert.equal(getRunningPillClassName('duration', duration.warning + 1), 'tone-orange');
+  assert.equal(getRunningPillClassName('duration', duration.critical + 1), 'tone-rose');
+
+  assert.match(PILL_SOURCE, /getRunningPillClassName\(threshold, elapsedMs\)/,
+    '跑秒必须走 running 色阶，用 getTimingPillClassName 会提前把绿色用掉');
+});

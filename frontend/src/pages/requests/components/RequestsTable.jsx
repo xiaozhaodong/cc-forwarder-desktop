@@ -11,11 +11,13 @@ import { LoadingSpinner } from '@components/ui';
 import { formatCost } from '@utils/api.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import useCountUp from '@hooks/useCountUp.js';
-import RequestStatusBadge from './RequestStatusBadge.jsx';
+import { RequestTraceCell } from './TraceRail.jsx';
+import LiveElapsedPill from './LiveElapsedPill.jsx';
 import ModelTag from './ModelTag.jsx';
 import Pagination from './Pagination.jsx';
 import { copyTextToClipboard } from './clipboard.js';
 import { getRequestFamilyMeta } from '../utils/requestSource.js';
+import { IN_FLIGHT_STATUSES, UNSETTLED_STATUSES } from '../utils/constants.js';
 import { NO_ROW_ANIMATIONS } from '../utils/rowEnterAnimation.js';
 import {
   calculateTokensPerSecond,
@@ -27,18 +29,14 @@ import {
   resolveFirstResponseMs
 } from '../utils/timing.js';
 
-// 「进行中」的状态集合，与 constants.js 的 STATUS_OPTIONS 状态机对齐。
-// suspended（已挂起）不算进行中：它在等人工干预，动效会造成误导。
-const IN_FLIGHT_STATUSES = new Set(['pending', 'forwarding', 'processing', 'retry']);
-
-// 列序号走 CSS 变量驱动逐列接力的 animation-delay。
-// 长度与 index.css 里 min(var(--col-index), 4) 的封顶值绑定：超过封顶的列
-// delay 完全等价，多生成的项只是重复对象。改封顶值时两处一起改。
-const COL_INDEX_CAP = 4;
-const COL_INDEX_STYLES = Array.from({ length: COL_INDEX_CAP + 1 }, (_, index) =>
-  Object.freeze({ '--col-index': index })
-);
-const cappedColIndexStyle = (colIndex) => COL_INDEX_STYLES[Math.min(colIndex, COL_INDEX_CAP)];
+// 整套入场里收尾最晚的一条动画（左缘亮线 620ms）。摘 class 必须等它 ——
+// 单元格位移只有 200ms 且会从 td 冒泡上来，认 target 会提前 420ms 摘掉，
+// 把亮线截断在半路。
+const FINAL_ENTER_ANIMATION = 'request-row-edge-tick';
+// 兜底时长：620ms 亮线 + 最大 stagger + 一点余量。伪元素的 animationend 一旦
+// 没派发（或标签页在后台、动画根本不推进），class 与 --enter-delay 就会永久
+// 留在 DOM 上，下次任何 animation 中断恢复都会重播一次入场。
+const ENTER_TEARDOWN_MS = 900;
 
 /**
  * TotalCountBadge - 总条数徽章
@@ -93,9 +91,18 @@ const TimingTooltip = ({ anchorRect, items }) => {
   );
 };
 
+const TIMING_PILL_BASE = 'inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all';
+
 const RequestTimingCell = ({ request }) => {
   const [tooltipAnchor, setTooltipAnchor] = React.useState(null);
-  const firstResponseMs = resolveFirstResponseMs(request.firstTokenMs, request.duration, request.isStreaming);
+  const running = IN_FLIGHT_STATUSES.has(request.status);
+  // 进行中只认后端真实写入的 firstTokenMs。
+  // resolveFirstResponseMs 对非流式请求会拿 duration 兜底首响，而那条降级的前提是
+  // 「请求已结束」—— 进行中 duration 还是 0（tracker 只在终态写 duration_ms），
+  // 兜底会让每条非流式请求都先显示一个假的 0.0s 首响。
+  const firstResponseMs = running
+    ? (Number.isFinite(request.firstTokenMs) ? Math.max(request.firstTokenMs, 0) : null)
+    : resolveFirstResponseMs(request.firstTokenMs, request.duration, request.isStreaming);
   const hasFirstResponse = Number.isFinite(firstResponseMs);
   const completionMs = hasFirstResponse
     ? resolveCompletionMs(request.completionMs, request.duration, firstResponseMs, request.isStreaming)
@@ -114,36 +121,76 @@ const RequestTimingCell = ({ request }) => {
     setTooltipAnchor(null);
   };
 
+  // 进行中不挂 tooltip：那两项此刻都还没有值（duration 为 0、TPS 为 null），
+  // 而 pill 自己就在实时显示数字，tooltip 没有任何增量信息。
+  const hoverHandlers = running ? undefined : {
+    onMouseEnter: showTooltip,
+    onMouseMove: showTooltip,
+    onMouseLeave: hideTooltip,
+    onFocus: showTooltip,
+    onBlur: hideTooltip
+  };
+
   return (
-    <div
-      className="inline-flex items-center gap-1.5"
-      onMouseEnter={showTooltip}
-      onMouseMove={showTooltip}
-      onMouseLeave={hideTooltip}
-      onFocus={showTooltip}
-      onBlur={hideTooltip}
-    >
-      {hasFirstResponse && (
-        <span
-          className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('first', firstResponseMs)}`}
-        >
+    <div className="inline-flex items-center gap-1.5" {...hoverHandlers}>
+      {/* 首响位。已定值就静态显示；进行中且首字未到时，这一格自己在跑秒。 */}
+      {hasFirstResponse ? (
+        <span className={`${TIMING_PILL_BASE} ${getTimingPillClassName('first', firstResponseMs)}`}>
           {formatTimingBadge(firstResponseMs)}
         </span>
+      ) : running ? (
+        <LiveElapsedPill timestamp={request.timestamp} threshold="first" />
+      ) : null}
+
+      {/* 生成位。进行中且首字已到时，这一格接过跑秒 —— 交接的那一刻正是首字到达。
+          首字未到时不出这一格：生成还没开始，画一个 '-' 只是噪音。 */}
+      {running ? (
+        hasFirstResponse && (
+          <LiveElapsedPill
+            timestamp={request.timestamp}
+            baseMs={firstResponseMs}
+            threshold="duration"
+          />
+        )
+      ) : (
+        <span className={`${TIMING_PILL_BASE} ${getTimingPillClassName('duration', completionMs ?? request.duration)}`}>
+          {formatOptionalTimingBadge(completionMs)}
+        </span>
       )}
-      <span
-        className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all ${getTimingPillClassName('duration', completionMs ?? request.duration)}`}
-      >
-        {formatOptionalTimingBadge(completionMs)}
-      </span>
-      <TimingTooltip anchorRect={tooltipAnchor} items={timingTooltipItems} />
+      {!running && <TimingTooltip anchorRect={tooltipAnchor} items={timingTooltipItems} />}
     </div>
   );
 };
 
+// 在途时 token 与成本都还没有值：后端只在终态写这几个字段
+// （tracker.go 的 UpdateActiveRequestTokens 声称支持流式累积，但全项目零调用），
+// 所以此刻的 0 是「还不知道」，不是「用了 0 个」。
+//
+// 渲染成占位符除了诚实，也是完成瞬间最强的那个信号：0 是个合法数字，
+// 从 0 换成别的数字眼睛不会注意到，从 — 变成数字才是一次「到货」。
+const PENDING_VALUE = '—';
+
+/**
+ * ValueCell - 右对齐的数值单元格，在途时显示占位符
+ *
+ * inline-block 不能省：入场位移挂在 `> td > *` 上，而 transform 对非替换的
+ * 行内元素无效 —— 写成裸 <span> 这一列就只会淡入、不会跟着上浮。
+ */
+const ValueCell = ({ pending, tone, children }) => (
+  <span className={`inline-block font-mono text-xs ${pending ? 'text-fg-subtle' : tone}`}>
+    {pending ? PENDING_VALUE : children}
+  </span>
+);
+
 /**
  * 渲染单元格内容
+ *
+ * ⚠️ 每个分支必须返回单一根元素，且该元素不能是非替换的行内盒
+ * （见 ValueCell 的注释）—— 由静态扫描用例锁定。
  */
 const renderCell = (columnId, request, formatTimestamp) => {
+  const pending = UNSETTLED_STATUSES.has(request.status);
+
   switch (columnId) {
     case 'requestId':
       return (
@@ -153,9 +200,9 @@ const renderCell = (columnId, request, formatTimestamp) => {
         </div>
       );
     case 'timestamp':
-      return <span className="text-xs text-fg-subtle">{formatTimestamp(request.timestamp)}</span>;
+      return <span className="inline-block text-xs text-fg-subtle">{formatTimestamp(request.timestamp)}</span>;
     case 'status':
-      return <RequestStatusBadge status={request.status} />;
+      return <RequestTraceCell request={request} />;
     case 'model':
       return <ModelTag model={request.model} compact />;
     case 'requestFamily': {
@@ -167,15 +214,15 @@ const renderCell = (columnId, request, formatTimestamp) => {
     case 'duration':
       return <RequestTimingCell request={request} />;
     case 'inputTokens':
-      return <span className="text-fg-body text-right font-mono text-xs">{request.inputTokens}</span>;
+      return <ValueCell pending={pending} tone="text-fg-body">{request.inputTokens}</ValueCell>;
     case 'outputTokens':
-      return <span className="text-fg-body text-right font-mono text-xs">{request.outputTokens}</span>;
+      return <ValueCell pending={pending} tone="text-fg-body">{request.outputTokens}</ValueCell>;
     case 'cacheCreationTokens':
-      return <span className="text-fg-muted text-right font-mono text-xs">{request.cacheCreationTokens}</span>;
+      return <ValueCell pending={pending} tone="text-fg-muted">{request.cacheCreationTokens}</ValueCell>;
     case 'cacheReadTokens':
-      return <span className="text-fg-muted text-right font-mono text-xs">{request.cacheReadTokens}</span>;
+      return <ValueCell pending={pending} tone="text-fg-muted">{request.cacheReadTokens}</ValueCell>;
     case 'cost':
-      return <span className="text-right font-mono text-warn font-medium text-xs">{formatCost(request.cost)}</span>;
+      return <ValueCell pending={pending} tone="text-warn font-medium">{formatCost(request.cost)}</ValueCell>;
     default:
       return null;
   }
@@ -184,31 +231,52 @@ const renderCell = (columnId, request, formatTimestamp) => {
 /**
  * RequestRow - 单行请求数据（支持单击复制、双击查看详情）
  *
+ * columns 收的是列配置对象数组（不是 id 数组），与表头同一个引用。
+ *
  * enterAnimation 只在挂载那一刻取值并固化：React 按 requestId 做 key diff，
  * 「新的 requestId」等价于「新挂载的 RequestRow」。固化之后，
  * 后续任何 re-render 都不会重播入场动画。
  */
-const RequestRow = ({ request, visibleColumns, onCopyId, onDoubleClick, formatTimestamp, enterAnimation }) => {
+const RequestRow = ({ request, columns, onCopyId, onDoubleClick, formatTimestamp, enterAnimation }) => {
   const clickCountRef = React.useRef(0);
   const clickTimerRef = React.useRef(null);
-  const [enterState, setEnterState] = React.useState(() => enterAnimation);
+  const enterTimerRef = React.useRef(null);
+  const [entering, setEntering] = React.useState(() => Boolean(enterAnimation));
 
   React.useEffect(() => () => {
     if (clickTimerRef.current) {
       clearTimeout(clickTimerRef.current);
       clickTimerRef.current = null;
     }
+    if (enterTimerRef.current) {
+      clearTimeout(enterTimerRef.current);
+      enterTimerRef.current = null;
+    }
   }, []);
 
-  // 入场动画跑完就摘掉 class：它只在挂载那一次有意义，留在 DOM 上没有价值，
+  // 入场跑完就摘 class：它只在挂载那一次有意义，留在 DOM 上没有价值，
   // 且一旦将来有规则中断 animation（例如给 hover 加 animation:none），
-  // 中断恢复时会把入场高亮从头重播一次，看着像又来了一条新请求。
+  // 中断恢复时会把入场从头重播一次，看着像又来了一条新请求。
+  React.useEffect(() => {
+    if (!entering) return undefined;
+    // animationend 的兜底，不是主路径 —— 主路径见 handleAnimationEnd。
+    enterTimerRef.current = window.setTimeout(() => {
+      enterTimerRef.current = null;
+      setEntering(false);
+    }, ENTER_TEARDOWN_MS + (enterAnimation?.delayMs || 0));
+    return () => {
+      if (enterTimerRef.current) {
+        clearTimeout(enterTimerRef.current);
+        enterTimerRef.current = null;
+      }
+    };
+  }, [entering, enterAnimation]);
+
+  // 只认收尾最晚的那条动画。单元格位移（200ms）会从 td 冒泡上来，
+  // 认 event.target 会在亮线还剩 420ms 时就把 class 摘掉。
   const handleAnimationEnd = React.useCallback((event) => {
-    // 只认行级动画：逐列接力的 request-cell-enter 会从 td 冒泡上来，
-    // 且它比行动画先结束（最晚 ~252ms vs 800ms），提前摘 class 会截断接力。
-    // 扫光是 infinite，本来就不触发 end。
-    if (event.animationName === 'request-row-enter-cascade' || event.animationName === 'request-row-enter-flat') {
-      setEnterState(null);
+    if (event.animationName === FINAL_ENTER_ANIMATION) {
+      setEntering(false);
     }
   }, []);
 
@@ -236,27 +304,25 @@ const RequestRow = ({ request, visibleColumns, onCopyId, onDoubleClick, formatTi
     }
   };
 
-  const rowAnimationClass = [
-    enterState ? (enterState.withCascade ? 'request-row-enter-cascade' : 'request-row-enter-flat') : '',
-    IN_FLIGHT_STATUSES.has(request.status) ? 'request-row-inflight' : ''
-  ].filter(Boolean).join(' ');
-
   return (
     <tr
-      className={`hover:bg-surface-sub transition-colors group cursor-pointer ${rowAnimationClass}`}
-      // 走 CSS 变量而非行内 animation-delay：复合规则里有两条动画，
-      // 行内 delay 会同时套到扫光上，把它的起跑点冲掉。
-      style={enterState?.delayMs ? { '--enter-delay': `${enterState.delayMs}ms` } : undefined}
+      className={`hover:bg-surface-sub transition-colors group cursor-pointer ${entering ? 'request-row-enter' : ''}`}
+      // 走 CSS 变量而非行内 animation-delay：入场由两条动画组成
+      // （单元格位移 + 左缘亮线），行内 delay 只能套到其中一条上。
+      style={entering && enterAnimation?.delayMs ? { '--enter-delay': `${enterAnimation.delayMs}ms` } : undefined}
       onClick={handleRowClick}
       onAnimationEnd={handleAnimationEnd}
     >
-      {visibleColumns.map((colId, colIndex) => (
+      {/* 与表头同源：都遍历 visibleColumnConfigs。曾经这里走的是 visibleColumns
+          （state 数组），表头走 TABLE_COLUMNS，两者只靠「手抄的默认数组恰好同序」
+          才对得上 —— 一旦 TABLE_COLUMNS 调整顺序，表头就会盖在错误的数据列上，
+          且勾一下任意列就会自愈，只在首屏错。 */}
+      {columns.map((col) => (
         <td
-          key={colId}
-          className={`px-3 py-3 ${colId === 'cost' || colId.includes('Tokens') ? 'text-right' : ''}`}
-          style={cappedColIndexStyle(colIndex)}
+          key={col.id}
+          className={`px-3 py-3 ${col.align === 'right' ? 'text-right' : ''}`}
         >
-          {renderCell(colId, request, formatTimestamp)}
+          {renderCell(col.id, request, formatTimestamp)}
         </td>
       ))}
     </tr>
@@ -267,7 +333,7 @@ const RequestRow = ({ request, visibleColumns, onCopyId, onDoubleClick, formatTi
 // enterAnimation 已在挂载时固化，比较它没有意义，故排除在外。
 const MemoizedRequestRow = React.memo(RequestRow, (prev, next) => (
   prev.request === next.request
-  && prev.visibleColumns === next.visibleColumns
+  && prev.columns === next.columns
   && prev.onCopyId === next.onCopyId
   && prev.onDoubleClick === next.onDoubleClick
   && prev.formatTimestamp === next.formatTimestamp
@@ -281,10 +347,10 @@ const MemoizedRequestRow = React.memo(RequestRow, (prev, next) => (
  * @param {Object} props.pagination - 分页信息
  * @param {Function} props.onPageChange - 页码变更回调
  * @param {Function} props.onPageSizeChange - 每页条数变更回调
- * @param {Array} props.visibleColumns - 可见列ID数组
- * @param {Array} props.columnConfigs - 列配置数组
+ * @param {Array} props.visibleColumns - 可见列ID数组（与 columnConfigs 求交后决定渲染哪些列）
+ * @param {Array} props.columnConfigs - 列配置数组，其顺序即渲染顺序
  * @param {Function} props.onRowDoubleClick - 双击行回调
- * @param {Map<string, {delayMs:number, withCascade:boolean}>} props.enterAnimations
+ * @param {Map<string, {delayMs:number}>} props.enterAnimations
  *        本批次新增行的入场编排，由 index.jsx 在拿到新旧两批数据时算好传入
  */
 const RequestsTable = ({
@@ -359,7 +425,7 @@ const RequestsTable = ({
                   <MemoizedRequestRow
                     key={req.requestId}
                     request={req}
-                    visibleColumns={visibleColumns}
+                    columns={visibleColumnConfigs}
                     onCopyId={handleCopyId}
                     onDoubleClick={onRowDoubleClick}
                     formatTimestamp={formatTimestamp}

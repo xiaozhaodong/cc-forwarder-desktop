@@ -230,3 +230,22 @@ export const lifecycleSegmentColors = {
   failure: 'bg-rose-300 dark:bg-rose-800',
   cancelled: 'bg-slate-300 dark:bg-slate-500'
 };
+
+// railSegmentColors 同一套分段语义的「轨道版」，供列表里 3px 高的 TraceRail 使用。
+// 与上面那套刻意分叉，不要合并：
+//   - 详情条是 26px 色块且要承载浅色标签文字，暗色下必须压深（violet-700 起）；
+//   - 轨道只有 3px、不放文字，需要的是亮度 —— 同样的 violet-700 画在 3px 上
+//     会直接读成「这段没渲染出来」。
+// first / stream / failure 双主题同值：violet-400 / emerald-400 / rose-400 在
+// 两个背景上都够亮，再分叉只会让两个主题的比例观感对不上。
+export const railSegmentColors = {
+  queue: 'bg-slate-300 dark:bg-slate-500',
+  connect: 'bg-indigo-300 dark:bg-indigo-400',
+  pre: 'bg-slate-300 dark:bg-slate-500',
+  first: 'bg-violet-400',
+  stream: 'bg-emerald-400',
+  tail: 'bg-slate-300 dark:bg-slate-500',
+  total: 'bg-slate-300 dark:bg-slate-500',
+  failure: 'bg-rose-400',
+  cancelled: 'bg-slate-300 dark:bg-slate-500'
+};

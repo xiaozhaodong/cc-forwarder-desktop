@@ -16,6 +16,17 @@ export const STATUS_OPTIONS = {
   cancelled: '已取消'
 };
 
+// 「进行中」的状态集合，与上面的 STATUS_OPTIONS 状态机对齐。
+// suspended（已挂起）不算进行中：它在等人工干预 —— 轨道对它不给流光，
+// 耗时列对它不跑秒，两处都靠这一份集合判定。
+export const IN_FLIGHT_STATUSES = new Set(['pending', 'forwarding', 'processing', 'retry']);
+
+// 「还没落定」的状态。比 IN_FLIGHT 多一个 suspended —— 它不该有流光和跑秒
+// （在等人工干预，不是在工作），但请求确实还没结束。
+// 用途：token 与成本只在终态被写入，这些状态下那几列的 0 是「还不知道」
+// 而不是「用了 0 个」，必须渲染成占位符。
+export const UNSETTLED_STATUSES = new Set([...IN_FLIGHT_STATUSES, 'suspended']);
+
 // 转换为 Select 组件需要的格式
 export const STATUS_SELECT_OPTIONS = Object.entries(STATUS_OPTIONS).map(([value, label]) => ({
   value,
@@ -38,11 +49,15 @@ export const DEFAULT_FILTERS = {
   endDate: ''
 };
 
-// 表格列定义
+// 表格列定义。这个数组的顺序就是表格的渲染顺序（表头与数据格同源，
+// 见 RequestsTable 的 visibleColumnConfigs）。
 export const TABLE_COLUMNS = [
+  // 状态列排首位：轨道是这张表的扫描锚点 —— 先看「这条现在怎么样」，
+  // 再往右读「是哪条」。夹在长请求 ID 和时间戳后面时，轨道的动态感被隔断，
+  // 表格读起来像历史日志而不是监控列表。
+  { id: 'status', label: '状态', alwaysVisible: false, width: 'auto' },
   { id: 'requestId', label: '请求ID', alwaysVisible: true, width: 'auto' },
   { id: 'timestamp', label: '时间', alwaysVisible: true, width: 'auto' },
-  { id: 'status', label: '状态', alwaysVisible: false, width: 'auto' },
   { id: 'model', label: '模型', alwaysVisible: false, width: 'auto' },
   { id: 'requestFamily', label: '类型', alwaysVisible: false, width: 'auto' },
   { id: 'upstreamName', label: '上游', alwaysVisible: false, width: 'auto' },
@@ -54,11 +69,9 @@ export const TABLE_COLUMNS = [
   { id: 'cost', label: '成本', alwaysVisible: false, width: 'auto', align: 'right' }
 ];
 
-// 默认可见的列（v4.0: 添加缓存创建/读取列）
-export const DEFAULT_VISIBLE_COLUMNS = [
-  'requestId', 'timestamp', 'status', 'model', 'requestFamily', 'upstreamName',
-  'duration', 'inputTokens', 'outputTokens', 'cacheCreationTokens', 'cacheReadTokens', 'cost'
-];
+// 默认全部可见。必须从 TABLE_COLUMNS 派生而不是手抄一份 id 列表 ——
+// 手抄的版本会漏列、会写错 id，也会在 TABLE_COLUMNS 调整顺序时悄悄失配。
+export const DEFAULT_VISIBLE_COLUMNS = TABLE_COLUMNS.map(col => col.id);
 
 // 时间范围快捷选项
 export const TIME_RANGE_OPTIONS = [
