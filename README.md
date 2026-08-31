@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.2.5-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-5.3.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/Go-1.21+-00ADD8.svg" alt="Go">
@@ -21,14 +21,15 @@
 
 ## 概述
 
-AI Switchboard 是一款基于 [Wails](https://wails.io) 构建的跨平台桌面应用，专为 Claude API 用户设计。它作为本地代理运行，提供智能请求转发、多端点管理、自动故障恢复等企业级功能，同时记录完整的使用统计和成本数据。
+AI Switchboard 是一款基于 [Wails](https://wails.io) 构建的跨平台桌面应用。它作为本地代理运行，统一转发 Claude 与 OpenAI / Codex 请求，提供多端点智能路由、账号池调度、自动故障恢复等能力，同时记录完整的使用统计和成本数据。
 
 ### 为什么需要它？
 
-- **多账号/多端点管理** - 统一管理多个 API 端点，无需频繁切换配置
+- **多账号/多端点管理** - 统一管理多个 API 端点与 ChatGPT Codex 账号池，无需频繁切换配置
 - **高可用保障** - 主端点故障时自动切换到备用端点，确保服务不中断
 - **成本透明** - 实时追踪 Token 用量和费用，支持不同端点设置成本倍率
 - **请求可观测** - 完整的请求生命周期追踪，便于问题排查
+- **出站隐私保护** - 请求体按规则扫描脱敏，敏感信息不出本机
 
 ![overview](images/overview.png)
 
@@ -55,10 +56,27 @@ AI Switchboard 是一款基于 [Wails](https://wails.io) 构建的跨平台桌�
 - **三态路由** - 支持自动调度、手动优选和手动固定端点
 - **状态监控** - 实时显示端点健康状态和响应延迟
 - **灵活配置** - 支持 Token/API Key、自定义 Header、超时、模型改写和成本倍率
+- **调度快照** - 记录每次调度的候选端点、跳过原因与最终命中，异常时才前台警示
+
+### 🔀 Codex 账号池
+
+- **OAuth 授权** - ChatGPT 账号一键授权，自动刷新 Token 与账号画像
+- **分组编排** - 主组 / 备组 / 冷备三层，支持组内首选与全局固定账号
+- **额度可见** - 展示 5h / 周额度剩余与刷新时间，`api_key` 账号可配置成本倍率
+- **健康管理** - 启动批量连通性检查、冷却与鉴权失效自动处理
+
+### 🔒 出站隐私保护
+
+- **三种模式** - 关闭 / 仅检测 / 脱敏转发，默认关闭
+- **规则可维护** - 规则存 SQLite，保存时先编译后落库，原子热替换不重启
+- **精确扫描** - 按 JSON 文本字段扫描（含工具调用结果），零命中时请求体逐字节不变
+- **不留痕** - 只记录规则名、命中数与耗时，不记录命中原文
 
 ### 🔧 其他特性
 
-- **请求生命周期追踪** - 从接收到完成的全程状态管理
+- **请求生命周期追踪** - 从接收到完成的全程状态管理，详情页展示分段耗时
+- **独立图像 API 代理** - OpenAI 兼容生图/改图转发，不进端点与账号池调度
+- **暗黑模式** - 全站语义色 token，跟随系统或手动切换
 - **热池架构** - 内存缓存 + 异步写入，高性能低延迟
 - **本地存储** - SQLite 数据库，无需额外依赖
 - **跨平台** - macOS、Windows、Linux 全平台支持
@@ -187,7 +205,9 @@ endpoints_storage:
 │  │                     │      │                         │   │
 │  │  ├─ 概览仪表板      │◄────►│  ├─ HTTP 代理服务       │   │
 │  │  ├─ 端点管理        │ Wails│  ├─ 端点管理器          │   │
-│  │  ├─ 请求追踪        │ IPC  │  ├─ 请求生命周期管理    │   │
+│  │  ├─ 账号池          │ IPC  │  ├─ 账号池调度器        │   │
+│  │  ├─ 请求追踪        │      │  ├─ 请求生命周期管理    │   │
+│  │  ├─ 隐私保护        │      │  ├─ 隐私规则引擎        │   │
 │  │  ├─ 系统日志        │      │  ├─ 使用量追踪          │   │
 │  │  └─ 设置页面        │      │  └─ 事件推送系统        │   │
 │  └─────────────────────┘      └─────────────────────────┘   │
@@ -196,6 +216,8 @@ endpoints_storage:
 │                               ┌─────────────────────┐        │
 │                               │       SQLite        │        │
 │                               │   ├─ 端点配置       │        │
+│                               │   ├─ 账号池         │        │
+│                               │   ├─ 隐私规则       │        │
 │                               │   ├─ 请求日志       │        │
 │                               │   ├─ 使用统计       │        │
 │                               │   └─ 模型定价       │        │
@@ -221,6 +243,10 @@ endpoints_storage:
 |------|------|------|
 | 代理引擎 | `internal/proxy/` | 请求转发、流式处理、错误恢复 |
 | 端点管理 | `internal/endpoint/` | 端点调度、健康检查、故障转移 |
+| 账号池 | `internal/service/` | 账号 CRUD、分组编排、调度与画像刷新 |
+| 账号鉴权 | `internal/accountauth/` | ChatGPT OAuth 授权、Token 刷新、画像解析 |
+| 隐私引擎 | `internal/privacy/` | 规则编译、JSON 扫描、offset-aware 替换 |
+| 模型改写 | `internal/modelrewrite/` | 端点与账号共用的模型改写解析与匹配 |
 | 使用追踪 | `internal/tracking/` | 热池缓存、数据库写入、统计查询 |
 | 事件系统 | `internal/events/` | SSE 推送、状态同步 |
 | 前端应用 | `frontend/` | React + Vite + TailwindCSS |
@@ -264,7 +290,12 @@ endpoints_storage:
 <details>
 <summary><b>Q: 支持其他 AI API 吗？</b></summary>
 
-目前专为 Claude API 设计和优化。理论上兼容 Claude API 格式的其他服务也可以使用。
+除 Claude API 外，当前还支持：
+
+- **OpenAI / Codex** - `/v1/responses` 与 `/v1/responses/compact`，走独立的 Codex 账号池调度
+- **图像生成** - OpenAI 兼容的 `/v1/images/generations` 与 `/v1/images/edits`，单独配置 URL / Key / 固定单价，不参与端点与账号池调度
+
+兼容 Claude API 格式的第三方服务也可以直接作为端点使用。
 
 </details>
 

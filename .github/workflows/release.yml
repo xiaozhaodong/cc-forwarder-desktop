@@ -47,16 +47,21 @@ jobs:
       - name: Get version
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+            VERSION="${GITHUB_REF#refs/tags/}"
           else
-            echo "VERSION=dev-$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+            VERSION="dev-$(git rev-parse --short HEAD)"
           fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          # main.go 的 Version 不带 v 前缀，注入时剥掉；Release 标题仍用带 v 的 VERSION
+          echo "VERSION_NUM=${VERSION#v}" >> $GITHUB_ENV
+          echo "COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
 
       - name: Build
         run: |
           PLATFORM="${{ matrix.platform }}"
           ARCH="${PLATFORM#*/}"
-          wails build -platform ${{ matrix.platform }} -ldflags "-X main.version=${{ env.VERSION }}"
+          wails build -platform ${{ matrix.platform }} -ldflags "-X main.Version=${{ env.VERSION_NUM }} -X main.Commit=${{ env.COMMIT }} -X main.BuildTime=${{ env.BUILD_TIME }}"
 
       - name: Package
         run: |
@@ -104,13 +109,18 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+            VERSION="${GITHUB_REF#refs/tags/}"
           else
-            echo "VERSION=dev-$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+            VERSION="dev-$(git rev-parse --short HEAD)"
           fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          # main.go 的 Version 不带 v 前缀，注入时剥掉；Release 标题仍用带 v 的 VERSION
+          echo "VERSION_NUM=${VERSION#v}" >> $GITHUB_ENV
+          echo "COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
 
       - name: Build
-        run: wails build -platform windows/amd64 -ldflags "-X main.version=${{ env.VERSION }}"
+        run: wails build -platform windows/amd64 -ldflags "-X main.Version=${{ env.VERSION_NUM }} -X main.Commit=${{ env.COMMIT }} -X main.BuildTime=${{ env.BUILD_TIME }}"
 
       - name: Package
         shell: pwsh
@@ -156,13 +166,18 @@ jobs:
       - name: Get version
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+            VERSION="${GITHUB_REF#refs/tags/}"
           else
-            echo "VERSION=dev-$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+            VERSION="dev-$(git rev-parse --short HEAD)"
           fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          # main.go 的 Version 不带 v 前缀，注入时剥掉；Release 标题仍用带 v 的 VERSION
+          echo "VERSION_NUM=${VERSION#v}" >> $GITHUB_ENV
+          echo "COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
 
       - name: Build
-        run: wails build -platform linux/amd64 -ldflags "-X main.version=${{ env.VERSION }}"
+        run: wails build -platform linux/amd64 -ldflags "-X main.Version=${{ env.VERSION_NUM }} -X main.Commit=${{ env.COMMIT }} -X main.BuildTime=${{ env.BUILD_TIME }}"
 
       - name: Package
         run: |
