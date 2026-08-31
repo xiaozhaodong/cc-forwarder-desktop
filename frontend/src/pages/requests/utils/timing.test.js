@@ -12,9 +12,13 @@ import {
   resolveFirstResponseMs
 } from './timing.js';
 
-test('formatTimingBadge renders milliseconds as one-decimal seconds', () => {
-  assert.equal(formatTimingBadge(12345), '12.3s');
-  assert.equal(formatTimingBadge(-100), '0.0s');
+test('formatTimingBadge 三档：毫秒 / 两位小数 / 一位小数', () => {
+  assert.equal(formatTimingBadge(340), '340ms', '1 秒内给毫秒整数，避免一屏的 0.3s');
+  assert.equal(formatTimingBadge(999), '999ms');
+  assert.equal(formatTimingBadge(1000), '1.00s');
+  assert.equal(formatTimingBadge(5432), '5.43s');
+  assert.equal(formatTimingBadge(12345), '12.3s', '10 秒后末位只剩噪声，收回一位');
+  assert.equal(formatTimingBadge(-100), '0ms');
 });
 
 test('formatOptionalTimingBadge renders missing timing as placeholder', () => {

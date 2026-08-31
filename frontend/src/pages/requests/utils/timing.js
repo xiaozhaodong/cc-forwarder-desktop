@@ -11,7 +11,23 @@ export const TIMING_THRESHOLDS_MS = Object.freeze({
 
 const toSafeMs = (ms) => (Number.isFinite(ms) ? Math.max(ms, 0) : 0);
 
-export const formatTimingBadge = (ms) => `${(toSafeMs(ms) / 1000).toFixed(1)}s`;
+/**
+ * 耗时的唯一格式。跑秒中和定稿后共用同一把尺子 —— 精度在完成瞬间变化
+ * 会让人以为数据源换了，而「完成」本来就由灰→彩负责表达，不需要数字帮腔。
+ *
+ * 1 秒内直接给毫秒整数：这一段大多是排队/连接，340ms 比 0.34s 好读。
+ * 10 秒后收回一位小数：末位那时已经没人读了，跳动只剩噪声，也顺带压住了列宽。
+ *
+ * 中间那档两位小数是跑秒的主场 —— 0.1s 的刻度每秒只跳 10 次，看着像在等；
+ * 0.01s 的末位滚起来才是秒表。三档宽度都是 5 个等宽字符（999ms / 1.00s / 10.0s）。
+ */
+export const formatTimingBadge = (ms) => {
+  const value = toSafeMs(ms);
+  if (value < 1000) {
+    return `${Math.round(value)}ms`;
+  }
+  return `${(value / 1000).toFixed(value < 10000 ? 2 : 1)}s`;
+};
 
 export const formatOptionalTimingBadge = (ms) => (
   Number.isFinite(ms) ? formatTimingBadge(ms) : '-'

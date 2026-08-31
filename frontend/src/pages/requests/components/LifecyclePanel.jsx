@@ -19,9 +19,6 @@ import {
 
 const EMPTY_CANDIDATES = [];
 
-// 分段时间展示：<1s 用毫秒避免「0.0s」，≥1s 沿用秒格式。
-const formatSegmentMs = (ms) => (ms < 1000 ? `${Math.round(ms)}ms` : formatTimingBadge(ms));
-
 const LifecycleCell = ({ icon: Icon, iconClass, title, loading, children }) => (
   <div className="p-4 min-w-0">
     <div className="flex items-center gap-2 text-sm font-medium text-fg-muted mb-3">
@@ -113,7 +110,7 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
             // 占比过小的段只显示时间，名称见下方图例与 title。
             // 终态段 label 为短标签，原始错误全文经 detail 走 tooltip。
             const showLabel = pct >= 10;
-            const tooltip = `${segment.label} ${formatSegmentMs(segment.ms)}${segment.detail ? `\n${segment.detail}` : ''}`;
+            const tooltip = `${segment.label} ${formatTimingBadge(segment.ms)}${segment.detail ? `\n${segment.detail}` : ''}`;
             return (
               <div
                 key={segment.key}
@@ -122,7 +119,7 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
                 title={tooltip}
               >
                 <span className="text-[11px] font-mono font-medium text-slate-700/90 dark:text-slate-100 whitespace-nowrap max-w-[220px] overflow-hidden text-ellipsis">
-                  {showLabel ? `${segment.label} ${formatSegmentMs(segment.ms)}` : formatSegmentMs(segment.ms)}
+                  {showLabel ? `${segment.label} ${formatTimingBadge(segment.ms)}` : formatTimingBadge(segment.ms)}
                 </span>
               </div>
             );

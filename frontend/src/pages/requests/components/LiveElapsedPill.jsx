@@ -34,7 +34,7 @@ const LiveElapsedPill = ({ timestamp, baseMs = 0, threshold }) => {
   useLayoutEffect(() => {
     if (!canTick) return undefined;
 
-    // 直接写 DOM 而不是 setState：每 100ms 推一次全表 diff，
+    // 直接写 DOM 而不是 setState：跑秒是逐帧的，每帧推一次全表 diff
     // 恰好会撞上新行入场动画在跑的时刻 —— 那是主线程最不该被占的时候。
     const paint = () => {
       const node = nodeRef.current;

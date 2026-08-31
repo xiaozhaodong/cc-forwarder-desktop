@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { IN_FLIGHT_STATUSES } from './constants.js';
-import { TIMING_THRESHOLDS_MS, getTimingPillClassName, getRunningPillClassName } from './timing.js';
+import { TIMING_THRESHOLDS_MS, getTimingPillClassName, getRunningPillClassName, formatTimingBadge } from './timing.js';
 import {
   subscribeElapsedTick,
   resolveElapsedMs,
@@ -56,8 +56,21 @@ test('一个订阅者抛错不会让其余的时钟停摆', async () => {
 });
 
 test('跑秒精度必须细于显示精度，否则数字会跳格', () => {
-  // formatTimingBadge 显示到 0.1s；刷新慢于 100ms 就会一次跳过多个刻度。
-  assert.ok(TICK_INTERVAL_MS <= 100, `刷新间隔 ${TICK_INTERVAL_MS}ms 粗于 0.1s 显示精度`);
+  // formatTimingBadge 显示到 0.01s；降级间隔慢于一帧就会一次跳过多个刻度。
+  assert.ok(TICK_INTERVAL_MS <= 16, `刷新间隔 ${TICK_INTERVAL_MS}ms 粗于一帧`);
+});
+
+test('跑秒与定稿共用同一把尺子 —— 完成瞬间精度不能变', () => {
+  // 精度在完成瞬间跳变会让人以为数据源换了；「完成」由灰→彩负责表达，
+  // 不需要数字帮腔。所以 LiveElapsedPill 和静态徽章必须是同一个函数。
+  assert.equal(formatTimingBadge(5432), '5.43s');
+  assert.match(PILL_SOURCE, /formatTimingBadge\(elapsedMs\)/,
+    '跑秒不该有自己的格式函数');
+
+  // 三档宽度一致，跑秒过程中列宽不抖。
+  for (const ms of [999, 1000, 5432, 10000]) {
+    assert.equal(formatTimingBadge(ms).length, 5, `${ms} 的宽度应与其他档一致`);
+  }
 });
 
 test('已耗时钳到非负 —— 时间戳异常时不显示负数', () => {
