@@ -73,10 +73,28 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
   const isWails = isWailsEnvironment();
   const titlebarPadding = isWails ? 'pt-7' : '';
 
+  // 双击标题栏空白可拖拽区域时切换窗口最大化/还原（遵循 macOS 原生标题栏行为）
+  const handleDoubleClick = (e) => {
+    if (!isWails) return;
+    const target = e.target;
+    if (!target) return;
+    const computedDrag = window.getComputedStyle(target).getPropertyValue('--wails-draggable')?.trim();
+    if (computedDrag === 'drag') {
+      try {
+        if (window.runtime?.WindowToggleMaximise) {
+          window.runtime.WindowToggleMaximise();
+        }
+      } catch (err) {
+        console.warn('WindowToggleMaximise failed:', err);
+      }
+    }
+  };
+
   return (
     <nav
       className={`wails-drag select-none sticky top-0 z-50 bg-surface/80 backdrop-blur-xl border-b border-line/60 supports-[backdrop-filter]:bg-surface/60 ${titlebarPadding}`}
       style={isWails ? { '--wails-draggable': 'drag' } : {}}
+      onDoubleClick={handleDoubleClick}
     >
       <div className="max-w-7xl mx-auto px-4 xl:px-6 h-16 flex items-center gap-4 xl:gap-6">
         {/* 左侧：Logo（flex-1 与右侧等宽撑开，保证中间导航居中） */}
@@ -84,6 +102,8 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
           <div
             role="button"
             tabIndex={0}
+            aria-label="AI Switchboard - 返回概览"
+            title="返回概览"
             className="wails-no-drag flex items-center space-x-2.5 group cursor-pointer"
             onClick={() => onTabChange('overview')}
             onKeyDown={(e) => {
@@ -144,6 +164,7 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
             tabIndex={0}
             className="wails-no-drag w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 border-2 border-surface shadow-md cursor-pointer hover:ring-2 ring-accent-line transition-all"
             aria-label="用户头像"
+            title="用户头像"
           ></div>
         </div>
       </div>
