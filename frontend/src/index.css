@@ -724,3 +724,53 @@ body {
 .theme-switching *::after {
   transition: none !important;
 }
+
+/* ============================================================
+ * Wails 窗口拖拽与交互优化 (macOS WKWebView)
+ * ============================================================ */
+.wails-drag {
+  --wails-draggable: drag;
+}
+
+.wails-no-drag {
+  --wails-draggable: no-drag;
+}
+
+/* 拖拽容器内的交互组件、表单与链接默认不接管窗口拖拽，避免点击和交互失效 */
+.wails-drag button,
+.wails-drag [role="button"],
+.wails-drag a,
+.wails-drag input,
+.wails-drag select,
+.wails-drag textarea {
+  --wails-draggable: no-drag;
+}
+
+/* 交互元素防选区与防元素拖拽：避免在导航栏拖拽窗口或高频点击时误触发划选或触发 WebKit 的元素拖拽幽灵图 */
+nav,
+button,
+[role="button"],
+img,
+svg,
+a {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* 确保主内容区（日志、代码、表格、弹窗与抽屉等）与输入框仍保留文本划选和复制能力 */
+table td,
+table th,
+pre,
+code,
+.select-text {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+input,
+textarea {
+  -webkit-user-select: auto;
+  user-select: auto;
+}
+
