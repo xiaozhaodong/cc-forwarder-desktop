@@ -724,3 +724,35 @@ body {
 .theme-switching *::after {
   transition: none !important;
 }
+
+/* ============================================================
+ * Wails 窗口拖拽支持 (macOS WKWebView)
+ * ============================================================ */
+.wails-drag {
+  --wails-draggable: drag;
+}
+
+.wails-no-drag {
+  --wails-draggable: no-drag;
+}
+
+/* 拖拽容器内的表单与按钮默认不接管窗口拖拽，避免交互失效 */
+.wails-drag button,
+.wails-drag [role="button"],
+.wails-drag input,
+.wails-drag select,
+.wails-drag textarea {
+  --wails-draggable: no-drag;
+}
+
+/* 交互元素防选区：避免在导航栏拖拽窗口或高频点击时误触发划选；
+   主内容区（日志、代码、表格等）保持文本可选与复制能力 */
+nav,
+button,
+[role="button"],
+img,
+svg {
+  -webkit-user-select: none;
+  user-select: none;
+}
+

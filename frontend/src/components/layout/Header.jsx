@@ -10,8 +10,9 @@ import { useTheme } from '@contexts/ThemeContext.jsx';
 // 导航标签项
 const NavItem = ({ label, active, onClick }) => (
   <button
+    type="button"
     onClick={onClick}
-    className={`shrink-0 whitespace-nowrap px-3 xl:px-4 py-2 text-sm font-medium rounded-full transition-all duration-200 ${
+    className={`wails-no-drag shrink-0 whitespace-nowrap px-3 xl:px-4 py-2 text-sm font-medium rounded-full transition-all duration-200 ${
       active
         ? 'bg-inverted text-fg-inverted shadow-md'
         : 'text-fg-muted hover:text-fg hover:bg-surface-mut'
@@ -73,15 +74,24 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
   const titlebarPadding = isWails ? 'pt-7' : '';
 
   return (
-    <nav className={`sticky top-0 z-50 bg-surface/80 backdrop-blur-xl border-b border-line/60 supports-[backdrop-filter]:bg-surface/60 ${titlebarPadding}`}
-         style={isWails ? { WebkitAppRegion: 'drag' } : {}}>
-      <div className="max-w-7xl mx-auto px-4 xl:px-6 h-16 flex items-center gap-4 xl:gap-6"
-           style={isWails ? { WebkitAppRegion: 'no-drag' } : {}}>
+    <nav
+      className={`wails-drag select-none sticky top-0 z-50 bg-surface/80 backdrop-blur-xl border-b border-line/60 supports-[backdrop-filter]:bg-surface/60 ${titlebarPadding}`}
+      style={isWails ? { '--wails-draggable': 'drag' } : {}}
+    >
+      <div className="max-w-7xl mx-auto px-4 xl:px-6 h-16 flex items-center gap-4 xl:gap-6">
         {/* 左侧：Logo（flex-1 与右侧等宽撑开，保证中间导航居中） */}
         <div className="flex flex-1 items-center justify-start">
           <div
-            className="flex items-center space-x-2.5 group cursor-pointer"
+            role="button"
+            tabIndex={0}
+            className="wails-no-drag flex items-center space-x-2.5 group cursor-pointer"
             onClick={() => onTabChange('overview')}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onTabChange('overview');
+              }
+            }}
           >
             <div className="w-8 h-8 bg-inverted rounded-lg flex items-center justify-center text-fg-inverted shadow-lg">
               <Command size={16} strokeWidth={3} />
@@ -93,7 +103,7 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
         </div>
 
         {/* 中间：导航标签 */}
-        <div className="hidden md:flex min-w-0 items-center overflow-x-auto xl:overflow-visible bg-surface-mut/50 p-1 rounded-full border border-line/60 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="wails-no-drag hidden md:flex min-w-0 items-center overflow-x-auto xl:overflow-visible bg-surface-mut/50 p-1 rounded-full border border-line/60 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {tabs.map(tab => (
             <NavItem
               key={tab.name}
@@ -117,24 +127,29 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
             {status.text}
           </div>
 
-          {/* 主题开关：位于 no-drag 内层容器，Wails 下可正常点击 */}
+          {/* 主题开关：显式标记 wails-no-drag，Wails 下可正常点击 */}
           <button
             type="button"
             onClick={toggle}
             title={resolved === 'dark' ? '切换到浅色' : '切换到深色'}
             aria-label="切换主题"
-            className="p-2 rounded-lg text-fg-muted hover:text-fg hover:bg-surface-mut transition-colors"
+            className="wails-no-drag p-2 rounded-lg text-fg-muted hover:text-fg hover:bg-surface-mut transition-colors"
           >
             {resolved === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
           </button>
 
           {/* 用户头像 */}
-          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 border-2 border-surface shadow-md cursor-pointer hover:ring-2 ring-accent-line transition-all"></div>
+          <div
+            role="button"
+            tabIndex={0}
+            className="wails-no-drag w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 border-2 border-surface shadow-md cursor-pointer hover:ring-2 ring-accent-line transition-all"
+            aria-label="用户头像"
+          ></div>
         </div>
       </div>
 
       {/* 移动端导航 */}
-      <div className="md:hidden flex items-center space-x-2 px-4 pb-3 overflow-x-auto">
+      <div className="wails-no-drag md:hidden flex items-center space-x-2 px-4 pb-3 overflow-x-auto">
         {tabs.map(tab => (
           <NavItem
             key={tab.name}
